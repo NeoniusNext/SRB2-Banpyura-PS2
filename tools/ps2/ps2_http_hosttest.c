@@ -1,6 +1,13 @@
 // Host test (Winsock) of the PS2 HTTP client (src/ps2/ps2_curl.c) against tools/ps2/mock_masterserver.py: run by ps2_http_hosttest.py.
 // usage: ps2_http_hosttest BASEURL   -> prints "T <name> <PASS|FAIL> ..." lines
 #include <stdio.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#define Sleep(ms) usleep((ms) * 1000)
+#endif
 #include <stdlib.h>
 #include <string.h>
 #include "../../src/ps2/ps2_curl.h"
@@ -50,6 +57,36 @@ static CURLcode Do(const char *url, const char *post, long timeout, long *status
 	return rc;
 }
 
+static size_t OnFile(char *s, size_t sz, size_t n, void *ud)
+{
+	return fwrite(s, sz, n, (FILE *)ud);
+}
+
+// "get URL OUTFILE [stall_seconds]": the streaming GET (PS2HttpGet_*, add-on download) stepped like the game does; prints one line with the result
+static int GetMode(const char *url, const char *outfile, long stall)
+{
+	FILE *f = fopen(outfile, "wb");
+	ps2_httpget_t *g = PS2HttpGet_Open(url, stall, 5, "ps2-http-hosttest/1");
+	char err[256];
+	long status = 0, total = -1, got = 0;
+	int rc, steps = 0;
+
+	if (!f || !g)
+		return 2;
+	do
+	{
+		rc = PS2HttpGet_Step(g, OnFile, f, &status, &total, &got, err, sizeof err);
+		steps++;
+		if (rc > 0)
+			Sleep(1);
+	}
+	while (rc > 0 && steps < 20000000);
+	fclose(f);
+	PS2HttpGet_Close(g);
+	printf("GET rc=%d status=%ld total=%ld got=%ld steps=%d err=%s\n", rc, status, total, got, steps, err);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	const char *base = argc > 1 ? argv[1] : "http://127.0.0.1:8080/MS/0";
@@ -60,6 +97,9 @@ int main(int argc, char **argv)
 	int n;
 
 	curl_global_init(CURL_GLOBAL_ALL);
+
+	if (argc > 3 && !strcmp(argv[1], "get"))
+		return GetMode(argv[2], argv[3], argc > 4 ? atol(argv[4]) : 0);
 
 	if (argc > 2 && !strcmp(argv[2], "redirect"))
 	{

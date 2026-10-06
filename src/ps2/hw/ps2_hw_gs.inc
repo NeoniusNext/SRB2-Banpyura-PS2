@@ -6,25 +6,54 @@
 // screen copies and draws execute in the order they were issued, so VRAM can be reused inside a frame.
 
 static void poll_dma(void);
+static void tex_cap_control(void);
+static void tx_report(void);
+static void lod_frame_end(void);
 static void ov_flush_all(void); // draws queued by the light overlay (ps2_hw_draw.inc); every frame boundary and read-back first
+static void rel_poll(void); // OPT9: engine data referenced by DMA is unlocked when the transfer is done (ps2_hw_tex.inc)
+static void rel_release_buf(int i);
+static void rel_release_all(void);
+
+// DMA tags of a source chain (the GIF channel reads one tag per element: the tag itself is not sent to the GIF)
+#define DMAT_REFE 0ull // send qwc qwords from addr, then end
+#define DMAT_CNT 1ull // send the qwords that follow the tag, continue after them
+#define DMAT_REF 3ull // send qwc qwords from addr, continue with the tag after this one
+#define DMAT_END 7ull // send the qwords that follow the tag, then end
+
+static inline u64 dma_tag(u32 qwc, u64 id, u32 addr)
+{
+	return (u64)qwc | (id << 28) | ((u64)addr << 32);
+}
 
 static void dma_start_locked(void) // interrupts disabled
 {
 	int i;
-	u32 qwc;
 
 	if (H.dma_busy || H.q_n == 0)
 		return;
+	if (H.gate && H.pend && H.q_fid[H.q_head] != H.pend_fid)
+		return; // a buffer of the next frame: the GS starts it when the finished frame has been shown (do_flip)
 	i = H.q_idx[H.q_head];
-	qwc = H.q_qwc[H.q_head];
 	H.q_head = (H.q_head + 1) % NBUF;
 	H.q_n--;
 	H.dma_cur = i;
 	H.dma_busy = 1;
-	*D2_MADR = phys(H.ring[i]);
-	*D2_QWC = qwc;
-	__asm__ volatile("sync.l");
-	*D2_CHCR = 0x101; // DIR = from memory, normal mode, start
+	if (V.on) // PS2-HW-44: the chain goes to the VIF (channel 1) with the VIF codes of its tags (TTE)
+	{
+		*D1_TADR = phys(H.ring[i]);
+		*D1_MADR = 0;
+		*D1_QWC = 0;
+		__asm__ volatile("sync.l");
+		*D1_CHCR = 0x145; // DIR = from memory, source chain mode, TTE, start
+	}
+	else
+	{
+		*D2_TADR = phys(H.ring[i]);
+		*D2_MADR = 0;
+		*D2_QWC = 0;
+		__asm__ volatile("sync.l");
+		*D2_CHCR = 0x105; // DIR = from memory, source chain mode, start
+	}
 	__asm__ volatile("sync.p");
 	H.st.dma_kicks++;
 }
@@ -33,10 +62,11 @@ static int dmac_gif_handler(int ch)
 {
 	(void)ch;
 	H.irq_seen++;
-	if (H.dma_busy && !(*D2_CHCR & 0x100))
+	if (H.dma_busy && !(DCH_CHCR & 0x100))
 	{
 		H.dma_busy = 0;
 		H.pending--;
+		H.done_seq++;
 		iSignalSema(H.sema_dma);
 	}
 	dma_start_locked();
@@ -48,10 +78,11 @@ static void poll_dma(void)
 {
 	u32 irq = DIntr();
 
-	if (H.dma_busy && !(*D2_CHCR & 0x100))
+	if (H.dma_busy && !(DCH_CHCR & 0x100))
 	{
 		H.dma_busy = 0;
 		H.pending--;
+		H.done_seq++;
 	}
 	dma_start_locked();
 	if (irq)
@@ -86,12 +117,16 @@ static void wd_recover(const char *why)
 		hw_failure("PS2 GS watchdog: the GS/DMA stays stuck after repeated resets");
 	irq = DIntr();
 	*D2_CHCR = 0; // stop channel 2
+	if (V.on)
+		*D1_CHCR = 0; // PS2-HW-44: and the VIF channel
 	__asm__ volatile("sync.l");
 	H.dma_busy = 0;
 	H.q_n = 0;
 	H.q_head = 0;
 	H.pending = 0;
-	H.wr = 0;
+	H.wr = 1;
+	H.run = 0;
+	H.done_seq = H.q_seq; // nothing is read by DMA any more
 	H.gsr.valid = 0;
 	H.clut_loaded = 0;
 	H.finish_pending = 0;
@@ -100,6 +135,7 @@ static void wd_recover(const char *why)
 	*GS_CSR = 2;
 	if (irq)
 		EIntr();
+	rel_release_all();
 }
 
 // Sleep until at most `limit` buffers are queued or in flight.
@@ -127,16 +163,36 @@ static void ring_wait(int limit)
 	H.st.cyc_wait += t1;
 }
 
+// Queue the open buffer: its first run is closed with END (or the chain ends with the last reference), the buffer is written back.
 static void pk_flush(void)
 {
-	u32 irq;
+	u32 irq, qwc;
+	qw_t *b;
+	int slot;
 
-	if (!H.wr)
+	if (H.wr <= 1)
 		return;
-	SyncDCache(H.ring[H.cur], H.ring[H.cur] + H.wr);
+	b = H.ring[H.cur];
+	qwc = H.wr - H.run - 1;
+	if (qwc)
+	{
+		b[H.run].d[0] = dma_tag(qwc, DMAT_END, 0);
+		if (V.on)
+			b[H.run].d[1] = vif_gif_codes(qwc); // PS2-HW-44
+	}
+	else
+	{
+		// the chain ends with the reference in front of the empty run
+		b[H.run - 1].d[0] = (b[H.run - 1].d[0] & ~(7ull << 28)) | (DMAT_REFE << 28);
+		H.wr--;
+	}
+	SyncDCache(b, b + H.wr);
 	irq = DIntr();
-	H.q_idx[(H.q_head + H.q_n) % NBUF] = H.cur;
-	H.q_qwc[(H.q_head + H.q_n) % NBUF] = H.wr;
+	slot = (H.q_head + H.q_n) % NBUF;
+	H.q_idx[slot] = H.cur;
+	H.q_qwc[slot] = H.wr;
+	H.q_fid[slot] = H.fid;
+	H.buf_seq[H.cur] = ++H.q_seq;
 	H.q_n++;
 	H.pending++;
 	dma_start_locked();
@@ -144,15 +200,18 @@ static void pk_flush(void)
 		EIntr();
 	H.st.qwords += H.wr;
 	H.cur = (H.cur + 1) % NBUF;
-	H.wr = 0;
+	H.wr = 1; // the tag of the first run
+	H.run = 0;
 	ring_wait(NBUF - 1); // the buffer that is filled next has to be free
+	rel_release_buf(H.cur); // the engine data its previous packets referenced is not read any more
+	rel_poll();
 }
 
 static qw_t *pk_alloc(u32 n)
 {
 	qw_t *p;
 
-	if (n > BUF_QW)
+	if (n > BUF_QW - 2)
 	{
 		CONS_Alert(CONS_ERROR, "PS2 GS: oversized GIF packet (%u qwords)\n", n);
 		abort();
@@ -162,6 +221,39 @@ static qw_t *pk_alloc(u32 n)
 	p = H.ring[H.cur] + H.wr;
 	H.wr += n;
 	return p;
+}
+
+// OPT9 (PS2-HW-32): the packet continues with `qwc` qwords read by the DMAC straight from `data` (16-byte aligned, written back by the caller).
+// The open run is closed with a CNT tag, the reference takes one tag, the next run starts behind it.
+static void pk_ref(const void *data, u32 qwc)
+{
+	qw_t *b, *t;
+	u32 n;
+
+	if (V.on && qwc > VIF_DIRECT_MAX) // PS2-HW-44: one DIRECT carries at most 65535 quadwords
+	{
+		pk_ref(data, VIF_DIRECT_MAX);
+		pk_ref((const u8 *)data + (size_t)VIF_DIRECT_MAX * 16, qwc - VIF_DIRECT_MAX);
+		return;
+	}
+	if (H.wr + 2 > BUF_QW)
+		pk_flush();
+	b = H.ring[H.cur];
+	n = H.wr - H.run - 1;
+	if (n)
+	{
+		b[H.run].d[0] = dma_tag(n, DMAT_CNT, 0);
+		if (V.on)
+			b[H.run].d[1] = vif_gif_codes(n);
+		t = b + H.wr++;
+	}
+	else
+	{
+		t = b + H.run; // an empty run: its tag becomes the reference
+	}
+	t->d[0] = dma_tag(qwc, DMAT_REF, phys(data));
+	t->d[1] = V.on ? vif_gif_codes(qwc) : 0;
+	H.run = H.wr++;
 }
 
 // n A+D register writes behind one GIF tag
@@ -213,6 +305,7 @@ static void do_flip(void)
 	H.pend_done = 0;
 	H.flips++;
 	H.flip_vbl = H.vbl;
+	dma_start_locked(); // the buffers of the next frame, held until now
 }
 
 // OPT5 (PS2-HW-21): the flip used to need FINISH to be still set at the vblank. The EE itself polls FINISH when the next frame starts
@@ -272,6 +365,44 @@ static void emit_const_env(void)
 	H.clut_loaded = 0;
 }
 
+// OPT9 (PS2-HW-35): wait until the finished frame has been shown. Only when the EE is a whole frame ahead of the display (frame_end of
+// the next frame, read-backs): a new frame is prepared without waiting for the flip, its buffers are held back by dma_start_locked.
+static void flip_wait(void)
+{
+	u32 w0, vbl0;
+
+	if (!H.pend)
+		return;
+	w0 = cyc();
+	vbl0 = H.vbl;
+	H.st.flip_waits++;
+	while (H.pend)
+	{
+		u32 el = (u32)(cyc() - w0);
+
+		if (el > FLIP_LIMIT && H.vbl == vbl0 && (H.pend_done || (*GS_CSR & 2))) // no vblank interrupt for 125 ms: flip by hand
+		{
+			u32 fi = DIntr();
+
+			if (H.pend)
+			{
+				do_flip();
+				H.st.flip_forced++;
+			}
+			if (fi)
+				EIntr();
+			break;
+		}
+		if (el > WAIT_LIMIT)
+		{
+			wd_recover("flip timeout (flip_wait)");
+			break;
+		}
+		DelayThread(100);
+	}
+	H.st.cyc_flipwait += cyc() - w0;
+}
+
 static void frame_begin(void)
 {
 	u32 irq;
@@ -279,6 +410,20 @@ static void frame_begin(void)
 
 	if (H.frame_open)
 		return;
+	if (H.gate)
+	{
+		// the buffer the CRTC will not read once the finished frame is shown; nothing to wait for: the GS runs this frame's
+		// buffers after that flip
+		irq = DIntr();
+		H.target = H.last_drawn ^ 1;
+		H.fid++;
+		H.frame_open = 1;
+		if (irq)
+			EIntr();
+		H.need_copy = !cfg.no_keep;
+		emit_const_env();
+		return;
+	}
 	if (H.finish_pending)
 	{
 		H.st.frame_waits++;
@@ -315,6 +460,7 @@ static void frame_begin(void)
 	H.target = b;
 	H.pend = 0; // no old flip may consume a mid-frame Sync's FINISH
 	H.frame_open = 1;
+	H.fid++;
 	if (irq)
 		EIntr();
 	H.need_copy = !cfg.no_keep;
@@ -356,12 +502,15 @@ static void frame_end(void)
 
 	ov_flush_all();
 	frame_prepare(0);
+	if (H.gate && H.pend)
+		flip_wait(); // the EE is a whole frame ahead of the display: the previous frame must be shown before this one can be marked finished
 	p = ad_alloc(1);
 	ad_set(p, 0, GSR_FINISH);
 	irq = DIntr();
 	*GS_CSR = 2; // mid-frame readback may have set FINISH; only this frame-end counts
 	H.pend_done = 0;
 	H.pend = 1;
+	H.pend_fid = H.fid;
 	H.pend_buf = H.target;
 	H.finish_pending = 1;
 	if (irq)
@@ -369,7 +518,12 @@ static void frame_end(void)
 	H.last_drawn = H.target;
 	H.have_drawn = 1;
 	H.frame_open = 0;
+	tex_cap_control();
+	if (ps2hwd_dbg_flags & HWDBG_TEX)
+		lod_frame_end();
 	H.frame_no++;
+	if ((ps2hwd_dbg_flags & HWDBG_TEX) && ++TX.frames >= 105)
+		tx_report();
 	pk_flush();
 }
 
@@ -476,8 +630,11 @@ static int gs_setup(void)
 	H.fbpsm = H.fb32 ? PSM_CT32 : PSM_CT16S;
 	H.outid = H.mode == PS2HWD_VIDEO_480P ? 2 : (H.mode == PS2HWD_VIDEO_PAL ? (field_frame ? 4 : 1) : (field_frame ? 3 : 0));
 
-	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
+	V.on = (ps2hwd_dbg_flags & HWDBG_VU1) != 0; // PS2-HW-44: -hwdbg 0x4000000: the stream goes through VIF1, the VU1 program draws the polygons
+	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, (1 << DMA_CHANNEL_GIF) | (V.on ? 1 << DMA_CHANNEL_VIF1 : 0));
 	dmaKit_chan_init(DMA_CHANNEL_GIF);
+	if (V.on)
+		dmaKit_chan_init(DMA_CHANNEL_VIF1);
 
 	gs = gsKit_init_global_custom(8 * 1024, 8 * 1024); // gsKit's own draw queues are never used
 	if (!gs)
@@ -554,7 +711,8 @@ static int gs_setup(void)
 			return -3;
 	}
 	H.cur = 0;
-	H.wr = 0;
+	H.wr = 1; // the tag of the first run
+	H.run = 0;
 
 	sema.init_count = 0;
 	sema.max_count = 1;
@@ -569,6 +727,20 @@ static int gs_setup(void)
 	H.dmac = AddDmacHandler(DMAC_GIF, dmac_gif_handler, 0);
 	if (H.dmac >= 0)
 		EnableDmac(DMAC_GIF);
+	if (V.on)
+	{
+		V.dmac = AddDmacHandler(DMAC_VIF1, dmac_gif_handler, 0);
+		if (V.dmac >= 0)
+		{
+			EnableDmac(DMAC_VIF1);
+			V.dmac_set = 1;
+		}
+		if (V.dmac < 0 || !vu1_boot())
+		{
+			CONS_Printf("HWD VU1: VIF1 interrupt or microcode upload failed, the GIF ring is used\n");
+			V.on = 0;
+		}
+	}
 	return 0;
 }
 

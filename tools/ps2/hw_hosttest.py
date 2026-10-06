@@ -63,7 +63,7 @@ def build(work, arch):
     bat = work / f"build-{arch}.bat"
     exe = f"hw_hosttest-{arch}.exe"
     lines = ["@echo off", f'call "{VCVARS}" {arch} >nul 2>&1', "if errorlevel 1 exit /b 1",
-             subprocess.list2cmdline(["cl", "/nologo", "/std:c17", "/O2", "/W3", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/D_USE_MATH_DEFINES",
+             subprocess.list2cmdline(["cl", "/nologo", "/std:c17", "/O2", "/W3", "/WX", "/D_CRT_SECURE_NO_WARNINGS", "/D_USE_MATH_DEFINES", "/DPS2_PROFILE",
                                       "/I" + str(work), str(ROOT / "tools/ps2/hw_hosttest.c"), "/Fe:" + exe, "/Fo:hw_hosttest-" + arch + ".obj"])]
     bat.write_text("\n".join(lines) + "\n", encoding="utf-8")
     r = subprocess.run(["cmd", "/c", str(bat)], cwd=work, capture_output=True, text=True, encoding="oem", errors="replace")

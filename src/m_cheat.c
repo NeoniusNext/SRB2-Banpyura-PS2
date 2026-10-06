@@ -992,8 +992,8 @@ static void OP_CycleThings(INT32 amt)
 		{
 			op_currentthing += add;
 			if (op_currentthing <= 0)
-				op_currentthing = NUMMOBJTYPES-1;
-			if (op_currentthing >= NUMMOBJTYPES)
+				op_currentthing = LIMIT_NUMMOBJTYPES-1;
+			if (op_currentthing >= LIMIT_NUMMOBJTYPES)
 				op_currentthing = 0;
 		} while
 		(mobjinfo[op_currentthing].doomednum == -1
@@ -1401,11 +1401,11 @@ void OP_ObjectplaceMovement(player_t *player)
 		if (cv_mapthingnum.value > 0 && cv_mapthingnum.value < 4096)
 		{
 			// find which type to spawn
-			for (spawnmid = 0; spawnmid < NUMMOBJTYPES; ++spawnmid)
+			for (spawnmid = 0; spawnmid < LIMIT_NUMMOBJTYPES; ++spawnmid)
 				if (cv_mapthingnum.value == mobjinfo[spawnmid].doomednum)
 					break;
 
-			if (spawnmid == NUMMOBJTYPES)
+			if (spawnmid == LIMIT_NUMMOBJTYPES)
 			{
 				CONS_Alert(CONS_ERROR, M_GetText("Can't place an object with mapthingnum %d.\n"), cv_mapthingnum.value);
 				return;

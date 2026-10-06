@@ -12,6 +12,7 @@
 
 static void ov_flush_all(void);
 static int scr_spill_victim(void);
+static u32 tex_want(const GLMipmap_t *m, int *visible); // ps2_hw_plan.inc
 
 static u32 vram_alloc(u32 n, u32 align)
 {
@@ -274,7 +275,14 @@ static int rec_new(void)
 	memset(&H.rec[i], 0, sizeof(texrec_t));
 	H.rec[i].used = 1;
 	H.rec[i].prev = H.rec[i].next = NOREC;
+	H.rec[i].share = H.rec[i].sec = H.rec[i].sec_next = NOREC;
 	return i;
+}
+
+// the record that owns the image of record i (itself unless it is a view)
+static inline int img_of(int i)
+{
+	return H.rec[i].share != NOREC ? H.rec[i].share : i;
 }
 
 static void rec_release(int i)
@@ -290,10 +298,40 @@ static void rec_release(int i)
 static void own_clear(u32 blk, u32 n);
 
 // drop a texture from VRAM; the engine finds `downloaded` cleared and regenerates/uploads it when it needs it again
+static void lod_account(texrec_t *r);
+
 static void tex_drop(int i, int count_eviction)
 {
 	texrec_t *r = &H.rec[i];
 
+	if (ps2hwd_dbg_flags & HWDBG_TEX)
+		lod_account(r);
+
+	if (r->share != NOREC)
+	{
+		// a view: the image stays for the other variants
+		texrec_t *o = &H.rec[r->share];
+		int *link = &o->sec;
+
+		while (*link != NOREC && *link != i)
+			link = &H.rec[*link].sec_next;
+		if (*link == i)
+			*link = r->sec_next;
+		if (r->owner)
+			r->owner->downloaded = 0;
+		rec_release(i);
+		return;
+	}
+	// the image goes, and every view of it with it (their engine owners find `downloaded` cleared)
+	while (r->sec != NOREC)
+	{
+		int v = r->sec;
+
+		r->sec = H.rec[v].sec_next;
+		if (H.rec[v].owner)
+			H.rec[v].owner->downloaded = 0;
+		rec_release(v);
+	}
 	if (r->owner)
 		r->owner->downloaded = 0;
 	if (r->screen)
@@ -309,6 +347,11 @@ static void tex_drop(int i, int count_eviction)
 // noted), 2 = the collected batches are being drawn (textures are made resident when their batch comes), 0 = not batching
 // (draws follow the selection of their texture immediately).
 static int batch_phase;
+
+unsigned int PS2HWD_ScanDirection(void)
+{
+	return H.frame_no & 1u;
+}
 
 void PS2HWD_BatchBegin(void)
 {
@@ -352,10 +395,15 @@ static void own_clear(u32 blk, u32 n)
 #define WEIGHT_STAY 0xFFFFFFFFu
 #define NOWIN 0xFFFFFFFFu
 
-// Cost of evicting record r per block (WEIGHT_STAY: it cannot be evicted now): 1 for the least recently used texture up to 64
-// for the most recent one.
+// Cost of evicting record r per block (WEIGHT_STAY: it cannot be evicted now): 1 for the least recently used texture up to 31 for the
+// most recent one; 60 for a texture of this frame's batches that has not been drawn yet. OPT9 (PS2-HW-31): textures drawn in this frame
+// are no longer weighed apart from the others: the least recently DRAWN goes first. The batches of a frame are drawn by texture and the
+// direction of that scan alternates from frame to frame (hw_batching.c), so the textures drawn first in a frame are the ones needed last
+// in the next frame: dropping the least recently used is then the optimal choice (Belady) for a cyclic scan that does not fit the pool.
 static inline u32 evict_weight(const texrec_t *r, int i, u32 seq_lo, u32 shift)
 {
+	if (r->share != NOREC)
+		return WEIGHT_STAY; // a view owns no blocks
 	if (r->pin)
 		return WEIGHT_STAY;
 	if (r->screen)
@@ -365,15 +413,14 @@ static inline u32 evict_weight(const texrec_t *r, int i, u32 seq_lo, u32 shift)
 			return 1;
 		return WEIGHT_STAY; // other captures cannot be regenerated from engine data
 	}
-	if (i == H.cur_tex)
+	if (H.cur_tex != NOREC && (i == H.cur_tex || H.rec[H.cur_tex].share == i))
 		return WEIGHT_STAY; // the texture being drawn
 	if (r->stamp == H.frame_no)
 	{
 		if (batch_phase == 1)
 			return WEIGHT_STAY;
-		if (batch_phase == 2)
-			return r->done == H.frame_no + 1 ? 40u : 60u; // drawn already (it is needed again next frame) / still to be drawn this frame
-		return 64u; // not batching: its draws are already in the stream
+		if (batch_phase == 2 && r->done != H.frame_no + 1)
+			return 60u; // still to be drawn this frame
 	}
 	return 1u + ((r->seq - seq_lo) >> shift); // 1 (least recently used) .. 31
 }
@@ -451,18 +498,18 @@ static u32 best_window(u32 n, u32 align)
 	return best;
 }
 
-// The texture to drop for a small request: the least recently used one that is not needed in this frame, then one that a batch has
-// drawn already (it is needed again next frame), then one still to be drawn. NOREC when everything left must stay.
+// The texture to drop for a small request: the least recently used one that is not still to be drawn in this frame, then (nothing else
+// left) one that is. NOREC when everything left must stay.
 static int small_victim(void)
 {
 	int v, pass;
 
-	for (pass = 0; pass < 3; pass++)
+	for (pass = 0; pass < 2; pass++)
 		for (v = H.lru_tail; v != NOREC; v = H.rec[v].prev)
 		{
-			u32 w = evict_weight(&H.rec[v], v, 0, 31); // seq 0, shift 31: every texture of an earlier frame weighs 1
+			u32 w = evict_weight(&H.rec[v], v, 0, 31); // seq 0, shift 31: every texture that is not pending weighs 1
 
-			if (w != WEIGHT_STAY && (pass == 0 ? w < 40u : pass == 1 ? w == 40u : 1))
+			if (w != WEIGHT_STAY && (pass == 1 || w < 60u))
 				return v;
 		}
 	return NOREC;
@@ -910,6 +957,244 @@ static void upload_bands(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, u32 bpp, row
 	ad_set(p, 0, GSR_TEXFLUSH);
 }
 
+// ---- texture data cache and zero-copy uploads (OPT9, PS2-HW-32) ----
+// The texels of a map texture or flat are P_8 rows exactly as the PSMT8 transfer needs them: the GIF packet takes them straight from memory
+// by a DMA reference (pk_ref) instead of a copy into the ring. The memory must not move or be freed until the DMA has read it, and the engine
+// frees / purges its texture data whenever it likes (and unlocks it again on every GetTexture), so the driver takes the block over: the data
+// cache. A block of it is a purgable zone block owned by the driver (the zone evicts it under memory pressure like any cache and clears
+// dc[i].p), locked while a queued DMA reads it (busy). The cache is keyed by (kind, texture number, size, level), so the chroma keyed and
+// the plain variant of a texture share an entry, and an evicted texture is uploaded again without the engine composing it again.
+
+extern void HWR_PS2_LockData(void *data);
+extern void HWR_PS2_UnlockData(void *data);
+extern void HWR_PS2_FreeData(void *data);
+extern void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser);
+extern void *HWR_PS2_AllocData(size_t bytes, void **newuser);
+
+#define DC_MAX 192
+#define DC_BUDGET (4u * 1024u * 1024u) // bytes of texels the cache may hold (the zone may take them back sooner)
+typedef struct
+{
+	u8 *p; // first: the owner pointer of the zone block (cleared by the zone when it purges the block)
+	u32 key, bytes, stamp;
+	u16 w, h;
+	u8 lvl, busy; // busy: queued uploads that read the block (locked)
+} dcent_t;
+static dcent_t dc[DC_MAX];
+static u32 dc_bytes, dc_seq;
+
+static inline u32 dc_key(const GLMipmap_t *m)
+{
+	return ((u32)m->regen_kind << 28) | ((u32)m->regen_id & 0x0FFFFFFFu);
+}
+
+static void dc_drop(dcent_t *e)
+{
+	if (e->p)
+		HWR_PS2_FreeData(e->p);
+	dc_bytes -= e->bytes;
+	memset(e, 0, sizeof *e);
+}
+
+static dcent_t *dc_find(u32 key, u32 w, u32 h, u32 lvl)
+{
+	int i;
+
+	for (i = 0; i < DC_MAX; i++)
+	{
+		dcent_t *e = &dc[i];
+
+		if (e->key != key)
+			continue;
+		if (!e->p && !e->busy)
+		{
+			dc_drop(e); // the zone purged the block
+			continue;
+		}
+		if (e->w == w && e->h == h && e->lvl == lvl)
+		{
+			e->stamp = ++dc_seq;
+			return e;
+		}
+	}
+	return NULL;
+}
+
+// a free entry for `bytes` more texels, evicting the least recently used idle ones; NULL when the budget cannot be met
+static dcent_t *dc_slot(u32 bytes)
+{
+	for (;;)
+	{
+		dcent_t *lru = NULL, *fr = NULL;
+		int i;
+
+		for (i = 0; i < DC_MAX; i++)
+		{
+			dcent_t *e = &dc[i];
+
+			if (!e->key)
+			{
+				fr = e;
+			}
+			else if (!e->p && !e->busy)
+			{
+				dc_drop(e);
+				fr = e;
+			}
+			else if (!e->busy && (!lru || e->stamp < lru->stamp))
+			{
+				lru = e;
+			}
+		}
+		if (fr && dc_bytes + bytes <= DC_BUDGET)
+			return fr;
+		if (!lru)
+			return NULL;
+		dc_drop(lru);
+	}
+}
+
+static void dc_flush(void)
+{
+	int i;
+
+	for (i = 0; i < DC_MAX; i++)
+		if (dc[i].key && !dc[i].busy)
+			dc_drop(&dc[i]);
+}
+
+#define REL_MAX 160
+#define REL_BYTES_MAX (1024u * 1024u) // texels read by queued DMA that the cache must keep locked: bounds the memory the zone cannot take back
+static struct
+{
+	u8 dc[REL_MAX]; // index into dc[]
+	int n;
+} rel_buf[NBUF];
+static int rel_total;
+static u32 rel_bytes;
+
+static void rel_release_buf(int i)
+{
+	int k;
+
+	for (k = 0; k < rel_buf[i].n; k++)
+	{
+		dcent_t *e = &dc[rel_buf[i].dc[k]];
+
+		if (e->busy && --e->busy == 0 && e->p)
+			HWR_PS2_UnlockData(e->p);
+		rel_bytes -= e->bytes;
+	}
+	rel_total -= rel_buf[i].n;
+	rel_buf[i].n = 0;
+}
+
+static void rel_release_all(void)
+{
+	int i;
+
+	for (i = 0; i < NBUF; i++)
+		rel_release_buf(i);
+}
+
+// release the cache entries of every queued buffer whose transfer has completed (the open buffer's list waits for its flush)
+static void rel_poll(void)
+{
+	int i;
+
+	if (!rel_total)
+		return;
+	for (i = 0; i < NBUF; i++)
+		if (rel_buf[i].n && i != H.cur && H.buf_seq[i] <= H.done_seq)
+			rel_release_buf(i);
+}
+
+// the entry is read by the packet being built: locked until the buffer that holds the reference has been transferred
+static void rel_add(dcent_t *e)
+{
+	if (rel_buf[H.cur].n >= REL_MAX)
+	{
+		pk_flush(); // the list stays with the flushed buffer, the new open one has an empty list (pk_flush)
+		ring_wait(0);
+		rel_poll();
+	}
+	if (!e->busy++)
+		HWR_PS2_LockData(e->p);
+	rel_buf[H.cur].dc[rel_buf[H.cur].n++] = (u8)(e - dc);
+	rel_bytes += e->bytes;
+	rel_total++;
+}
+
+// room for `bytes` more locked data: wait for the DMA of what is queued (the EE would wait for the ring anyway) when over the limit
+static void rel_room(u32 bytes)
+{
+	u32 c0;
+
+	if (rel_bytes + bytes <= REL_BYTES_MAX || !rel_total)
+		return;
+	c0 = cyc();
+	pk_flush();
+	ring_wait(0);
+	rel_poll();
+	TX.dmawait_cyc += cyc() - c0;
+}
+
+// Everything queued has been read by the DMAC: the entries are idle (the engine may free the texels it keeps, the cache may be flushed).
+static void dma_fence(void)
+{
+	if (!rel_total)
+		return;
+	pk_flush();
+	ring_wait(0);
+	rel_poll();
+	if (rel_total) // the open buffer's list (nothing was flushed): only when the buffer holds no reference any more
+		rel_release_buf(H.cur);
+}
+
+static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data)
+{
+	u32 band = (262144u / W2) & ~15u, r0, nr, c0 = cyc();
+	qw_t *p;
+
+	H.serial++;
+	if (band < 16)
+		band = 16;
+	SyncDCache((void *)data, (void *)(data + (size_t)W2 * H2));
+	TX.sync_cyc += cyc() - c0;
+	for (r0 = 0; r0 < H2; r0 += nr)
+	{
+		qw_t *h;
+		u32 bytes, nqw, full;
+
+		nr = H2 - r0 < band ? H2 - r0 : band;
+		bytes = W2 * nr;
+		nqw = (bytes + 15) >> 4;
+		full = bytes >> 4;
+		if (H.wr + 8 > BUF_QW)
+			pk_flush(); // the header and its reference stay in one buffer
+		h = pk_alloc(6);
+		h[0].d[0] = HWGIF_TAG(4, 0, 0, 0, 0, 1);
+		h[0].d[1] = GIF_REGS_AD;
+		ad_set(&h[1], ((u64)blk << 32) | ((u64)tbw << 48) | ((u64)psm << 56), GSR_BITBLTBUF);
+		ad_set(&h[2], (u64)r0 << 48, GSR_TRXPOS);
+		ad_set(&h[3], (u64)W2 | ((u64)nr << 32), GSR_TRXREG);
+		ad_set(&h[4], 0, GSR_TRXDIR);
+		h[5].d[0] = HWGIF_TAG(nqw, 1, 0, 0, 2, 0);
+		h[5].d[1] = 0;
+		if (full)
+			pk_ref(data + (size_t)r0 * W2, full);
+		if (bytes & 15)
+		{
+			qw_t *t = pk_alloc(1);
+
+			t->d[0] = t->d[1] = 0;
+			memcpy(t, data + (size_t)r0 * W2 + (size_t)(full << 4), bytes & 15);
+		}
+	}
+	p = ad_alloc(1);
+	ad_set(p, 0, GSR_TEXFLUSH);
+}
+
 typedef struct
 {
 	const u8 *src; // source rows of `sbpp` bytes per texel
@@ -1013,19 +1298,253 @@ static void fill_ia88(void *ctx, u32 row, u8 *dst)
 
 // why the last tex_upload failed (diagnostics of hw_SetTexture)
 static const char *tex_fail_why;
+static int zc_last; // the last tex_upload sent the texels by DMA reference: the engine data stays locked (rel_add)
+
+// ---- adaptive footprint cap (OPT8, PS2-HW-24) ----
+// The pool (3 MiB) holds less than the textures one frame draws (GFZ1 alone 7 MiB at full size): drawing them every frame means uploading
+// them every frame (measured: 4-7 MiB per frame, 20-30 vblanks per frame in PCSX2). The cap is the largest footprint one texture may take;
+// a bigger one is stored decimated. tex_cap_control() runs at every frame end: it knows what the frame drew (H.pred[k] = the sum of the
+// footprints under cap k) and keeps the working set at a fixed share of the pool.
+#define CAP_BUDGET_NUM 3 // the working set of a frame may fill 3/4 of the pool (the rest absorbs fragmentation, sprites of the next frame)
+#define CAP_BUDGET_DEN 4
+#define CAP_UP_FRAMES 150 // frames a larger cap must have fitted before it is taken (one step)
+#define CAP_DOWN_FRAMES 2 // frames the working set must have overflowed before the cap goes down (an emergency goes down at once)
+#define CAP_UPGRADE_BLOCKS 1200 // blocks of textures that may be re-made larger per frame
+
+static void cap_step(int idx, const char *why)
+{
+	static int logged;
+
+	if (idx < 0)
+		idx = 0;
+	if (idx >= NCAPS)
+		idx = NCAPS - 1;
+	if (idx == H.cap_idx)
+		return;
+	if (logged < 40)
+	{
+		logged++;
+		CONS_Printf("HWD texture cap %u -> %u blocks (%s)\n", (unsigned)CAPS[H.cap_idx], (unsigned)CAPS[idx], why);
+	}
+	H.cap_idx = idx;
+	H.tex_cap_blocks = CAPS[idx];
+	H.cap_gen++;
+	H.cap_up_count = H.cap_down_count = 0;
+	H.st.cap_changes++;
+}
+
+static void tex_cap_control(void)
+{
+	u32 budget = H.pool_blocks / CAP_BUDGET_DEN * CAP_BUDGET_NUM;
+	int k;
+
+	if (!H.cap_adapt || H.pred_frame != H.frame_no + 1)
+		return;
+	H.st.pred_ws = H.pred[H.cap_idx];
+	H.upg_blocks = 0;
+	if (H.pred[H.cap_idx] > budget)
+	{
+		H.cap_up_count = 0;
+		for (k = H.cap_idx + 1; k < NCAPS - 1 && H.pred[k] > budget; k++)
+			;
+		if (H.pred[H.cap_idx] > H.pool_blocks / 10u * 9u || ++H.cap_down_count >= CAP_DOWN_FRAMES)
+			cap_step(k, "working set over budget");
+		return;
+	}
+	H.cap_down_count = 0;
+	if (H.cap_idx > 0 && H.pred[H.cap_idx - 1] <= budget * 9u / 10u)
+	{
+		if (++H.cap_up_count >= CAP_UP_FRAMES)
+			cap_step(H.cap_idx - 1, "working set fits a larger cap");
+	}
+	else
+	{
+		H.cap_up_count = 0;
+	}
+}
+
+// The stored size of a texture: every axis over the GS limit of 1024 texels is halved (by taking every (1 << d)-th texel), then the larger
+// axis is halved until the GS footprint is within `cap` blocks (cap 0 = no cap). Returns 0 when the size cannot be made valid.
+static int tex_plan(int psm, u32 sw, u32 sh, u32 cap, u32 *pdx, u32 *pdy)
+{
+	u32 dx = 0, dy = 0;
+
+	while ((sw >> dx) > 1024 && !(sw & ((2u << dx) - 1)))
+		dx++;
+	while ((sh >> dy) > 1024 && !(sh & ((2u << dy) - 1)))
+		dy++;
+	if ((sw >> dx) > 1024 || (sh >> dy) > 1024)
+		return 0;
+	while (cap)
+	{
+		u32 w1 = sw >> dx, h1 = sh >> dy, tb = psm == PSM_T8 ? ((w1 + 127) / 128) * 2 : (w1 + 63) / 64;
+
+		if (tex_footprint(psm, w1, h1, tb) <= cap)
+			break;
+		if (w1 >= h1 && w1 > 16 && !(sw & ((2u << dx) - 1)))
+			dx++;
+		else if (h1 > 16 && !(sh & ((2u << dy) - 1)))
+			dy++;
+		else if (w1 > 16 && !(sw & ((2u << dx) - 1)))
+			dx++;
+		else
+			break;
+	}
+	*pdx = dx;
+	*pdy = dy;
+	return 1;
+}
+
+static u32 tex_plan_blocks(int psm, u32 sw, u32 sh, u32 dx, u32 dy)
+{
+	u32 w1 = sw >> dx, h1 = sh >> dy, tb = psm == PSM_T8 ? ((w1 + 127) / 128) * 2 : (w1 + 63) / 64;
+
+	return tex_footprint(psm, w1, h1, tb);
+}
+
+// statistics: kind of upload and uploads of the same texture within one frame
+static struct
+{
+	const GLMipmap_t *m;
+	u32 frame1;
+} up_hist[2048];
+
+static void tx_note_upload(const GLMipmap_t *m, int psm, u32 nblk)
+{
+	u32 k = psm != PSM_T8 ? 3u : m->regen_kind == 1 ? 0u : m->regen_kind == 2 ? 1u : 2u;
+	u32 h = (u32)(((uintptr_t)m >> 4) * 2654435761u) >> 21;
+
+	TX.up_n[k]++;
+	TX.up_blk[k] += nblk;
+	if (up_hist[h].m == m && up_hist[h].frame1 == H.frame_no + 1)
+	{
+		TX.reup_n++;
+		TX.reup_blk += nblk;
+	}
+	up_hist[h].m = m;
+	up_hist[h].frame1 = H.frame_no + 1;
+}
+
+// does a byte of d[0..n) equal 255 (the chroma key / hole index)? Eight bytes per step on the 64-bit R5900 registers.
+static int scan_has_ff(const u8 *d, u32 n)
+{
+	u32 i = 0;
+
+	while (i < n && ((uintptr_t)(d + i) & 7))
+	{
+		if (d[i] == 255)
+			return 1;
+		i++;
+	}
+	if (i + 8 <= n)
+	{
+		const u64 *w = (const u64 *)(const void *)(d + i);
+
+		for (; i + 8 <= n; i += 8, w++)
+		{
+			u64 x = ~*w; // a byte of 255 becomes 0
+
+			if ((x - 0x0101010101010101ull) & ~x & 0x8080808080808080ull)
+				return 1;
+		}
+	}
+	for (; i < n; i++)
+		if (d[i] == 255)
+			return 1;
+	return 0;
+}
+
+// Level `lv` of a P_8 image (PS2-HW-34): every texel stands for a block of 2^lv x 2^lv texels. Palette indices cannot be averaged, so one of
+// four samples of the block (its corners inside a margin of a quarter) is taken: the one whose luminance is farthest from the mean of the four,
+// which keeps a thin dark or light line visible where picking the middle texel would lose it (the PC driver's point sampling shows such a line
+// in a part of the pixels, never in none). Index 255 (hole / chroma key) is kept when at least two samples have it, else it is not picked.
+static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
+{
+	u32 lum[256], i, x, y, bw = 1u << lv, o0 = bw >> 2, o1 = bw - 1 - o0, ow = sw >> lv, oh = sh >> lv;
+
+	for (i = 0; i < 256; i++)
+		lum[i] = ((H.pal[i] & 255u) * 77u + ((H.pal[i] >> 8) & 255u) * 150u + ((H.pal[i] >> 16) & 255u) * 29u) >> 8;
+	for (y = 0; y < oh; y++)
+	{
+		const u8 *r0 = src + (size_t)(y * bw + o0) * sw, *r1 = src + (size_t)(y * bw + o1) * sw;
+
+		for (x = 0; x < ow; x++)
+		{
+			u32 xa = x * bw + o0, xb = x * bw + o1, s[4], n = 0, sum = 0, best = 0, bestd = 0, k, holes = 0, found = 0;
+
+			s[0] = r0[xa];
+			s[1] = r0[xb];
+			s[2] = r1[xa];
+			s[3] = r1[xb];
+			for (k = 0; k < 4; k++)
+			{
+				if (s[k] == 255)
+				{
+					holes++;
+				}
+				else
+				{
+					sum += lum[s[k]];
+					n++;
+				}
+			}
+			if (holes >= 2 || !n)
+			{
+				dst[(size_t)y * ow + x] = 255;
+				continue;
+			}
+			sum = (sum + (n >> 1)) / n;
+			for (k = 0; k < 4; k++)
+			{
+				u32 d;
+
+				if (s[k] == 255)
+					continue;
+				d = lum[s[k]] > sum ? lum[s[k]] - sum : sum - lum[s[k]];
+				if (!found || d > bestd)
+				{
+					best = s[k];
+					bestd = d;
+					found = 1;
+				}
+			}
+			dst[(size_t)y * ow + x] = (u8)best;
+		}
+	}
+}
 
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
 	u32 sw = m->width, sh = m->height;
 	u32 W2, H2, bpp, tbw, nblk, align, blk, i, n;
-	int psm, clut, baked = 0, holes = 0, uses255 = 0, ri;
+	int psm, clut, baked = 0, holes = 0, uses255 = 0, ri, shareable = 0, has255 = 0;
 	rowfill_t fill;
 	fillctx_t fc, *c = &fc;
 	u32 t0 = cyc();
 	const u8 *data = m->data;
+	dcent_t *dce = NULL, *l0 = NULL;
+	u32 lv = 0; // mip level the texture is stored at (PS2-HW-34); the texels of a level are made by dec_level
+	int lvdec = 0; // the stored texels are those of the cache entry of that level
 
 	tex_fail_why = "ok";
+	zc_last = 0;
+	if (m->format == GL_TEXFMT_P_8 && (m->regen_kind == 1 || m->regen_kind == 2) && sw * sh >= 2048)
+	{
+		if (sw * sh >= PLAN_MIN_TEXELS && !H.tex_cap_blocks && sw <= 1024 && sh <= 1024)
+		{
+			int vis;
+
+			lv = tex_want(m, &vis);
+			if (lv && (dce = dc_find(dc_key(m), sw >> lv, sh >> lv, lv)) != NULL)
+			{
+				data = dce->p; // that level is in the data cache already
+				lvdec = 1;
+			}
+		}
+		if (!dce && (l0 = dc_find(dc_key(m), sw, sh, 0)) != NULL)
+			data = l0->p; // the texels of this texture (or its other variant) are in the data cache: the engine need not make them again
+	}
 	if (!data || !sw || !sh)
 	{
 		tex_fail_why = !data ? "no data (purged)" : "zero size";
@@ -1046,13 +1565,34 @@ static int tex_upload(GLMipmap_t *m)
 			psm = PSM_T8;
 			clut = (m->flags & TF_CHROMAKEYED) ? 2 : 1;
 			fill = fill_idx;
-			if (clut == 2)
+			if (m->regen_kind == 1 || m->regen_kind == 2)
+			{
+				// PS2-HW-30: the plain and the chroma keyed variant of a map texture / flat have the same texels, the VRAM image is shared
+				// (tex_view); the keyed one only needs the keyed CLUT when some texel has the index of the key
+				shareable = 1;
+				if (lvdec)
+				{
+					has255 = scan_has_ff(data, (sw >> lv) * (sh >> lv)); // the stored texels are those of the level (not cached: the full size may differ)
+				}
+				else
+				{
+					if (!m->ps2_h255)
+						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, n) ? 2 : 1);
+					has255 = m->ps2_h255 == 2;
+				}
+				if (clut == 2 && !has255)
+					clut = 1;
+				holes = clut == 2;
+			}
+			else if (clut == 2)
+			{
 				for (i = 0; i < n; i++)
 					if (data[i] == 255)
 					{
 						holes = 1;
 						break;
 					}
+			}
 			break;
 		case GL_TEXFMT_AP_88:
 		{
@@ -1133,68 +1673,135 @@ static int tex_upload(GLMipmap_t *m)
 	}
 
 	// The GS takes at most 1024 texels per axis, and the pool of the PS2 is a fifth of what the engine's textures can add up to
-	// in a frame: a texture over the limit (or over the configured footprint cap) is stored decimated by powers of two, see PS2-HW-20.
+	// in a frame: a texture over the limit (or over the footprint cap in force) is stored decimated by powers of two (PS2-HW-20).
+	// OPT8 (PS2-HW-24): the cap is chosen by tex_cap_control from the working set, and a texture that does not fit the pool even
+	// after everything else was evicted lowers the cap and is made smaller instead of being skipped (a skipped draw is a hole).
 	bpp = psm == PSM_T8 ? 1 : 4;
+	for (;;)
 	{
 		u32 dx = 0, dy = 0;
 
-		while ((sw >> dx) > 1024 && !(sw & ((2u << dx) - 1)))
-			dx++;
-		while ((sh >> dy) > 1024 && !(sh & ((2u << dy) - 1)))
-			dy++;
-		if ((sw >> dx) > 1024 || (sh >> dy) > 1024)
+		if (!tex_plan(psm, sw, sh, H.tex_cap_blocks, &dx, &dy))
 		{
 			tex_fail_why = "larger than 1024 and not divisible";
 			return NOREC;
 		}
-		while (H.tex_cap_blocks)
-		{
-			u32 w1 = sw >> dx, h1 = sh >> dy, tb = psm == PSM_T8 ? ((w1 + 127) / 128) * 2 : (w1 + 63) / 64;
-
-			if (tex_footprint(psm, w1, h1, tb) <= H.tex_cap_blocks)
-				break;
-			if (w1 >= h1 && w1 > 16 && !(sw & ((2u << dx) - 1)))
-				dx++;
-			else if (h1 > 16 && !(sh & ((2u << dy) - 1)))
-				dy++;
-			else if (w1 > 16 && !(sw & ((2u << dx) - 1)))
-				dx++;
-			else
-				break;
-		}
+		if (lv && !dx && !dy && psm == PSM_T8 && shareable)
+			dx = dy = lv; // stored at level lv: the texels come from dec_level (or the cache) below, the plain decimation of the fill functions is the fallback
+		else
+			lv = 0;
 		c->dx = dx;
 		c->dy = dy;
 		W2 = sw >> dx;
 		H2 = sh >> dy;
-		if (dx || dy)
-			H.st.tex_decimated++;
+		tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
+		nblk = tex_footprint(psm, W2, H2, tbw);
+		if (cfg.tex_max_bytes > 0 && nblk > (u32)cfg.tex_max_bytes / 256u)
+		{
+			tex_fail_why = "footprint over budget";
+			hw_failure("exact texture GS footprint exceeds configured budget");
+			return NOREC;
+		}
+		align = 1;
+		while (align < nblk && align < PAGE_BLOCKS)
+			align <<= 1;
+		blk = vram_alloc_evicting(nblk, align, 0);
+		if (blk)
+			break;
+		if (!H.cap_adapt || H.cap_idx >= NCAPS - 1)
+		{
+			tex_fail_why = "no VRAM block (pool)";
+			return NOREC;
+		}
+		cap_step(H.cap_idx + 1, "texture does not fit the pool");
+	}
+	if (lv)
+	{
+		// level lv of the image: from the data cache, or made now from the full size texels (and kept in the cache)
+		if (!dce)
+		{
+			dcent_t *ne;
+			void *srcblk = l0 ? (void *)l0->p : (void *)m->data;
+
+			if (srcblk)
+				HWR_PS2_LockData(srcblk); // the allocation below may purge the zone's caches, the source among them
+			if (l0)
+				l0->busy++;
+			ne = dc_slot(W2 * H2);
+			if (ne && HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
+			{
+				dec_level(data, sw, sh, lv, ne->p);
+				ne->key = dc_key(m);
+				ne->bytes = W2 * H2;
+				ne->w = (u16)W2;
+				ne->h = (u16)H2;
+				ne->lvl = (u8)lv;
+				ne->busy = 0;
+				ne->stamp = ++dc_seq;
+				dc_bytes += ne->bytes;
+				dce = ne;
+				data = ne->p;
+			}
+			if (l0)
+				l0->busy--;
+			if (srcblk)
+				HWR_PS2_UnlockData(srcblk);
+		}
+		else
+		{
+			data = dce->p;
+		}
+		if (dce)
+		{
+			lvdec = 1;
+			c->dx = c->dy = 0; // the texels are decimated already
+		}
+		TX.lvl_up[lv > 5 ? 5 : lv]++;
+	}
+	else if (c->dx || c->dy)
+	{
+		H.st.tex_decimated++;
 	}
 
+	if (!dce && l0 && !lv && !c->dx && !c->dy)
+		dce = l0; // the full size texels are in the data cache: the upload reads them from there
 	c->src = data;
 	c->sw = sw;
 	c->sh = sh;
 	c->W2 = W2;
 	c->H2 = H2;
 
-	tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
-	nblk = tex_footprint(psm, W2, H2, tbw);
-	if (cfg.tex_max_bytes > 0 && nblk > (u32)cfg.tex_max_bytes / 256u)
+	if (!dce && fill == fill_idx && psm == PSM_T8 && !c->dx && !c->dy && data == (const u8 *)m->data && (m->regen_kind == 1 || m->regen_kind == 2)
+		&& n >= 2048 && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15) && (dce = dc_slot(n)) != NULL)
 	{
-		tex_fail_why = "footprint over budget";
-		hw_failure("exact texture GS footprint exceeds configured budget");
-		return NOREC;
-	}
-	align = 1;
-	while (align < nblk && align < PAGE_BLOCKS)
-		align <<= 1;
-	blk = vram_alloc_evicting(nblk, align, 0);
-	if (!blk)
-	{
-		tex_fail_why = "no VRAM block (pool)";
-		return NOREC;
-	}
+		// the engine's block becomes the driver's: purgable zone block owned by the cache entry, the engine keeps no pointer to it
+		void *p = HWR_PS2_StealData(m, (void **)(void *)&dce->p);
 
-	upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
+		dce->key = dc_key(m);
+		dce->bytes = n;
+		dce->w = (u16)sw;
+		dce->h = (u16)sh;
+		dce->lvl = 0;
+		dce->busy = 0;
+		dce->stamp = ++dc_seq;
+		dc_bytes += n;
+		data = (const u8 *)p;
+		c->src = data;
+	}
+	if (dce && fill == fill_idx && psm == PSM_T8 && !c->dx && !c->dy && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15))
+	{
+		// PS2-HW-32: the texels go by DMA reference, from the cache entry (locked until the DMA has read it)
+		rel_room(n);
+		upload_ref(blk, tbw, psm, W2, H2, data);
+		rel_add(dce);
+		zc_last = 1;
+		TX.zc_n++;
+		TX.zc_blk += nblk;
+	}
+	else
+	{
+		upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
+	}
 
 	ri = rec_new();
 	if (ri == NOREC)
@@ -1231,13 +1838,179 @@ static int tex_upload(GLMipmap_t *m)
 		if (holes && clut == 2 && (m->format == GL_TEXFMT_P_8 || m->format == GL_TEXFMT_AP_88))
 			m->flags |= TF_TRANSPARENT; // as r_opengl.c does for a chroma keyed texture with a hole
 		r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;
+		r->shareable = (u8)shareable;
+		r->has255 = (u8)has255;
+		r->sw = (u16)sw;
+		r->sh = (u16)sh;
+		r->dx = (u8)(lvdec ? lv : c->dx);
+		r->dy = (u8)(lvdec ? lv : c->dy);
+		r->capi = (u8)H.cap_idx;
 		lru_push_head(ri);
 	}
 	m->downloaded = (UINT32)(ri + 1);
 	H.st.uploads++;
 	H.st.upload_bytes += W2 * H2 * bpp;
 	H.st.cyc_tex += cyc() - t0;
+	tx_note_upload(m, psm, nblk);
 	return ri;
+}
+
+// PS2-HW-30: a record for the other CLUT variant (chroma keyed / plain) of the image that record `owner_rec` owns or views. It has the
+// texels of the image, its own owner, flags and CLUT kind; the blocks belong to the image (see tex_drop). Returns the record or NOREC.
+static int tex_view(GLMipmap_t *m, int owner_rec)
+{
+	int ow = img_of(owner_rec), ri = rec_new();
+	texrec_t *r, *o;
+
+	if (ri == NOREC)
+		return NOREC;
+	o = &H.rec[ow];
+	r = &H.rec[ri];
+	*r = *o;
+	r->prev = r->next = NOREC;
+	r->used = 1;
+	r->pin = 0;
+	r->owner = m;
+	r->share = ow;
+	r->sec = NOREC;
+	r->sec_next = o->sec;
+	o->sec = ri;
+	r->wrapx = (m->flags & TF_WRAPX) ? 1 : 0;
+	r->wrapy = (m->flags & TF_WRAPY) ? 1 : 0;
+	r->clut = (u8)(((m->flags & TF_CHROMAKEYED) && o->has255) ? 2 : 1);
+	if (r->clut == 2)
+		m->flags |= TF_TRANSPARENT; // as tex_upload does for a chroma keyed texture with a hole
+	r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;
+	r->stamp = H.frame_no;
+	r->done = 0;
+	r->ws = 0;
+	m->downloaded = (UINT32)(ri + 1);
+	return ri;
+}
+
+// PS2-HW-34 (instrumentation, later the planner): the mip level a polygon needs. On the plane of the polygon the clip coordinates x, y, w are
+// affine in the texel coordinates (u, v): x = x0 + ax u + bx v, ... From three vertices of the unclipped polygon (their clip coordinates and
+// texel coordinates) the coefficients follow, and at every vertex of the CLIPPED polygon (the part the view sees) the screen size of a texel
+// is the length of (d(x/w)/du, d(y/w)/du) in pixels (and the same along v). A texel of level L is 2^L times wider: level L is enough when the
+// largest texel anywhere in the visible polygon (it is at a vertex: the size is monotone along every line) still covers at most one pixel
+// at level L, i.e. nothing is magnified compared with level 0.
+static float lodc[3][2]; // d(x, y, w) / d(u, v) of the polygon being drawn (poly_plane)
+static int lodc_ok;
+
+static void poly_plane(const cv_t *un, int n, float sw, float sh)
+{
+	float u1 = (un[1].a[0] - un[0].a[0]) * sw, v1 = (un[1].a[1] - un[0].a[1]) * sh, det = 0.0f, u2 = 0.0f, v2 = 0.0f;
+	int k, third = 2;
+
+	lodc_ok = 0;
+	if (n < 3)
+		return;
+	for (; third < n; third++) // a vertex that is not on the line through the first two
+	{
+		u2 = (un[third].a[0] - un[0].a[0]) * sw;
+		v2 = (un[third].a[1] - un[0].a[1]) * sh;
+		det = u1 * v2 - u2 * v1;
+		if (fabsf(det) > 1e-2f * (fabsf(u1) + fabsf(v1) + 1e-3f) * (fabsf(u2) + fabsf(v2) + 1e-3f))
+			break;
+	}
+	if (third >= n)
+		return;
+	for (k = 0; k < 3; k++)
+	{
+		float c0 = k == 0 ? un[0].x : k == 1 ? un[0].y : un[0].w, c1 = k == 0 ? un[1].x : k == 1 ? un[1].y : un[1].w, cc = k == 0 ? un[third].x : k == 1 ? un[third].y : un[third].w;
+
+		lodc[k][0] = ((c1 - c0) * v2 - (cc - c0) * v1) / det;
+		lodc[k][1] = ((cc - c0) * u1 - (c1 - c0) * u2) / det;
+	}
+	lodc_ok = 1;
+}
+
+static int poly_lod(const cv_t *cl, int cnt)
+{
+	float px = 0.5f * H.vpw, py = 0.5f * H.vph, smax = 0.0f;
+	int i, lvl = 0;
+
+	if (!lodc_ok || cnt < 3)
+		return 0;
+	for (i = 0; i < cnt; i++)
+	{
+		float w = cl[i].w, iw2;
+		int axis;
+
+		if (w < 1e-4f)
+			return 0;
+		iw2 = 1.0f / (w * w);
+		for (axis = 0; axis < 2; axis++)
+		{
+			float dxs = (lodc[0][axis] * w - cl[i].x * lodc[2][axis]) * iw2 * px, dys = (lodc[1][axis] * w - cl[i].y * lodc[2][axis]) * iw2 * py, sz = dxs * dxs + dys * dys;
+
+			if (sz > smax)
+				smax = sz;
+		}
+	}
+	smax = sqrtf(smax);
+	while (lvl < 5 && smax * 2.0f <= 1.0f)
+	{
+		smax *= 2.0f;
+		lvl++;
+	}
+	return lvl;
+}
+
+static void lod_note(const cv_t *cl, int cnt)
+{
+	texrec_t *im = &H.rec[img_of(H.cur_tex)];
+	int lvl = poly_lod(cl, cnt);
+
+	if (im->lodfr != H.frame_no + 1)
+	{
+		im->lodfr = H.frame_no + 1;
+		im->lod = (u8)lvl;
+	}
+	else if (lvl < im->lod)
+	{
+		im->lod = (u8)lvl;
+	}
+}
+
+// the working set of the frame as it would be with each image kept at the level its polygons need (called for every image when the frame
+// ends and when an image is dropped: an image evicted during the frame is part of the working set too)
+static void lod_account(texrec_t *r)
+{
+	u32 b;
+
+	if (!r->used || r->share != NOREC || r->screen || r->lodfr != H.frame_no + 1)
+		return;
+	r->lodfr = 0; // once per frame and image
+	b = r->nblk >> (2 * r->lod);
+	if (!b)
+		b = 1;
+	TX.lod_blk += b;
+	TX.lod_lvl[r->lod] += r->nblk;
+}
+
+static void lod_frame_end(void)
+{
+	int i;
+
+	for (i = 0; i < H.rec_n; i++)
+		lod_account(&H.rec[i]);
+}
+
+// HWTEX line of the window just ended (per-frame averages of the block counts; counts of uploads are window totals)
+static void tx_report(void)
+{
+	static int win;
+	u32 f = TX.frames ? TX.frames : 1;
+
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u invis=%u\n",
+		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
+		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
+		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
+		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
+		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
+		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.invisible);
+	memset(&TX, 0, sizeof TX);
 }
 
 // drop every texture; the engine finds `downloaded` cleared and regenerates what it still needs
@@ -1250,7 +2023,8 @@ static void tex_free_all(void)
 		{
 			if (H.rec[i].owner)
 				H.rec[i].owner->downloaded = 0;
-			vram_free(H.rec[i].blk, H.rec[i].nblk);
+			if (H.rec[i].share == NOREC) // a view owns no blocks
+				vram_free(H.rec[i].blk, H.rec[i].nblk);
 			H.rec[i].used = 0;
 		}
 	memset(blk_owner, 0, sizeof blk_owner);

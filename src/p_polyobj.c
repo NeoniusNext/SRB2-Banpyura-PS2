@@ -710,6 +710,10 @@ static void Polyobj_linkToBlockmap(polyobj_t *po)
 			{
 				polymaplink_t  *l = Polyobj_getLink();
 
+#ifdef PS2_PROFILE
+				if (!polyblocklinks) // PS2-88
+					polyblocklinks = Z_Calloc(sizeof (*polyblocklinks) * bmapwidth * bmapheight, PU_LEVEL, NULL);
+#endif
 				l->po = po;
 
 				M_DLListInsert(&l->link,

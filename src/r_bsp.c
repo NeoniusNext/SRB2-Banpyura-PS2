@@ -1180,7 +1180,9 @@ void R_CheckSectorLightLists(sector_t *sector, sector_t *fakeflat, INT32 *floorl
 
 		if (anyMoved == true)
 		{
+#ifndef PS2_PROFILE // PS2-HW-41: R_Prep3DFloors reuses the light list when its size is unchanged (a moving FOF sector made a Z_Free + Z_Calloc per sector per frame, each a long-lived allocation: Z_MoveFrontier walks)
 			fakeflat->numlights = sector->numlights = 0;
+#endif
 			R_Prep3DFloors(fakeflat);
 			sector->lightlist = fakeflat->lightlist;
 			sector->numlights = fakeflat->numlights;

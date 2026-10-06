@@ -34,6 +34,29 @@
 
 INT32 numskins = 0;
 skin_t **skins = NULL;
+#ifdef PS2_DYNLIMITS
+skin_t *ps2_skin_pending = NULL;
+
+// PS2-104: a skin with its animation tables in one zone block (see r_skins.h)
+static skin_t *R_AllocSkin(void)
+{
+	const size_t n = NUMPLAYERSPRITES;
+	const size_t defs = sizeof (spritedef_t) * n, infos = sizeof (spriteinfo_t) * n;
+	skin_t *skin = Z_Calloc(sizeof (skin_t) + 2 * defs + 2 * infos + 2 * defs, PU_STATIC, NULL);
+	UINT8 *p = (UINT8 *)(skin + 1);
+
+	skin->sprites = (spritedef_t *)p;
+	p += defs;
+	skin->super.sprites = (spritedef_t *)p;
+	p += defs;
+	skin->sprinfo = (spriteinfo_t *)p;
+	p += infos;
+	skin->super.sprinfo = (spriteinfo_t *)p;
+	p += infos;
+	skin->sprites_compat = (spritedef_t *)p;
+	return skin;
+}
+#endif
 
 // Gets the animation ID of a state
 UINT16 P_GetStateSprite2(state_t *state)
@@ -199,7 +222,21 @@ static void Sk_SetDefaultValue(skin_t *skin)
 	//
 	// set default skin values
 	//
+#ifdef PS2_DYNLIMITS
+	{ // the animation tables stay where R_AllocSkin put them, empty
+		spritedef_t *sprites = skin->sprites, *supersprites = skin->super.sprites, *compat = skin->sprites_compat;
+		spriteinfo_t *sprinfo = skin->sprinfo, *supersprinfo = skin->super.sprinfo;
+
+		memset(skin, 0, sizeof (skin_t));
+		skin->sprites = sprites;
+		skin->super.sprites = supersprites;
+		skin->sprites_compat = compat;
+		skin->sprinfo = sprinfo;
+		skin->super.sprinfo = supersprinfo;
+	}
+#else
 	memset(skin, 0, sizeof (skin_t));
+#endif
 	snprintf(skin->name,
 		sizeof skin->name, "skin %u", (UINT32)(skin->skinnum));
 	skin->name[sizeof skin->name - 1] = '\0';
@@ -247,7 +284,7 @@ static void Sk_SetDefaultValue(skin_t *skin)
 
 	skin->natkcolor = SKINCOLOR_NONE;
 
-	for (i = 0; i < sfx_skinsoundslot0; i++)
+	for (i = 0; i < LIMIT_SFX_SKINSLOT0; i++)
 		if (S_sfx[i].skinsound != -1)
 			skin->soundsid[S_sfx[i].skinsound] = i;
 }
@@ -762,7 +799,7 @@ static boolean R_ProcessPatchableFields(skin_t *skin, char *stoken, char *value)
 
 		// copy name of sounds that are remapped
 		// for this skin
-		for (i = 0; i < sfx_skinsoundslot0; i++)
+		for (i = 0; i < LIMIT_SFX_SKINSLOT0; i++)
 		{
 			if (!S_sfx[i].name)
 				continue;
@@ -820,7 +857,12 @@ void R_AddSkins(UINT16 wadnum, boolean mainfile)
 
 		// set defaults
 		skins = Z_Realloc(skins, sizeof(skin_t*) * (numskins + 1), PU_STATIC, NULL);
+#ifdef PS2_DYNLIMITS
+		skin = skins[numskins] = R_AllocSkin();
+		ps2_skin_pending = skin;
+#else
 		skin = skins[numskins] = Z_Calloc(sizeof(skin_t), PU_STATIC, NULL);
+#endif
 		Sk_SetDefaultValue(skin);
 		skin->skinnum = numskins;
 		skin->wadnum = wadnum;
@@ -937,6 +979,9 @@ next_token:
 		if (mainfile == false)
 			CONS_Printf(M_GetText("Added skin '%s'\n"), skin->name);
 
+#ifdef PS2_DYNLIMITS
+		ps2_skin_pending = NULL;
+#endif
 		numskins++;
 	}
 	return;

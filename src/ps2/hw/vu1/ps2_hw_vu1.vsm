@@ -1,0 +1,324 @@
+; PS2 GS hardware renderer: VU1 polygon program (PS2-HW-45, OPT9 HG). Assembled with dvp-as (tools/ps2/build.py).
+;
+; One run (MSCAL) draws a chunk of convex polygons that the EE wrote into VU1 data memory (UNPACK with the double buffer, XTOP):
+;   chunk   qw 0           : x = number of polygons
+;   polygon qw 0 (header)  : x = vertex count n (3..12), y = 1 when the primitive uses fog (PRIM.FGE), z = F << 4 (the fog coefficient
+;                            of the darkness class), w = 0
+;           qw 1           : x = sb, y = tb (whole texture repeats removed from s, t), z = w = 0
+;           qw 2 + 2i      : x, y, z, 1.0 of vertex i (object space of the engine)
+;           qw 3 + 2i      : s, t of vertex i
+; The program transforms with the matrix of the plan, classifies the vertices against the six planes of the clipping volume (the guard
+; band of the driver; x and y are pre-scaled by the plan matrix so that the volume is |x'|, |y'|, |z| <= w), throws away polygons that
+; are outside one plane, clips (Sutherland-Hodgman, near plane first) those that cross one, divides, and writes a GIF packet
+;   tag (PACKED, NREG 3: ST, RGBAQ, XYZF2) + 3 qw per vertex
+; into one of two output buffers and XGKICKs it. The packet is what emit_reglist_fan / put_vertex write for format 1 (ST/RGBAQ/XYZF2),
+; from the same arithmetic: the VU's float is not IEEE (truncation, no NaN), so the GS integers may differ by one LSB.
+;
+; Data memory (quad words):
+;    0.. 3  columns of the clip matrix (x', y', z, w) = M' * (x, y, z, 1)
+;    4      (kxg, kyg, zk, 1): screen scale; x/y already contain the guard band factors
+;    5      (ox, oy, zo, 0): screen offset (the 16 sub pixel bits and the rounding are in the constants)
+;    6      (0, 0, zmax, 0)
+;    7      (tsx, tsy, 1, 0): texture coordinate scale
+;    8      RGBAQ of the polygons (integers R, G, B, A)
+;    9      GIF tag without fog, 10 GIF tag with fog (NLOOP is patched)
+;   11      (0, 0, 0, 1e-30): the epsilon of the sign tests
+;  128..383 / 384..639  input buffers (TOPS: BASE 128, OFFSET 256)
+;  640..703 / 704..767  output buffers
+;  768..807 / 808..847  vertex lists (20 vertices of 2 qw): clip coordinates + (s, t, outcode, 0)
+; Registers: VI10 = the output buffer to write next (kept between runs, set by the Init entry).
+
+		.equ	K_CONST,	0
+		.equ	OUT0,		640
+		.equ	OUT1,		704
+		.equ	OUTSUM,		1344
+		.equ	LISTA,		768
+		.equ	LISTB,		808
+		.equ	OCMASK,		0x0a95
+
+; the six planes in the order they are clipped (bit of the outcode, the bits of the planes that come after)
+		.equ	B_ZM,		0x0800	; z < -w   (near)
+		.equ	B_ZP,		0x0010	; z >  w   (far)
+		.equ	B_XM,		0x0080	; x' < -w
+		.equ	B_XP,		0x0001	; x' >  w
+		.equ	B_YM,		0x0200	; y' < -w
+		.equ	B_YP,		0x0004	; y' >  w
+		.equ	K_AFTER_ZM,	0x0295
+		.equ	K_AFTER_ZP,	0x0285
+		.equ	K_AFTER_XM,	0x0205
+		.equ	K_AFTER_XP,	0x0204
+		.equ	K_AFTER_YM,	0x0004
+		.equ	K_AFTER_YP,	0x0000
+
+; n idle cycles
+		.macro	IDLE n
+		.rept	\n
+		NOP					NOP
+		.endr
+		.endm
+
+; Clip the polygon in list VI05 (VI04 vertices) against one plane into list VI06; swaps the lists, VI04 = new count, polygon dropped when
+; fewer than 3 vertices remain.
+;   bit    outcode bit of the plane
+;   keep   outcode bits of the planes that are clipped later
+;   plus   0: the plane is  c + w >= 0 (outside when c < -w);  1: w - c >= 0 (outside when c > w)
+;   c      the coordinate lane x, y or z
+		.macro	CLIPPLANE bit, keep, plus, c
+		NOP					iaddiu		VI14,VI00,\bit
+		IDLE	2
+		NOP					iand		VI15,VI07,VI14
+		IDLE	2
+		NOP					ibeq		VI15,VI00,PlaneEnd\@
+		NOP					NOP
+		NOP					iaddiu		VI12,VI06,0
+		NOP					iaddiu		VI08,VI00,0
+		NOP					iaddiu		VI09,VI04,0
+		NOP					iaddiu		VI11,VI05,0
+Kloop\@:
+		NOP					iaddiu		VI13,VI11,2
+		NOP					isubiu		VI15,VI09,1
+		IDLE	2
+		NOP					ibne		VI15,VI00,Knw\@
+		NOP					NOP
+		NOP					iaddiu		VI13,VI05,0
+Knw\@:
+		NOP					ilw.z		VI15,1(VI11)
+		NOP					ilw.z		VI01,1(VI13)
+		IDLE	4
+		NOP					iand		VI15,VI15,VI14
+		NOP					iand		VI01,VI01,VI14
+		IDLE	2
+		NOP					ibne		VI15,VI00,Kout\@
+		NOP					NOP
+; the current vertex is inside: keep it
+		NOP					lq			VF11,0(VI11)
+		NOP					lq			VF12,1(VI11)
+		IDLE	1
+		NOP					sq			VF11,0(VI12)
+		NOP					sq			VF12,1(VI12)
+		NOP					iaddiu		VI12,VI12,2
+		NOP					iaddiu		VI08,VI08,1
+		IDLE	2
+		NOP					ibne		VI01,VI00,Kcross\@
+		NOP					NOP
+		NOP					b			Knext\@
+		NOP					NOP
+Kout\@:
+		IDLE	2
+		NOP					ibne		VI01,VI00,Knext\@
+		NOP					NOP
+; the edge crosses the plane: the intersection joins the list
+Kcross\@:
+		NOP					lq			VF11,0(VI11)
+		NOP					lq			VF12,0(VI13)
+		NOP					lq			VF16,1(VI11)
+		NOP					lq			VF17,1(VI13)
+		IDLE	1
+		.if \plus
+		sub\c\().w	VF13,VF11,VF11		NOP
+		sub\c\().w	VF14,VF12,VF12		NOP
+		sub.w		VF15,VF13,VF14		NOP
+		IDLE	4
+		NOP					div			Q,VF13w,VF15w
+		.else
+		addw.\c		VF13,VF11,VF11		NOP
+		addw.\c		VF14,VF12,VF12		NOP
+		sub.\c		VF15,VF13,VF14		NOP
+		IDLE	4
+		NOP					div			Q,VF13\c,VF15\c
+		.endif
+		sub			VF18,VF12,VF11		NOP
+		sub			VF19,VF17,VF16		NOP
+		NOP					waitq
+		mulq		VF18,VF18,Q			NOP
+		mulq		VF19,VF19,Q			NOP
+		add			VF18,VF11,VF18		NOP
+		add			VF19,VF16,VF19		NOP
+		addw.xyz	VF20,VF18,VF18w		NOP
+		subw.xyz	VF21,VF18,VF18w		NOP
+		clipw.xyz	VF20xyz,VF10w		NOP
+		clipw.xyz	VF21xyz,VF10w		NOP
+		IDLE	4
+		NOP					fcget		VI01
+		NOP					iaddiu		VI15,VI00,OCMASK & \keep
+		IDLE	2
+		NOP					iand		VI01,VI01,VI15
+		NOP					sq			VF18,0(VI12)
+		NOP					sq			VF19,1(VI12)
+		NOP					isw.z		VI01,1(VI12)
+		NOP					ior			VI07,VI07,VI01
+		NOP					iaddiu		VI12,VI12,2
+		NOP					iaddiu		VI08,VI08,1
+Knext\@:
+		NOP					iaddiu		VI11,VI11,2
+		NOP					isubiu		VI09,VI09,1
+		IDLE	2
+		NOP					ibne		VI09,VI00,Kloop\@
+		NOP					NOP
+; the result becomes the polygon
+		NOP					iaddiu		VI15,VI05,0
+		NOP					iaddiu		VI05,VI06,0
+		NOP					iaddiu		VI06,VI15,0
+		NOP					iaddiu		VI04,VI08,0
+		IDLE	1
+		NOP					isubiu		VI15,VI04,3
+		IDLE	2
+		NOP					ibltz		VI15,PolyDone
+		NOP					NOP
+PlaneEnd\@:
+		.endm
+
+		.vu
+		.align	4
+		.global	VU1Draw_CodeStart
+		.global	VU1Draw_CodeEnd
+		.global	VU1Draw_EntryInit
+		.global	VU1Draw_EntryDraw
+VU1Draw_CodeStart:
+; ---- entry 0: Init (once, after the upload) ----
+VU1Draw_EntryInit:
+		NOP					iaddiu		VI10,VI00,OUT0
+		NOP[E]				NOP
+		NOP					NOP
+; ---- entry: Draw ----
+VU1Draw_EntryDraw:
+		NOP					xtop		VI02
+		NOP					lq			VF01,0(VI00)
+		NOP					lq			VF02,1(VI00)
+		NOP					lq			VF03,2(VI00)
+		NOP					lq			VF04,3(VI00)
+		NOP					lq			VF05,4(VI00)
+		NOP					lq			VF06,5(VI00)
+		NOP					lq			VF07,6(VI00)
+		NOP					lq			VF08,7(VI00)
+		NOP					lq			VF09,8(VI00)
+		NOP					lq			VF10,11(VI00)
+		NOP					ilw.x		VI03,0(VI02)
+		IDLE	4
+		NOP					iaddiu		VI02,VI02,1
+		IDLE	2
+		NOP					ibeq		VI03,VI00,Done
+		NOP					NOP
+
+PolyLoop:
+		NOP					ilw.x		VI04,0(VI02)
+		NOP					iaddiu		VI11,VI02,2
+		NOP					iaddiu		VI12,VI00,LISTA
+		NOP					iaddiu		VI07,VI00,0
+		NOP					iaddiu		VI08,VI00,OCMASK
+		IDLE	4
+		NOP					iaddiu		VI09,VI04,0
+
+; ---- transform + classify every vertex ----
+VLoop:
+		NOP					lq			VF12,0(VI11)
+		NOP					lq			VF13,1(VI11)
+		IDLE	1
+		mulax		ACC,VF01,VF12x		NOP
+		madday		ACC,VF02,VF12y		NOP
+		maddaz		ACC,VF03,VF12z		NOP
+		maddw		VF14,VF04,VF12w		NOP
+		addw.xyz	VF15,VF14,VF14w		sq			VF14,0(VI12)
+		subw.xyz	VF16,VF14,VF14w		sq			VF13,1(VI12)
+		IDLE	4
+		clipw.xyz	VF15xyz,VF10w		NOP
+		clipw.xyz	VF16xyz,VF10w		NOP
+		IDLE	4
+		NOP					fcget		VI01
+		NOP					iaddiu		VI15,VI00,OCMASK
+		IDLE	2
+		NOP					iand		VI01,VI01,VI15
+		IDLE	1
+		NOP					isw.z		VI01,1(VI12)
+		NOP					ior			VI07,VI07,VI01
+		NOP					iand		VI08,VI08,VI01
+		NOP					iaddiu		VI12,VI12,2
+		NOP					iaddiu		VI11,VI11,2
+		NOP					isubiu		VI09,VI09,1
+		IDLE	2
+		NOP					ibne		VI09,VI00,VLoop
+		NOP					NOP
+
+; all vertices outside one plane: nothing to draw
+		IDLE	1
+		NOP					ibne		VI08,VI00,PolyDone
+		NOP					NOP
+		NOP					iaddiu		VI05,VI00,LISTA
+		NOP					iaddiu		VI06,VI00,LISTB
+		IDLE	2
+		NOP					ibeq		VI07,VI00,Emit
+		NOP					NOP
+
+; ---- clipping ----
+		CLIPPLANE	B_ZM, K_AFTER_ZM, 0, z
+		CLIPPLANE	B_ZP, K_AFTER_ZP, 1, z
+		CLIPPLANE	B_XM, K_AFTER_XM, 0, x
+		CLIPPLANE	B_XP, K_AFTER_XP, 1, x
+		CLIPPLANE	B_YM, K_AFTER_YM, 0, y
+		CLIPPLANE	B_YP, K_AFTER_YP, 1, y
+
+; ---- divide, convert, pack, kick ----
+Emit:
+		NOP					ilw.y		VI15,0(VI02)
+		NOP					ilw.z		VI01,0(VI02)
+		NOP					lq			VF11,1(VI02)
+		IDLE	4
+		NOP					iaddiu		VI15,VI15,9
+		IDLE	2
+		NOP					lq			VF22,0(VI15)
+		NOP					iaddiu		VI13,VI04,0x7fff
+		IDLE	1
+		NOP					iaddiu		VI13,VI13,1
+		IDLE	2
+		NOP					sq			VF22,0(VI10)
+		NOP					isw.x		VI13,0(VI10)
+		NOP					iaddiu		VI12,VI10,1
+		NOP					iaddiu		VI11,VI05,0
+		NOP					iaddiu		VI09,VI04,0
+ELoop:
+		NOP					lq			VF14,0(VI11)
+		NOP					lq			VF13,1(VI11)
+		IDLE	1
+		NOP					div			Q,VF00w,VF14w
+		sub.xy		VF15,VF13,VF11		NOP
+		mul.xy		VF15,VF15,VF08		NOP
+		addw.z		VF15,VF00,VF00		NOP
+		NOP					waitq
+		mulq.xyz	VF16,VF15,Q			NOP
+		mulq.xyz	VF17,VF14,Q			mfir.w		VF18,VI01
+		mulaw.xyz	ACC,VF06,VF00w		NOP
+		madd.xyz	VF17,VF17,VF05		NOP
+		max.z		VF17,VF17,VF00		NOP
+		mini.z		VF17,VF17,VF07		NOP
+		ftoi4.z		VF18,VF17			NOP
+		ftoi0.xy	VF18,VF17			NOP
+		NOP					sq			VF16,0(VI12)
+		NOP					sq			VF09,1(VI12)
+		NOP					sq			VF18,2(VI12)
+		NOP					iaddiu		VI12,VI12,3
+		NOP					iaddiu		VI11,VI11,2
+		NOP					isubiu		VI09,VI09,1
+		IDLE	2
+		NOP					ibne		VI09,VI00,ELoop
+		NOP					NOP
+		NOP					xgkick		VI10
+		NOP					iaddiu		VI15,VI00,OUTSUM
+		IDLE	2
+		NOP					isub		VI10,VI15,VI10
+
+; ---- next polygon ----
+PolyDone:
+		NOP					ilw.x		VI15,0(VI02)
+		IDLE	4
+		NOP					iadd		VI02,VI02,VI15
+		NOP					iadd		VI02,VI02,VI15
+		NOP					iaddiu		VI02,VI02,2
+		NOP					isubiu		VI03,VI03,1
+		IDLE	2
+		NOP					ibne		VI03,VI00,PolyLoop
+		NOP					NOP
+Done:
+		NOP[E]				NOP
+		NOP					NOP
+		.align	4
+VU1Draw_CodeEnd:

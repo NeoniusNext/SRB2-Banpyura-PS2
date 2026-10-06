@@ -259,10 +259,16 @@ extern char logfilename[1024];
 
 #define COLORRAMPSIZE 16
 #define MAXCOLORNAME 32
-#ifdef PS2_PROFILE
+#if defined(PS2_PROFILE) && !defined(PS2_LIMITS)
 #define NUMCOLORFREESLOTS 32 // PS2-11: vanilla data uses no color freeslots
 #else
 #define NUMCOLORFREESLOTS 1024
+#endif
+#ifdef PS2_DYNLIMITS
+#define PS2_SMALL_COLORFREESLOTS 32 // PS2-104: the table starts at 32 free colours and grows to 1024 (PS2Limits_Grow)
+#define LIMIT_COLORFREESLOTS (ps2_fulllimits ? NUMCOLORFREESLOTS : PS2_SMALL_COLORFREESLOTS)
+#else
+#define LIMIT_COLORFREESLOTS NUMCOLORFREESLOTS
 #endif
 
 typedef struct skincolor_s
@@ -463,9 +469,15 @@ typedef enum
 	NUMSUPERCOLORS = ((SKINCOLOR_FIRSTFREESLOT - FIRSTSUPERCOLOR)/5)
 } skincolornum_t;
 
+#define LIMIT_MAXSKINCOLORS (SKINCOLOR_FIRSTFREESLOT + LIMIT_COLORFREESLOTS) // PS2-104: == MAXSKINCOLORS outside the PS2 limits
+
 extern UINT16 numskincolors;
 
+#ifdef PS2_DYNLIMITS
+extern skincolor_t *skincolors;
+#else
 extern skincolor_t skincolors[MAXSKINCOLORS];
+#endif
 
 // State updates, number of tics / second.
 // NOTE: used to setup the timer rate, see I_StartupTimer().

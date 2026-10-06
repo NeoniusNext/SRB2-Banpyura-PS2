@@ -701,6 +701,9 @@ void D_QuitNetGame(void)
 
 void CL_HandleTimeout(void)
 {
+#ifdef PS2_PROFILE
+	CONS_Printf("PS2 net: server timeout (no packet from the server for %u tics), back to the title screen\n", (unsigned)connectiontimeout); // PS2-138: a test can wait for this line
+#endif
 	LUA_HookBool(false, HOOK(GameQuit));
 	D_QuitNetGame();
 	CL_Reset();

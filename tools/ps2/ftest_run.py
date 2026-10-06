@@ -29,7 +29,9 @@ def main():
     ap.add_argument('--until', default='FT_DONE')
     ap.add_argument('--timeout', type=float, default=600)
     ap.add_argument('--demo', default='')
-    ap.add_argument('--show', default='FT_,I_Error,OOM,Out of memory,Lua,lua,error,Error,Added file', help='comma separated: log lines containing one of these are printed')
+    ap.add_argument('--retries', type=int, default=4, help='restarts when the emulator itself did not start')
+    ap.add_argument('--lock-wait', type=float, default=7200, help='seconds to wait for the machine-wide emulator lock (other agents run long sweeps)')
+    ap.add_argument('--show', default='FT_,FTLUA,ZSTAT,I_Error,OOM,Out of memory,Lua,lua,error,Error,Added file', help='comma separated: log lines containing one of these are printed')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     run = Path(a.out).resolve() / a.name
@@ -53,11 +55,19 @@ def main():
             shutil.copy2(src, dst)
     args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt'] + a.extra
     cmd = [sys.executable, str(ROOT / 'tools/ps2/run_pcsx2.py'), '--elf', str(run / 'SRB2.ELF'), '--log', str(run / 'pcsx2.log'),
-           '--args=' + ' '.join(args), '--timeout', str(a.timeout), '--until-file', str(boot), '--until', a.until]
+           '--args=' + ' '.join(args), '--timeout', str(a.timeout), '--lock-wait', str(a.lock_wait), '--until-file', str(boot), '--until', a.until]
     env = dict(os.environ, SRB2_PCSX2=PCSX2[a.ram])
     print(' '.join(cmd), flush=True)
-    p = subprocess.run(cmd, env=env, capture_output=True, text=True)
-    (run / 'run.log').write_text(p.stdout + p.stderr, encoding='utf-8')
+    for attempt in range(a.retries + 1):  # PCSX2 sometimes fails to start ("Failed to create swap chain", lock lost): start again
+        if boot.exists():
+            boot.unlink()
+        p = subprocess.run(cmd, env=env, capture_output=True, text=True)
+        (run / 'run.log').write_text(p.stdout + p.stderr, encoding='utf-8')
+        plog = (run / 'pcsx2.log').read_text(errors='replace') if (run / 'pcsx2.log').exists() else ''
+        if 'could not get the PCSX2 lock' in p.stdout + p.stderr or 'Failed to create swap chain' in plog or (p.returncode == 1 and not boot.exists()):
+            print(f'  emulator did not start (attempt {attempt + 1}), again', flush=True)
+            continue
+        break
     text = boot.read_text(errors='replace') if boot.exists() else ''
     keys = [k for k in a.show.split(',') if k]
     shown = 0

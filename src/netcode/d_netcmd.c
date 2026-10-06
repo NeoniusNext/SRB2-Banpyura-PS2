@@ -697,13 +697,13 @@ void D_RegisterClientCommands(void)
 {
 	INT32 i;
 
-	for (i = 0; i < MAXSKINCOLORS; i++)
+	for (i = 0; i < LIMIT_MAXSKINCOLORS; i++)
 	{
 		Color_cons_t[i].value = i;
 		Color_cons_t[i].strvalue = skincolors[i].name;
 	}
-	Color_cons_t[MAXSKINCOLORS].value = 0;
-	Color_cons_t[MAXSKINCOLORS].strvalue = NULL;
+	Color_cons_t[LIMIT_MAXSKINCOLORS].value = 0;
+	Color_cons_t[LIMIT_MAXSKINCOLORS].strvalue = NULL;
 
 	// Set default player names
 	// Monster Iestyn (12/08/19): not sure where else I could have actually put this, but oh well

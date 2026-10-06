@@ -37,6 +37,8 @@
 #include "ps2_boot.h"
 #include "ps2_sys.h"
 #include "ps2_mem.h"
+#include "ps2_kbd.h"
+#include "ps2_mouse.h"
 
 #define WADKEYWORD1 "SRB2.PAK"
 #define PS2_PRECISION ((UINT64)kBUSCLK) // GetTimerSystemTime ticks per second (147 456 000)
@@ -226,9 +228,9 @@ void I_OsPolling(void)
 	if (PS2Boot_PowerRequested())
 		I_Quit();
 
-	// no keyboard: modifier state is always clear
-	shiftdown = ctrldown = altdown = 0;
-	capslock = false;
+	// PS2-151: USB keyboard (raw driver events -> key/text events, repeat) and the modifier state; without a keyboard it is always clear
+	PS2Kbd_Poll();
+	I_GetMouseEvents(); // PS2-155: USB mouse (the SDL port polls it here too)
 }
 
 INT32 I_GetKey(void)
@@ -251,21 +253,21 @@ INT32 I_GetKey(void)
 	return rc;
 }
 
-void I_StartupMouse(void) {}
-void I_StartupMouse2(void) {}
-void I_GetMouseEvents(void) {}
+// PS2-155: USB mouse (ps2_mouse.c): use_mouse / use_mouse2 callbacks, the per-tic poll (I_OsPolling), the virtual pointer; no grabbing on a console
+void I_StartupMouse(void) { PS2Mouse_Startup(1); }
+void I_StartupMouse2(void) { PS2Mouse_Startup(2); }
+void I_GetMouseEvents(void) { PS2Mouse_Poll(); }
 void I_UpdateMouseGrab(void) {}
 void I_SetMouseGrab(boolean grab) { (void)grab; }
 
 void I_GetCursorPosition(INT32 *x, INT32 *y)
 {
-	if (x) *x = 0;
-	if (y) *y = 0;
+	PS2Mouse_GetCursor(x, y);
 }
 
 void I_SetTextInputMode(boolean active)
 {
-	textinputmode = active; // no keyboard yet: only the flag
+	textinputmode = active; // the flag ps2_kbd.c reads: ev_text is only posted while it is on
 }
 
 boolean I_GetTextInputMode(void)
@@ -373,6 +375,8 @@ void I_ShutdownSystem(void)
 
 static void I_ShutdownInput(void)
 {
+	PS2Kbd_Shutdown(); // PS2-151
+	PS2Mouse_Shutdown(); // PS2-155
 	PS2Joy_Shutdown();
 }
 

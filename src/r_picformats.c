@@ -1662,9 +1662,34 @@ static void R_ParseSpriteInfoFrame(spriteinfo_t *info)
 	}
 
 	// set fields
-	info->pivot[frameFrame].x = frameXPivot;
-	info->pivot[frameFrame].y = frameYPivot;
+	R_SpriteInfoPivot(info)[frameFrame].x = frameXPivot;
+	R_SpriteInfoPivot(info)[frameFrame].y = frameYPivot;
 }
+
+#ifdef PS2_DYNLIMITS
+spriteframepivot_t *R_SpriteInfoPivot(spriteinfo_t *info)
+{
+	if (!info->pivot)
+		info->pivot = Z_Calloc(sizeof (spriteframepivot_t) * MAXFRAMENUM, PU_STATIC, NULL);
+	return info->pivot;
+}
+
+void R_SpriteInfoCopy(spriteinfo_t *dst, const spriteinfo_t *src)
+{
+	dst->available = src->available;
+	if (src->pivot)
+		M_Memcpy(R_SpriteInfoPivot(dst), src->pivot, sizeof (spriteframepivot_t) * MAXFRAMENUM);
+	else if (dst->pivot)
+		memset(dst->pivot, 0, sizeof (spriteframepivot_t) * MAXFRAMENUM);
+}
+
+void R_SpriteInfoFree(spriteinfo_t *info)
+{
+	if (info->pivot)
+		Z_Free(info->pivot);
+	info->pivot = NULL;
+}
+#endif
 
 //
 // R_ParseSpriteInfo
@@ -1677,8 +1702,8 @@ static void R_ParseSpriteInfo(boolean spr2)
 	char *sprinfoToken;
 	size_t sprinfoTokenLength;
 	char newSpriteName[MAXSPRITENAME + 1]; // no longer dynamically allocated
-	spritenum_t sprnum = NUMSPRITES;
-	playersprite_t spr2num = NUMPLAYERSPRITES;
+	spritenum_t sprnum = LIMIT_NUMSPRITES;
+	playersprite_t spr2num = LIMIT_NUMPLAYERSPRITES;
 	INT32 i;
 	UINT8 *skinnumbers = NULL;
 	INT32 foundskins = 0;
@@ -1699,14 +1724,14 @@ static void R_ParseSpriteInfo(boolean spr2)
 	if (!spr2)
 	{
 		sprnum = R_GetSpriteNumByName(newSpriteName);
-		if (sprnum == NUMSPRITES)
+		if (sprnum == LIMIT_NUMSPRITES)
 			I_Error("Error parsing SPRTINFO lump: Unknown sprite name \"%s\"", newSpriteName);
 	}
 	else
 	{
-		for (i = 0; i <= NUMPLAYERSPRITES; i++)
+		for (i = 0; i <= LIMIT_NUMPLAYERSPRITES; i++)
 		{
-			if (i == NUMPLAYERSPRITES)
+			if (i == LIMIT_NUMPLAYERSPRITES)
 				I_Error("Error parsing SPRTINFO lump: Unknown sprite2 name \"%s\"", newSpriteName);
 			if (!memcmp(newSpriteName,spr2names[i],4))
 			{
@@ -1781,11 +1806,11 @@ static void R_ParseSpriteInfo(boolean spr2)
 					{
 						skin_t *skin = skins[skinnumbers[i]];
 						spriteinfo_t *sprinfo = skin->sprinfo;
-						M_Memcpy(&sprinfo[spr2num], info, sizeof(spriteinfo_t));
+						R_SpriteInfoCopy(&sprinfo[spr2num], info);
 					}
 				}
 				else
-					M_Memcpy(&spriteinfo[sprnum], info, sizeof(spriteinfo_t));
+					R_SpriteInfoCopy(&spriteinfo[sprnum], info);
 			}
 			else
 			{
@@ -1805,6 +1830,7 @@ static void R_ParseSpriteInfo(boolean spr2)
 	}
 
 	Z_Free(sprinfoToken);
+	R_SpriteInfoFree(info);
 	Z_Free(info);
 	if (skinnumbers)
 		Z_Free(skinnumbers);

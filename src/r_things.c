@@ -79,7 +79,12 @@ spriteinfo_t spriteinfo[NUMSPRITES];
 spritedef_t *sprites;
 size_t numsprites;
 
+#ifdef PS2_DYNLIMITS
+static spriteframe_t sprtemp_small[PS2_SMALL_MAXFRAMENUM];
+spriteframe_t *sprtemp = sprtemp_small; // PS2-104: replaced by a MAXFRAMENUM table by PS2Limits_Grow(), when a lump names a frame >= 64
+#else
 static spriteframe_t sprtemp[MAXFRAMENUM];
+#endif
 static size_t maxframe;
 static const char *spritename;
 
@@ -178,10 +183,10 @@ static void R_BuildDrawsegBins(void)
 
 spritenum_t R_GetSpriteNumByName(const char *name)
 {
-	for (spritenum_t i = 0; i < NUMSPRITES; i++)
+	for (spritenum_t i = 0; i < LIMIT_NUMSPRITES; i++)
 		if (!strcmp(name, sprnames[i]))
 			return i;
-	return NUMSPRITES;
+	return LIMIT_NUMSPRITES;
 }
 
 //
@@ -204,6 +209,11 @@ static void R_InstallSpriteLump(UINT16 wad,            // graphics patch
 
 	INT32 r;
 	lumpnum_t lumppat = (wad << 16) + lump;
+
+#ifdef PS2_DYNLIMITS
+	if (frame >= LIMIT_MAXFRAMENUM) // PS2-104: a frame past the vanilla-size scratch table
+		PS2Limits_Grow();
+#endif
 
 	if (maxframe ==(size_t)-1 || frame > maxframe)
 		maxframe = frame;
@@ -521,7 +531,11 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 	lumpinfo_t *lumpinfo;
 	UINT16 numadded = 0;
 
+#ifdef PS2_DYNLIMITS
+	memset(sprtemp, 0xFF, sizeof (spriteframe_t) * LIMIT_MAXFRAMENUM);
+#else
 	memset(sprtemp,0xFF, sizeof (sprtemp));
+#endif
 	maxframe = (size_t)-1;
 
 	spritename = sprname;
@@ -751,7 +765,7 @@ static void AddLongSpriteDefs(UINT16 wadnum, size_t *ptr_spritesadded, size_t *p
 		strupr(sprname);
 		sprnum = R_GetSpriteNumByName(sprname);
 
-		if (sprnum != NUMSPRITES && R_AddSingleSpriteDef(sprname, &sprites[sprnum], wadnum, folderstart, folderend, true))
+		if (sprnum != LIMIT_NUMSPRITES && R_AddSingleSpriteDef(sprname, &sprites[sprnum], wadnum, folderstart, folderend, true))
 		{
 			// A new sprite was added (not just replaced)
 			(*ptr_spritesadded)++;
@@ -823,13 +837,19 @@ void R_InitSprites(void)
 	// count the number of sprite names, and allocate sprites table
 	//
 	numsprites = 0;
-	for (i = 0; i < NUMSPRITES + 1; i++)
+	for (i = 0; i < LIMIT_NUMSPRITES + 1; i++)
 		if (sprnames[i][0] != '\0') numsprites++;
 
 	if (!numsprites)
 		I_Error("R_AddSpriteDefs: no sprites in namelist\n");
 
+#ifdef PS2_DYNLIMITS
+	// PS2-104: the table has a (zeroed, 12 KB) entry for every sprite of the PC limit already: PS2Limits_Grow() only raises numsprites, a
+	// R_AddSingleSpriteDef under way (it holds a pointer to its entry) is not left pointing at a freed table
+	sprites = Z_Calloc(NUMSPRITES * sizeof (*sprites), PU_STATIC, NULL);
+#else
 	sprites = Z_Calloc(numsprites * sizeof (*sprites), PU_STATIC, NULL);
+#endif
 
 	// find sprites in each -file added pwad
 	for (i = 0; i < numwadfiles; i++)
@@ -869,6 +889,42 @@ void R_ClearSprites(void)
 //
 static vissprite_t overflowsprite;
 
+#ifdef PS2_PROFILE
+// PS2-87: a chunk is 64 vissprite_t followed by their clip arrays (2 x vid.width INT16 each); the screen width a chunk was made for is
+// remembered, R_ResetVisSprites (from R_ExecuteSetViewSize, between two frames) drops the chunks when it changes.
+static INT16 overflowclip[2 * MAXVIDWIDTH];
+
+void R_ResetVisSprites(void)
+{
+	size_t i;
+
+	for (i = 0; i < sizeof visspritechunks / sizeof visspritechunks[0]; i++)
+		if (visspritechunks[i])
+			Z_Free(visspritechunks[i]); // clears visspritechunks[i] (its owner)
+}
+
+static vissprite_t *R_GetVisSprite(UINT32 num)
+{
+		UINT32 chunk = num >> VISSPRITECHUNKBITS;
+
+		// Allocate chunk if necessary
+		if (!visspritechunks[chunk])
+		{
+			const size_t w = (size_t)vid.width; // R_ProjectSprite/R_ClipVisSprite only touch the columns of the view: x < viewwidth <= vid.width
+			vissprite_t *vs = Z_Malloc(sizeof(vissprite_t) * VISSPRITESPERCHUNK + 2 * w * sizeof (INT16) * VISSPRITESPERCHUNK, PU_LEVEL, &visspritechunks[chunk]);
+			INT16 *clip = (INT16 *)(vs + VISSPRITESPERCHUNK);
+			UINT32 i;
+
+			for (i = 0; i < VISSPRITESPERCHUNK; i++, clip += 2 * w)
+			{
+				vs[i].clipbot = clip;
+				vs[i].cliptop = clip + w;
+			}
+		}
+
+		return visspritechunks[chunk] + (num & VISSPRITEINDEXMASK);
+}
+#else
 static vissprite_t *R_GetVisSprite(UINT32 num)
 {
 		UINT32 chunk = num >> VISSPRITECHUNKBITS;
@@ -879,11 +935,18 @@ static vissprite_t *R_GetVisSprite(UINT32 num)
 
 		return visspritechunks[chunk] + (num & VISSPRITEINDEXMASK);
 }
+#endif
 
 static vissprite_t *R_NewVisSprite(void)
 {
 	if (visspritecount == MAXVISSPRITES)
+	{
+#ifdef PS2_PROFILE
+		overflowsprite.clipbot = overflowclip; // PS2-87
+		overflowsprite.cliptop = overflowclip + MAXVIDWIDTH;
+#endif
 		return &overflowsprite;
+	}
 
 	return R_GetVisSprite(visspritecount++);
 }
@@ -1404,7 +1467,18 @@ static void R_SplitSprite(vissprite_t *sprite)
 
 		// Found a split! Make a new sprite, copy the old sprite to it, and
 		// adjust the heights.
+#ifdef PS2_PROFILE
+		{ // PS2-87: the clip arrays belong to each sprite (they are reset when it is drawn): copy the fields, keep the new sprite's own arrays
+			vissprite_t *fresh = R_NewVisSprite();
+			INT16 *clipbot = fresh->clipbot, *cliptop = fresh->cliptop;
+
+			newsprite = M_Memcpy(fresh, sprite, sizeof (vissprite_t));
+			newsprite->clipbot = clipbot;
+			newsprite->cliptop = cliptop;
+		}
+#else
 		newsprite = M_Memcpy(R_NewVisSprite(), sprite, sizeof (vissprite_t));
+#endif
 
 		newsprite->cut |= (sprite->cut & SC_FLAGMASK);
 

@@ -42,7 +42,7 @@ INCS = ['-I' + str(ROOT/'src'), '-I' + str(ROOT/'src/ps2'), '-I' + str(GEN),
 LDFLAGS = ['-T' + str(SDK/'ee/startup/linkfile'), '-L' + str(SDK/'ee/lib'), '-L' + str(DEV/'gsKit/lib'),
            '-L' + str(SDK/'ports/lib'), '-Wl,-zmax-page-size=128', '-Wl,--defsym,_stack_size=0x60000',  # PS2-77: 384 KiB (was 512): 133 KB deepest use measured on MAP11, -zstack
            '-Wl,--gc-sections', '-Wl,--wrap=W_LumpLength']
-LIBS = ['-lps2_drivers', '-llz4', '-lgskit', '-ldmakit', '-laudsrv', '-lpad', '-lpoweroff', '-lfileXio', '-lcdvd',
+LIBS = ['-lps2_drivers', '-llz4', '-lgskit', '-ldmakit', '-laudsrv', '-lpad', '-lkbd', '-lmouse', '-lpoweroff', '-lfileXio', '-lcdvd',  # PS2-150: libkbd/libmouse RPC clients of the embedded ps2kbd/ps2mouse IRX
         '-ldebug', '-lpatches', '-lvorbisfile', '-lvorbis', '-logg', '-lmpg123', '-lm']
 
 
@@ -54,6 +54,8 @@ for _f in NO_FEATURES:
 if 'zippng' not in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DHAVE_ZLIB', '-DHAVE_PNG']  # PS2-100: pk3 (ZIP) and PNG pictures of add-ons; cooked packs stay the fast path
     LIBS = [l for l in LIBS if l != '-lm'] + ['-lpng16', '-lz', '-lm']
+if 'addons' not in NO_FEATURES:
+    LIBS = ['-lmc'] + LIBS  # PS2-103: ps2_ftest.c formats a blank test card (-ftest-mcformat)
 
 
 def gen_config():
@@ -244,6 +246,10 @@ def main():
         CFLAGS.append('-DPS2_LEAKTRACE')
         for fn in ('malloc', 'calloc', 'realloc', 'free', 'memalign', '_malloc_r', '_calloc_r', '_realloc_r', '_free_r', '_memalign_r'):
             LDFLAGS.append('-Wl,--wrap=' + fn)
+    elif os.environ.get('SRB2_PS2_SPILL', '1') != '0':
+        # PS2-79: what the C heap cannot give is taken from the zone arena (src/ps2/ps2_spill.c); all of newlib's allocators end in these five
+        for fn in ('_malloc_r', '_calloc_r', '_realloc_r', '_free_r', '_memalign_r'):
+            LDFLAGS.append('-Wl,--wrap=' + fn)
     if a.memprof:
         CFLAGS.append('-DPS2_MEMPROF')
         for fn in ('memcpy', 'memset', 'memmove'):
@@ -294,6 +300,16 @@ def main():
         return 1 if failed else 0
     elf = OUT / a.target
     objs = [str(obj_for(s)) for s in srcs]
+    if HW_BUILD:  # PS2-HW-45: the VU1 microcode of the polygon program (dvp-as; its symbols are used by ps2_hw_vu1.inc)
+        vsm = ROOT/'src/ps2/hw/vu1/ps2_hw_vu1.vsm'
+        if vsm.is_file():
+            vobj = OBJ/'ps2_hw_vu1_vsm.o'
+            if not vobj.exists() or vobj.stat().st_mtime < vsm.stat().st_mtime:
+                pv = subprocess.run([str(DEV/'dvp/bin/dvp-as.exe'), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
+                if pv.returncode or pv.stdout.strip() or pv.stderr.strip():
+                    print('FAIL dvp-as', vsm, (pv.stdout + pv.stderr)[-3000:])
+                    return 1
+            objs.append(str(vobj))
     if LTO:
         merged = OBJ / 'engine_lto.o'
         rcmd = [str(CC), '-r', '-nostdlib', '-flto=%d' % a.jobs, '-flinker-output=nolto-rel', '-O2', '-ffunction-sections', '-fdata-sections'] + [f for f in CFLAGS if f.startswith('-G') or f == '-mno-abicalls'] + objs + ['-o', str(merged)]

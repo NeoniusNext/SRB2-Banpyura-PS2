@@ -73,7 +73,7 @@ static UINT8 lib_searchBlockmap_Lines(lua_State *L, INT32 x, INT32 y, mobj_t *th
 	offset = y*bmapwidth + x;
 
 	// haleyjd 02/22/06: consider polyobject lines
-	plink = polyblocklinks[offset];
+	plink = POLYBLOCKLINK(offset);
 
 	while (plink)
 	{
@@ -163,7 +163,7 @@ static UINT8 lib_searchBlockmap_PolyObjs(lua_State *L, INT32 x, INT32 y, mobj_t 
 	offset = y*bmapwidth + x;
 
 	// haleyjd 02/22/06: consider polyobject lines
-	plink = polyblocklinks[offset];
+	plink = POLYBLOCKLINK(offset);
 
 	while (plink)
 	{

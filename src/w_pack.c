@@ -98,7 +98,11 @@ boolean WPack_Detect(FILE *handle)
 
 	if (fseek(handle, 0, SEEK_SET) != 0 || !ReadBytes(handle, magic, sizeof magic))
 		return false;
-	return memcmp(magic, "SRP2", 4) == 0;
+	if (memcmp(magic, "SRP2", 4) == 0)
+		return true;
+	// PS2-103: a file that is not a pack goes to the original loaders (ResGetLumpsWad reads the header from the current position)
+	fseek(handle, 0, SEEK_SET);
+	return false;
 }
 
 void *WPack_SetupHandle(FILE *handle)

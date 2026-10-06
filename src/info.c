@@ -29,7 +29,11 @@
 
 // Hey, moron! If you change this table, don't forget about the sprite enum in info.h and the sprite lights in hw_light.c!
 // For the sake of constant merge conflicts, let's spread this out
+#ifdef PS2_DYNLIMITS
+char sprnames_small[SPR_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS + 1][MAXSPRITENAME + 1] = // PS2-104: PC size after PS2Limits_Grow()
+#else
 char sprnames[NUMSPRITES + 1][MAXSPRITENAME + 1] =
+#endif
 {
 	"NULL", // invisible object
 	"UNKN",
@@ -532,8 +536,15 @@ char sprnames[NUMSPRITES + 1][MAXSPRITENAME + 1] =
 	// LJ Knuckles
 	"OLDK",
 };
+#ifdef PS2_DYNLIMITS
+char (*sprnames)[MAXSPRITENAME + 1] = sprnames_small;
+#endif
 
+#ifdef PS2_DYNLIMITS
+char spr2names_small[SPR2_FIRSTFREESLOT + PS2_SMALL_SPR2FREESLOTS][MAXSPRITENAME + 1] =
+#else
 char spr2names[NUMPLAYERSPRITES][MAXSPRITENAME + 1] =
+#endif
 {
 	"STND",
 	"WAIT",
@@ -621,9 +632,16 @@ char spr2names[NUMPLAYERSPRITES][MAXSPRITENAME + 1] =
 
 	"XTRA",
 };
+#ifdef PS2_DYNLIMITS
+char (*spr2names)[MAXSPRITENAME + 1] = spr2names_small;
+#endif
 playersprite_t free_spr2 = SPR2_FIRSTFREESLOT;
 
+#ifdef PS2_DYNLIMITS
+playersprite_t spr2defaults_small[SPR2_FIRSTFREESLOT + PS2_SMALL_SPR2FREESLOTS] = {
+#else
 playersprite_t spr2defaults[NUMPLAYERSPRITES] = {
+#endif
 	0, // SPR2_STND,
 	0, // SPR2_WAIT,
 	0, // SPR2_WALK,
@@ -710,9 +728,16 @@ playersprite_t spr2defaults[NUMPLAYERSPRITES] = {
 
 	0, // SPR2_XTRA (should never be referenced)
 };
+#ifdef PS2_DYNLIMITS
+playersprite_t *spr2defaults = spr2defaults_small;
+#endif
 
 // Doesn't work with g++, needs actionf_p1 (don't modify this comment)
+#ifdef PS2_DYNLIMITS
+state_t states_small[S_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS * 8] =
+#else
 state_t states[NUMSTATES] =
+#endif
 {
 	// frame is masked through FF_FRAMEMASK
 	// FF_ANIMATE makes simple state animations (var1 #frames, var2 tic delay)
@@ -4038,8 +4063,15 @@ state_t states[NUMSTATES] =
 	{SPR_OLDK, 2, 0, A_Scream, 0, 0, S_OLDK_DIE2, 0}, // S_OLDK_DIE1
 	{SPR_OLDK, 2, -1, A_ZThrust, 14, 1|(1<<16), S_NULL, 0}, // S_OLDK_DIE2
 };
+#ifdef PS2_DYNLIMITS
+state_t *states = states_small;
+#endif
 
+#ifdef PS2_DYNLIMITS
+mobjinfo_t mobjinfo_small[MT_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS] =
+#else
 mobjinfo_t mobjinfo[NUMMOBJTYPES] =
+#endif
 {
 	{           // MT_NULL
 		-1,             // doomednum
@@ -21863,8 +21895,15 @@ mobjinfo_t mobjinfo[NUMMOBJTYPES] =
 		S_NULL          // raisestate
 	},
 };
+#ifdef PS2_DYNLIMITS
+mobjinfo_t *mobjinfo = mobjinfo_small;
+#endif
 
+#ifdef PS2_DYNLIMITS
+skincolor_t skincolors_small[SKINCOLOR_FIRSTFREESLOT + PS2_SMALL_COLORFREESLOTS] = {
+#else
 skincolor_t skincolors[MAXSKINCOLORS] = {
+#endif
 	{"None", {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, SKINCOLOR_NONE, 0, 0, false}, // SKINCOLOR_NONE
 
 	// Greyscale ranges
@@ -22041,11 +22080,17 @@ skincolor_t skincolors[MAXSKINCOLORS] = {
 	{"Super Tan 4", {0x51, 0x52, 0x52, 0x52, 0x52, 0x54, 0x54, 0x54, 0x55, 0x56, 0x57, 0xf5, 0xf7, 0xf9, 0xfb, 0xed}, SKINCOLOR_BROWN, 11, V_BROWNMAP, false}, // SKINCOLOR_SUPERTAN4
 	{"Super Tan 5", {0x52, 0x52, 0x54, 0x54, 0x54, 0x55, 0x56, 0x57, 0xf5, 0xf7, 0xf9, 0xfb, 0xed, 0xee, 0xef, 0xef}, SKINCOLOR_BROWN, 10, V_BROWNMAP, false}  // SKINCOLOR_SUPERTAN5
 };
+#ifdef PS2_DYNLIMITS
+skincolor_t *skincolors = skincolors_small;
+#endif
 
 /** Patches the mobjinfo, state, and skincolor tables.
   * Free slots are emptied out and set to initial values.
+  * PS2-104: the slots [old, new) of the tables, in units of mobj/sprite slots (states: 8 per slot) and of colour slots;
+  * P_PatchInfoTables() does the live range from 0, PS2Limits_Grow() the part a table grew by. which: 1 sprite names, 2 states,
+  * 4 mobjinfo, 8 skincolors (the flags of SOC RESETINFO).
   */
-void P_PatchInfoTables(void)
+void P_PatchInfoRange(INT32 oldslots, INT32 newslots, INT32 oldcolors, INT32 newcolors, INT32 which)
 {
 	INT32 i;
 	char *tempname;
@@ -22055,7 +22100,9 @@ void P_PatchInfoTables(void)
 #endif
 
 	// empty out free slots
-	for (i = SPR_FIRSTFREESLOT; i <= SPR_LASTFREESLOT; i++)
+	if (which & 1)
+	{
+	for (i = SPR_FIRSTFREESLOT + oldslots; i < SPR_FIRSTFREESLOT + newslots; i++)
 	{
 		tempname = sprnames[i];
 		tempname[0] = (char)('0' + (char)((i-SPR_FIRSTFREESLOT+1)/1000));
@@ -22067,18 +22114,44 @@ void P_PatchInfoTables(void)
 		t_lspr[i] = &lspr[NOLIGHT];
 #endif
 	}
-	sprnames[i][0] = '\0'; // i == NUMSPRITES
-	memset(&states[S_FIRSTFREESLOT], 0, sizeof (state_t) * NUMSTATEFREESLOTS);
-	memset(&mobjinfo[MT_FIRSTFREESLOT], 0, sizeof (mobjinfo_t) * NUMMOBJFREESLOTS);
-	memset(&skincolors[SKINCOLOR_FIRSTFREESLOT], 0, sizeof (skincolor_t) * NUMCOLORFREESLOTS);
-	for (i = SKINCOLOR_FIRSTFREESLOT; i <= SKINCOLOR_LASTFREESLOT; i++) {
-		skincolors[i].accessible = false;
-		skincolors[i].name[0] = '\0';
+	sprnames[i][0] = '\0'; // i == NUMSPRITES (of the live table)
 	}
-	for (i = MT_FIRSTFREESLOT; i <= MT_LASTFREESLOT; i++)
-		mobjinfo[i].doomednum = -1;
+	if (which & 2)
+		memset(&states[S_FIRSTFREESLOT + oldslots * 8], 0, sizeof (state_t) * (newslots - oldslots) * 8);
+	if (which & 4)
+	{
+		memset(&mobjinfo[MT_FIRSTFREESLOT + oldslots], 0, sizeof (mobjinfo_t) * (newslots - oldslots));
+		for (i = MT_FIRSTFREESLOT + oldslots; i < MT_FIRSTFREESLOT + newslots; i++)
+			mobjinfo[i].doomednum = -1;
+	}
+	if (which & 8)
+	{
+		memset(&skincolors[SKINCOLOR_FIRSTFREESLOT + oldcolors], 0, sizeof (skincolor_t) * (newcolors - oldcolors));
+		for (i = SKINCOLOR_FIRSTFREESLOT + oldcolors; i < SKINCOLOR_FIRSTFREESLOT + newcolors; i++) {
+			skincolors[i].accessible = false;
+			skincolors[i].name[0] = '\0';
+		}
+	}
 }
 
+void P_PatchInfoTables(void)
+{
+	P_PatchInfoRange(0, LIMIT_MOBJFREESLOTS, 0, LIMIT_COLORFREESLOTS, 15);
+}
+
+#ifdef PS2_DYNLIMITS
+// PS2-104: the tables are pointers; the backup is of the vanilla-size tables taken at start-up (the free slots are all empty then), a
+// table that grew since has its extra slots re-initialised by P_ResetData
+#define SIZE_SPRNAMES ((size_t)(SPR_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS + 1) * (MAXSPRITENAME + 1))
+#define SIZE_STATES (sizeof (state_t) * (S_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS * 8))
+#define SIZE_MOBJINFO (sizeof (mobjinfo_t) * (MT_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS))
+#define SIZE_SKINCOLORS (sizeof (skincolor_t) * (SKINCOLOR_FIRSTFREESLOT + PS2_SMALL_COLORFREESLOTS))
+#else
+#define SIZE_SPRNAMES sizeof (sprnames)
+#define SIZE_STATES sizeof (states)
+#define SIZE_MOBJINFO sizeof (mobjinfo)
+#define SIZE_SKINCOLORS sizeof (skincolors)
+#endif
 #ifdef ALLOW_RESETDATA
 static char *sprnamesbackup;
 static state_t *statesbackup;
@@ -22091,38 +22164,38 @@ void P_BackupTables(void)
 {
 #ifdef ALLOW_RESETDATA
 	// Allocate buffers in size equal to that of the uncompressed data to begin with
-	sprnamesbackup = Z_Malloc(sizeof(sprnames), PU_STATIC, NULL);
-	statesbackup = Z_Malloc(sizeof(states), PU_STATIC, NULL);
-	mobjinfobackup = Z_Malloc(sizeof(mobjinfo), PU_STATIC, NULL);
-	skincolorsbackup = Z_Malloc(sizeof(skincolors), PU_STATIC, NULL);
+	sprnamesbackup = Z_Malloc(SIZE_SPRNAMES, PU_STATIC, NULL);
+	statesbackup = Z_Malloc(SIZE_STATES, PU_STATIC, NULL);
+	mobjinfobackup = Z_Malloc(SIZE_MOBJINFO, PU_STATIC, NULL);
+	skincolorsbackup = Z_Malloc(SIZE_SKINCOLORS, PU_STATIC, NULL);
 
 	// Sprite names
-	sprnamesbackupsize = lzf_compress(sprnames, sizeof(sprnames), sprnamesbackup, sizeof(sprnames));
+	sprnamesbackupsize = lzf_compress(sprnames, SIZE_SPRNAMES, sprnamesbackup, SIZE_SPRNAMES);
 	if (sprnamesbackupsize > 0)
 		sprnamesbackup = Z_Realloc(sprnamesbackup, sprnamesbackupsize, PU_STATIC, NULL);
 	else
-		M_Memcpy(sprnamesbackup, sprnames, sizeof(sprnames));
+		M_Memcpy(sprnamesbackup, sprnames, SIZE_SPRNAMES);
 
 	// States
-	statesbackupsize = lzf_compress(states, sizeof(states), statesbackup, sizeof(states));
+	statesbackupsize = lzf_compress(states, SIZE_STATES, statesbackup, SIZE_STATES);
 	if (statesbackupsize > 0)
 		statesbackup = Z_Realloc(statesbackup, statesbackupsize, PU_STATIC, NULL);
 	else
-		M_Memcpy(statesbackup, states, sizeof(states));
+		M_Memcpy(statesbackup, states, SIZE_STATES);
 
 	// Mobj info
-	mobjinfobackupsize = lzf_compress(mobjinfo, sizeof(mobjinfo), mobjinfobackup, sizeof(mobjinfo));
+	mobjinfobackupsize = lzf_compress(mobjinfo, SIZE_MOBJINFO, mobjinfobackup, SIZE_MOBJINFO);
 	if (mobjinfobackupsize > 0)
 		mobjinfobackup = Z_Realloc(mobjinfobackup, mobjinfobackupsize, PU_STATIC, NULL);
 	else
-		M_Memcpy(mobjinfobackup, mobjinfo, sizeof(mobjinfo));
+		M_Memcpy(mobjinfobackup, mobjinfo, SIZE_MOBJINFO);
 
 	//Skincolor info
-	skincolorsbackupsize = lzf_compress(skincolors, sizeof(skincolors), skincolorsbackup, sizeof(skincolors));
+	skincolorsbackupsize = lzf_compress(skincolors, SIZE_SKINCOLORS, skincolorsbackup, SIZE_SKINCOLORS);
 	if (skincolorsbackupsize > 0)
 		skincolorsbackup = Z_Realloc(skincolorsbackup, skincolorsbackupsize, PU_STATIC, NULL);
 	else
-		M_Memcpy(skincolorsbackup, skincolors, sizeof(skincolors));
+		M_Memcpy(skincolorsbackup, skincolors, SIZE_SKINCOLORS);
 #endif
 }
 
@@ -22135,7 +22208,7 @@ void P_ResetData(INT32 flags)
 	if (flags & 1)
 	{
 		if (sprnamesbackupsize > 0)
-			lzf_decompress(sprnamesbackup, sprnamesbackupsize, sprnames, sizeof(sprnames));
+			lzf_decompress(sprnamesbackup, sprnamesbackupsize, sprnames, SIZE_SPRNAMES);
 		else
 			M_Memcpy(sprnames, sprnamesbackup, sizeof(sprnamesbackup));
 	}
@@ -22143,7 +22216,7 @@ void P_ResetData(INT32 flags)
 	if (flags & 2)
 	{
 		if (statesbackupsize > 0)
-			lzf_decompress(statesbackup, statesbackupsize, states, sizeof(states));
+			lzf_decompress(statesbackup, statesbackupsize, states, SIZE_STATES);
 		else
 			M_Memcpy(states, statesbackup, sizeof(statesbackup));
 	}
@@ -22151,7 +22224,7 @@ void P_ResetData(INT32 flags)
 	if (flags & 4)
 	{
 		if (mobjinfobackupsize > 0)
-			lzf_decompress(mobjinfobackup, mobjinfobackupsize, mobjinfo, sizeof(mobjinfo));
+			lzf_decompress(mobjinfobackup, mobjinfobackupsize, mobjinfo, SIZE_MOBJINFO);
 		else
 			M_Memcpy(mobjinfo, mobjinfobackup, sizeof(mobjinfobackup));
 	}
@@ -22159,9 +22232,18 @@ void P_ResetData(INT32 flags)
 	if (flags & 8)
 	{
 		if (skincolorsbackupsize > 0)
-			lzf_decompress(skincolorsbackup, skincolorsbackupsize, skincolors, sizeof(skincolors));
+			lzf_decompress(skincolorsbackup, skincolorsbackupsize, skincolors, SIZE_SKINCOLORS);
 		else
 			M_Memcpy(skincolors, skincolorsbackup, sizeof(skincolorsbackup));
 	}
+
+#ifdef PS2_DYNLIMITS
+	if (ps2_fulllimits) // the slots the tables grew by since the backup are empty again
+	{
+		const INT32 s0 = PS2_SMALL_MOBJFREESLOTS, c0 = PS2_SMALL_COLORFREESLOTS;
+
+		P_PatchInfoRange(s0, NUMMOBJFREESLOTS, c0, NUMCOLORFREESLOTS, flags & 15);
+	}
+#endif
 #endif
 }

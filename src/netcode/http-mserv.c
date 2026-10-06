@@ -678,6 +678,9 @@ HMS_fetch_servers (msg_server_t *list, int room_number, int query_id)
 	char *p;
 
 	int i;
+#ifdef PS2
+	int ps2_rows = 0, ps2_v6 = 0, ps2_otherver = 0;
+#endif
 
 	HMS_check_args_once();
 
@@ -725,6 +728,15 @@ HMS_fetch_servers (msg_server_t *list, int room_number, int query_id)
 				title   = strtok(0, " ");
 				version = strtok(0, "");
 
+#ifdef PS2
+				// PS2-131: the IP stack is IPv4 only and the master server lists most hosts twice (v4 and v6): the v6 rows would only fill the 16 slots
+				ps2_rows++;
+				if (address && strchr(address, ':'))
+				{
+					ps2_v6++;
+					address = NULL;
+				}
+#endif
 				if (address && port && title && version)
 				{
 					I_lock_mutex(&ms_QueryId_mutex);
@@ -737,6 +749,10 @@ HMS_fetch_servers (msg_server_t *list, int room_number, int query_id)
 					if (! doing_shit)
 						break;
 
+#ifdef PS2
+					if (strcmp(version, local_version) != 0)
+						ps2_otherver++;
+#endif
 					if (strcmp(version, local_version) == 0)
 					{
 						strlcpy(list[i].ip,      address, sizeof list[i].ip);
@@ -766,6 +782,11 @@ HMS_fetch_servers (msg_server_t *list, int room_number, int query_id)
 
 		if (doing_shit)
 			list[i].header.buffer[0] = 0;
+#ifdef PS2
+		// PS2-131: what the master server's list came to (the browser then asks each of these for its info)
+		if (cv_masterserver_debug.value)
+			CONS_Printf("HMS: %d server rows, %d IPv6 skipped, %d of another version, %d listed (limit %d)\n", ps2_rows, ps2_v6, ps2_otherver, i, MAXSERVERLIST);
+#endif
 	}
 	else
 		list = NULL;

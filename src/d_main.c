@@ -116,6 +116,9 @@ static addfilelist_t startupwadfiles;
 #ifdef HAS_ADDONS // PS2-20: command line add-ons exist only with PS2_ADDONS
 static addfilelist_t startuppwads;
 #endif
+#if defined (PS2) && defined (HAS_ADDONS)
+#include "ps2/ps2_addons.h"
+#endif
 
 boolean devparm = false; // started game with -devparm
 
@@ -1116,6 +1119,14 @@ static void D_AddFile(addfilelist_t *list, const char *file)
 	list->files[index] = newfile;
 }
 
+#if defined (PS2) && defined (HAS_ADDONS)
+// PS2-103: the files of the auto-load folders join the start-up add-on list (ps2_addons.c)
+static void D_AutoloadAdd(const char *path, void *ctx)
+{
+	D_AddFile((addfilelist_t *)ctx, path);
+}
+#endif
+
 #ifdef HAS_ADDONS
 static void D_AddFolder(addfilelist_t *list, const char *file)
 {
@@ -1496,6 +1507,9 @@ void D_SRB2Main(void)
 		INT32 addontype = 0;
 		INT32 i;
 
+#if defined (PS2) && defined (HAS_ADDONS)
+		PS2Addons_Autoload(D_AutoloadAdd, &startuppwads); // PS2-103: <data>/autoload, <home>/autoload, -autoload DIR; before the -file list
+#endif
 		for (i = 1; i < myargc; i++)
 		{
 			if (!strcasecmp(myargv[i], "-file"))

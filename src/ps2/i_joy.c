@@ -144,7 +144,7 @@ static void ConfigurePort(INT32 p)
 // (up down left right cross circle square triangle l1 r1 l2 r2 start select l3 r3) or axis=value (lx ly rx ry, 0..255, 128 = centre). The raw
 // state goes through the same conversion as a real pad (ps2_padmap.c), so the whole path to the engine events is the one that is shipped.
 // -padscript file:NAME reads the list from <HOME>/NAME. A port with a script is "plugged in" whatever libpad says.
-#define SCRIPT_MAX 2048
+#define SCRIPT_MAX 12288 // PS2-141: 20 minutes of two scripted pads (tools/ps2/gen_padscript.py, a step every ~12 polls)
 typedef struct
 {
 	UINT32 frame;
@@ -234,7 +234,7 @@ static void ScriptInit(void)
 	if (M_CheckParm("-padscript") && M_IsNextParm())
 	{
 		const char *arg = M_GetNextParm();
-		const size_t bufsize = 32768;
+		const size_t bufsize = 262144;
 		char *buf = malloc(bufsize);
 
 		script = calloc(SCRIPT_MAX, sizeof *script);

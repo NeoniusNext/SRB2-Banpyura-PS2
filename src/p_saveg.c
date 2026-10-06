@@ -3433,10 +3433,10 @@ static thinker_t* LoadMobjThinker(save_t *save_p, actionf_p1 thinker)
 		mobj->type = P_ReadUINT32(save_p);
 	else
 	{
-		for (i = 0; i < NUMMOBJTYPES; i++)
+		for (i = 0; i < LIMIT_NUMMOBJTYPES; i++)
 			if (mobj->spawnpoint && mobj->spawnpoint->type == mobjinfo[i].doomednum)
 				break;
-		if (i == NUMMOBJTYPES)
+		if (i == LIMIT_NUMMOBJTYPES)
 		{
 			if (mobj->spawnpoint)
 				CONS_Alert(CONS_ERROR, "Found mobj with unknown map thing type %d\n", mobj->spawnpoint->type);

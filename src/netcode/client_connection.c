@@ -41,6 +41,10 @@
 #if defined (__GNUC__) || defined (__unix__)
 #include <unistd.h>
 #endif
+#ifdef PS2_PROFILE
+#include "../ps2/ps2_net.h"
+#define unlink PS2Net_Unlink // PS2-139: the host: device of PCSX2 cannot delete a file (see ps2_net.c)
+#endif
 
 static boolean viewserver_addons = false;
 static boolean viewserver_toggle = false;
@@ -1671,6 +1675,10 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 			break;
 
 		case CL_DOWNLOADHTTPFILES:
+#ifdef PS2_PROFILE
+			if (filedownload.http_running)
+				CURLGetFile(); // PS2-137: no thread - one step of the running download per pass (d_netfil.c)
+#endif
 			waitmore = false;
 			for (int i = filedownload.current; i < fileneedednum; i++)
 			{
@@ -1957,6 +1965,9 @@ void CL_ConnectToServer(void)
 	tic_t oldtic;
 	tic_t asksent;
 	char tmpsave[sizeof srb2home + sizeof(PATHSEP TMPSAVENAME) - 1];
+#ifdef PS2_PROFILE
+	const boolean joining = client; // PS2-138: see the check in the loop below
+#endif
 
 	sprintf(tmpsave, "%s" PATHSEP TMPSAVENAME, srb2home);
 
@@ -2008,6 +2019,16 @@ void CL_ConnectToServer(void)
 		// If the connection was aborted for some reason, leave
 		if (!CL_ServerConnectionTicker(tmpsave, &oldtic, &asksent))
 			return;
+#ifdef PS2_PROFILE
+		// PS2-138: the server stopped answering (or went away) while this client was still joining: CL_HandleTimeout reset the game (server = true,
+		// title screen, "Server Timeout" box) but this loop would wait for a server that is not there until the 5 minute limit - or for ever, since the
+		// limit is only checked in CL_ASKJOIN. A console has no Esc key that a player would think of: the loop ends with the reset.
+		if (joining && server && cl_mode != CL_CONNECTED)
+		{
+			cl_mode = CL_SEARCHING;
+			return;
+		}
+#endif
 
 		if (server)
 		{

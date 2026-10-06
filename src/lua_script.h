@@ -156,6 +156,9 @@ void LUA_PushUserdata(lua_State *L, void *data, const char *meta);
 lpushed_t LUA_RawPushUserdata(lua_State *L, void *data);
 
 void LUA_InvalidateUserdata(void *data);
+#ifdef PS2_DYNLIMITS
+void LUA_RemapUserdata(const void *oldp, void *newp); // PS2-104: a table element moved (PS2Limits_Grow): userdata made before still work
+#endif
 
 void LUA_InvalidateLevel(void);
 void LUA_InvalidateMapthings(void);

@@ -39,7 +39,15 @@
 #include <unistd.h>
 #endif
 
+#ifdef PS2_PROFILE
+#include "../ps2/ps2_net.h"
+#define unlink PS2Net_Unlink // PS2-139: the host: device of PCSX2 cannot delete a file (see ps2_net.c)
+// PS2-126: the buffer grows by realloc (P_Write* in p_saveg.c doubles it): 768 KB up front does not fit the C heap that is left next to the zone
+// arena (the join of a client failed with "No more free memory for savegame" on a PS2 server). The usual save of a level is a few tens of KB.
+#define SAVEGAMESIZE (64*1024)
+#else
 #define SAVEGAMESIZE (768*1024)
+#endif
 
 UINT8 hu_redownloadinggamestate = 0;
 boolean cl_redownloadinggamestate = false;

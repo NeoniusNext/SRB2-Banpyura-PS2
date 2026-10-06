@@ -56,6 +56,7 @@
 #define D2_CHCR ((volatile u32 *)0x1000A000)
 #define D2_MADR ((volatile u32 *)0x1000A010)
 #define D2_QWC ((volatile u32 *)0x1000A020)
+#define D2_TADR ((volatile u32 *)0x1000A030)
 
 // primitive types
 #define PRIM_POINT 0
@@ -109,7 +110,7 @@ static inline u32 phys(const void *p)
 
 // ---- configuration and run-time state ----
 static ps2hwd_config_t cfg = {
-	PS2HWD_VIDEO_AUTO, 0, 0, 1, 0, 1, 0, 3, 320, 200, 0, 0, 0,
+	PS2HWD_VIDEO_AUTO, 0, 0, 1, 0, 1, 0, 3, 320, 200, 0, 0, 0, 0,
 };
 
 #define NBUF 4
@@ -127,6 +128,11 @@ typedef struct
 	u32 stamp;
 	u32 gen; // palette generation it was built from
 } clutent_t;
+
+// OPT8 (PS2-HW-24): footprint caps of one texture in 256-byte blocks. Index 0 = no cap (the GS limit of 1024 texels per axis only).
+// The adaptive controller (tex_cap_control) picks the largest cap whose predicted working set fits the pool.
+#define NCAPS 8
+static const u32 CAPS[NCAPS] = {0u, 4096u, 1024u, 512u, 256u, 128u, 64u, 32u};
 
 typedef struct
 {
@@ -155,6 +161,23 @@ typedef struct
 	int prev, next; // LRU list, indices into the table (-1 = none)
 	u32 uw, vh; // the used part of a screen texture in texels
 	float sxs, sys; // engine texture coordinate -> GS ST scale: w / 2^tw, h / 2^th (1 for power of two sizes)
+	u16 sw, sh; // OPT8: the engine's size of the texture (the stored size is w x h = sw >> dx, sh >> dy)
+	u8 dx, dy; // decimation shifts of the stored texture
+	u8 capi; // footprint cap index (CAPS[]) the stored plan was made for
+	u8 pad2;
+	u16 fp[NCAPS]; // footprint in blocks the texture would take under each cap (working set prediction)
+	// OPT9 (PS2-HW-30): one VRAM image for the CLUT variants of a map texture / flat (chroma keyed or not): the variants are separate records
+	// (own owner, clut, flags) and only the first one owns the blocks.
+	int share; // NOREC = this record owns its blocks (the image); else the owning record (this one is a view: same blk/tbw/psm, nblk = size of the image)
+	int sec; // owner: first view of the image
+	int sec_next; // view: next view of the same image
+	u8 has255; // owner: the image has texels of index 255 (holes under the keyed CLUT)
+	u8 shareable; // owner: P_8 data of a map texture or flat: views for the other variants may share it
+	u8 dmapend; // zero-copy upload (PS2-HW-32): the image data is read by queued DMA
+	u8 pad3;
+	u32 imgws; // owner: frame_no + 1 of the last frame in which a draw used the image (through any of its records)
+	u32 lodfr; // owner: frame_no + 1 of the frame lod belongs to
+	u8 lod; // owner: the finest mip level (0 = full size) a polygon of the frame needed (instrumentation, PS2-HW-34)
 } texrec_t;
 
 #define NOREC (-1)
@@ -199,7 +222,14 @@ static struct
 	// DMA ring
 	qw_t *ring[NBUF];
 	int cur;
-	u32 wr; // qwords used in ring[cur]
+	u32 wr; // qwords used in ring[cur] (OPT9: the first one is the DMA tag of the first run)
+	u32 run; // OPT9 (PS2-HW-32): index in ring[cur] of the tag of the open DMA run (the buffer is a source chain: runs of inline data and references to engine data)
+	u32 q_seq; // transfers queued (FIFO)
+	volatile u32 done_seq; // transfers completed: buffer i is free when buf_seq[i] <= done_seq
+	u32 buf_seq[NBUF];
+	int gate; // OPT9 (PS2-HW-35): the EE prepares the next frame while the GS finishes and shows the previous one (buffers of the next frame are held until the flip)
+	u32 fid, pend_fid; // frame id of the open frame / of the finished frame waiting for its flip
+	u32 q_fid[NBUF]; // frame id of each queued buffer
 	volatile int pending; // buffers queued or in flight
 	volatile int dma_busy;
 	int dma_cur;
@@ -243,6 +273,14 @@ static struct
 	void *scr_data[NSCR]; // lossless EE backing for captures spilled out of VRAM (aligned 64)
 	u32 screen_bytes, screen_peak_bytes;
 	u32 tex_cap_blocks; // footprint cap of one texture in blocks (0 = none): bigger ones are stored decimated
+	int cap_adapt; // 1 = the controller (tex_cap_control) chooses tex_cap_blocks from the working set; 0 = fixed (config)
+	int cap_idx; // index into CAPS[] of the cap in force (adaptive mode)
+	u32 cap_gen; // bumped when the cap changes: textures stored under an older cap are re-made when they are drawn
+	u32 pred[NCAPS]; // this frame: footprint sum of the textures drawn so far, as if every one were stored under cap k
+	u32 pred_frame; // frame_no + 1 the sums belong to
+	int cap_up_count; // frames in a row in which a larger cap would have fitted
+	int cap_down_count; // frames in a row in which the working set did not fit
+	u32 upg_blocks; // blocks of textures re-made at a larger size in this frame (budget)
 	int tex_filter; // HWD_SET_TEXTUREFILTER_*
 	u32 pal[256]; // GS CLUT entries, 0x00BBGGRR, no alpha, in index order
 	int pal_set;
@@ -275,6 +313,37 @@ static struct
 } H __attribute__((aligned(16)));
 
 int ps2hwd_dbg_flags;
+
+// -hwdbg flags of the texture manager (OPT9, HT); bits below 0x100000 belong to the other HW agents and the host tests
+#define HWDBG_TEX 0x100000 // HWTEX lines every 105 frames (texture statistics, instrumentation of the working set)
+#define HWDBG_NOZC 0x200000 // no zero-copy uploads (DMA references): the texels are copied into the ring
+#define HWDBG_BATCHORDER 0x400000 // HWBO lines: the textures of one frame per window in the order the batches draw them (hit / upload)
+#define HWDBG_NOGATE 0x800000 // the old frame start: wait for the flip of the previous frame before drawing the next one
+#define HWDBG_COMPOSE 0x1000000 // hw_cache.c: every composed P_8 texture is checked against the original column loops
+#define HWDBG_NOPLAN 0x2000000 // no frame plan: every texture is stored at full size
+
+#define PLAN_MIN_TEXELS 65536u // PS2-HW-34: smaller textures are always stored at full size: their share of the working set is small and the estimate costs cycles
+#define PLAN_FULL_KEEP 150 // frames a texture that was drawn unplanned keeps its full size in the plans
+
+// OPT9 (HT): texture statistics of the window of 105 frames; printed as HWTEX lines when ps2hwd_dbg_flags has bit 1024 (-hwdbg 1024)
+typedef struct
+{
+	u32 frames;
+	u32 shared; // views made (the other CLUT variant of a resident image: no upload)
+	u32 up_n[4], up_blk[4]; // uploads by kind: 0 map texture, 1 flat, 2 patch or other 8-bit, 3 direct colour
+	u32 reup_n, reup_blk; // uploads of a texture that was uploaded already in the same frame (evicted in between)
+	u32 regen_n, regen_cyc; // data the engine had to make again at draw time
+	u32 up_cyc; // EE cycles of the uploads (conversion / copy / tags)
+	u32 need_blk, need_n; // images drawn per frame, summed over the window
+	u32 zc_n, zc_blk; // uploads made by DMA reference (zero copy)
+	u32 sync_cyc; // EE cycles of SyncDCache for those
+	u32 dmawait_cyc;
+	u32 lod_blk, lod_lvl[6]; // blocks of the working set if every image were stored at the level the frame needs; per level
+	u32 lvl_up[6]; // uploads of images stored at a mip level (1..5), PS2-HW-34
+	u32 upgrades; // images made again at a finer level than they were stored at
+	u32 invisible; // textures not uploaded: no polygon of the frame can see them
+} txstats_t;
+static txstats_t TX;
 
 enum
 {

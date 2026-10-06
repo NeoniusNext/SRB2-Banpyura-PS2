@@ -24,6 +24,7 @@
 #include "../m_argv.h"
 #include "../s_sound.h"
 #include "../g_game.h"
+#include "../p_tick.h" // leveltime (software-only build; the HW build gets it through hw_main.h)
 #include "../f_finale.h"
 #include "../i_video.h"
 #include "../console.h"
@@ -218,11 +219,22 @@ static boolean Impl_HWAcquire(void)
 		c.screen_w = vid.width;
 		c.screen_h = vid.height;
 		c.linear = M_CheckParm("-linear") ? 1 : 0;
+		c.tex_adapt = 1; // PS2-HW-24: the footprint cap follows the working set ...
 		if (M_CheckParm("-hwtexcap") && M_IsNextParm())
-			c.tex_cap_blocks = (unsigned int)atoi(M_GetNextParm()); // PS2-HW-20: footprint cap of one texture (256-byte blocks), 0 = none
+		{
+			c.tex_cap_blocks = (unsigned int)atoi(M_GetNextParm()); // PS2-HW-20: ... unless a fixed footprint cap of one texture (256-byte blocks, 0 = none) is given
+			c.tex_adapt = 0;
+		}
 		PS2HWD_Configure(&c);
-		PS2HWD_SetTrace((M_CheckParm("-hwtrace") && M_IsNextParm()) ? atoi(M_GetNextParm()) : -1,
-			(M_CheckParm("-hwdbg") && M_IsNextParm()) ? atoi(M_GetNextParm()) : 0); // PS2-HW-22: diagnostics (frame whose draws are traced, ps2hwd_dbg_flags)
+		{
+			INT32 trace = -1, dbg = 0; // PS2-HW-22: diagnostics (frame whose draws are traced, ps2hwd_dbg_flags). PS2-HW-60: one parameter after the other: the old call evaluated both
+			// M_CheckParm()s before the M_GetNextParm()s (the argument order is unspecified; they share one cursor) and lost -hwdbg when -hwtrace was absent
+			if (M_CheckParm("-hwtrace") && M_IsNextParm())
+				trace = atoi(M_GetNextParm());
+			if (M_CheckParm("-hwdbg") && M_IsNextParm())
+				dbg = atoi(M_GetNextParm());
+			PS2HWD_SetTrace(trace, dbg);
+		}
 	}
 	ps2gs_shutdown();
 	if (!HWD.pfnInit())
@@ -863,6 +875,7 @@ static void Impl_DumpHW(void)
 static void Impl_HWProf(void)
 {
 	static INT32 frames, windows;
+	static unsigned int hwprof_vbl0; // vblank counter at the end of the previous window (st.vblanks is a running count)
 	static UINT32 last_count;
 	static UINT64 wall;
 	UINT32 now = ps2hwp_now();
@@ -877,14 +890,22 @@ static void Impl_HWProf(void)
 		PS2HWD_DumpWorkingSet();
 	PS2HWD_GetStats(&st, 1);
 	PS2HWD_GetInfo(&info);
-	CONS_Printf("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u\n",
+	CONS_Printf("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u vbl=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u cap=%u pred=%u capchg=%u restamp=%u decim=%u\n",
 		(int)windows, (int)frames, (unsigned)(wall / frames),
 		(unsigned)(ps2hwp_cyc[HWP_CLEAR] / frames), (unsigned)(ps2hwp_cyc[HWP_BSP] / frames), (unsigned)(ps2hwp_cyc[HWP_BATCH] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_SPRITES] / frames), (unsigned)(ps2hwp_cyc[HWP_NODES] / frames), (unsigned)(ps2hwp_cyc[HWP_POST] / frames),
-		st.cyc_draw / frames, st.cyc_tex / frames, st.cyc_wait / frames, st.cyc_finish,
+		st.cyc_draw / frames, st.cyc_tex / frames, st.cyc_wait / frames, st.cyc_flipwait / frames, st.vblanks - hwprof_vbl0, st.cyc_finish,
 		st.polys / frames, st.verts_in / frames, st.verts_out / frames, st.clipped / frames, st.rejected / frames, st.qwords / frames,
 		st.state_writes / frames, st.passes / frames, st.bands / frames, st.uploads, st.upload_bytes, st.evictions, st.clut_uploads, st.dma_kicks / frames,
-		st.dma_waits, st.frame_waits, st.dropped, st.tex_regen, st.tex_missing, st.tex_skipped, st.ws_blocks / frames, st.ws_tex / frames, info.pool_used_blocks, info.pool_blocks);
+		st.dma_waits, st.frame_waits, st.dropped, st.tex_regen, st.tex_missing, st.tex_skipped, st.ws_blocks / frames, st.ws_tex / frames, info.pool_used_blocks, info.pool_blocks,
+		st.cap_blocks, st.pred_ws, st.cap_changes, st.tex_restamped, st.tex_decimated);
+	hwprof_vbl0 = st.vblanks;
+	// PS2-HW-40 (OPT9, HG): finer spans of hardware/hw_main.c (inclusive, some nested in the phases above)
+	CONS_Printf("HWPROF2 win=%d setup=%u sky=%u seg=%u plane=%u addspr=%u subsec=%u light=%u sprsort=%u sprdraw=%u nodesort=%u nodedraw=%u\n", (int)windows,
+		(unsigned)(ps2hwp_cyc[HWP_SETUP] / frames), (unsigned)(ps2hwp_cyc[HWP_SKY] / frames), (unsigned)(ps2hwp_cyc[HWP_SEG] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_PLANE] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames), (unsigned)(ps2hwp_cyc[HWP_SUBSEC] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);
 	wall = 0;
 	frames = 0;
@@ -1024,6 +1045,9 @@ static void Impl_VidKeys(void)
 		else if (!strcmp(kn, "lshift")) key = KEY_LSHIFT;
 		else if (!strcmp(kn, "f10")) key = KEY_F10;
 		else if (!strcmp(kn, "f11")) key = KEY_F11;
+		else if (!strcmp(kn, "console")) key = '`'; // PS2-HW-60: the console key
+		else if (!strcmp(kn, "f1")) key = KEY_F1;
+		else if (!strcmp(kn, "f2")) key = KEY_F2;
 		else if (kn[0] >= 'a' && kn[0] <= 'z' && !kn[1]) key = kn[0];
 		else
 			I_Error("-vidkeys: unknown key '%s'", kn);
@@ -1048,8 +1072,11 @@ static void Impl_VidKeys(void)
 static void Impl_VidShot(void)
 {
 	static boolean parsed;
-	static char spec[128];
-	static INT32 titlen, leveln, anyn, left, done;
+	static char spec[1536];
+	static INT32 titlen, leveln, anyn, wipen, left, done;
+	static INT32 knext;
+	static boolean klow = true;
+	INT32 kord = 0;
 	const char *p;
 
 	if (!parsed)
@@ -1058,16 +1085,24 @@ static void Impl_VidShot(void)
 		if (M_CheckParm("-vidshot") && M_IsNextParm())
 		{
 			strlcpy(spec, M_GetNextParm(), sizeof spec);
-			for (p = spec; *p; p++)
-				left += (*p == 't' || *p == 'l' || *p == 'f');
+			for (p = spec; *p;) // one shot per item 't35' / 'l70' / 'f200' (an optional '=command' follows the number)
+			{
+				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w');
+				while (*p && *p != ',')
+					p++;
+				if (*p == ',')
+					p++;
+			}
 		}
 	}
 	if (!left)
 		return;
 	anyn++;
+	if (gamestate == GS_LEVEL && leveltime < 20)
+		klow = true;
 	if (WipeInAction)
-		return;
-	if (gamestate == GS_TITLESCREEN)
+		wipen++; // w5 = the 5th frame drawn while a screen wipe runs (PS2-HW-60)
+	else if (gamestate == GS_TITLESCREEN)
 		titlen++;
 	else if (gamestate == GS_LEVEL)
 		leveln++;
@@ -1076,17 +1111,36 @@ static void Impl_VidShot(void)
 		const char kind = *p++;
 		INT32 n = 0, hit;
 		char tag[24];
+		char cmd[64];
+		size_t cl = 0;
 
 		while (*p >= '0' && *p <= '9')
 			n = n * 10 + (*p++ - '0');
+		cmd[0] = '\0';
+		if (*p == '=') // PS2-HW-23: l100=map~2 -> console command ('~' = space) after the shot (several maps in one run)
+		{
+			for (p++; *p && *p != ',' && cl < sizeof cmd - 2; p++)
+				cmd[cl++] = *p == '~' ? ' ' : *p;
+			cmd[cl++] = '\n';
+			cmd[cl] = '\0';
+		}
 		while (*p && *p != ',')
 			p++;
 		if (*p == ',')
 			p++;
-		hit = (kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn);
+		hit = (kind == 'w' && WipeInAction && n == wipen)
+			|| (!WipeInAction && ((kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn)))
+			|| (!WipeInAction && (kind == 'k' || kind == 'K') && kord++ == knext && gamestate == GS_LEVEL && (INT32)leveltime >= n && (klow || kind == 'k')); // PS2-HW-60: k300 = first frame with leveltime >= 300, K300 = the same but only in a level that started after the previous shot; k/K items fire in order (the same tic as the PC reference at any frame rate)
+		if (hit && (kind == 'k' || kind == 'K'))
+		{
+			knext++;
+			klow = false; // the next K shot waits for the next level (leveltime restarts)
+		}
 		if (!hit)
 			continue;
 		snprintf(tag, sizeof tag, "%c%d", kind, (int)n);
+		if (kind == 'k' || kind == 'K')
+			snprintf(tag, sizeof tag, "k%d_%d", (int)n, (int)knext - 1); // the order of the shot: the same tic of several maps
 		{
 			char path[256];
 			UINT8 *row = malloc((size_t)vid.width * 3);
@@ -1130,6 +1184,8 @@ static void Impl_VidShot(void)
 			free(hwrgb);
 			CONS_Printf("VIDSHOT %s %dx%d output=%s fit=%s gamestate=%d saved %s\n", tag, (int)vid.width, (int)vid.height,
 				ps2gs_is_up() ? ps2vm_output(ps2gs_mode())->name : "-", cv_vidfit.string ? cv_vidfit.string : "?", (int)gamestate, path);
+			if (cmd[0])
+				COM_BufAddText(cmd);
 			if (++done >= left)
 			{
 				CONS_Printf("VIDSHOT COMPLETE %d\n", (int)done);

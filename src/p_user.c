@@ -4037,7 +4037,7 @@ static void P_DoTeeter(player_t *player)
 				offset = by*bmapwidth + bx;
 
 				// haleyjd 02/22/06: consider polyobject lines
-				plink = polyblocklinks[offset];
+				plink = POLYBLOCKLINK(offset);
 
 				while (plink)
 				{
@@ -10374,7 +10374,7 @@ boolean P_MoveChaseCamera(player_t *player, camera_t *thiscam, boolean resetcall
 				offset = by*bmapwidth + bx;
 
 				// haleyjd 02/22/06: consider polyobject lines
-				plink = polyblocklinks[offset];
+				plink = POLYBLOCKLINK(offset);
 
 				while (plink)
 				{

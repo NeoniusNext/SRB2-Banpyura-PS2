@@ -51,6 +51,8 @@ unsigned long long ps2hwp_cyc[HWP_NUM];
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
+#define HWP_SPAN_BEGIN(name) ((void)0)
+#define HWP_SPAN_END(name, idx) ((void)0)
 #endif
 
 // ==========================================================================
@@ -144,6 +146,7 @@ static boolean HWR_IsWireframeMode(void)
 void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap)
 {
 	RGBA_t poly_color, tint_color, fade_color;
+	HWP_SPAN_BEGIN(hwp_tlight);
 
 	poly_color.rgba = 0xFFFFFFFF;
 	tint_color.rgba = (colormap != NULL) ? (UINT32)colormap->rgba : 0x00000000;
@@ -226,6 +229,7 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 		Surface->LightTableId = HWR_GetLightTableID(colormap);
 	else
 		Surface->LightTableId = 0;
+	HWP_SPAN_END(hwp_tlight, HWP_LIGHT);
 }
 
 UINT8 HWR_FogBlockAlpha(INT32 light, extracolormap_t *colormap) // Let's see if this can work
@@ -343,27 +347,27 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, angle_t dir, fixed_t delta)
 
 static UINT8 HWR_SideLightLevel(side_t *side, INT16 base_lightlevel)
 {
-	return (max(max(0, cv_secbright.value), min(255, side->light +
-		((side->lightabsolute) ? 0 : base_lightlevel))));
+	return (max(max(0, cv_secbright.value), min(255, SIDE_LIGHT(side) +
+		((SIDE_LIGHTABSOLUTE(side)) ? 0 : base_lightlevel))));
 }
 
 /* TODO: implement per-texture lighting
 static UINT8 HWR_TopLightLevel(side_t *side, INT16 base_lightlevel)
 {
-	return max(0, min(255, side->light_top +
-		((side->lightabsolute_top) ? 0 : HWR_SideLightLevel(side, base_lightlevel))));
+	return max(0, min(255, SIDE_LIGHT_TOP(side) +
+		((SIDE_LIGHTABSOLUTE_TOP(side)) ? 0 : HWR_SideLightLevel(side, base_lightlevel))));
 }
 
 static UINT8 HWR_MidLightLevel(side_t *side, INT16 base_lightlevel)
 {
-	return max(0, min(255, side->light_mid +
-		((side->lightabsolute_mid) ? 0 : HWR_SideLightLevel(side, base_lightlevel))));
+	return max(0, min(255, SIDE_LIGHT_MID(side) +
+		((SIDE_LIGHTABSOLUTE_MID(side)) ? 0 : HWR_SideLightLevel(side, base_lightlevel))));
 }
 
 static UINT8 HWR_BottomLightLevel(side_t *side, INT16 base_lightlevel)
 {
-	return max(0, min(255, side->light_bottom +
-		((side->lightabsolute_bottom) ? 0 : HWR_SideLightLevel(side, base_lightlevel))));
+	return max(0, min(255, SIDE_LIGHT_BOTTOM(side) +
+		((SIDE_LIGHTABSOLUTE_BOTTOM(side)) ? 0 : HWR_SideLightLevel(side, base_lightlevel))));
 }
 */
 
@@ -651,6 +655,16 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	HWR_PlaneLighting(planeVerts, nrPlaneVerts);
 #endif
 }
+
+#ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the plane builder (HWPROF2 "plane")
+static void HWR_RenderPlaneTimed(subsector_t *subsector, extrasubsector_t *xsub, boolean isceiling, fixed_t fixedheight, FBITFIELD PolyFlags, INT32 lightlevel, levelflat_t *levelflat, sector_t *FOFsector, UINT8 alpha, extracolormap_t *planecolormap)
+{
+	HWP_SPAN_BEGIN(t);
+	HWR_RenderPlane(subsector, xsub, isceiling, fixedheight, PolyFlags, lightlevel, levelflat, FOFsector, alpha, planecolormap);
+	HWP_SPAN_END(t, HWP_PLANE);
+}
+#define HWR_RenderPlane HWR_RenderPlaneTimed
+#endif
 
 FBITFIELD HWR_GetBlendModeFlag(INT32 style)
 {
@@ -1006,7 +1020,7 @@ static void HWR_RenderMidtexture(INT32 gl_midtexture, float cliplow, float cliph
 	else
 		back = gl_linedef->backsector;
 
-	fixed_t texheight = FixedDiv(textureheight[gl_midtexture], abs(gl_sidedef->scaley_mid));
+	fixed_t texheight = FixedDiv(textureheight[gl_midtexture], abs(SIDE_SCALEY_MID(gl_sidedef)));
 	INT32 repeats;
 
 	if (gl_sidedef->repeatcnt)
@@ -1033,8 +1047,8 @@ static void HWR_RenderMidtexture(INT32 gl_midtexture, float cliplow, float cliph
 		repeats = 1;
 
 	GLMapTexture_t *grTex = HWR_GetTexture(gl_midtexture, true);
-	float xscale = FixedToFloat(gl_sidedef->scalex_mid);
-	float yscale = FixedToFloat(gl_sidedef->scaley_mid);
+	float xscale = FixedToFloat(SIDE_SCALEX_MID(gl_sidedef));
+	float yscale = FixedToFloat(SIDE_SCALEY_MID(gl_sidedef));
 
 	// SoM: a little note: popentop and popenbottom
 	// record the limits the texture can be displayed in.
@@ -1064,7 +1078,7 @@ static void HWR_RenderMidtexture(INT32 gl_midtexture, float cliplow, float cliph
 	// Find the wall's coordinates
 	fixed_t midtexheight = texheight * repeats;
 
-	fixed_t rowoffset = FixedDiv(gl_sidedef->rowoffset + gl_sidedef->offsety_mid, abs(gl_sidedef->scaley_mid));
+	fixed_t rowoffset = FixedDiv(gl_sidedef->rowoffset + SIDE_OFFSETY_MID(gl_sidedef), abs(SIDE_SCALEY_MID(gl_sidedef)));
 
 	// Texture is not skewed
 	if (gl_linedef->flags & ML_NOSKEW)
@@ -1143,12 +1157,12 @@ static void HWR_RenderMidtexture(INT32 gl_midtexture, float cliplow, float cliph
 	// Left side
 	wallVerts[3].t = texturevpeg * yscale * grTex->scaleY;
 	wallVerts[0].t = (h - l + texturevpeg) * yscale * grTex->scaleY;
-	wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + gl_sidedef->textureoffset + gl_sidedef->offsetx_mid) * grTex->scaleX;
+	wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + gl_sidedef->textureoffset + SIDE_OFFSETX_MID(gl_sidedef)) * grTex->scaleX;
 
 	// Right side
 	wallVerts[2].t = texturevpegslope * yscale * grTex->scaleY;
 	wallVerts[1].t = (hS - lS + texturevpegslope) * yscale * grTex->scaleY;
-	wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + gl_sidedef->textureoffset + gl_sidedef->offsetx_mid) * grTex->scaleX;
+	wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + gl_sidedef->textureoffset + SIDE_OFFSETX_MID(gl_sidedef)) * grTex->scaleX;
 
 	// set top/bottom coords
 	// Take the texture peg into account, rather than changing the offsets past
@@ -1292,14 +1306,14 @@ static void HWR_ProcessSeg(void)
 		if ((worldhighslope < worldtopslope || worldhigh < worldtop) && gl_toptexture)
 		{
 			grTex = HWR_GetTexture(gl_toptexture, false);
-			xscale = FixedToFloat(abs(gl_sidedef->scalex_top));
-			yscale = FixedToFloat(abs(gl_sidedef->scaley_top));
+			xscale = FixedToFloat(abs(SIDE_SCALEX_TOP(gl_sidedef)));
+			yscale = FixedToFloat(abs(SIDE_SCALEY_TOP(gl_sidedef)));
 
-			fixed_t offsetx_top = gl_sidedef->textureoffset + gl_sidedef->offsetx_top;
+			fixed_t offsetx_top = gl_sidedef->textureoffset + SIDE_OFFSETX_TOP(gl_sidedef);
 
 			float left = cliplow * xscale;
 			float right = cliphigh * xscale;
-			if (gl_sidedef->scalex_top < 0)
+			if (SIDE_SCALEX_TOP(gl_sidedef) < 0)
 			{
 				left = -left;
 				right = -right;
@@ -1307,7 +1321,7 @@ static void HWR_ProcessSeg(void)
 			}
 
 			fixed_t texheight = textureheight[gl_toptexture];
-			fixed_t texheightscaled = FixedDiv(texheight, abs(gl_sidedef->scaley_top));
+			fixed_t texheightscaled = FixedDiv(texheight, abs(SIDE_SCALEY_TOP(gl_sidedef)));
 
 			// PEGGING
 			// FIXME: This is probably not correct?
@@ -1320,10 +1334,10 @@ static void HWR_ProcessSeg(void)
 
 			texturevpeg *= yscale;
 
-			if (gl_sidedef->scaley_top < 0)
-				texturevpeg -= gl_sidedef->rowoffset + gl_sidedef->offsety_top;
+			if (SIDE_SCALEY_TOP(gl_sidedef) < 0)
+				texturevpeg -= gl_sidedef->rowoffset + SIDE_OFFSETY_TOP(gl_sidedef);
 			else
-				texturevpeg += gl_sidedef->rowoffset + gl_sidedef->offsety_top;
+				texturevpeg += gl_sidedef->rowoffset + SIDE_OFFSETY_TOP(gl_sidedef);
 
 			// This is so that it doesn't overflow and screw up the wall, it doesn't need to go higher than the texture's height anyway
 			texturevpeg %= texheightscaled;
@@ -1356,7 +1370,7 @@ static void HWR_ProcessSeg(void)
 				wallVerts[2].t = wallVerts[1].t - (worldtopslope - worldhighslope) * yscale * grTex->scaleY;
 			}
 
-			if (gl_sidedef->scaley_top < 0)
+			if (SIDE_SCALEY_TOP(gl_sidedef) < 0)
 			{
 				wallVerts[0].t = -wallVerts[0].t;
 				wallVerts[1].t = -wallVerts[1].t;
@@ -1382,14 +1396,14 @@ static void HWR_ProcessSeg(void)
 		if ((worldlowslope > worldbottomslope || worldlow > worldbottom) && gl_bottomtexture)
 		{
 			grTex = HWR_GetTexture(gl_bottomtexture, false);
-			xscale = FixedToFloat(abs(gl_sidedef->scalex_bottom));
-			yscale = FixedToFloat(abs(gl_sidedef->scaley_bottom));
+			xscale = FixedToFloat(abs(SIDE_SCALEX_BOTTOM(gl_sidedef)));
+			yscale = FixedToFloat(abs(SIDE_SCALEY_BOTTOM(gl_sidedef)));
 
-			fixed_t offsetx_bottom = gl_sidedef->textureoffset + gl_sidedef->offsetx_bottom;
+			fixed_t offsetx_bottom = gl_sidedef->textureoffset + SIDE_OFFSETX_BOTTOM(gl_sidedef);
 
 			float left = cliplow * xscale;
 			float right = cliphigh * xscale;
-			if (gl_sidedef->scalex_bottom < 0)
+			if (SIDE_SCALEX_BOTTOM(gl_sidedef) < 0)
 			{
 				left = -left;
 				right = -right;
@@ -1406,13 +1420,13 @@ static void HWR_ProcessSeg(void)
 
 			texturevpeg *= yscale;
 
-			if (gl_sidedef->scaley_bottom < 0)
-				texturevpeg -= gl_sidedef->rowoffset + gl_sidedef->offsety_bottom;
+			if (SIDE_SCALEY_BOTTOM(gl_sidedef) < 0)
+				texturevpeg -= gl_sidedef->rowoffset + SIDE_OFFSETY_BOTTOM(gl_sidedef);
 			else
-				texturevpeg += gl_sidedef->rowoffset + gl_sidedef->offsety_bottom;
+				texturevpeg += gl_sidedef->rowoffset + SIDE_OFFSETY_BOTTOM(gl_sidedef);
 
 			// This is so that it doesn't overflow and screw up the wall, it doesn't need to go higher than the texture's height anyway
-			texturevpeg %= FixedDiv(textureheight[gl_bottomtexture], abs(gl_sidedef->scaley_bottom));
+			texturevpeg %= FixedDiv(textureheight[gl_bottomtexture], abs(SIDE_SCALEY_BOTTOM(gl_sidedef)));
 
 			wallVerts[3].t = wallVerts[2].t = texturevpeg * grTex->scaleY;
 			wallVerts[0].t = wallVerts[1].t = (texturevpeg + (gl_backsector->floorheight - gl_frontsector->floorheight) * yscale) * grTex->scaleY;
@@ -1441,7 +1455,7 @@ static void HWR_ProcessSeg(void)
 				wallVerts[1].t = (texturevpeg + (worldlowslope - worldbottomslope) * yscale) * grTex->scaleY;
 			}
 
-			if (gl_sidedef->scaley_bottom < 0)
+			if (SIDE_SCALEY_BOTTOM(gl_sidedef) < 0)
 			{
 				wallVerts[0].t = -wallVerts[0].t;
 				wallVerts[1].t = -wallVerts[1].t;
@@ -1496,8 +1510,8 @@ static void HWR_ProcessSeg(void)
 		if (gl_midtexture && gl_linedef->special != SPECIAL_HORIZON_LINE) // (Ignore horizon line for OGL)
 		{
 			grTex = HWR_GetTexture(gl_midtexture, false);
-			xscale = FixedToFloat(gl_sidedef->scalex_mid);
-			yscale = FixedToFloat(gl_sidedef->scaley_mid);
+			xscale = FixedToFloat(SIDE_SCALEX_MID(gl_sidedef));
+			yscale = FixedToFloat(SIDE_SCALEY_MID(gl_sidedef));
 
 			fixed_t texturevpeg;
 
@@ -1510,12 +1524,12 @@ static void HWR_ProcessSeg(void)
 				// top of texture at top
 				texturevpeg = 0;
 
-			texturevpeg += gl_sidedef->rowoffset + gl_sidedef->offsety_mid;
+			texturevpeg += gl_sidedef->rowoffset + SIDE_OFFSETY_MID(gl_sidedef);
 
 			wallVerts[3].t = wallVerts[2].t = texturevpeg * grTex->scaleY;
 			wallVerts[0].t = wallVerts[1].t = (texturevpeg + gl_frontsector->ceilingheight - gl_frontsector->floorheight) * grTex->scaleY;
-			wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + gl_sidedef->textureoffset + gl_sidedef->offsetx_mid) * grTex->scaleX;
-			wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + gl_sidedef->textureoffset + gl_sidedef->offsetx_mid) * grTex->scaleX;
+			wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + gl_sidedef->textureoffset + SIDE_OFFSETX_MID(gl_sidedef)) * grTex->scaleX;
+			wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + gl_sidedef->textureoffset + SIDE_OFFSETX_MID(gl_sidedef)) * grTex->scaleX;
 
 			// Texture correction for slopes
 			if (gl_linedef->flags & ML_NOSKEW) {
@@ -1578,7 +1592,7 @@ static void HWR_ProcessSeg(void)
 		// Used for height comparisons and etc across FOFs and slopes
 		fixed_t high1, highslope1, low1, lowslope1;
 
-		fixed_t texturehpeg = gl_sidedef->textureoffset + gl_sidedef->offsetx_mid;
+		fixed_t texturehpeg = gl_sidedef->textureoffset + SIDE_OFFSETX_MID(gl_sidedef);
 
 		INT32 texnum;
 
@@ -1667,11 +1681,11 @@ static void HWR_ProcessSeg(void)
 					// Wow, how was this missing from OpenGL for so long?
 					// ...Oh well, anyway, Lower Unpegged now changes pegging of FOFs like in software
 					// -- Monster Iestyn 26/06/18
-					fixed_t texturevpeg = side->rowoffset + side->offsety_mid;
+					fixed_t texturevpeg = side->rowoffset + SIDE_OFFSETY_MID(side);
 
 					grTex = HWR_GetTexture(texnum, true);
-					xscale = FixedToFloat(side->scalex_mid);
-					yscale = FixedToFloat(side->scaley_mid);
+					xscale = FixedToFloat(SIDE_SCALEX_MID(side));
+					yscale = FixedToFloat(SIDE_SCALEY_MID(side));
 
 					if (!do_texture_skew) // no skewing
 					{
@@ -1699,8 +1713,8 @@ static void HWR_ProcessSeg(void)
 						}
 					}
 
-					wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + texturehpeg + side->offsetx_mid) * grTex->scaleX;
-					wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + texturehpeg + side->offsetx_mid) * grTex->scaleX;
+					wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + texturehpeg + SIDE_OFFSETX_MID(side)) * grTex->scaleX;
+					wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + texturehpeg + SIDE_OFFSETX_MID(side)) * grTex->scaleX;
 				}
 
 				FBITFIELD blendmode;
@@ -1824,11 +1838,11 @@ static void HWR_ProcessSeg(void)
 					// Wow, how was this missing from OpenGL for so long?
 					// ...Oh well, anyway, Lower Unpegged now changes pegging of FOFs like in software
 					// -- Monster Iestyn 26/06/18
-					fixed_t texturevpeg = side->rowoffset + side->offsety_mid;
+					fixed_t texturevpeg = side->rowoffset + SIDE_OFFSETY_MID(side);
 
 					grTex = HWR_GetTexture(texnum, true);
-					xscale = FixedToFloat(side->scalex_mid);
-					yscale = FixedToFloat(side->scaley_mid);
+					xscale = FixedToFloat(SIDE_SCALEX_MID(side));
+					yscale = FixedToFloat(SIDE_SCALEY_MID(side));
 
 					if (!do_texture_skew) // no skewing
 					{
@@ -1856,8 +1870,8 @@ static void HWR_ProcessSeg(void)
 						}
 					}
 
-					wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + texturehpeg + side->offsetx_mid) * grTex->scaleX;
-					wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + texturehpeg + side->offsetx_mid) * grTex->scaleX;
+					wallVerts[0].s = wallVerts[3].s = ((cliplow * xscale) + texturehpeg + SIDE_OFFSETX_MID(side)) * grTex->scaleX;
+					wallVerts[2].s = wallVerts[1].s = ((cliphigh * xscale) + texturehpeg + SIDE_OFFSETX_MID(side)) * grTex->scaleX;
 				}
 
 				FBITFIELD blendmode;
@@ -1903,6 +1917,16 @@ static void HWR_ProcessSeg(void)
 #undef SLOPEPARAMS
 //Hurdler: end of 3d-floors test
 }
+
+#ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the wall builder (HWPROF2 "seg")
+static void HWR_ProcessSegTimed(void)
+{
+	HWP_SPAN_BEGIN(t);
+	HWR_ProcessSeg();
+	HWP_SPAN_END(t, HWP_SEG);
+}
+#define HWR_ProcessSeg HWR_ProcessSegTimed
+#endif
 
 // From PrBoom:
 //
@@ -2671,7 +2695,11 @@ static void HWR_Subsector(size_t num)
 	{
 		// draw sprites first, coz they are clipped to the solidsegs of
 		// subsectors more 'in front'
-		HWR_AddSprites(gl_frontsector);
+		{
+			HWP_SPAN_BEGIN(tspr);
+			HWR_AddSprites(gl_frontsector);
+			HWP_SPAN_END(tspr, HWP_ADDSPR);
+		}
 
 		//Hurdler: at this point validcount must be the same, but is not because
 		//         gl_frontsector doesn't point anymore to sub->sector due to
@@ -2716,12 +2744,16 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 		if (bspnum == -1)
 		{
 			//*(gl_drawsubsector_p++) = 0;
+			HWP_SPAN_BEGIN(tsub);
 			HWR_Subsector(0);
+			HWP_SPAN_END(tsub, HWP_SUBSEC);
 		}
 		else
 		{
 			//*(gl_drawsubsector_p++) = bspnum&(~NF_SUBSECTOR);
+			HWP_SPAN_BEGIN(tsub);
 			HWR_Subsector(bspnum&(~NF_SUBSECTOR));
+			HWP_SPAN_END(tsub, HWP_SUBSEC);
 		}
 		return;
 	}
@@ -4172,6 +4204,30 @@ static void HWR_CreateDrawNodes(void)
 	// Dump EVERYTHING into a huge drawnode list. Then we'll sort it!
 	// Could this be optimized into _AddTransparentWall/_AddTransparentPlane?
 	// Hell yes! But sort algorithm must be modified to use a linked list.
+#ifdef PS2_PROFILE // PS2-HW-40: persistent work arrays instead of two PU_STATIC zone blocks per frame (every one of them walked the arena: Z_MoveFrontier, 1..7 M cycles a frame)
+	{
+		static gl_drawnode_t *dn_buf;
+		static size_t *di_buf;
+		static size_t dn_cap;
+		const size_t need = numplanes + numpolyplanes + numwalls;
+
+		if (need > dn_cap)
+		{
+			size_t cap = dn_cap ? dn_cap : 128;
+
+			while (cap < need)
+				cap += cap / 2;
+			dn_buf = realloc(dn_buf, cap * sizeof *dn_buf);
+			di_buf = realloc(di_buf, cap * sizeof *di_buf);
+			if (!dn_buf || !di_buf)
+				I_Error("HWR_CreateDrawNodes: out of memory (%lu nodes)", (unsigned long)cap);
+			dn_cap = cap;
+		}
+		memset(dn_buf, 0, need * sizeof *dn_buf);
+		sortnode = dn_buf;
+		sortindex = di_buf;
+	}
+#else
 	sortnode = Z_Calloc((sizeof(planeinfo_t)*numplanes)
 					+ (sizeof(polyplaneinfo_t)*numpolyplanes)
 					+ (sizeof(wallinfo_t)*numwalls)
@@ -4180,8 +4236,10 @@ static void HWR_CreateDrawNodes(void)
 	// However, in reality we shouldn't be re-copying and shifting all this information
 	// that is already lying around. This should all be in some sort of linked list or lists.
 	sortindex = Z_Calloc(sizeof(size_t) * (numplanes + numpolyplanes + numwalls), PU_STATIC, NULL);
+#endif
 
 	PS_START_TIMING(ps_hw_nodesorttime);
+	HWP_SPAN_BEGIN(hwp_tnsort);
 
 	for (i = 0; i < numplanes; i++, p++)
 	{
@@ -4237,8 +4295,10 @@ static void HWR_CreateDrawNodes(void)
 	}
 
 	PS_STOP_TIMING(ps_hw_nodesorttime);
+	HWP_SPAN_END(hwp_tnsort, HWP_NODESORT);
 
 	PS_START_TIMING(ps_hw_nodedrawtime);
+	HWP_SPAN_BEGIN(hwp_tndraw);
 
 	// Okay! Let's draw it all! Woo!
 	HWD.pfnSetTransform(&atransform);
@@ -4277,14 +4337,20 @@ static void HWR_CreateDrawNodes(void)
 	}
 
 	PS_STOP_TIMING(ps_hw_nodedrawtime);
+	HWP_SPAN_END(hwp_tndraw, HWP_NODEDRAW);
 
 	numwalls = 0;
 	numplanes = 0;
 	numpolyplanes = 0;
 
 	// No mem leaks, please.
+#ifdef PS2_PROFILE
+	sortnode = NULL; // persistent buffers (above)
+	sortindex = NULL;
+#else
 	Z_Free(sortnode);
 	Z_Free(sortindex);
+#endif
 }
 
 // --------------------------------------------------------------------------
@@ -5611,6 +5677,7 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 {
 	HWP_LOCAL;
+	HWP_SPAN_BEGIN(hwp_tsetup);
 	const float fpov = FixedToFloat(R_GetPlayerFov(player));
 
 	const boolean skybox = (skyboxmo[0] && cv_skybox.value); // True if there's a skybox object and skyboxes are on
@@ -5642,9 +5709,14 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 
 	//------------------------------------------------------------------------
 	HWR_ClearView(); // Clears the depth buffer and resets the view I believe
+	HWP_SPAN_END(hwp_tsetup, HWP_SETUP);
 
 	if (!skybox && drawsky) // Don't draw the regular sky if there's a skybox
+	{
+		HWP_SPAN_BEGIN(hwp_tsky);
 		HWR_DrawSkyBackground(player);
+		HWP_SPAN_END(hwp_tsky, HWP_SKY);
+	}
 
 	//Hurdler: it doesn't work in splitscreen mode
 	drawsky = splitscreen;
@@ -5704,10 +5776,18 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	// Draw MD2 and sprites
 	ps_numsprites.value.i = gl_visspritecount;
 	PS_START_TIMING(ps_hw_spritesorttime);
-	HWR_SortVisSprites();
+	{
+		HWP_SPAN_BEGIN(tsort);
+		HWR_SortVisSprites();
+		HWP_SPAN_END(tsort, HWP_SPRSORT);
+	}
 	PS_STOP_TIMING(ps_hw_spritesorttime);
 	PS_START_TIMING(ps_hw_spritedrawtime);
-	HWR_DrawSprites();
+	{
+		HWP_SPAN_BEGIN(tdraw);
+		HWR_DrawSprites();
+		HWP_SPAN_END(tdraw, HWP_SPRDRAW);
+	}
 	PS_STOP_TIMING(ps_hw_spritedrawtime);
 	HWP_LAP(HWP_SPRITES);
 
@@ -5746,7 +5826,11 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 // Can't have palette rendering if shaders are disabled.
 boolean HWR_ShouldUsePaletteRendering(void)
 {
+#ifdef PS2_PROFILE // PS2-HW-62: no 3D palette lookup / light tables on the GS: sector light is the GLSL-equivalent fade (depth bands / ramp), the textures stay indexed
+	return false;
+#else
 	return (pMasterPalette != NULL && cv_glpaletterendering.value && HWR_UseShader());
+#endif
 }
 
 // enable or disable palette rendering state depending on settings and availability

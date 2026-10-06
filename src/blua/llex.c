@@ -25,6 +25,16 @@
 
 #define _HEX2INT_(v) ( (v) <= '9' ? (v)-'0' : tolower(v)-'a'+10 )
 
+#ifdef PS2
+// PS2-103: the PC game runs this lexer under the code page of the system, where isalpha() of a byte >= 0x80 is true (a Russian Windows: Cyrillic letters), and mods
+// written there name variables with such bytes (L_LithCore: "local Ñ1"). With the C locale of newlib they are no letters: every byte >= 0x80 may be in a name.
+#define LEX_ISALPHA(c) (isalpha(c) || (c) >= 0x80)
+#define LEX_ISALNUM(c) (isalnum(c) || (c) >= 0x80)
+#else
+#define LEX_ISALPHA(c) isalpha(c)
+#define LEX_ISALNUM(c) isalnum(c)
+#endif
+
 
 #define next(ls) (ls->current = zgetc(ls->z))
 
@@ -565,12 +575,12 @@ static int llex (LexState *ls, SemInfo *seminfo) {
           read_numeral(ls, seminfo);
           return TK_NUMBER;
         }
-        else if (isalpha(ls->current) || ls->current == '_') {
+        else if (LEX_ISALPHA(ls->current) || ls->current == '_') {
           /* identifier or reserved word */
           TString *ts;
           do {
             save_and_next(ls);
-          } while (isalnum(ls->current) || ls->current == '_');
+          } while (LEX_ISALNUM(ls->current) || ls->current == '_');
           ts = luaX_newstring(ls, luaZ_buffer(ls->buff),
                                   luaZ_bufflen(ls->buff));
           if (ts->tsv.reserved > 0)  /* reserved word? */

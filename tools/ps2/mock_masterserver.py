@@ -7,7 +7,7 @@ Endpoints (relative to --base):
   POST servers/<token>/update      form title=
   POST servers/<token>/unlist
   GET  servers | rooms/<id>/servers   "room\\naddr port title version\\n..." sections separated by a blank line
-  GET  versions/<modid>            "<version> <name>"
+  GET  versions/<modid>            "<version> <name>" (as the real one: "56 v2.2.15" = MODVERSION of the vanilla game, --modversion)
 --chunked answers with Transfer-Encoding: chunked, --redirect serves the API under a 302 from "/" (the client must follow it).
 Everything that happens is appended to --log as JSON lines: this file is the proof of what the PS2 host registered.
 """
@@ -18,9 +18,12 @@ import threading
 import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 ROOMS = [(1, 'Standard', 'Standard rooms: any gametype.'), (2, 'Casual', 'Casual play, no cheats.'), (3, 'Custom', 'Mods and add-ons.')]
 SERVERS = {}  # token -> dict
+TOKENS = [0]
+ROOMIDS = [r[0] for r in ROOMS]  # the rooms the server list is built over (--fixture adds the real ones)
 LOCK = threading.Lock()
 OPTS = None
 
@@ -81,10 +84,16 @@ class H(BaseHTTPRequestHandler):
         rel = path[len(OPTS.base) + 1:].strip('/').split('/')
         with LOCK:
             if method == 'GET' and rel == ['rooms']:
+                if OPTS.rooms_raw:
+                    return self.reply(200, OPTS.rooms_raw)  # the real master server's answer, verbatim (--fixture)
                 return self.reply(200, ''.join(f'{i}\n{t}\n{m}\n\n\n' for i, t, m in ROOMS))
             if method == 'POST' and len(rel) == 3 and rel[0] == 'rooms' and rel[2] == 'register':
                 room = int(rel[1])
-                token = f'tok{len(SERVERS) + 1:04d}'
+                port = form.get('port', ['5029'])[0]
+                for old in [t for t, o in SERVERS.items() if o['addr'] == peer and o['port'] == port]:
+                    del SERVERS[old]  # like the real one: one entry per address and port (a server re-registers when its name or room changes)
+                TOKENS[0] += 1
+                token = f'tok{TOKENS[0]:04d}'
                 SERVERS[token] = {'room': room, 'addr': peer, 'port': form.get('port', ['5029'])[0], 'title': form.get('title', ['?'])[0],
                                   'version': form.get('version', ['?'])[0], 'seen': time.time()}
                 log(ev='registered', token=token, **SERVERS[token])
@@ -101,7 +110,7 @@ class H(BaseHTTPRequestHandler):
             if method == 'GET' and (rel == ['servers'] or (len(rel) == 3 and rel[0] == 'rooms' and rel[2] == 'servers')):
                 want = int(rel[1]) if len(rel) == 3 else None
                 out = []
-                for room, _, _ in ROOMS:
+                for room in ROOMIDS:
                     if want is not None and room != want:
                         continue
                     lines = [f'{room}']
@@ -112,7 +121,7 @@ class H(BaseHTTPRequestHandler):
                 body = '\n'.join(out)  # sections: "<room>\n<server>\n...\n" + "\n"
                 return self.reply(200, body)
             if method == 'GET' and len(rel) == 2 and rel[0] == 'versions':
-                return self.reply(200, '0 none\n')
+                return self.reply(200, f'{OPTS.modversion} v2.2.15\n')
         return self.reply(404, 'not found\n')
 
     def do_GET(self):
@@ -131,8 +140,28 @@ def main():
     ap.add_argument('--log', default='')
     ap.add_argument('--chunked', action='store_true')
     ap.add_argument('--redirect', action='store_true')
+    ap.add_argument('--modversion', type=int, default=56)
     ap.add_argument('--seed', action='append', default=[], help='room:addr:port:title (pre-registered server)')
+    ap.add_argument('--fixture', default='', help='DIR written by tools/ps2/ms_fixture.py: the real rooms (verbatim) and servers (anonymised addresses) as seeds')
     OPTS = ap.parse_args()
+    OPTS.rooms_raw = ''
+    if OPTS.fixture:
+        fx = Path(OPTS.fixture)
+        OPTS.rooms_raw = open(fx / 'rooms.txt', encoding='utf-8', newline='').read()
+        room = None
+        del ROOMIDS[:]
+        for i, line in enumerate(open(fx / 'servers.txt', encoding='utf-8', newline='').read().split('\n')):
+            parts = line.split(' ')
+            if len(parts) == 1 and parts[0].isdigit():
+                room = int(parts[0])
+                if room not in ROOMIDS:
+                    ROOMIDS.append(room)
+            elif len(parts) >= 4 and room is not None:
+                SERVERS[f'fx{i}'] = {'room': room, 'addr': parts[0], 'port': parts[1], 'title': urllib.parse.unquote(parts[2]), 'version': parts[3], 'seen': time.time()}
+        for rid in [r for r in OPTS.rooms_raw.split('\n\n\n') if r.strip()]:
+            n = rid.split('\n')[0].strip()
+            if n.isdigit() and int(n) not in ROOMIDS:
+                ROOMIDS.append(int(n))
     for i, s in enumerate(OPTS.seed):
         room, addr, port, title = s.split(':', 3)
         SERVERS[f'seed{i}'] = {'room': int(room), 'addr': addr, 'port': port, 'title': title, 'version': '2.2.15', 'seen': time.time()}

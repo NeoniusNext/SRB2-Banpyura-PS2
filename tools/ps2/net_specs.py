@@ -3,13 +3,15 @@ Names: ps2srv-pccli (PS2 server, PC client), pcsrv-ps2cli (PC server, PS2 client
 PCSX2's Sockets mode passes inbound datagrams only from addresses the guest has sent to: a PS2 server is "punched" towards the client's fixed
 port (client: -clientport 5030) before the client joins (console command "punch", src/netcode/i_tcp.c)."""
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ELF = sys.argv[1] if len(sys.argv) > 1 else 'build/opt7-s/s6.ELF'
-OUT = ROOT / 'build/opt7-s/specs'
+ELF = sys.argv[1] if len(sys.argv) > 1 else 'build/opt8-s/out/SRB2.ELF'
+BASE = os.environ.get('SRB2_NET_BASE', 'build/opt8-s')  # run/spec output; the PC build stays in build/opt7-s/pc
+OUT = ROOT / BASE / 'specs'
 OUT.mkdir(parents=True, exist_ok=True)
 PY = Path(sys.executable).as_posix()
 PC = 'build/opt7-s/pc/srb2-s7pc.exe'
@@ -27,7 +29,7 @@ def punches(port, start, end, step=60):
 
 
 def write(name, spec):
-    spec.setdefault('out', 'build/opt7-s/run')
+    spec.setdefault('out', BASE + '/run')
     spec.setdefault('pak', 'build/opt6-s/pak')
     spec['name'] = name
     (OUT / f'{name}.json').write_text(json.dumps(spec, indent=1))
@@ -72,9 +74,9 @@ write('ps2srv-ps2cli', {
 write('ps2host-mock', {
     'timeout': 420,
     'nodes': [
-        {'id': 'mock', 'kind': 'pc', 'exe': PY, 'cwd': 'build/opt7-s',
+        {'id': 'mock', 'kind': 'pc', 'exe': PY, 'cwd': BASE,
          'args': ['-u', (ROOT / 'tools/ps2/mock_masterserver.py').as_posix(), '--port', '8090', '--bind', '0.0.0.0', '--log',
-                  (ROOT / 'build/opt7-s/run/ps2host-mock/mock.jsonl').as_posix()], 'start': 0},
+                  (ROOT / BASE / 'run/ps2host-mock/mock.jsonl').as_posix()], 'start': 0},
         {'id': 'ps2', 'kind': 'ps2', 'emu': EMU1, 'elf': ELF, 'map': 'MAP01', 'start': 2,
          'args': ['-server', '-netdebug', '-netcmd', 'file:cmd.txt'],
          'files': {'cmd.txt': '900:listserv'},

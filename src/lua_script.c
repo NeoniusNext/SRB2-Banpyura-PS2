@@ -937,6 +937,35 @@ void LUA_InvalidateUserdata(void *data)
 	lua_pop(gL, 1); // pop LREG_VALID
 }
 
+#ifdef PS2_DYNLIMITS
+// PS2-104: the state/mobjinfo/skincolor/sound tables move when they grow; the userdata a script made for an element before still points at the old
+// copy. Re-point it (and the cache that finds it by the pointer) to the new element. Nothing to do when no script has seen that element.
+void LUA_RemapUserdata(const void *oldp, void *newp)
+{
+	void **userdata;
+
+	if (!gL || oldp == newp)
+		return;
+	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);
+	lua_pushlightuserdata(gL, (void *)oldp);
+	lua_rawget(gL, -2);
+	if (lua_isnil(gL, -1))
+	{
+		lua_pop(gL, 2); // pop nil and LREG_VALID
+		return;
+	}
+	userdata = lua_touserdata(gL, -1);
+	*userdata = newp;
+	lua_pushlightuserdata(gL, newp); // the cache finds it by the new pointer from now on
+	lua_pushvalue(gL, -2);
+	lua_rawset(gL, -4);
+	lua_pushlightuserdata(gL, (void *)oldp);
+	lua_pushnil(gL);
+	lua_rawset(gL, -4);
+	lua_pop(gL, 2); // pop the userdata and LREG_VALID
+}
+#endif
+
 // Invalidate level data arrays
 void LUA_InvalidateLevel(void)
 {

@@ -87,7 +87,7 @@ static inline int vu0_xform(const FOutVector *s, cv_t *d, pv_t *o)
 		"vftoi0.xyz $vf10, $vf10\n"
 		"vmulq.w $vf10, $vf0, $Q\n"
 		"sqc2 $vf10, 0(%3)\n"
-		: "=r"(f) : "r"(in), "r"(d), "r"(o) : "memory");
+		: "=&r"(f) : "r"(in), "r"(d), "r"(o) : "memory"); // early clobber: cfc2 writes %0 before the last store reads %3 (PS2-HW-44)
 	d->a[0] = s->s;
 	d->a[1] = s->t;
 	f &= 0x3F; // VU0: bit 0 +x, 1 -x, 2 +y, 3 -y, 4 +z, 5 -z (|w| is the limit)

@@ -580,7 +580,7 @@ extern int actionsoverridden[NUMACTIONS][MAX_ACTION_RECURSION];
 #endif
 
 // ratio of states to sprites to mobj types is roughly 6 : 1 : 1
-#ifdef PS2_PROFILE
+#if defined(PS2_PROFILE) && !defined(PS2_LIMITS)
 // PS2-11: free slots exist for Lua/FREESLOT addons; the vanilla data uses none (checked on srb2/zones/characters/music.pk3).
 // 1024 slots cost ~1.3 MB of static tables (spriteinfo, states, mobjinfo, sprnames, FREE_STATES...).
 #define NUMMOBJFREESLOTS 32
@@ -589,6 +589,15 @@ extern int actionsoverridden[NUMACTIONS][MAX_ACTION_RECURSION];
 #endif
 #define NUMSPRITEFREESLOTS NUMMOBJFREESLOTS
 #define NUMSTATEFREESLOTS (NUMMOBJFREESLOTS*8)
+#ifdef PS2_DYNLIMITS
+// PS2-104: the tables start with the 32-slot profile size and grow to NUMMOBJFREESLOTS (PC size) with PS2Limits_Grow()
+#define PS2_SMALL_MOBJFREESLOTS 32
+#define LIMIT_MOBJFREESLOTS (ps2_fulllimits ? NUMMOBJFREESLOTS : PS2_SMALL_MOBJFREESLOTS)
+#else
+#define LIMIT_MOBJFREESLOTS NUMMOBJFREESLOTS
+#endif
+#define LIMIT_SPRITEFREESLOTS LIMIT_MOBJFREESLOTS
+#define LIMIT_STATEFREESLOTS (LIMIT_MOBJFREESLOTS*8)
 #define MAXSPRITENAME 64
 
 // Hey, moron! If you change this table, don't forget about sprnames in info.c and the sprite lights in hw_light.c!
@@ -1100,6 +1109,12 @@ typedef enum sprite
 	NUMSPRITES
 } spritenum_t;
 
+#ifdef PS2_DYNLIMITS
+#define LIMIT_NUMSPRITES (SPR_FIRSTFREESLOT + LIMIT_SPRITEFREESLOTS)
+#else
+#define LIMIT_NUMSPRITES NUMSPRITES
+#endif
+
 typedef enum playersprite
 {
 	SPR2_STND = 0,
@@ -1191,7 +1206,7 @@ typedef enum playersprite
 	SPR2_XTRA, // stuff that isn't in-map - "would this ever need an md2 or variable length animation?"
 
 	SPR2_FIRSTFREESLOT,
-#ifdef PS2_PROFILE
+#if defined(PS2_PROFILE) && !defined(PS2_LIMITS)
 	// Vanilla data uses no sprite2 freeslots; every skin_t carries NUMPLAYERSPRITES-sized tables (4.2 MB each at 1025)
 	SPR2_LASTFREESLOT = SPR2_FIRSTFREESLOT + 7,
 #else
@@ -1199,6 +1214,13 @@ typedef enum playersprite
 #endif
 	NUMPLAYERSPRITES
 } playersprite_t;
+
+#ifdef PS2_DYNLIMITS
+#define PS2_SMALL_SPR2FREESLOTS 8
+#define LIMIT_NUMPLAYERSPRITES (ps2_fulllimits ? (int)NUMPLAYERSPRITES : (int)(SPR2_FIRSTFREESLOT + PS2_SMALL_SPR2FREESLOTS))
+#else
+#define LIMIT_NUMPLAYERSPRITES NUMPLAYERSPRITES
+#endif
 
 enum
 {
@@ -4422,6 +4444,12 @@ typedef enum state
 	NUMSTATES
 } statenum_t;
 
+#ifdef PS2_DYNLIMITS
+#define LIMIT_NUMSTATES (S_FIRSTFREESLOT + LIMIT_STATEFREESLOTS)
+#else
+#define LIMIT_NUMSTATES NUMSTATES
+#endif
+
 typedef struct
 {
 	spritenum_t sprite;
@@ -4434,10 +4462,18 @@ typedef struct
 	UINT16 sprite2;
 } state_t;
 
+#ifdef PS2_DYNLIMITS
+// PS2-104: pointers to tables that start at the vanilla size and are replaced by PC-size copies by PS2Limits_Grow() (ps2_limits.c)
+extern state_t *states;
+extern char (*sprnames)[MAXSPRITENAME + 1];
+extern char (*spr2names)[MAXSPRITENAME + 1];
+extern playersprite_t *spr2defaults;
+#else
 extern state_t states[NUMSTATES];
 extern char sprnames[NUMSPRITES + 1][MAXSPRITENAME + 1];
 extern char spr2names[NUMPLAYERSPRITES][MAXSPRITENAME + 1];
 extern playersprite_t spr2defaults[NUMPLAYERSPRITES];
+#endif
 extern state_t *astate;
 extern playersprite_t free_spr2;
 
@@ -5229,6 +5265,12 @@ typedef enum mobj_type
 	NUMMOBJTYPES
 } mobjtype_t;
 
+#ifdef PS2_DYNLIMITS
+#define LIMIT_NUMMOBJTYPES (MT_FIRSTFREESLOT + LIMIT_MOBJFREESLOTS)
+#else
+#define LIMIT_NUMMOBJTYPES NUMMOBJTYPES
+#endif
+
 typedef struct
 {
 	INT32 doomednum;
@@ -5257,9 +5299,14 @@ typedef struct
 	statenum_t raisestate;
 } mobjinfo_t;
 
+#ifdef PS2_DYNLIMITS
+extern mobjinfo_t *mobjinfo;
+#else
 extern mobjinfo_t mobjinfo[NUMMOBJTYPES];
+#endif
 
 void P_PatchInfoTables(void);
+void P_PatchInfoRange(INT32 oldslots, INT32 newslots, INT32 oldcolors, INT32 newcolors, INT32 which); // PS2-104 (ps2_limits.c)
 
 void P_BackupTables(void);
 

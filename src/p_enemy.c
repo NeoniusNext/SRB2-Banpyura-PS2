@@ -3410,7 +3410,7 @@ void A_BossScream(void *data)
 	y = actor->y + FixedMul(FINESINE(fa),actor->radius);
 
 	// Determine what mobj to spawn. If undefined or invalid, use MT_BOSSEXPLODE as default.
-	if (locvar2 <= 0 || locvar2 >= NUMMOBJTYPES)
+	if (locvar2 <= 0 || locvar2 >= LIMIT_NUMMOBJTYPES)
 		explodetype = MT_SONIC3KBOSSEXPLODE; //MT_BOSSEXPLODE; -- piss to you, sonic 2
 	else
 		explodetype = (mobjtype_t)locvar2;
@@ -6314,7 +6314,7 @@ void A_RockSpawn(void *data)
 
 	type = actor->spawnpoint->stringargs[0] ? get_number(actor->spawnpoint->stringargs[0]) : MT_ROCKCRUMBLE1;
 
-	if (type < MT_NULL || type >= NUMMOBJTYPES)
+	if (type < MT_NULL || type >= LIMIT_NUMMOBJTYPES)
 	{
 		CONS_Debug(DBG_GAMELOGIC, "A_RockSpawn: Invalid mobj type %s!\n", actor->spawnpoint->stringargs[0]);
 		return;
@@ -11386,7 +11386,7 @@ void A_VileTarget(void *data)
 		return;
 
 	// Determine object to spawn
-	if (locvar1 <= 0 || locvar1 >= NUMMOBJTYPES)
+	if (locvar1 <= 0 || locvar1 >= LIMIT_NUMMOBJTYPES)
 		fogtype = MT_CYBRAKDEMON_TARGET_RETICULE;
 	else
 		fogtype = (mobjtype_t)locvar1;
@@ -11479,12 +11479,12 @@ void A_VileAttack(void *data)
 	if (P_MobjWasRemoved(actor))
 		return;
 
-	if (locvar1 <= 0 || locvar1 >= NUMSFX)
+	if (locvar1 <= 0 || locvar1 >= LIMIT_NUMSFX)
 		soundtoplay = sfx_brakrx;
 	else
 		soundtoplay = (sfxenum_t)locvar1;
 
-	if ((locvar2 & 0xFFFF) > 0 && (locvar2 & 0xFFFF) <= NUMMOBJTYPES)
+	if ((locvar2 & 0xFFFF) > 0 && (locvar2 & 0xFFFF) <= LIMIT_NUMMOBJTYPES)
 	{
 		explosionType = (mobjtype_t)(locvar2 & 0xFFFF);
 	}
@@ -11617,7 +11617,7 @@ void A_VileFire(void *data)
 	P_SetThingPosition(actor);
 
 	// Play sound, if one's specified
-	if (locvar1 > 0 && locvar1 < NUMSFX)
+	if (locvar1 > 0 && locvar1 < LIMIT_NUMSFX)
 		S_StartSound(actor, (sfxenum_t)locvar1);
 
 	// Now draw the line to the actor's target
@@ -11776,7 +11776,7 @@ void A_BrakChase(void *data)
 	}
 
 	// Optionally play a sound effect
-	if (locvar2 > 0 && locvar2 < NUMSFX)
+	if (locvar2 > 0 && locvar2 < LIMIT_NUMSFX)
 		S_StartSound(actor, (sfxenum_t)locvar2);
 
 	// make active sound
@@ -11930,7 +11930,7 @@ void A_BrakLobShot(void *data)
 	if (P_MobjWasRemoved(actor))
 		return;
 
-	if (locvar1 <= 0 || locvar1 >= NUMMOBJTYPES)
+	if (locvar1 <= 0 || locvar1 >= LIMIT_NUMMOBJTYPES)
 		typeOfShot = MT_CANNONBALL;
 	else typeOfShot = (mobjtype_t)locvar1;
 	shot = P_SpawnMobj(actor->x, actor->y, actor->z + FixedMul(locvar2*FRACUNIT, actor->scale), typeOfShot);
@@ -11979,7 +11979,7 @@ void A_NapalmScatter(void *data)
 		return;
 
 	// Some quick sanity-checking
-	if (typeOfShot >= NUMMOBJTYPES) // I'd add a <0 check, too, but 0x0000FFFF isn't negative in this case
+	if (typeOfShot >= LIMIT_NUMMOBJTYPES) // I'd add a <0 check, too, but 0x0000FFFF isn't negative in this case
 		typeOfShot = MT_NULL;
 	if (numToShoot <= 0) // Presumably you forgot to set var1 up; else, why are you calling this to shoot nothing?
 		numToShoot = 8;

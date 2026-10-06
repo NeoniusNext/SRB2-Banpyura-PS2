@@ -76,6 +76,10 @@ static inline int lib_freeslot(lua_State *L)
 				if (in_bit_array(used_spr, j - SPR_FIRSTFREESLOT))
 					continue; // Already allocated, next.
 				// Found a free slot!
+#ifdef PS2_DYNLIMITS
+				if (j >= LIMIT_NUMSPRITES) // PS2-104: past the vanilla-size tables
+					PS2Limits_Grow();
+#endif
 				CONS_Printf("Sprite SPR_%s allocated.\n",word);
 				strcpy(sprnames[j], word);
 				set_bit_array(used_spr, j - SPR_FIRSTFREESLOT); // Okay, this sprite slot has been named now.
@@ -93,7 +97,8 @@ static inline int lib_freeslot(lua_State *L)
 		else if (fastcmp(type, "S"))
 		{
 			statenum_t i;
-			for (i = 0; i < NUMSTATEFREESLOTS; i++)
+			PS2_FREESLOT_CHECK(FREE_STATES, LIMIT_STATEFREESLOTS);
+			for (i = 0; i < LIMIT_STATEFREESLOTS; i++)
 				if (!FREE_STATES[i]) {
 					CONS_Printf("State S_%s allocated.\n",word);
 					FREE_STATES[i] = Z_Malloc(strlen(word)+1, PU_STATIC, NULL);
@@ -102,7 +107,7 @@ static inline int lib_freeslot(lua_State *L)
 					r++;
 					break;
 				}
-			if (i == NUMSTATEFREESLOTS)
+			if (i == LIMIT_STATEFREESLOTS)
 				CONS_Alert(CONS_WARNING, "Ran out of free State slots!\n");
 
 			freeslots_s++;
@@ -110,7 +115,8 @@ static inline int lib_freeslot(lua_State *L)
 		else if (fastcmp(type, "MT"))
 		{
 			mobjtype_t i;
-			for (i = 0; i < NUMMOBJFREESLOTS; i++)
+			PS2_FREESLOT_CHECK(FREE_MOBJS, LIMIT_MOBJFREESLOTS);
+			for (i = 0; i < LIMIT_MOBJFREESLOTS; i++)
 				if (!FREE_MOBJS[i]) {
 					CONS_Printf("MobjType MT_%s allocated.\n",word);
 					FREE_MOBJS[i] = Z_Malloc(strlen(word)+1, PU_STATIC, NULL);
@@ -119,7 +125,7 @@ static inline int lib_freeslot(lua_State *L)
 					r++;
 					break;
 				}
-			if (i == NUMMOBJFREESLOTS)
+			if (i == LIMIT_MOBJFREESLOTS)
 				CONS_Alert(CONS_WARNING, "Ran out of free MobjType slots!\n");
 
 			freeslots_mt++;
@@ -127,7 +133,8 @@ static inline int lib_freeslot(lua_State *L)
 		else if (fastcmp(type, "SKINCOLOR"))
 		{
 			skincolornum_t i;
-			for (i = 0; i < NUMCOLORFREESLOTS; i++)
+			PS2_FREESLOT_CHECK(FREE_SKINCOLORS, LIMIT_COLORFREESLOTS);
+			for (i = 0; i < LIMIT_COLORFREESLOTS; i++)
 				if (!FREE_SKINCOLORS[i]) {
 					CONS_Printf("Skincolor SKINCOLOR_%s allocated.\n",word);
 					FREE_SKINCOLORS[i] = Z_Malloc(strlen(word)+1, PU_STATIC, NULL);
@@ -137,7 +144,7 @@ static inline int lib_freeslot(lua_State *L)
 					r++;
 					break;
 				}
-			if (i == NUMCOLORFREESLOTS)
+			if (i == LIMIT_COLORFREESLOTS)
 				CONS_Alert(CONS_WARNING, "Ran out of free skincolor slots!\n");
 
 			freeslots_skincolor++;
@@ -151,7 +158,11 @@ static inline int lib_freeslot(lua_State *L)
 					break;
 			// We don't, so allocate a new one.
 			if (i >= free_spr2) {
-				if (free_spr2 < NUMPLAYERSPRITES)
+#ifdef PS2_DYNLIMITS
+				if (free_spr2 >= (playersprite_t)LIMIT_NUMPLAYERSPRITES && !ps2_fulllimits)
+					PS2Limits_Grow();
+#endif
+				if (free_spr2 < LIMIT_NUMPLAYERSPRITES)
 				{
 					CONS_Printf("Sprite SPR2_%s allocated.\n",word);
 					strncpy(spr2names[free_spr2],word,4);
@@ -435,7 +446,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	}
 	else if (fastncmp("S_",word,2)) {
 		p = word+2;
-		for (i = 0; i < NUMSTATEFREESLOTS; i++) {
+		for (i = 0; i < LIMIT_STATEFREESLOTS; i++) {
 			if (!FREE_STATES[i])
 				break;
 			if (fastcmp(p, FREE_STATES[i])) {
@@ -452,7 +463,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	}
 	else if (fastncmp("MT_",word,3)) {
 		p = word+3;
-		for (i = 0; i < NUMMOBJFREESLOTS; i++) {
+		for (i = 0; i < LIMIT_MOBJFREESLOTS; i++) {
 			if (!FREE_MOBJS[i])
 				break;
 			if (fastcmp(p, FREE_MOBJS[i])) {
@@ -470,7 +481,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	else if (fastncmp("SPR_",word,4)) {
 		p = word+4;
 		i = R_GetSpriteNumByName(p);
-		if (i != NUMSPRITES)
+		if (i != LIMIT_NUMSPRITES)
 		{
 			// updating overridden sprnames is not implemented for soc parser,
 			// so don't use cache
@@ -507,7 +518,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	}
 	else if (!mathlib && fastncmp("sfx_",word,4)) {
 		p = word+4;
-		for (i = 0; i < NUMSFX; i++)
+		for (i = 0; i < LIMIT_NUMSFX; i++)
 			if (S_sfx[i].name && fastcmp(p, S_sfx[i].name)) {
 				CacheAndPushConstant(L, word, i);
 				return 1;
@@ -516,7 +527,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	}
 	else if (mathlib && fastncmp("SFX_",word,4)) { // SOCs are ALL CAPS!
 		p = word+4;
-		for (i = 0; i < NUMSFX; i++)
+		for (i = 0; i < LIMIT_NUMSFX; i++)
 			if (S_sfx[i].name && fasticmp(p, S_sfx[i].name)) {
 				CacheAndPushConstant(L, word, i);
 				return 1;
@@ -525,7 +536,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	}
 	else if (mathlib && fastncmp("DS",word,2)) {
 		p = word+2;
-		for (i = 0; i < NUMSFX; i++)
+		for (i = 0; i < LIMIT_NUMSFX; i++)
 			if (S_sfx[i].name && fasticmp(p, S_sfx[i].name)) {
 				CacheAndPushConstant(L, word, i);
 				return 1;
@@ -563,7 +574,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	}
 	else if (fastncmp("SKINCOLOR_",word,10)) {
 		p = word+10;
-		for (i = 0; i < NUMCOLORFREESLOTS; i++) {
+		for (i = 0; i < LIMIT_COLORFREESLOTS; i++) {
 			if (!FREE_SKINCOLORS[i])
 				break;
 			if (fastcmp(p, FREE_SKINCOLORS[i])) {

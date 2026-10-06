@@ -398,7 +398,7 @@ typedef struct
 extern mapheader_t* mapheaderinfo[NUMMAPS];
 
 // Gametypes
-#ifdef PS2_PROFILE
+#if defined(PS2_PROFILE) && !defined(PS2_LIMITS)
 #define NUMGAMETYPEFREESLOTS 16 // PS2-11: vanilla data defines no custom gametypes
 #else
 #define NUMGAMETYPEFREESLOTS 128

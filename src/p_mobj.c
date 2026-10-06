@@ -204,15 +204,15 @@ static boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 
 #ifdef PS2_PROFILE
 	// PS2-42: the states of this call's chain, not a NUMSTATES table cleared by memset on every call
-	statenum_t seenlist[NUMSTATES];
+	statenum_t seenlist[LIMIT_NUMSTATES];
 	size_t seencount = 0;
 #else
 	// remember states seen, to detect cycles:
-	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
+	static statenum_t seenstate_tab[LIMIT_NUMSTATES]; // fast transition table
 	statenum_t *seenstate = seenstate_tab; // pointer to table
 	static INT32 recursion; // detects recursion
 	statenum_t i; // initial state
-	statenum_t tempstate[NUMSTATES]; // for use with recursion
+	statenum_t tempstate[LIMIT_NUMSTATES]; // for use with recursion
 #endif
 
 #ifdef PARANOIA
@@ -538,15 +538,15 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 	state_t *st;
 
 #ifdef PS2_PROFILE
-	statenum_t seenlist[NUMSTATES]; // PS2-42, see P_SetPlayerMobjState
+	statenum_t seenlist[LIMIT_NUMSTATES]; // PS2-42, see P_SetPlayerMobjState
 	size_t seencount = 0;
 #else
 	// remember states seen, to detect cycles:
-	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
+	static statenum_t seenstate_tab[LIMIT_NUMSTATES]; // fast transition table
 	statenum_t *seenstate = seenstate_tab; // pointer to table
 	static INT32 recursion; // detects recursion
 	statenum_t i = state; // initial state
-	statenum_t tempstate[NUMSTATES]; // for use with recursion
+	statenum_t tempstate[LIMIT_NUMSTATES]; // for use with recursion
 #endif
 
 	if (mobj->player != NULL)
@@ -11587,7 +11587,7 @@ void P_PrecipitationEffects(void)
 mobjtype_t P_GetMobjtype(UINT16 mthingtype)
 {
 	mobjtype_t i;
-	for (i = 0; i < NUMMOBJTYPES; i++)
+	for (i = 0; i < LIMIT_NUMMOBJTYPES; i++)
 		if (mthingtype == mobjinfo[i].doomednum)
 			return i;
 	return MT_UNKNOWN;

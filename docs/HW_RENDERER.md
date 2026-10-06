@@ -70,6 +70,23 @@ The null driver is a separate **logging-only** integration aid.
   These passes are not GLSL: InitShaders/CompileShader refuse shader capability,
   preserving engine fallbacks. Water ripple is diagnosed as missing.
 
+## OPT9-HF (2026-10-06): shader capability, light, water, diagnostics
+
+Facts from runs in the emulator (details and pictures: `docs/GATES/g1/opt9-HF.md`):
+
+* The driver now **advertises the base shaders** (`InitShaders` true unless `-hwdbg 2048`, `CompileShader` true for the built-in slots, custom GLSL still refused with one
+  log line). Before, the engine saw `gl_shadersavailable = false` and used its flat per-polygon fallback colour; every GS light path (depth bands, ramp, CLUT tint,
+  fog blocks, water) had never run inside the engine. `HWR_ShouldUsePaletteRendering()` is `false` on PS2 (no 3D palette lookup/light tables on the GS).
+* Sector light = the GLSL equation `mix(colour, fade, floor(R_DoomColormap)/32)` reproduced exactly: polygons are cut at the eye depths where the darkness class steps
+  (GS fog with a constant F per piece; FOGCOL = fade colour); colormap tint = a CLUT per tint (`CK_TINT`). Polygons that stay inside one class are not cut (THZ1: 2 of
+  ~1800 polygons per frame are cut).
+* Water (`PF_Ripple`, shader 4): the shader's `tex(s - sin(a)*0.025, t - cos(a)*0.025)` with `a = -pi*z/2*0.025 + leveltime*2` is made by cutting the polygon into
+  16-unit depth bands (to 640 units) with the texture coordinate shifted by the middle of the band (error <= 0.5 texel on a 64 texel flat).
+* A polygon whose texture coordinates span more than 4096 texels (huge floors/horizons) is cut at whole repeats (`UV_EXTENT`): the GS UV integer part is 14 bits.
+* Diagnostics of the driver go to the log only (`CONS_Printf`/`CONS_Alert` are redefined to `I_OutputMsg` inside `ps2_hwd.c`): they were drawn over the picture.
+* `-hwdbg` bits: 2048 engine fallback lighting (A/B), 4096 light parameters of frame 150 (`HWT lit`). `HWFX frame N: ...` lists the effects drawn in the last 300 frames.
+* `-vidshot kN` / `KN` (first frame with `leveltime >= N`, `K` only in a level started after the previous shot), `wN` (N-th frame of a wipe), keys `console`, `f1`, `f2` for `-vidkeys`.
+
 ## Complete callback matrix
 
 `P` = implementation exercised by standalone primitive/readback tests;

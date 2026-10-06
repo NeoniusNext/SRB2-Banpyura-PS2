@@ -3629,7 +3629,17 @@ void G_UpdateGametypeSelections(void)
 void G_SetGametypeDescription(INT16 gtype, char *descriptiontext, UINT8 leftcolor, UINT8 rightcolor)
 {
 	if (descriptiontext != NULL)
+	{
+#ifdef PS2_DYNLIMITS
+		char *text = Z_Malloc(441, PU_STATIC, NULL); // PS2-104: gtdesc_t holds a pointer
+
+		strncpy(text, descriptiontext, 440);
+		text[440] = '\0';
+		gametypedesc[gtype].notes = text;
+#else
 		strncpy(gametypedesc[gtype].notes, descriptiontext, 441);
+#endif
+	}
 	gametypedesc[gtype].col[0] = leftcolor;
 	gametypedesc[gtype].col[1] = rightcolor;
 }

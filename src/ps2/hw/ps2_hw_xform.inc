@@ -90,12 +90,15 @@ static void m_perspective(float *m, float fovy, float aspect, float zn, float zf
 	m_mul(m, m, p);
 }
 
+static u32 xf_ver; // bumped whenever H.mvp is recomputed (the VU1 constants cache their derived matrix, ps2_hw_vu1.inc)
+
 static void xf_update(void)
 {
 	if (H.mat_dirty)
 	{
 		m_mul(H.mvp, H.proj, H.mv);
 		H.mat_dirty = 0;
+		xf_ver++;
 	}
 }
 

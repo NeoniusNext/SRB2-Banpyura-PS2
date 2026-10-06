@@ -694,7 +694,7 @@ INT32 I_StartSound(sfxenum_t id, UINT8 vol, UINT8 sep, UINT8 pitch, UINT8 priori
 {
 	cached_sample *s;
 	(void)priority; // SRB2 chooses/steals channels before calling the driver.
-	if (!sound_started || id <= sfx_None || id >= NUMSFX) return -1;
+	if (!sound_started || id <= sfx_None || id >= (unsigned)LIMIT_NUMSFX) return -1;
 	s = S_sfx[id].data;
 	if (!s) return -1;
 	s->used = ++sample_serial;

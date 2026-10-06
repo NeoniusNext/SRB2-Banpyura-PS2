@@ -33,6 +33,11 @@ struct GLMipmap_s;
 // Fan batches of hw_batching.c: desc holds nfans pairs (index of the first vertex in base, vertex count); one plan for all of them.
 struct FSurfaceInfo_s;
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc);
+// The frame plan (PS2-HW-34): every polygon of the frame goes through PlanPolygon before the first batch is drawn; the driver notes which mip level each big texture needs.
+void PS2HWD_PlanBegin(void);
+void PS2HWD_PlanPolygon(struct GLMipmap_s *mipmap, const void *verts, unsigned int n); // verts: n FOutVector
+void PS2HWD_PlanEnd(void);
+unsigned int PS2HWD_ScanDirection(void); // 0 / 1 alternating with the frames: the order in which the batches of a frame run through the textures (PS2-HW-31)
 void PS2HWD_BatchBegin(void); // polygons are collected: SetTexture only notes the texture
 void PS2HWD_BatchDraw(void); // the collected polygons are drawn: SetTexture makes the texture resident (asking for its data again if needed)
 void PS2HWD_BatchEnd(void);

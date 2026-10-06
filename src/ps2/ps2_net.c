@@ -117,6 +117,19 @@ boolean PS2Net_Up(void)
 	return true;
 }
 
+int PS2Net_Unlink(const char *path)
+{
+	FILE *f;
+
+	if (remove(path) == 0)
+		return 0;
+	f = fopen(path, "wb");
+	if (!f)
+		return -1;
+	fclose(f);
+	return 0;
+}
+
 const char *PS2Net_Address(void)
 {
 	return netstate > 0 ? netaddr : "";
@@ -168,10 +181,22 @@ static void NetCmd_Parse(const char *spec)
 	}
 }
 
+extern UINT32 ps2net_rx, ps2net_tx, ps2net_txerr; // i_tcp.c
+extern char ps2net_lastfrom[];
+
 void PS2Net_Frame(void)
 {
 	static boolean parsed;
+	static UINT32 frames, lastrx, lasttx;
 	INT32 i;
+
+	if (netstate > 0 && (ps2net_rx | ps2net_tx) && M_CheckParm("-netdebug") && ++frames % 70 == 0)
+	{
+		CONS_Printf("NETSTAT frame %u: rx=%u (+%u) tx=%u (+%u) txerr=%u last=%s\n", (unsigned)frames, (unsigned)ps2net_rx, (unsigned)(ps2net_rx - lastrx),
+			(unsigned)ps2net_tx, (unsigned)(ps2net_tx - lasttx), (unsigned)ps2net_txerr, ps2net_lastfrom);
+		lastrx = ps2net_rx;
+		lasttx = ps2net_tx;
+	}
 
 	if (!parsed)
 	{

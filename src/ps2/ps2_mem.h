@@ -94,6 +94,8 @@ int ZA_InitMem(void *base, size_t bytes);
 // bytes when non-zero). Returns the arena size, 0 on failure.
 size_t ZA_InitHeap(size_t reserve, size_t cap);
 int ZA_Ready(void);
+int ZA_Contains(const void *p);          // PS2-79: payload address inside the arena
+size_t ZA_PayloadBytes(const void *payload); // bytes the caller asked for
 void ZA_Shutdown(void); // host test only: forget the arena (the caller owns the memory)
 
 // NULL when no free block fits. `align` is a power of two >= 16.
@@ -139,6 +141,8 @@ void PS2Mem_Frame(void);  // once per displayed frame (Z_NextFrame): -zquit N / 
 void PS2Mem_Sizes(void);  // -zsizes: sizeof of the level and renderer structures
 unsigned PS2Mem_Cycles(void); // COP0 Count (0 off the EE)
 unsigned PS2Mem_Ms(void);     // EE milliseconds since boot (64-bit bus clock, no wrap; 0 off the EE)
+void PS2Spill_Init(void);   // PS2-79 (ps2_spill.c): called by the game thread once the arena exists
+void PS2Spill_Stats(size_t *now, size_t *peak, size_t *blocks, size_t *total, size_t *fail, size_t *foreign); // C heap blocks taken from the arena
 size_t PS2Mem_LibcPeak(void); // highest C heap break above the arena since start (EE; 0 elsewhere)
 size_t PS2Mem_StackUsed(void); // deepest main thread stack use (EE, with -zstack; 0 otherwise)
 unsigned Z_TestFlushes(void); // z_zone.c: forced cache flushes done by -zflush

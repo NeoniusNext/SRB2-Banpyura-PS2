@@ -81,7 +81,7 @@ static boolean mobj_hook_available(int hook_type, mobjtype_t mobj_type)
 	return
 		(
 				mobjHookIds [MT_NULL] [hook_type].numHooks > 0 ||
-				(mobj_type < NUMMOBJTYPES && mobjHookIds[mobj_type][hook_type].numHooks > 0)
+				(mobj_type < LIMIT_NUMMOBJTYPES && mobjHookIds[mobj_type][hook_type].numHooks > 0)
 		);
 }
 
@@ -177,14 +177,34 @@ static void add_mobj_hook(lua_State *L, int hook_type)
 {
 	mobjtype_t   mobj_type = luaL_optnumber(L, 3, MT_NULL);
 
-	luaL_argcheck(L, mobj_type < NUMMOBJTYPES, 3, "invalid mobjtype_t");
+	luaL_argcheck(L, mobj_type < LIMIT_NUMMOBJTYPES, 3, "invalid mobjtype_t");
 
 #ifdef PS2_PROFILE
 	if (!mobjHookIds)
-		mobjHookIds = Z_Calloc(sizeof (*mobjHookIds) * NUMMOBJTYPES, PU_STATIC, &mobjHookIds);
+		mobjHookIds = Z_Calloc(sizeof (*mobjHookIds) * LIMIT_NUMMOBJTYPES, PU_STATIC, &mobjHookIds);
 #endif
 	add_hook(&mobjHookIds[mobj_type][hook_type]);
 }
+
+#ifdef PS2_DYNLIMITS
+// PS2-104: the table of mobj hooks (one row per object type) follows the object type table when it grows (PS2Limits_Grow)
+void LUA_GrowMobjHooks(INT32 oldtypes, INT32 newtypes)
+{
+	hook_t (*grown)[MOBJ_HOOK(MAX)];
+
+	if (!mobjHookIds)
+		return;
+	grown = Z_Calloc(sizeof (*grown) * newtypes, PU_STATIC, NULL);
+	M_Memcpy(grown, mobjHookIds, sizeof (*grown) * oldtypes);
+	// the lists of hook ids are zone blocks owned by the pointer inside the table (add_hook: Z_Realloc(map->ids, ..., &map->ids)): the owner moves with the table
+	for (INT32 type = 0; type < oldtypes; type++)
+		for (INT32 hook = 0; hook < MOBJ_HOOK(MAX); hook++)
+			if (grown[type][hook].ids)
+				Z_SetUser(grown[type][hook].ids, (void **)&grown[type][hook].ids);
+	Z_Free(mobjHookIds);
+	mobjHookIds = grown;
+}
+#endif
 
 static void add_hud_hook(lua_State *L, int idx)
 {
@@ -365,7 +385,7 @@ static boolean prepare_mobj_hook
 		mobj_t     * primary_mobj
 ){
 	const mobjtype_t mobj_type =
-		primary_mobj ? primary_mobj->type : NUMMOBJTYPES;
+		primary_mobj ? primary_mobj->type : LIMIT_NUMMOBJTYPES;
 
 #ifdef PARANOIA
 	if (mobj_type == MT_NULL)
@@ -572,7 +592,7 @@ static int call_hooks
 		/* call generic mobj hooks first */
 		calls += call_mobj_type_hooks(hook, MT_NULL);
 
-		if (hook->mobj_type < NUMMOBJTYPES)
+		if (hook->mobj_type < LIMIT_NUMMOBJTYPES)
 			calls += call_mobj_type_hooks(hook, hook->mobj_type);
 
 		ps_lua_mobjhooks.value.i += calls;

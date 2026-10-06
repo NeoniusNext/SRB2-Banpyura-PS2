@@ -594,6 +594,9 @@ void Command_Numnodes(void)
 
 #ifdef PS2
 static void Command_Punch_f(void); // PS2-121, below
+// PS2-127: -netdebug prints these once per two seconds of displayed frames (ps2_net.c): the datagram counters of the socket layer
+UINT32 ps2net_rx, ps2net_tx, ps2net_txerr;
+char ps2net_lastfrom[32];
 #endif
 
 // Returns true if a packet was received from a new node, false in all other cases
@@ -624,6 +627,11 @@ static boolean SOCK_Get(void)
 			(void *)&fromaddress, &fromlen);
 		if (c != ERRSOCKET)
 		{
+#ifdef PS2
+			ps2net_rx++;
+			if (fromaddress.any.sa_family == AF_INET)
+				snprintf(ps2net_lastfrom, sizeof ps2net_lastfrom, "%s:%u", inet_ntoa(fromaddress.ip4.sin_addr), (unsigned)ntohs(fromaddress.ip4.sin_port));
+#endif
 			// find remote node number
 			for (j = 1; j <= MAXNETNODES; j++) //include LAN
 			{
@@ -745,6 +753,12 @@ static void SOCK_Send(void)
 		}
 	}
 
+#ifdef PS2
+	if (c == ERRSOCKET)
+		ps2net_txerr++;
+	else
+		ps2net_tx++;
+#endif
 	if (c == ERRSOCKET && e != 0) // 0 means no socket for the address family was found
 	{
 		if (!ALLOWEDERROR(e))

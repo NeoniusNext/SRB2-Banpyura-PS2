@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "ps2_boot.h"
+#include "ps2_usb.h"
 
 // embedded modules (libps2_drivers)
 extern unsigned char sio2man_irx[], padman_irx[], iomanX_irx[], fileXio_irx[], poweroff_irx[], cdfs_irx[];
@@ -271,6 +272,8 @@ void PS2Boot_Init(int *argc, char ***argv)
 
 	*argc = nn;
 	*argv = nv;
+	if (!HasFlag(nn, nv, "-nousb")) // also from <datadir>/ps2args
+		PS2USB_Init(); // PS2-150: usbd + ps2kbd + ps2mouse, once; after sio2man/padman (libpad hangs otherwise, PLAN 4.3a)
 	printf("PS2BOOT boot=%s data=%s home=%s host=%d iopreset=%d args=%d (ps2args lines: %d)\n",
 		ps2boot.bootpath, ps2boot.datadir, ps2boot.homedir, ps2boot.host, ps2boot.iopreset, nn, fromfile);
 }

@@ -358,7 +358,11 @@ static CV_PossibleValue_t addons_cons_t[] = {{0, "Default"},
 #if 1
 												{1, "HOME"}, {2, "SRB2"},
 #endif
-													{3, "CUSTOM"}, {0, NULL}};
+													{3, "CUSTOM"},
+#ifdef PS2
+													{4, "MC0"}, {5, "MC1"}, {6, "USB"}, // PS2-103: memory cards (mc0:/SRB2, mc1:/SRB2) and a USB stick (mass:/SRB2)
+#endif
+													{0, NULL}};
 
 consvar_t cv_addons_option = CVAR_INIT ("addons_option", "Default", CV_SAVE|CV_CALL, addons_cons_t, Addons_option_Onchange);
 consvar_t cv_addons_folder = CVAR_INIT ("addons_folder", "", CV_SAVE, NULL, NULL);

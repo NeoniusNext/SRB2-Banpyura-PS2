@@ -70,6 +70,15 @@ struct GLMipmap_s
 	// (HWR_PS2_RegenerateMipmap): kind 0 = no way (patches stay as they are), 1 = map texture `regen_id`, 2 = level flat `regen_id`
 	INT32                 regen_id;
 	UINT8                 regen_kind;
+	// PS2-HW-30: the other CLUT variant (chroma keyed / plain) of a map texture or flat: it has the same pixels, the GS driver keeps one
+	// VRAM image for both. Set on the chroma keyed variant (-> original); the original reaches it through nextcolormap.
+	struct GLMipmap_s    *ps2_twin;
+	UINT8                 ps2_h255; // 0 unknown, 1 no texel has index 255, 2 some has (cached: scanning 512 KiB costs 0.6 M cycles)
+	// PS2-HW-34: what the batches of this frame need of the texture (ps2_hw_plan.inc): on the original mipmap of a variant pair
+	UINT32                ps2_planfr; // driver frame + 1 the plan belongs to (0 = none)
+	UINT8                 ps2_want; // the coarsest mip level (0 = full size) at which no polygon of the frame magnifies a texel
+	UINT8                 ps2_vis; // some polygon of the frame is visible at all
+	UINT32                ps2_full_fr; // driver frame + 1 of the last draw that needed the full size without a plan (the next plans keep the full size)
 #endif
 };
 typedef struct GLMipmap_s GLMipmap_t;

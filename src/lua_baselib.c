@@ -44,8 +44,8 @@ return luaL_error(L, "HUD rendering code should not call this function!");\
 else if (hook_cmd_running)\
 return luaL_error(L, "CMD building code should not call this function!");
 
-#define NOSPAWNNULL if (type >= NUMMOBJTYPES)\
-return luaL_error(L, "mobj type %d out of range (0 - %d)", type, NUMMOBJTYPES-1);\
+#define NOSPAWNNULL if (type >= LIMIT_NUMMOBJTYPES)\
+return luaL_error(L, "mobj type %d out of range (0 - %d)", type, LIMIT_NUMMOBJTYPES-1);\
 else if (type == MT_NULL)\
 {\
 	if (!nospawnnull_seen) {\
@@ -56,8 +56,8 @@ type = MT_RAY;\
 }
 static boolean nospawnnull_seen = false; // TODO: 2.3: Delete
 // TODO: 2.3: Use the below NOSPAWNNULL define instead. P_SpawnMobj used to say "if MT_NULL, use MT_RAY instead", so the above define maintains Lua script compatibility until v2.3
-/*#define NOSPAWNNULL if (type <= MT_NULL || type >= NUMMOBJTYPES)\
-return luaL_error(L, "mobj type %d out of range (1 - %d)", type, NUMMOBJTYPES-1);*/
+/*#define NOSPAWNNULL if (type <= MT_NULL || type >= LIMIT_NUMMOBJTYPES)\
+return luaL_error(L, "mobj type %d out of range (1 - %d)", type, LIMIT_NUMMOBJTYPES-1);*/
 
 boolean luaL_checkboolean(lua_State *L, int narg) {
 	luaL_checktype(L, narg, LUA_TBOOLEAN);
@@ -713,8 +713,8 @@ static int lib_pSpawnLockOn(lua_State *L)
 		return LUA_ErrInvalid(L, "mobj_t");
 	if (!player)
 		return LUA_ErrInvalid(L, "player_t");
-	if (state >= NUMSTATES)
-		return luaL_error(L, "state %d out of range (0 - %d)", state, NUMSTATES-1);
+	if (state >= LIMIT_NUMSTATES)
+		return luaL_error(L, "state %d out of range (0 - %d)", state, LIMIT_NUMSTATES-1);
 	if (P_IsLocalPlayer(player)) // Only display it on your own view. Don't display it for spectators
 	{
 		mobj_t *visual = P_SpawnMobj(lockon->x, lockon->y, lockon->z, MT_LOCKON); // positioning, flip handled in P_SceneryThinker
@@ -907,8 +907,8 @@ static int lib_pSpawnParaloop(lua_State *L)
 	NOHUD
 	INLEVEL
 	NOSPAWNNULL
-	if (nstate >= NUMSTATES)
-		return luaL_error(L, "state %d out of range (0 - %d)", nstate, NUMSTATES-1);
+	if (nstate >= LIMIT_NUMSTATES)
+		return luaL_error(L, "state %d out of range (0 - %d)", nstate, LIMIT_NUMSTATES-1);
 	P_SpawnParaloop(x, y, z, radius, number, type, nstate, rotangle, spawncenter);
 	P_SetTarget(&tmthing, ptmthing);
 	return 0;
@@ -2493,8 +2493,8 @@ static int lib_pSetMobjStateNF(lua_State *L)
 	INLEVEL
 	if (!mobj)
 		return LUA_ErrInvalid(L, "mobj_t");
-	if (state >= NUMSTATES)
-		return luaL_error(L, "state %d out of range (0 - %d)", state, NUMSTATES-1);
+	if (state >= LIMIT_NUMSTATES)
+		return luaL_error(L, "state %d out of range (0 - %d)", state, LIMIT_NUMSTATES-1);
 	if (mobj->player && state == S_NULL)
 		return luaL_error(L, "Attempt to remove player mobj with S_NULL.");
 	lua_pushboolean(L, P_SetMobjStateNF(mobj, state));
@@ -3121,8 +3121,8 @@ static int lib_rSkinUsable(lua_State *L)
 static int lib_pGetStateSprite2(lua_State *L)
 {
 	int statenum = luaL_checkinteger(L, 1);
-	if (statenum < 0 || statenum >= NUMSTATES)
-		return luaL_error(L, "state %d out of range (0 - %d)", statenum, NUMSTATES-1);
+	if (statenum < 0 || statenum >= LIMIT_NUMSTATES)
+		return luaL_error(L, "state %d out of range (0 - %d)", statenum, LIMIT_NUMSTATES-1);
 
 	lua_pushinteger(L, P_GetStateSprite2(&states[statenum]));
 	return 1;
@@ -3131,8 +3131,8 @@ static int lib_pGetStateSprite2(lua_State *L)
 static int lib_pGetSprite2StateFrame(lua_State *L)
 {
 	int statenum = luaL_checkinteger(L, 1);
-	if (statenum < 0 || statenum >= NUMSTATES)
-		return luaL_error(L, "state %d out of range (0 - %d)", statenum, NUMSTATES-1);
+	if (statenum < 0 || statenum >= LIMIT_NUMSTATES)
+		return luaL_error(L, "state %d out of range (0 - %d)", statenum, LIMIT_NUMSTATES-1);
 
 	lua_pushinteger(L, P_GetSprite2StateFrame(&states[statenum]));
 	return 1;
@@ -3141,8 +3141,8 @@ static int lib_pGetSprite2StateFrame(lua_State *L)
 static int lib_pIsStateSprite2Super(lua_State *L)
 {
 	int statenum = luaL_checkinteger(L, 1);
-	if (statenum < 0 || statenum >= NUMSTATES)
-		return luaL_error(L, "state %d out of range (0 - %d)", statenum, NUMSTATES-1);
+	if (statenum < 0 || statenum >= LIMIT_NUMSTATES)
+		return luaL_error(L, "state %d out of range (0 - %d)", statenum, LIMIT_NUMSTATES-1);
 
 	lua_pushboolean(L, P_IsStateSprite2Super(&states[statenum]));
 	return 1;
@@ -3152,8 +3152,8 @@ static int lib_pIsStateSprite2Super(lua_State *L)
 static int lib_pGetSuperSprite2(lua_State *L)
 {
 	int animID = luaL_checkinteger(L, 1) & SPR2F_MASK;
-	if (animID < 0 || animID >= NUMPLAYERSPRITES)
-		return luaL_error(L, "sprite2 %d out of range (0 - %d)", animID, NUMPLAYERSPRITES-1);
+	if (animID < 0 || animID >= LIMIT_NUMPLAYERSPRITES)
+		return luaL_error(L, "sprite2 %d out of range (0 - %d)", animID, LIMIT_NUMPLAYERSPRITES-1);
 
 	lua_pushinteger(L, animID | SPR2F_SUPER);
 	return 1;
@@ -3267,8 +3267,8 @@ static int lib_sStartSound(lua_State *L)
 	player_t *player = NULL;
 	//NOHUD
 
-	if (sound_id >= NUMSFX)
-		return luaL_error(L, "sfx %d out of range (0 - %d)", sound_id, NUMSFX-1);
+	if (sound_id >= (unsigned)LIMIT_NUMSFX)
+		return luaL_error(L, "sfx %d out of range (0 - %d)", sound_id, LIMIT_NUMSFX-1);
 
 	if (!lua_isnone(L, 3) && lua_isuserdata(L, 3))
 	{
@@ -3297,8 +3297,8 @@ static int lib_sStartSoundAtVolume(lua_State *L)
 	player_t *player = NULL;
 	//NOHUD
 
-	if (sound_id >= NUMSFX)
-		return luaL_error(L, "sfx %d out of range (0 - %d)", sound_id, NUMSFX-1);
+	if (sound_id >= (unsigned)LIMIT_NUMSFX)
+		return luaL_error(L, "sfx %d out of range (0 - %d)", sound_id, LIMIT_NUMSFX-1);
 	if (!lua_isnone(L, 4) && lua_isuserdata(L, 4))
 	{
 		player = *((player_t **)luaL_checkudata(L, 4, META_PLAYER));
@@ -3331,8 +3331,8 @@ static int lib_sStopSoundByID(lua_State *L)
 	sfxenum_t sound_id = luaL_checkinteger(L, 2);
 	//NOHUD
 
-	if (sound_id >= NUMSFX)
-		return luaL_error(L, "sfx %d out of range (0 - %d)", sound_id, NUMSFX-1);
+	if (sound_id >= (unsigned)LIMIT_NUMSFX)
+		return luaL_error(L, "sfx %d out of range (0 - %d)", sound_id, LIMIT_NUMSFX-1);
 	if (!lua_isnil(L, 1))
 		if (!GetValidSoundOrigin(L, &origin))
 			return LUA_ErrInvalid(L, "mobj_t/sector_t");
@@ -3536,8 +3536,8 @@ static int lib_sIdPlaying(lua_State *L)
 {
 	sfxenum_t id = luaL_checkinteger(L, 1);
 	//NOHUD
-	if (id >= NUMSFX)
-		return luaL_error(L, "sfx %d out of range (0 - %d)", id, NUMSFX-1);
+	if (id >= (unsigned)LIMIT_NUMSFX)
+		return luaL_error(L, "sfx %d out of range (0 - %d)", id, LIMIT_NUMSFX-1);
 	lua_pushboolean(L, S_IdPlaying(id));
 	return 1;
 }
@@ -3548,8 +3548,8 @@ static int lib_sSoundPlaying(lua_State *L)
 	sfxenum_t id = luaL_checkinteger(L, 2);
 	//NOHUD
 	INLEVEL
-	if (id >= NUMSFX)
-		return luaL_error(L, "sfx %d out of range (0 - %d)", id, NUMSFX-1);
+	if (id >= (unsigned)LIMIT_NUMSFX)
+		return luaL_error(L, "sfx %d out of range (0 - %d)", id, LIMIT_NUMSFX-1);
 	if (!GetValidSoundOrigin(L, &origin))
 		return LUA_ErrInvalid(L, "mobj_t/sector_t");
 
@@ -3851,7 +3851,11 @@ static int lib_gAddGametype(lua_State *L)
 	newgtidx = G_AddGametype(newgtrules);
 	G_AddGametypeTOL(newgtidx, newgttol);
 	G_SetGametypeDescription(newgtidx, NULL, newgtleftcolor, newgtrightcolor);
+#ifdef PS2_DYNLIMITS
+	gametypedesc[newgtidx].notes = gtdescription; // PS2-104: gtdesc_t holds a pointer (gtdescription is a Z_StrDup'd PU_STATIC copy)
+#else
 	strncpy(gametypedesc[newgtidx].notes, gtdescription, 441);
+#endif
 
 	// Not covered by G_AddGametype alone.
 	if (newgtrankingstype == -1)

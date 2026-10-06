@@ -35,6 +35,7 @@ enum
 #define ALPHA_AD GSA(0, 1, 1, 1) // (Cs - Cd) * Ad + Cd (destination alpha as the mask)
 
 #define MAXPASS 4
+static void lit_fast_plan(void); // ps2_hw_fast.inc (PS2-HW-43)
 #define PRIM_IIP (1u << 3)
 #define PRIM_TME (1u << 4)
 #define PRIM_FGE (1u << 5)
@@ -98,6 +99,8 @@ static struct
 	int vcol; // vertices carry their own colours (sky dome)
 	int cull; // 0 two-sided; +1 keep CCW; -1 keep CW (models)
 	int fast; // one plain pass, no cuts: polygons take emit_fast_fan (state set up once per plan, see serial)
+	int litfast; // as fast, but with the light staircase (LM_BANDS): polygons of one darkness class take lit_fast_poly (ps2_hw_fast.inc, PS2-HW-43)
+	int vuok, vu; // the plan can be drawn by the VU1 program (vuok); PS2HWD_DrawFans turns vu on for the polygons of a batch (ps2_hw_vu1.inc, PS2-HW-45)
 	int vu0; // the plan's constants are in VU0 (vu0_batch_load): emit_poly transforms on VU0
 	u32 serial; // H.serial when pass 0 was last set up for this plan
 } P;
@@ -233,6 +236,8 @@ static void tex_regs(const texrec_t *r, int wms, int wmt, int linear, u32 cbp, i
 
 static void lru_touch(int i)
 {
+	H.rec[i].stamp = H.frame_no;
+	i = img_of(i); // OPT9 (PS2-HW-30): a view shares the LRU position of its image
 	H.rec[i].stamp = H.frame_no;
 	if (H.lru_head != i)
 	{
@@ -449,6 +454,31 @@ static void pass_flat(pass_t *ps)
 	ps->zwrite = 0;
 }
 
+// PS2-HW-66: census of the effects the engine asks for: a line "HWFX frame N: ..." every 300 frames lists what was drawn in them
+// (which map exercises fog blocks, water, colormaps, additive/subtractive blends...: the scenes for the parity pictures)
+static u32 fx_seen, fx_report_frame;
+
+static void fx_note(u32 bit)
+{
+	fx_seen |= bit;
+}
+
+static void fx_report(void)
+{
+	static const char *const fxn[] = {"translucent", "additive", "subtractive", "revsub", "multiply", "environment", "fogblock", "water", "tint", "fade-colour",
+		"decal", "invisible", "dome", "nodepth", "alpha-poly", "ripple-flag", "slope-or-tilt"};
+	char line[256];
+	u32 i;
+	size_t n = 0;
+
+	for (i = 0; i < sizeof fxn / sizeof fxn[0] && n < sizeof line - 24; i++)
+		if (fx_seen & (1u << i))
+			n += (size_t)snprintf(line + n, sizeof line - n, "%s ", fxn[i]);
+	line[n] = '\0';
+	CONS_Printf("HWFX frame %u: %s\n", (unsigned)H.frame_no, line);
+	fx_seen = 0;
+}
+
 // Prepare everything for a polygon with these engine flags. Returns 0 when the polygon must not be drawn.
 static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 {
@@ -484,6 +514,35 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	blend = flags & PF_Blending;
 	occlude = (flags & PF_Occlude) && !(dbg & 8);
 	invisible = (flags & PF_Invisible) != 0;
+	if (H.frame_no % 300 == 299 && fx_report_frame != H.frame_no)
+	{
+		fx_report_frame = H.frame_no;
+		fx_report();
+	}
+	if (blend == (PF_Translucent & PF_Blending) && (flags & PF_Translucent))
+		fx_note(1u << 0);
+	else if (blend == (PF_Additive & PF_Blending))
+		fx_note(1u << 1);
+	else if (blend == (PF_Subtractive & PF_Blending))
+		fx_note(1u << 2);
+	else if (blend == (PF_ReverseSubtract & PF_Blending))
+		fx_note(1u << 3);
+	else if (blend == (PF_Multiplicative & PF_Blending))
+		fx_note(1u << 4);
+	else if (blend == (PF_Environment & PF_Blending))
+		fx_note(1u << 5);
+	else if (blend == PF_Fog)
+		fx_note(1u << 6);
+	if (flags & PF_Decal)
+		fx_note(1u << 10);
+	if (invisible)
+		fx_note(1u << 11);
+	if (flags & PF_NoDepthTest)
+		fx_note(1u << 13);
+	if (av != 255)
+		fx_note(1u << 14);
+	if (flags & PF_Ripple)
+		fx_note(1u << 15);
 	partial_tex = textured && r->psm == PSM_CT32 && !r->notcc && !r->screen;
 
 	// shader lighting: PF_ColorMapped polygons under a built-in lit shader
@@ -495,14 +554,21 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		P.rs.fade = (u32)surf->FadeColor.s.red | ((u32)surf->FadeColor.s.green << 8) | ((u32)surf->FadeColor.s.blue << 16);
 		P.rs.tint = surf->TintColor.rgba;
 		P.rs.alpha = (u8)av;
+		if ((dbg & 4096) && H.frame_no == 150) // -hwdbg 4096: the light parameters of every lit polygon of frame 150
+			CONS_Printf("HWT lit sh=%d fl=0x%x a=%d L=%d fs=%d fe=%d fade=%06x tint=%08x tex=%s\n", H.shader, (unsigned)flags, av, (int)P.rs.lp.light, P.rs.lp.fade_start, P.rs.lp.fade_end, (unsigned)P.rs.fade, (unsigned)P.rs.tint, textured && r->owner ? HWR_PS2_TexName(r->owner) : "-");
+		if ((P.rs.tint >> 24) != 0)
+			fx_note(1u << 8);
+		if (P.rs.fade != 0 || P.rs.lp.fade_start != 0 || P.rs.lp.fade_end != 31)
+			fx_note(1u << 9);
+		if (H.shader == 4)
+			fx_note(1u << 7);
 	}
 	P.rs.variant = 0;
 	P.rs.scale = 0;
 	P.lmode = LM_NONE;
 	P.fogcol = 0;
 	P.water = lit && H.shader == 4 && (flags & PF_Ripple);
-	if (flags & PF_Ripple)
-		hw_limit(HW_SHADER, "water ripple texture displacement is not implemented");
+	// PS2-HW-63: a PF_Ripple polygon is made by emit_water_poly (depth bands with shifted texture coordinates)
 
 	P.textured = textured;
 	P.r = r;
@@ -553,11 +619,30 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		// a non power of two axis is clamped to the texture's own region; its repeat was turned into cuts
 		P.clamp = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34);
 		lru_touch(H.cur_tex);
+		{
+			texrec_t *im = &H.rec[img_of(H.cur_tex)];
+
+			if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set
+			{
+				im->imgws = H.frame_no + 1;
+				TX.need_blk += im->nblk;
+				TX.need_n++;
+			}
+		}
 		if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame
 		{
+			int k;
+
 			r->ws = H.frame_no + 1;
 			H.st.ws_blocks += r->nblk;
 			H.st.ws_tex++;
+			if (H.pred_frame != H.frame_no + 1)
+			{
+				memset(H.pred, 0, sizeof H.pred);
+				H.pred_frame = H.frame_no + 1;
+			}
+			for (k = 0; k < NCAPS; k++)
+				H.pred[k] += r->fp[k];
 		}
 	}
 
@@ -815,6 +900,12 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 
 	P.fast = P.npass == 1 && P.lmode == LM_NONE && !P.cutx && !P.cuty && !P.water && !P.pass[0].ramp && !(flags & PF_Ripple)
 		&& P.pass[0].tex == (u8)textured && !(ps2hwd_dbg_flags & 64);
+	P.litfast = P.npass == 1 && P.lmode == LM_BANDS && !P.cutx && !P.cuty && !P.water && !P.pass[0].ramp && !(flags & PF_Ripple)
+		&& P.pass[0].tex == (u8)textured && !(ps2hwd_dbg_flags & 64);
+	if (P.litfast)
+		lit_fast_plan(); // PS2-HW-43
+	P.vu = 0;
+	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible);
 	P.serial = H.serial - 1; // the first polygon sets the state up
 	xf_update();
 	P.zmax = PS2HWD_ZMAX;
@@ -877,6 +968,8 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	{
 		ov_flush(); // anything else sees the picture with the queued light applied
 	}
+	if ((dbg & 4096) && H.frame_no == 150 && P.textured)
+		CONS_Printf("HWT view proj=%.3f/%.3f mv5=%.3f vp=%.1fx%.1f at %.1f,%.1f s=%.3f/%.3f scr=%dx%d v=%dx%d near=%.2f\n", H.proj[0], H.proj[5], H.mv[5], H.vpw, H.vph, H.vpx, H.vpy, H.sx, H.sy, H.scr_w, H.scr_h, H.vw, H.vh, H.near_plane);
 	H.cur_flags = flags;
 	return 1;
 }
@@ -1159,6 +1252,7 @@ static int clip_attr(const cv_t *in, int n, cv_t *out, int which, float cut, int
 #define CUTBUF (PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA + 16)
 static cv_t cutbuf[3][3][CUTBUF];
 #define MAXCUTS 40
+#define UV_EXTENT 4096.0f // texels of s or t one GS primitive may span (14.4 fixed point U/V; the rest is cut at whole repeats)
 
 // ---- emitting pieces ----
 
@@ -1217,7 +1311,19 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		(void)tmp;
 		if (ps->ramp)
 			continue; // light overlays and fog ramps are handled below
-		pass_setup(k, 0);
+		if (P.npass == 1)
+		{
+			// PS2-HW-65: the pieces of one polygon (light bands, repeats) and consecutive polygons of a plan share the pass 0 state: set it once
+			if (P.serial != H.serial)
+			{
+				pass_setup(0, 0);
+				P.serial = H.serial;
+			}
+		}
+		else
+		{
+			pass_setup(k, 0);
+		}
 		// a pass with fog but a band without darkness: PRIM.FGE off
 		memset(&pk, 0, sizeof pk);
 		pk.sb = pc->sb;
@@ -1309,6 +1415,7 @@ typedef struct
 	float cuts[MAXCUTS];
 	int cls[MAXCUTS + 1];
 	int n;
+	float step; // repeats between two cuts of s / t (1 = every repeat)
 } cutlist_t;
 
 static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int na, const cutlist_t *cl, int next_stage)
@@ -1330,9 +1437,9 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 				piece_t p2 = *pc;
 
 				if (cl->which == 7)
-					p2.sb = floorf(cl->cuts[k]) - 1.0f; // each piece starts at the previous whole repeat
+					p2.sb = floorf(cl->cuts[k]) - cl->step; // each piece starts at the previous cut
 				else if (cl->which == 8)
-					p2.tb = floorf(cl->cuts[k]) - 1.0f;
+					p2.tb = floorf(cl->cuts[k]) - cl->step;
 				else
 					p2.cls = cl->cls[k];
 				cut_and_emit(piece, np, next_stage, p2, na);
@@ -1346,7 +1453,7 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 		// MAXCUTS bounds staging, not valid repeats. Continue iteratively in bounded storage.
 		if ((cl->which == 7 || cl->which == 8) && cl->n == MAXCUTS)
 		{
-			float hi = attr_of(&rem[0], cl->which), cut = cl->cuts[cl->n - 1] + 1.0f;
+			float hi = attr_of(&rem[0], cl->which), cut = cl->cuts[cl->n - 1] + cl->step;
 			int i, n = 0, attr = cl->which;
 			for (i = 1; i < nrem; i++)
 				if (attr_of(&rem[i], attr) > hi)
@@ -1354,12 +1461,13 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 			while (cut < hi && n < MAXCUTS)
 			{
 				tail.cuts[n++] = cut;
-				cut += 1.0f;
+				cut += cl->step;
 			}
 			if (n)
 			{
 				tail.which = attr;
 				tail.n = n;
+				tail.step = cl->step;
 				cl = &tail;
 				H.st.passes += (u32)n;
 				which = rem == cutbuf[stage][1] ? 1 : 0;
@@ -1392,9 +1500,11 @@ static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na)
 		return;
 	switch (stage)
 	{
-		case 0: // repeats of a texture whose width is not a power of two
-			if (P.cutx)
+		case 0: // repeats of a texture whose width is not a power of two; PS2-HW-64: and of a power of two texture whose polygon covers more than UV_EXTENT texels
+			if (P.cutx || (P.wrapx && P.r))
 			{
+				float stp = 1.0f;
+
 				lo = hi = v[0].a[0];
 				for (i = 1; i < cnt; i++)
 				{
@@ -1403,17 +1513,33 @@ static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na)
 					if (v[i].a[0] > hi)
 						hi = v[i].a[0];
 				}
+				if (!P.cutx)
+				{
+					if ((hi - lo) * (float)P.r->w > UV_EXTENT)
+					{
+						stp = floorf(UV_EXTENT / (float)P.r->w);
+						if (stp < 1.0f)
+							stp = 1.0f;
+					}
+					else
+					{
+						cut_and_emit(v, cnt, 1, pc, na);
+						return;
+					}
+				}
 				pc.sb = floorf(lo);
 				if (hi - lo > 0.0f && floorf(hi) > floorf(lo))
 				{
-					int n = 0, kk;
+					int n = 0;
+					float kk;
 
-					for (kk = (int)floorf(lo) + 1; (float)kk < hi && n < MAXCUTS; kk++)
-						c->cuts[n++] = (float)kk;
+					for (kk = floorf(lo) + stp; kk < hi && n < MAXCUTS; kk += stp)
+						c->cuts[n++] = kk;
 					if (n)
 					{
 						c->which = 7;
 						c->n = n;
+						c->step = stp;
 						H.st.passes += (u32)n;
 						emit_cuts(v, cnt, stage, &pc, na, c, 1);
 						return;
@@ -1423,8 +1549,10 @@ static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na)
 			cut_and_emit(v, cnt, 1, pc, na);
 			return;
 		case 1:
-			if (P.cuty)
+			if (P.cuty || (P.wrapy && P.r))
 			{
+				float stp = 1.0f;
+
 				lo = hi = v[0].a[1];
 				for (i = 1; i < cnt; i++)
 				{
@@ -1433,17 +1561,33 @@ static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na)
 					if (v[i].a[1] > hi)
 						hi = v[i].a[1];
 				}
+				if (!P.cuty)
+				{
+					if ((hi - lo) * (float)P.r->h > UV_EXTENT)
+					{
+						stp = floorf(UV_EXTENT / (float)P.r->h);
+						if (stp < 1.0f)
+							stp = 1.0f;
+					}
+					else
+					{
+						cut_and_emit(v, cnt, 2, pc, na);
+						return;
+					}
+				}
 				pc.tb = floorf(lo);
 				if (floorf(hi) > floorf(lo))
 				{
-					int n = 0, kk;
+					int n = 0;
+					float kk;
 
-					for (kk = (int)floorf(lo) + 1; (float)kk < hi && n < MAXCUTS; kk++)
-						c->cuts[n++] = (float)kk;
+					for (kk = floorf(lo) + stp; kk < hi && n < MAXCUTS; kk += stp)
+						c->cuts[n++] = kk;
 					if (n)
 					{
 						c->which = 8;
 						c->n = n;
+						c->step = stp;
 						H.st.passes += (u32)n;
 						emit_cuts(v, cnt, stage, &pc, na, c, 2);
 						return;
@@ -1588,12 +1732,130 @@ static void emit_fast_fan(const cv_t *v, const void *pvv, int cnt, float sb, flo
 	H.st.verts_out += (u32)cnt;
 }
 
+// ---- water ripple (PS2-HW-63) ----
+// GLSL_WATER_FRAGMENT_SHADER: texel = tex(s - sin(a) * amp, t - cos(a) * amp), a = -pi * (z / 2 * freq) + leveltime * speed, z = eye depth
+// of the fragment (zfrag), freq = amp = 0.025, speed = 2. The GS has no fragment program: the polygon is cut into bands of RIPPLE_STEP of
+// eye depth, every band takes the offset of its middle (a constant shift of the texture coordinates). Beyond RIPPLE_ZMAX the offset
+// (1.6 texels at most) is below one pixel: no ripple there. Error: the offset steps by up to 2 pi * 0.025 * 16 / 160 texel-widths
+// per band (about a quarter texel) against the smooth shader.
+#define RIPPLE_STEP 16.0f
+#define RIPPLE_ZMAX 640.0f
+#define RIPPLE_AMP 0.025f
+
+static float ripple_sin[256 + 1];
+static int ripple_ready;
+
+static inline float ripple_sinf(float a) // sin() of any angle from a 256 entry table, linear interpolation
+{
+	float x = a * (256.0f / 6.28318530718f), fl;
+	int i;
+
+	fl = floorf(x);
+	i = (int)fl & 255;
+	x -= fl;
+	return ripple_sin[i] + (ripple_sin[i + 1] - ripple_sin[i]) * x;
+}
+
+static void ripple_offset(float zc, float *ds, float *dt)
+{
+	float a = -3.14159265f * (zc * 0.5f * 0.025f) + (float)H.leveltime * 2.0f;
+
+	*ds = ripple_sinf(a) * RIPPLE_AMP;
+	*dt = ripple_sinf(a + 1.57079633f) * RIPPLE_AMP; // cos
+}
+
+static cv_t wpiece[CUTBUF], wrem[2][CUTBUF];
+
+static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
+{
+	float wlo = v[0].w, whi = v[0].w, z0, z1, ds, dt, step = RIPPLE_STEP;
+	const cv_t *rem = v;
+	int nrem = cnt, i, k, which = 0;
+	piece_t p2;
+
+	if (!ripple_ready)
+	{
+		for (i = 0; i <= 256; i++)
+			ripple_sin[i] = sinf((float)i * (6.28318530718f / 256.0f));
+		ripple_ready = 1;
+	}
+	for (i = 1; i < cnt; i++)
+	{
+		if (v[i].w < wlo)
+			wlo = v[i].w;
+		if (v[i].w > whi)
+			whi = v[i].w;
+	}
+	z0 = zfrag_of_w(wlo);
+	z1 = zfrag_of_w(whi);
+	if (z0 >= RIPPLE_ZMAX)
+	{
+		cut_and_emit(v, cnt, 0, pc, na);
+		return;
+	}
+	k = z0 > 0.0f ? (int)(z0 / step) : 0;
+	for (;; k++)
+	{
+		float cutz = (float)(k + 1) * step;
+
+		if (cutz >= z1 || cutz >= RIPPLE_ZMAX)
+		{
+			// the last piece: the rest of the polygon
+			p2 = pc;
+			if (cutz >= RIPPLE_ZMAX && (float)k * step >= RIPPLE_ZMAX)
+			{
+				ds = dt = 0.0f;
+			}
+			else
+			{
+				float lo = (float)k * step, hi = z1 < RIPPLE_ZMAX ? z1 : RIPPLE_ZMAX;
+
+				if (lo < z0)
+					lo = z0;
+				ripple_offset(0.5f * (lo + hi), &ds, &dt);
+			}
+			p2.sb += ds;
+			p2.tb += dt;
+			cut_and_emit(rem, nrem, 0, p2, na);
+			return;
+		}
+		{
+			float cutw = w_of_zfrag(cutz);
+			int np = clip_attr(rem, nrem, wpiece, 6, cutw, 0, na);
+			cv_t *rb = wrem[which];
+			int nn = clip_attr(rem, nrem, rb, 6, cutw, 1, na);
+
+			if (np >= 3)
+			{
+				float lo = (float)k * step;
+
+				if (lo < z0)
+					lo = z0;
+				ripple_offset(0.5f * (lo + cutz), &ds, &dt);
+				p2 = pc;
+				p2.sb += ds;
+				p2.tb += dt;
+				cut_and_emit(wpiece, np, 0, p2, na);
+				H.st.bands++;
+			}
+			if (nn < 3)
+				return;
+			rem = rb;
+			nrem = nn;
+			which ^= 1;
+		}
+	}
+}
+
+#include "ps2_hw_fast.inc" // PS2-HW-43: lit_fast_poly / lit_fast_plan
+#include "ps2_hw_vu1.inc" // PS2-HW-45: vu_poly / vu_sync (the VU1 program draws the polygons of a batch)
+
 // Transform, clip and pack one convex polygon.
 // Vertices: base[idx[i]] (or base[i] when idx is NULL); with `vcol` (4 floats per vertex index) they carry colours.
 static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float *vcol)
 {
 	const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
-	int i, cnt, and_ = 0x3F, or_ = 0, na = P.vcol ? 6 : 2;
+	int i, cnt, and_ = 0x3F, or_ = 0, na = P.vcol ? 6 : 2, big = 0;
 	cv_t *v;
 	u32 t0 = cyc();
 	piece_t pc;
@@ -1603,6 +1865,12 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 
 	if (n < 3)
 		return;
+	if (P.vu)
+	{
+		if (!idx && !vcol && vu_poly(base, n))
+			return; // PS2-HW-45: the VU1 program transforms, clips and packs it
+		vu_sync();
+	}
 	for (i = 0; i < n; i++)
 	{
 		u32 vi = idx ? idx[i] : (u32)i;
@@ -1632,6 +1900,8 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	}
 	v = vbuf_a;
 	cnt = n;
+	if ((ps2hwd_dbg_flags & HWDBG_TEX) && P.textured && H.cur_tex != NOREC && H.rec[H.cur_tex].sw && !vcol && !P.vcol)
+		poly_plane(vbuf_a, n, (float)H.rec[H.cur_tex].sw, (float)H.rec[H.cur_tex].sh); // before clipping reuses the buffers
 	if (or_)
 	{
 		cnt = clip_poly(vbuf_a, vbuf_b, n, na, or_, &v);
@@ -1646,7 +1916,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	if (P.textured && (P.wrapx || P.wrapy) && !P.cutx && !P.cuty)
 	{
 		// whole repeats of a power of two texture can be dropped from the coordinates (keeps S/Q and T/Q small)
-		float smin = 1e30f, tmin = 1e30f;
+		float smin = 1e30f, tmin = 1e30f, smax = -1e30f, tmax = -1e30f;
 
 		for (i = 0; i < cnt; i++)
 		{
@@ -1654,9 +1924,14 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 				smin = v[i].a[0];
 			if (v[i].a[1] < tmin)
 				tmin = v[i].a[1];
+			if (v[i].a[0] > smax)
+				smax = v[i].a[0];
+			if (v[i].a[1] > tmax)
+				tmax = v[i].a[1];
 		}
 		pc.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
 		pc.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
+		big = (P.wrapx && (smax - smin) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin) * (float)P.r->h > UV_EXTENT); // PS2-HW-64: too many texels for one primitive: cut at whole repeats (cut_and_emit)
 	}
 	else
 	{
@@ -1664,12 +1939,18 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	}
 	pc.cls = -1;
 	pc.ripple = 0;
-	if (P.fast && !P.vcol && !vcol)
+	if ((ps2hwd_dbg_flags & HWDBG_TEX) && P.textured && H.cur_tex != NOREC && H.rec[H.cur_tex].sw && !vcol && !P.vcol)
+		lod_note(v, cnt); // OPT9 instrumentation: the mip level this polygon needs
+	if (P.fast && !P.vcol && !vcol && !big)
 #ifdef HW_VU0
 		emit_fast_fan(v, (vu0 && !or_) ? (const void *)pvbuf : NULL, cnt, pc.sb, pc.tb);
 #else
 		emit_fast_fan(v, NULL, cnt, pc.sb, pc.tb);
 #endif
+	else if (P.litfast && !big && !vcol && !P.vcol && !(ps2hwd_dbg_flags & 8192) && lit_fast_poly(v, LF_PV(vu0, or_), cnt, pc.sb, pc.tb))
+		; // PS2-HW-43: drawn
+	else if (P.water && P.textured && !P.vcol && !vcol && !big)
+		emit_water_poly(v, cnt, pc, na);
 	else
 		cut_and_emit(v, cnt, 0, pc, na);
 	H.st.cyc_draw += cyc() - t0;

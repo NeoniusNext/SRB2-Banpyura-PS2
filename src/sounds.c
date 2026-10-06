@@ -25,7 +25,11 @@
 // Information about all the sfx
 //
 
+#ifdef PS2_DYNLIMITS
+sfxinfo_t S_sfx_small[sfx_freeslot0 + PS2_SMALL_SFXFREESLOTS + PS2_SMALL_SKINSFXSLOTS] =
+#else
 sfxinfo_t S_sfx[NUMSFX] =
+#endif
 {
 
 /*****
@@ -827,7 +831,13 @@ sfxinfo_t S_sfx[NUMSFX] =
   // initialized to NULL
 };
 
+#ifdef PS2_DYNLIMITS
+sfxinfo_t *S_sfx = S_sfx_small;
+char freeslotnames_small[sfx_freeslot0 + PS2_SMALL_SFXFREESLOTS + PS2_SMALL_SKINSFXSLOTS][7];
+char (*freeslotnames)[7] = freeslotnames_small;
+#else
 char freeslotnames[sfx_freeslot0 + NUMSFXFREESLOTS + NUMSKINSFXSLOTS][7];
+#endif
 
 // Prepare free sfx slots to add sfx at run time
 void S_InitRuntimeSounds (void)
@@ -836,7 +846,7 @@ void S_InitRuntimeSounds (void)
 	INT32 value;
 	char soundname[10];
 
-	for (i = sfx_freeslot0; i <= sfx_lastskinsoundslot; i++)
+	for (i = sfx_freeslot0; i < (sfxenum_t)LIMIT_NUMSFX; i++)
 	{
 		value = (i+1) - sfx_freeslot0;
 
@@ -874,9 +884,12 @@ sfxenum_t S_AddSoundFx(const char *name, boolean singular, INT32 flags, boolean 
 {
 	sfxenum_t i;
 
+#ifdef PS2_DYNLIMITS
+retry:
+#endif
 	if (skinsound)
 	{
-		for (i = sfx_skinsoundslot0; i < NUMSFX; i++)
+		for (i = LIMIT_SFX_SKINSLOT0; i < (sfxenum_t)LIMIT_NUMSFX; i++)
 		{
 			if (S_sfx[i].priority)
 				continue;
@@ -886,7 +899,17 @@ sfxenum_t S_AddSoundFx(const char *name, boolean singular, INT32 flags, boolean 
 	else
 		i = sfxfree;
 
-	if (i < NUMSFX)
+#ifdef PS2_DYNLIMITS
+	// PS2-104: out of the vanilla-size slots, or the first sound of a skin (its number is a PC number, the skin slots follow the free slots): the sound
+	// tables grow to the PC size and the search starts again
+	if (!ps2_fullsfx && (skinsound || i > LIMIT_SFX_LASTFREESLOT))
+	{
+		PS2Limits_GrowSounds();
+		goto retry;
+	}
+#endif
+
+	if (i < (sfxenum_t)LIMIT_NUMSFX)
 	{
 		strncpy(freeslotnames[i-sfx_freeslot0], name, 6);
 		S_sfx[i].singularity = singular;
@@ -911,7 +934,7 @@ sfxenum_t S_AddSoundFx(const char *name, boolean singular, INT32 flags, boolean 
 
 void S_RemoveSoundFx(sfxenum_t id)
 {
-	if (id >= sfx_freeslot0 && id <= sfx_lastskinsoundslot
+	if (id >= sfx_freeslot0 && id < (sfxenum_t)LIMIT_NUMSFX
 		&& S_sfx[id].priority != 0)
 	{
 		S_sfx[id].lumpnum = LUMPERROR;

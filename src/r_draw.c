@@ -739,7 +739,7 @@ UINT8* R_GetTranslationColormap(INT32 skinnum, skincolornum_t color, UINT8 flags
 	{
 		// Allocate table for skin if necessary
 		if (!translationtablecache[index])
-			translationtablecache[index] = Z_Calloc(MAXSKINCOLORS * sizeof(colorcache_t**), PU_STATIC, NULL);
+			translationtablecache[index] = Z_Calloc(LIMIT_MAXSKINCOLORS * sizeof(colorcache_t**), PU_STATIC, NULL);
 
 		// Get colormap
 		ret = translationtablecache[index][color];
@@ -796,8 +796,26 @@ void R_FlushTranslationColormapCache(void)
 
 	for (i = 0; i < TT_CACHE_SIZE; i++)
 		if (translationtablecache[i])
-			memset(translationtablecache[i], 0, MAXSKINCOLORS * sizeof(UINT8**));
+			memset(translationtablecache[i], 0, LIMIT_MAXSKINCOLORS * sizeof(UINT8**));
 }
+
+#ifdef PS2_DYNLIMITS
+// PS2-104: the per-skin tables of cached colormaps are one pointer per colour of the live colour table; they follow it when it grows
+void R_GrowTranslationCaches(void)
+{
+	INT32 i;
+
+	for (i = 0; i < TT_CACHE_SIZE; i++)
+		if (translationtablecache[i])
+		{
+			colorcache_t **grown = Z_Calloc(MAXSKINCOLORS * sizeof(colorcache_t**), PU_STATIC, NULL);
+
+			M_Memcpy(grown, translationtablecache[i], (SKINCOLOR_FIRSTFREESLOT + PS2_SMALL_COLORFREESLOTS) * sizeof(colorcache_t**));
+			Z_Free(translationtablecache[i]);
+			translationtablecache[i] = grown;
+		}
+}
+#endif
 
 UINT16 R_GetColorByName(const char *name)
 {

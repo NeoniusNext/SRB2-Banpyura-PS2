@@ -65,7 +65,7 @@ static boolean Z_calloc = false;
 // Z_HEADROOM_DEFAULT bytes (cache of any age may go then: the view holds nothing yet).
 // RAM profiles (PS2-OPT-01): 32 MB retail keeps the arena compact, a 128 MB Dev/TOOL console gets large reserves
 // and a large headroom so that the frame is never short of one contiguous block; everything else follows from the arena size.
-#define Z_RESERVE_DEFAULT (1536u << 10) // C heap left for libc malloc: stdio, GS/IOP buffers, per-frame malloc. PS2-77: was 2 MiB; MAP11 + music peak 911 KB (-zck libcpeak), the sweep of all maps <= 0.9 MB
+#define Z_RESERVE_DEFAULT (512u << 10) // C heap left for libc malloc: stdio, GS/IOP buffers, per-frame malloc. PS2-77: was 2 MiB; MAP11 + music peak 911 KB (-zck libcpeak), the sweep of all maps <= 0.9 MB. PS2-79: 512 KiB (allocations of 24 KiB and more by the game thread go to the arena first, ps2_spill.c: the C heap above the arena peaked at 128 KB; it is for the decoder/mixer/network threads and small blocks)
 #define Z_HEADROOM_DEFAULT (4u << 20) // one free block of this size is ensured when purging gets locked
 #define Z_RESERVE_128 (8u << 20)
 #define Z_HEADROOM_128 (16u << 20)

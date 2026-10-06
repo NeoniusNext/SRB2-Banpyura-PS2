@@ -14,6 +14,10 @@ const char *PS2Net_Gateway(void);
 // Bytes of C heap the stack added (modules' EE side, lwIP pools), for the memory budget
 UINT32 PS2Net_HeapUse(void);
 
+// PS2-139: unlink() that also works where the device cannot delete (PCSX2's host: refuses: "Can't delete host:/.srb2/$$$.sav" after every join, and
+// the next "connect" would end in I_Error): the file is emptied instead. 0 = gone or emptied, -1 = neither worked.
+int PS2Net_Unlink(const char *path);
+
 // -netcmd "N:command|..." (diagnostic): console commands at displayed frame N; called once per frame
 void PS2Net_Frame(void);
 

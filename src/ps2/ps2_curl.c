@@ -179,16 +179,13 @@ static int ParseUrl(const char *url, url_t *u)
 	return CURLE_OK;
 }
 
-// 0 ok, else a CURLcode. Waits for the connection for at most the time left (the stack's own connect timeout is far longer).
-static int Connect(const url_t *u, long deadline, sock_t *out, char *errbuf, size_t errsize)
+// Opens the socket and starts the connection: 0 ok (*done = 1 when connected already, else poll with ConnectPoll), else a CURLcode.
+static int ConnectBegin(const url_t *u, sock_t *out, int *done, char *errbuf, size_t errsize)
 {
 	struct sockaddr_in sa;
 	sock_t s;
 	int port = atoi(u->port);
 	unsigned long ip;
-	fd_set wfds, efds;
-	struct timeval tv;
-	long left;
 	int rc;
 
 	memset(&sa, 0, sizeof sa);
@@ -225,6 +222,7 @@ static int Connect(const url_t *u, long deadline, sock_t *out, char *errbuf, siz
 		fcntl(s, F_SETFL, fl | O_NONBLOCK);
 	}
 #endif
+	*done = 0;
 	rc = connect(s, (struct sockaddr *)&sa, sizeof sa);
 	if (rc != 0)
 	{
@@ -241,37 +239,67 @@ static int Connect(const url_t *u, long deadline, sock_t *out, char *errbuf, siz
 			sock_close(s);
 			return CURLE_COULDNT_CONNECT;
 		}
-		for (;;)
-		{
-			left = deadline - NowMs();
-			if (left <= 0)
-			{
-				Fail(errbuf, errsize, "Connection timed out connecting to %s", u->host);
-				sock_close(s);
-				return CURLE_OPERATION_TIMEDOUT;
-			}
-			FD_ZERO(&wfds);
-			FD_SET(s, &wfds);
-			FD_ZERO(&efds);
-			FD_SET(s, &efds); // Winsock reports a refused connection here
-			tv.tv_sec = (left > 500 ? 500 : left) / 1000;
-			tv.tv_usec = ((left > 500 ? 500 : left) % 1000) * 1000;
-			rc = select((int)s + 1, NULL, &wfds, &efds, &tv);
-			if (rc > 0)
-			{
-				int err = 0;
-				socklen_t len = sizeof err;
+	}
+	else
+		*done = 1;
+	*out = s;
+	return CURLE_OK;
+}
 
-				getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
-				if (err)
-				{
-					Fail(errbuf, errsize, "Failed to connect to %s (error %d)", u->host, err);
-					sock_close(s);
-					return CURLE_COULDNT_CONNECT;
-				}
-				break;
-			}
+// Waits up to waitms for the connection started by ConnectBegin: 0 ok (*done says whether it is up), else a CURLcode (the socket is closed).
+static int ConnectPoll(sock_t s, const char *host, long waitms, int *done, char *errbuf, size_t errsize)
+{
+	fd_set wfds, efds;
+	struct timeval tv;
+	int rc;
+
+	FD_ZERO(&wfds);
+	FD_SET(s, &wfds);
+	FD_ZERO(&efds);
+	FD_SET(s, &efds); // Winsock reports a refused connection here
+	tv.tv_sec = waitms / 1000;
+	tv.tv_usec = (waitms % 1000) * 1000;
+	rc = select((int)s + 1, NULL, &wfds, &efds, &tv);
+	*done = 0;
+	if (rc > 0)
+	{
+		int err = 0;
+		socklen_t len = sizeof err;
+
+		getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&err, &len);
+		if (err)
+		{
+			Fail(errbuf, errsize, "Failed to connect to %s (error %d)", host, err);
+			sock_close(s);
+			return CURLE_COULDNT_CONNECT;
 		}
+		*done = 1;
+	}
+	return CURLE_OK;
+}
+
+// 0 ok, else a CURLcode. Waits for the connection for at most the time left (the stack's own connect timeout is far longer).
+static int Connect(const url_t *u, long deadline, sock_t *out, char *errbuf, size_t errsize)
+{
+	sock_t s;
+	int rc, done;
+
+	rc = ConnectBegin(u, &s, &done, errbuf, errsize);
+	if (rc)
+		return rc;
+	while (!done)
+	{
+		const long left = deadline - NowMs();
+
+		if (left <= 0)
+		{
+			Fail(errbuf, errsize, "Connection timed out connecting to %s", u->host);
+			sock_close(s);
+			return CURLE_OPERATION_TIMEDOUT;
+		}
+		rc = ConnectPoll(s, u->host, left > 500 ? 500 : left, &done, errbuf, errsize);
+		if (rc)
+			return rc;
 	}
 	*out = s;
 	return CURLE_OK;
@@ -644,6 +672,384 @@ CURLcode PS2Http_Request(const char *url, const char *post, long postsize, int i
 		free(body.p);
 		return CURLE_OK;
 	}
+}
+
+// ===== PS2-137: streaming GET, stepped from the game loop (add-on download from the server's HTTP source) =====
+// PS2Http_Request keeps the whole body (512 KB at most) and blocks. An add-on is megabytes and the connection screen must go on drawing and
+// polling the pad, so this one is a state machine: every PS2HttpGet_Step() does what the sockets allow right now (select with a zero timeout,
+// as the game's UDP code does under lwIP) and returns; the body goes through write_fn in pieces as it arrives.
+
+enum { G_START, G_CONNECT, G_SEND, G_HEAD, G_BODY, G_DONE };
+enum { CS_SIZE, CS_DATA, CS_CRLF };
+
+struct ps2_httpget
+{
+	int state;
+	sock_t s;
+	url_t u;
+	char cur[1536];
+	char useragent[256];
+	int redirs, maxredirs;
+	long stall_ms, last_progress;
+	char req[1536];
+	int reqlen, reqsent;
+	char head[MAXHEAD];
+	int headlen;
+	long status, clen, got;
+	int chunked, cs, sizelen;
+	long chunkleft;
+	char sizeline[24];
+};
+
+ps2_httpget_t *PS2HttpGet_Open(const char *url, long stall_seconds, int maxredirs, const char *useragent)
+{
+	ps2_httpget_t *g = calloc(1, sizeof *g);
+
+	if (!g)
+		return NULL;
+	g->s = SOCK_BAD;
+	snprintf(g->cur, sizeof g->cur, "%s", url);
+	snprintf(g->useragent, sizeof g->useragent, "%s", useragent && useragent[0] ? useragent : "SRB2");
+	g->maxredirs = maxredirs;
+	g->stall_ms = (stall_seconds > 0 ? stall_seconds : 20) * 1000;
+	g->last_progress = NowMs();
+	g->clen = -1;
+	return g;
+}
+
+void PS2HttpGet_Close(ps2_httpget_t *g)
+{
+	if (!g)
+		return;
+	if (g->s != SOCK_BAD)
+		sock_close(g->s);
+	free(g);
+}
+
+static int GetFail(ps2_httpget_t *g, int code, char *errbuf, size_t errsize, const char *msg)
+{
+	if (g->s != SOCK_BAD)
+	{
+		sock_close(g->s);
+		g->s = SOCK_BAD;
+	}
+	g->state = G_DONE;
+	if (msg)
+		Fail(errbuf, errsize, "%s", msg);
+	return -code;
+}
+
+// Delivers a piece of the message body. 0 = go on, 1 = the body is complete, < 0 = -CURLcode
+static int GetFeed(ps2_httpget_t *g, const char *p, size_t n, ps2curl_write_fn fn, void *ud)
+{
+	if (!g->chunked)
+	{
+		if (g->clen >= 0 && (long)n > g->clen - g->got)
+			n = (size_t)(g->clen - g->got);
+		if (n && fn && fn((char *)p, 1, n, ud) != n)
+			return -CURLE_WRITE_ERROR;
+		g->got += (long)n;
+		return g->clen >= 0 && g->got >= g->clen ? 1 : 0;
+	}
+	while (n)
+	{
+		if (g->cs == CS_SIZE)
+		{
+			const char c = *p++;
+
+			n--;
+			if (c == '\n')
+			{
+				g->sizeline[g->sizelen] = '\0';
+				g->chunkleft = strtol(g->sizeline, NULL, 16); // a ";extension" ends the number by itself
+				g->sizelen = 0;
+				if (g->chunkleft < 0)
+					return -CURLE_RECV_ERROR;
+				if (!g->chunkleft)
+					return 1; // the last chunk: the trailer is not needed
+				g->cs = CS_DATA;
+			}
+			else if (c != '\r' && g->sizelen < (int)sizeof g->sizeline - 1)
+				g->sizeline[g->sizelen++] = c;
+		}
+		else if (g->cs == CS_DATA)
+		{
+			const size_t take = (long)n > g->chunkleft ? (size_t)g->chunkleft : n;
+
+			if (fn && fn((char *)p, 1, take, ud) != take)
+				return -CURLE_WRITE_ERROR;
+			g->got += (long)take;
+			g->chunkleft -= (long)take;
+			p += take;
+			n -= take;
+			if (!g->chunkleft)
+				g->cs = CS_CRLF;
+		}
+		else // CS_CRLF: the line end after the chunk data
+		{
+			if (*p++ == '\n')
+				g->cs = CS_SIZE;
+			n--;
+		}
+	}
+	return 0;
+}
+
+// The reply header is complete in g->head (g->headlen bytes, "\r\n\r\n" at he). 0 = go on to the body, 1 = redirected (state G_START again), < 0 = -CURLcode
+static int GetHeader(ps2_httpget_t *g, char *he, char *errbuf, size_t errsize)
+{
+	size_t vl;
+	const char *v;
+
+	if (strncmp(g->head, "HTTP/1.", 7) != 0 || g->headlen < 12)
+		return GetFail(g, CURLE_RECV_ERROR, errbuf, errsize, "Received HTTP/0.9 or garbage when HTTP/1.x was expected");
+	g->status = atoi(g->head + 9);
+	he[2] = '\0'; // terminates the last header line for Header()
+	v = Header(g->head, "Transfer-Encoding", &vl);
+	g->chunked = v && vl >= 7 && !strncasecmp(v, "chunked", 7);
+	v = Header(g->head, "Content-Length", &vl);
+	g->clen = v ? atol(v) : -1;
+	if (g->status >= 300 && g->status < 400 && g->status != 304)
+	{
+		v = Header(g->head, "Location", &vl);
+		if (v && vl && vl < 1400)
+		{
+			char loc[1536];
+
+			if (g->redirs >= g->maxredirs)
+				return GetFail(g, CURLE_TOO_MANY_REDIRECTS, errbuf, errsize, "Maximum redirects followed");
+			memcpy(loc, v, vl);
+			loc[vl] = '\0';
+			if (!strncasecmp(loc, "http://", 7) || !strncasecmp(loc, "https://", 8))
+				snprintf(g->cur, sizeof g->cur, "%s", loc);
+			else if (loc[0] == '/')
+				snprintf(g->cur, sizeof g->cur, "http://%s:%s%s", g->u.host, g->u.port, loc);
+			else
+			{
+				char *slash = strrchr(g->u.path, '/');
+				const size_t dir = slash ? (size_t)(slash - g->u.path) + 1 : 0;
+
+				snprintf(g->cur, sizeof g->cur, "http://%s:%s%.*s%s", g->u.host, g->u.port, (int)dir, g->u.path, loc);
+			}
+			sock_close(g->s);
+			g->s = SOCK_BAD;
+			g->redirs++;
+			g->state = G_START;
+			return 1;
+		}
+	}
+	if (g->status < 200 || g->status >= 300)
+	{
+		char msg[64];
+
+		snprintf(msg, sizeof msg, "The requested URL returned error: %ld", g->status);
+		return GetFail(g, CURLE_HTTP_RETURNED_ERROR, errbuf, errsize, msg);
+	}
+	return 0;
+}
+
+int PS2HttpGet_Step(ps2_httpget_t *g, ps2curl_write_fn fn, void *ud, long *status, long *total, long *got, char *errbuf, size_t errsize)
+{
+	int round, rc;
+
+	if (errbuf && errsize)
+		errbuf[0] = '\0';
+	for (round = 0; round < 32; round++)
+	{
+		rc = 1;
+		if (g->state != G_START && g->state != G_DONE && NowMs() - g->last_progress > g->stall_ms)
+			rc = GetFail(g, CURLE_OPERATION_TIMEDOUT, errbuf, errsize, "Operation timed out: no data for a long time");
+		else
+			switch (g->state)
+			{
+				case G_START:
+				{
+					int done;
+
+					rc = ParseUrl(g->cur, &g->u);
+					if (rc == CURLE_UNSUPPORTED_PROTOCOL || (!rc && g->u.https))
+					{
+						rc = GetFail(g, CURLE_UNSUPPORTED_PROTOCOL, errbuf, errsize, "Protocol not supported (the PS2 build has no TLS: only http://)");
+						break;
+					}
+					if (rc)
+					{
+						rc = GetFail(g, rc, errbuf, errsize, "URL using bad/illegal format or missing URL");
+						break;
+					}
+					rc = ConnectBegin(&g->u, &g->s, &done, errbuf, errsize);
+					if (rc)
+					{
+						g->s = SOCK_BAD;
+						g->state = G_DONE;
+						rc = -rc;
+						break;
+					}
+					g->reqlen = snprintf(g->req, sizeof g->req, "GET %s HTTP/1.1\r\nHost: %s%s%s\r\nUser-Agent: %s\r\nAccept: */*\r\nConnection: close\r\n\r\n",
+						g->u.path, g->u.host, strcmp(g->u.port, "80") ? ":" : "", strcmp(g->u.port, "80") ? g->u.port : "", g->useragent);
+					if (g->reqlen <= 0 || g->reqlen >= (int)sizeof g->req)
+					{
+						rc = GetFail(g, CURLE_URL_MALFORMAT, errbuf, errsize, "URL too long");
+						break;
+					}
+					g->reqsent = 0;
+					g->headlen = 0;
+					g->status = 0;
+					g->clen = -1;
+					g->got = 0;
+					g->chunked = 0;
+					g->cs = CS_SIZE;
+					g->sizelen = 0;
+					g->state = done ? G_SEND : G_CONNECT;
+					g->last_progress = NowMs();
+					rc = 2; // go on in this call
+					break;
+				}
+				case G_CONNECT:
+				{
+					int done;
+
+					rc = ConnectPoll(g->s, g->u.host, 0, &done, errbuf, errsize);
+					if (rc)
+					{
+						g->s = SOCK_BAD;
+						g->state = G_DONE;
+						rc = -rc;
+						break;
+					}
+					if (!done)
+					{
+						rc = 1;
+						break;
+					}
+					g->state = G_SEND;
+					g->last_progress = NowMs();
+					rc = 2;
+					break;
+				}
+				case G_SEND:
+				{
+					fd_set wfds;
+					struct timeval tv = {0, 0};
+					int k;
+
+					FD_ZERO(&wfds);
+					FD_SET(g->s, &wfds);
+					if (select((int)g->s + 1, NULL, &wfds, NULL, &tv) <= 0)
+					{
+						rc = 1;
+						break;
+					}
+					k = (int)send(g->s, g->req + g->reqsent, (size_t)(g->reqlen - g->reqsent), 0);
+					if (k <= 0)
+					{
+						rc = GetFail(g, CURLE_SEND_ERROR, errbuf, errsize, "Failure when sending the request");
+						break;
+					}
+					g->reqsent += k;
+					g->last_progress = NowMs();
+					if (g->reqsent >= g->reqlen)
+						g->state = G_HEAD;
+					rc = 2;
+					break;
+				}
+				case G_HEAD:
+				case G_BODY:
+				{
+					fd_set rfds;
+					struct timeval tv = {0, 0};
+					char tmp[4096];
+					int k, fed = 0, want = (int)sizeof tmp;
+
+					FD_ZERO(&rfds);
+					FD_SET(g->s, &rfds);
+					if (select((int)g->s + 1, &rfds, NULL, NULL, &tv) <= 0)
+					{
+						rc = 1;
+						break;
+					}
+					if (g->state == G_HEAD && want > (int)sizeof g->head - 1 - g->headlen)
+						want = (int)sizeof g->head - 1 - g->headlen;
+					k = (int)recv(g->s, tmp, (size_t)want, 0);
+					if (k < 0)
+					{
+						rc = GetFail(g, CURLE_RECV_ERROR, errbuf, errsize, "Failure when receiving data from the peer");
+						break;
+					}
+					if (k == 0) // the server closed the connection
+					{
+						if (g->state == G_BODY && !g->chunked && g->clen < 0)
+						{
+							sock_close(g->s);
+							g->s = SOCK_BAD;
+							g->state = G_DONE;
+							rc = 0;
+						}
+						else
+							rc = GetFail(g, CURLE_RECV_ERROR, errbuf, errsize, g->state == G_HEAD ? "Empty reply from server" : "Transfer closed with data outstanding");
+						break;
+					}
+					g->last_progress = NowMs();
+					rc = 2;
+					if (g->state == G_BODY)
+						fed = GetFeed(g, tmp, (size_t)k, fn, ud);
+					else
+					{
+						char *he;
+
+						memcpy(g->head + g->headlen, tmp, (size_t)k);
+						g->headlen += k;
+						g->head[g->headlen] = '\0';
+						he = strstr(g->head, "\r\n\r\n");
+						if (!he)
+						{
+							if (g->headlen >= (int)sizeof g->head - 1)
+								rc = GetFail(g, CURLE_RECV_ERROR, errbuf, errsize, "The reply header is too large");
+							break;
+						}
+						{
+							const size_t bodystart = (size_t)(he + 4 - g->head);
+							const int hrc = GetHeader(g, he, errbuf, errsize);
+
+							if (hrc < 0)
+							{
+								rc = hrc;
+								break;
+							}
+							if (hrc > 0)
+								break; // redirected
+							g->state = G_BODY;
+							if ((size_t)g->headlen > bodystart)
+								fed = GetFeed(g, g->head + bodystart, (size_t)g->headlen - bodystart, fn, ud);
+							else if (g->clen == 0 && !g->chunked)
+								fed = 1;
+						}
+					}
+					if (fed < 0)
+						rc = GetFail(g, -fed, errbuf, errsize, "Failure writing output to destination");
+					else if (fed > 0)
+					{
+						sock_close(g->s);
+						g->s = SOCK_BAD;
+						g->state = G_DONE;
+						rc = 0;
+					}
+					break;
+				}
+				default:
+					rc = 0;
+					break;
+			}
+		if (rc != 2)
+			break;
+	}
+	if (status)
+		*status = g->status;
+	if (total)
+		*total = g->clen;
+	if (got)
+		*got = g->got;
+	return rc == 2 ? 1 : rc;
 }
 
 // ===== the libcurl-easy shape =====

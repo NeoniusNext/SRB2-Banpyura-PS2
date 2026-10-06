@@ -100,9 +100,23 @@ typedef struct
 
 typedef struct
 {
+#ifdef PS2_DYNLIMITS
+	spriteframepivot_t *pivot; // PS2-104: NULL until R_SpriteInfoPivot() allocates MAXFRAMENUM entries (2 KB per sprite that has pivots, not for every sprite and skin animation)
+#else
 	spriteframepivot_t pivot[MAXFRAMENUM];
+#endif
 	boolean available;
 } spriteinfo_t;
+
+#ifdef PS2_DYNLIMITS
+spriteframepivot_t *R_SpriteInfoPivot(spriteinfo_t *info); // the pivot array of info, allocated on first use
+void R_SpriteInfoCopy(spriteinfo_t *dst, const spriteinfo_t *src); // deep copy (what the memcpy of the fixed-size struct did)
+void R_SpriteInfoFree(spriteinfo_t *info); // frees the pivot array of a temporary
+#else
+#define R_SpriteInfoPivot(info) ((info)->pivot)
+#define R_SpriteInfoCopy(dst, src) M_Memcpy((dst), (src), sizeof (spriteinfo_t))
+#define R_SpriteInfoFree(info) ((void)(info))
+#endif
 
 // PNG support
 #define PNG_HEADER_SIZE 8

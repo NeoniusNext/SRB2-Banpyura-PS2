@@ -35,7 +35,11 @@ typedef struct
 	boolean     error;
 } md2_t;
 
+#ifdef PS2_DYNLIMITS
+extern md2_t *md2_models;
+#else
 extern md2_t md2_models[NUMSPRITES];
+#endif
 extern md2_t *md2_playermodels;
 extern size_t md2_numplayermodels;
 

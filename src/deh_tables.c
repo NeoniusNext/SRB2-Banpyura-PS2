@@ -28,9 +28,18 @@
 
 #include "deh_tables.h"
 
+#ifdef PS2_DYNLIMITS
+static char *free_states_small[PS2_SMALL_MOBJFREESLOTS * 8];
+static char *free_mobjs_small[PS2_SMALL_MOBJFREESLOTS];
+static char *free_skincolors_small[PS2_SMALL_COLORFREESLOTS];
+char **FREE_STATES = free_states_small;
+char **FREE_MOBJS = free_mobjs_small;
+char **FREE_SKINCOLORS = free_skincolors_small;
+#else
 char *FREE_STATES[NUMSTATEFREESLOTS];
 char *FREE_MOBJS[NUMMOBJFREESLOTS];
 char *FREE_SKINCOLORS[NUMCOLORFREESLOTS];
+#endif
 bitarray_t used_spr[BIT_ARRAY_SIZE(NUMSPRITEFREESLOTS)]; // Sprite freeslots in use
 
 const char NIGHTSGRADE_LIST[] = {

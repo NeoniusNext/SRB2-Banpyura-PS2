@@ -18,6 +18,9 @@
 #endif
 
 #include "m_menu.h"
+#if defined (PS2) && defined (HAS_ADDONS)
+#include "ps2/ps2_addons.h"
+#endif
 
 #include "doomdef.h"
 #include "d_main.h"
@@ -1249,8 +1252,10 @@ static menuitem_t OP_MouseOptionsMenu[] =
 static menuitem_t OP_Mouse2OptionsMenu[] =
 {
 	{IT_STRING | IT_CVAR, NULL, "Use Mouse 2",      &cv_usemouse2,        10},
+#ifndef PS2 // PS2-157: a USB mouse has no serial port (and its label overran the value)
 	{IT_STRING | IT_CVAR, NULL, "Second Mouse Serial Port",
 	                                                &cv_mouse2port,       20},
+#endif
 	{IT_STRING | IT_CVAR, NULL, "First-Person MouseLook", &cv_alwaysfreelook2,  30},
 	{IT_STRING | IT_CVAR, NULL, "Third-Person MouseLook", &cv_chasefreelook2,  40},
 	{IT_STRING | IT_CVAR, NULL, "Mouse Move",       &cv_mousemove2,       50},
@@ -6025,7 +6030,7 @@ static void M_DrawLevelPlatterRow(UINT8 row, INT32 y)
 	if (levellistmode == LLM_CREATESERVER && !row)
 	{
 		if (!char_notes)
-			char_notes = V_WordWrap(0, 282 - 8, V_ALLOWLOWERCASE, gametypedesc[cv_newgametype.value].notes);
+			char_notes = V_WordWrap(0, 282 - 8, V_ALLOWLOWERCASE, GTDESC_NOTES(cv_newgametype.value));
 
 		V_DrawFill(lsbasex, y, 282, 50, 27);
 		V_DrawString(lsbasex + 4, y + 4, V_RETURN8|V_ALLOWLOWERCASE, char_notes);
@@ -6529,6 +6534,17 @@ static void M_Addons(INT32 choice)
 #endif
 	if (cv_addons_option.value == 3 && *cv_addons_folder.string != '\0')
 		pathname = cv_addons_folder.string;
+#ifdef PS2
+	// PS2-103: the add-ons live in the folder SRB2 of a memory card or of a USB stick (their drivers are loaded now, not at start-up)
+	else if (cv_addons_option.value == 4)
+		pathname = "mc0:/SRB2";
+	else if (cv_addons_option.value == 5)
+		pathname = "mc1:/SRB2";
+	else if (cv_addons_option.value == 6)
+		pathname = "mass:/SRB2";
+	if (cv_addons_option.value >= 4)
+		PS2Addons_Prepare(pathname);
+#endif
 
 	strlcpy(menupath, pathname, 1024);
 	menupathindex[(menudepthleft = menudepth-1)] = strlen(menupath) + 1;

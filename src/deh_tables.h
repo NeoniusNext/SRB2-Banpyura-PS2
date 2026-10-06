@@ -20,31 +20,48 @@
 
 // Free slot names
 // The crazy word-reading stuff uses these.
+#ifdef PS2_DYNLIMITS
+// PS2-104: tables of the live size, replaced by PC-size copies by PS2Limits_Grow(); the sprite bit array is small enough to stay at the PC size
+extern char **FREE_STATES;
+extern char **FREE_MOBJS;
+extern char **FREE_SKINCOLORS;
+#define FREESIZE_STATES (sizeof (char *) * LIMIT_STATEFREESLOTS)
+#define FREESIZE_MOBJS (sizeof (char *) * LIMIT_MOBJFREESLOTS)
+#define FREESIZE_SKINCOLORS (sizeof (char *) * LIMIT_COLORFREESLOTS)
+// every free-slot allocation starts with this: when the live part of the table has no empty entry the tables grow first
+#define PS2_FREESLOT_CHECK(table, limit) do { INT32 q_; for (q_ = 0; q_ < (INT32)(limit); q_++) if (!(table)[q_]) break;\
+	if (q_ == (INT32)(limit) && !ps2_fulllimits) PS2Limits_Grow(); } while (0)
+#else
 extern char *FREE_STATES[NUMSTATEFREESLOTS];
 extern char *FREE_MOBJS[NUMMOBJFREESLOTS];
 extern char *FREE_SKINCOLORS[NUMCOLORFREESLOTS];
+#define FREESIZE_STATES sizeof(FREE_STATES)
+#define FREESIZE_MOBJS sizeof(FREE_MOBJS)
+#define FREESIZE_SKINCOLORS sizeof(FREE_SKINCOLORS)
+#define PS2_FREESLOT_CHECK(table, limit) ((void)0)
+#endif
 extern bitarray_t used_spr[BIT_ARRAY_SIZE(NUMSPRITEFREESLOTS)]; // Sprite freeslots in use
 
 #ifndef HAS_LUA
 #define initfreeslots() {\
-	memset(FREE_STATES, 0, sizeof(FREE_STATES));\
-	memset(FREE_MOBJS, 0, sizeof(FREE_MOBJS));\
-	memset(FREE_SKINCOLORS, 0, sizeof(FREE_SKINCOLORS));\
+	memset(FREE_STATES, 0, FREESIZE_STATES);\
+	memset(FREE_MOBJS, 0, FREESIZE_MOBJS);\
+	memset(FREE_SKINCOLORS, 0, FREESIZE_SKINCOLORS);\
 	memset(used_spr, 0, sizeof(used_spr));\
 }
 #elif defined(PS2_PROFILE)
 #define initfreeslots() {\
-	memset(FREE_STATES, 0, sizeof(FREE_STATES));\
-	memset(FREE_MOBJS, 0, sizeof(FREE_MOBJS));\
-	memset(FREE_SKINCOLORS, 0, sizeof(FREE_SKINCOLORS));\
+	memset(FREE_STATES, 0, FREESIZE_STATES);\
+	memset(FREE_MOBJS, 0, FREESIZE_MOBJS);\
+	memset(FREE_SKINCOLORS, 0, FREESIZE_SKINCOLORS);\
 	memset(used_spr, 0, sizeof(used_spr));\
 	if (actionsoverridden) memset(actionsoverridden, LUA_REFNIL, sizeof(*actionsoverridden) * NUMACTIONS);\
 }
 #else
 #define initfreeslots() {\
-	memset(FREE_STATES, 0, sizeof(FREE_STATES));\
-	memset(FREE_MOBJS, 0, sizeof(FREE_MOBJS));\
-	memset(FREE_SKINCOLORS, 0, sizeof(FREE_SKINCOLORS));\
+	memset(FREE_STATES, 0, FREESIZE_STATES);\
+	memset(FREE_MOBJS, 0, FREESIZE_MOBJS);\
+	memset(FREE_SKINCOLORS, 0, FREESIZE_SKINCOLORS);\
 	memset(used_spr, 0, sizeof(used_spr));\
 	memset(actionsoverridden, LUA_REFNIL, sizeof(actionsoverridden));\
 }

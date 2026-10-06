@@ -73,6 +73,23 @@ static void frame_prepare(int clearing)
 {
 	(void)clearing;
 }
+/* OPT9 (HT): the zero-copy upload path of ps2_hw_tex.inc (DMA references, locked engine data); the host test never takes it (no engine data pointer) */
+static void ring_wait(int limit)
+{
+	(void)limit;
+}
+static void pk_ref(const void *data, u32 qwc)
+{
+	(void)data; (void)qwc;
+}
+#define SyncDCache(a, b) ((void)0)
+void HWR_PS2_LockData(void *data) { (void)data; }
+void HWR_PS2_UnlockData(void *data) { (void)data; }
+void HWR_PS2_FreeData(void *data) { free(data); }
+void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser) { void *p = m->data; m->data = NULL; *newuser = p; return p; }
+void *HWR_PS2_AllocData(size_t bytes, void **newuser) { void *p = malloc(bytes); *newuser = p; return p; }
+/* PS2-HW-34: the frame plan (ps2_hw_plan.inc) is not part of the host test: every texture is stored at full size */
+static u32 tex_want(const GLMipmap_t *m, int *visible) { (void)m; *visible = 1; return 0; }
 static int clear_count;
 static void gs_fill_all(int buf, int colour, int depth, u32 rgba)
 {

@@ -626,7 +626,10 @@ typedef struct line_s
 // (HWRENDER) reads them, so it keeps the full structure.
 // PS2-74: the hardware build keeps them only until src/hardware/hw_main.c reads them through the accessors below (tools/ps2/hw_side_accessors.py
 // rewrites it); -DPS2_HW_SIDE_COMPACT selects the 36-byte side for that build (2.6 MB on MAP11).
-#if !defined(PS2_PROFILE) || (defined(HWRENDER) && !defined(PS2_HW_SIDE_COMPACT))
+// PS2-79 (OPT9-S): the hardware build is compact as well (src/hardware/hw_main.c reads through the SIDE_* accessors, tools/ps2/hw_side_accessors.py):
+// 2.6 MB of the zone on MAP11. NEW CODE in src/hardware/ and src/ps2/hw/ MUST read those fields with SIDE_*(side), never `side->scalex_top`.
+// -DPS2_HW_SIDE_FULL gives the 96-byte side back (comparison builds).
+#if !defined(PS2_PROFILE) || (defined(HWRENDER) && defined(PS2_HW_SIDE_FULL))
 #define SIDE_UDMF
 #endif
 
@@ -892,7 +895,9 @@ typedef struct seg_s
 	vertex_t *v1;
 	vertex_t *v2;
 
+#ifndef PS2_PROFILE
 	INT32 side;
+#endif
 
 	fixed_t offset;
 
@@ -917,8 +922,15 @@ typedef struct seg_s
 #endif
 
 	polyobj_t *polyseg;
+#ifdef PS2_PROFILE
+	// PS2-87: the three small fields in one word (49 592 segs on MAP11: 8 bytes each); 0/1 values
+	UINT8 side;
+	UINT8 dontrenderme;
+	UINT8 glseg;
+#else
 	boolean dontrenderme;
 	boolean glseg;
+#endif
 } seg_t;
 
 //
@@ -1147,11 +1159,19 @@ typedef struct
 #endif
 } spriteframe_t;
 
-#ifdef PS2_PROFILE
+#if defined(PS2_PROFILE) && !defined(PS2_LIMITS)
 // Standard sprite names give frames 0..63 (R_ReadSpriteFrame rejects >= 64); 256 costs 2 KB per spriteinfo_t
 #define MAXFRAMENUM 64
 #else
 #define MAXFRAMENUM 256
+#endif
+#ifdef PS2_DYNLIMITS
+// PS2-104: the scratch table of a sprite's frames (r_things.c sprtemp, cleared for every sprite) is 64 entries until a lump names a higher frame;
+// the pivots of a spriteinfo_t are allocated (MAXFRAMENUM entries) only for the sprites that have them (R_SpriteInfoPivot)
+#define PS2_SMALL_MAXFRAMENUM 64
+#define LIMIT_MAXFRAMENUM (ps2_fulllimits ? MAXFRAMENUM : PS2_SMALL_MAXFRAMENUM)
+#else
+#define LIMIT_MAXFRAMENUM MAXFRAMENUM
 #endif
 
 //

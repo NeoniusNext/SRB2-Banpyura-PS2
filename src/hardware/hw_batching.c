@@ -64,6 +64,30 @@ int unsortedVertexArrayAllocSize = 65536;
 #define HWR_BATCH_VERTICES finalVertexArray
 #endif
 
+#ifdef PS2
+// PS2-HW-31: the order of the batches. The pool of the GS holds less than the textures of a frame, so a frame uploads what is not resident,
+// and the batches of one texture must be drawn together (the engine's key hashed the texture together with the light level / blend mode,
+// scattering the batches of a texture over the frame: it was uploaded again for each of them). The key is the texture order (the map
+// texture or flat number) first, the rest of the state below it. The direction of the scan alternates from frame to frame: the textures
+// that stay in the pool at the end of a frame (the ones drawn last) are then the ones drawn first in the next, the best a cyclic scan can
+// do when the pool is smaller than the set. The state change test below compares the real state, so equal keys of different states are safe.
+static UINT32 HWR_PS2_TextureOrder(const GLMipmap_t *t)
+{
+	UINT32 id;
+	const UINT32 ps2_scan_dir = PS2HWD_ScanDirection(); // the frame's parity, not the batching passes' (a skybox view batches twice per frame)
+
+	if (!t)
+		return 0x3FFEu;
+	if (t->regen_kind == 1)
+		id = (UINT32)t->regen_id & 0x1FFFu;
+	else if (t->regen_kind == 2)
+		id = 0x2000u | ((UINT32)t->regen_id & 0x1FFFu);
+	else
+		id = (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18; // patches: any fixed order
+	return ps2_scan_dir ? 0x3FFFu - id : id;
+}
+#endif
+
 // Enables batching mode. HWR_ProcessPolygon will collect polygons instead of passing them directly to the rendering backend.
 static void *HWR_BatchResize(void *old, size_t bytes)
 {
@@ -219,7 +243,11 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			}
 #undef DIGEST
 			// remove the sign bit to ensure that skybox and horizon line comes first.
+#ifdef PS2 // PS2-HW-31: the texture first (14 bits), then the state hash (16 bits)
+			polygonArray[polygonArraySize-1].hash = (INT32)((HWR_PS2_TextureOrder(current_texture) << 16) | ((hash ^ (hash >> 16)) & 0xFFFFu));
+#else
 			polygonArray[polygonArraySize-1].hash = (hash & INT32_MAX);
+#endif
 		}
 
 		memcpy(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts * sizeof(FOutVector));
@@ -331,6 +359,18 @@ void HWR_RenderBatches(void)
 	// 4. colors + light level
 	// not sure about what order of the last 2 should be, or if it even matters
 
+#ifdef PS2 // PS2-HW-34: the driver plans the frame's textures (mip level, visibility) before the first batch is drawn
+	PS2HWD_PlanBegin();
+	for (i = 0; i < polygonArraySize; i++)
+	{
+		const PolygonArrayEntry *pa = &polygonArray[i];
+
+		if (pa->texture && !(pa->polyFlags & PF_NoTexture))
+			PS2HWD_PlanPolygon(pa->texture, &unsortedVertexArray[pa->vertsIndex], pa->numVerts);
+	}
+	PS2HWD_PlanEnd();
+#endif
+
 	PS_START_TIMING(ps_hw_batchdrawtime);
 
 	currentShader = polygonArray[polygonIndexArray[0]].shader;
@@ -439,8 +479,10 @@ void HWR_RenderBatches(void)
 		{
 			// check if a state change is required, set the change bools and next vars
 			int nextIndex = polygonIndexArray[polygonReadPos];
-#ifdef PS2 // PS2-HW-22: equal 31-bit keys of different textures must still change the state
-			if (polygonArray[index].hash != polygonArray[nextIndex].hash || polygonArray[index].texture != polygonArray[nextIndex].texture)
+#ifdef PS2 // PS2-HW-22/31: equal keys of different states must still change the state: the key has 30 bits of which the state hash has 16
+			if (polygonArray[index].hash != polygonArray[nextIndex].hash || polygonArray[index].texture != polygonArray[nextIndex].texture
+				|| polygonArray[index].polyFlags != polygonArray[nextIndex].polyFlags
+				|| polygonArray[index].surf.PolyColor.rgba != polygonArray[nextIndex].surf.PolyColor.rgba)
 #else
 			if (polygonArray[index].hash != polygonArray[nextIndex].hash)
 #endif

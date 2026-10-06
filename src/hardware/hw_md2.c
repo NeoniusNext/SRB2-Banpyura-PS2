@@ -72,7 +72,13 @@
 #include "errno.h"
 #endif
 
+#ifdef PS2_DYNLIMITS
+// PS2-104: one entry per sprite of the live sprite table (PS2Limits_Grow replaces it by the PC-size table)
+static md2_t md2_models_small[SPR_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS];
+md2_t *md2_models = md2_models_small;
+#else
 md2_t md2_models[NUMSPRITES];
+#endif
 md2_t *md2_playermodels = NULL;
 size_t md2_numplayermodels = 0;
 
@@ -487,11 +493,24 @@ static void md2_loadBlendTexture(md2_t *model)
 // Don't spam the console, or the OS with fopen requests!
 static boolean nomd2s = false;
 
+#ifdef PS2_DYNLIMITS
+void HWR_GrowSpriteTables(void)
+{
+	md2_t *grown = Z_Calloc(sizeof (md2_t) * NUMSPRITES, PU_STATIC, NULL);
+	size_t i;
+
+	M_Memcpy(grown, md2_models, sizeof (md2_t) * (SPR_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS));
+	for (i = SPR_FIRSTFREESLOT + PS2_SMALL_MOBJFREESLOTS; i < NUMSPRITES; i++)
+		grown[i].scale = -1.0f; // as HWR_InitModels leaves an entry without a model
+	md2_models = grown;
+}
+#endif
+
 void HWR_InitModels(void)
 {
 	size_t i;
 
-	for (i = 0; i < NUMSPRITES; i++)
+	for (i = 0; i < LIMIT_NUMSPRITES; i++)
 	{
 		md2_models[i].scale = -1.0f;
 		md2_models[i].model = NULL;

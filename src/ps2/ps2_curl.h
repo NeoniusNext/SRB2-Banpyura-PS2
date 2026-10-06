@@ -75,4 +75,13 @@ void curl_free(void *p);
 CURLcode PS2Http_Request(const char *url, const char *post, long postsize, int is_post, long timeout, int maxredirs, int follow,
 	const char *useragent, ps2curl_write_fn write_fn, void *userdata, long *status, char *errbuf, size_t errsize);
 
+// PS2-137: streaming GET stepped from the game loop (see ps2_curl.c): the add-on download from the server's HTTP source.
+// Open() never blocks (nothing is resolved or connected yet). Step() advances what the sockets allow and returns 1 (go on), 0 (the whole body was
+// delivered through write_fn) or -CURLcode (a failure; errbuf has the text, a 4xx/5xx answer is CURLE_HTTP_RETURNED_ERROR with its code in *status).
+// total is the Content-Length (-1 unknown), got the bytes delivered so far. stall_seconds = how long the connection may be silent (default 20).
+typedef struct ps2_httpget ps2_httpget_t;
+ps2_httpget_t *PS2HttpGet_Open(const char *url, long stall_seconds, int maxredirs, const char *useragent);
+int PS2HttpGet_Step(ps2_httpget_t *g, ps2curl_write_fn write_fn, void *userdata, long *status, long *total, long *got, char *errbuf, size_t errsize);
+void PS2HttpGet_Close(ps2_httpget_t *g);
+
 #endif

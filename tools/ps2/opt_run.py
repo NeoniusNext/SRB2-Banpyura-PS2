@@ -92,6 +92,10 @@ def main():
         args += ['-skipintro', '-warp', a.map]
     args += a.extra
     until = a.until or ('ZQUIT DONE' if any(x in ('-zquit', '-zquitall') for x in a.extra) else '')
+    # OPT9-S: PCSX2 -gameargs truncates the string at ~128 characters (a long list silently loses its tail: "-renderer" without "Hardware",
+    # a -zreserve that is never seen). Everything after "-logfile boot.txt" goes to <run>/ps2args, one argument per line (ps2_boot.c reads it).
+    (run / 'ps2args').write_text(os.linesep.replace('\r', '').join(args[2:]) + '\n')
+    args = args[:2]
     cmd = [sys.executable, str(ROOT / 'tools/ps2/run_pcsx2.py'), '--elf', str(run / 'SRB2.ELF'), '--log', str(run / 'pcsx2.log'),
            '--args=' + ' '.join(args), '--timeout', str(a.timeout)]
     if until:

@@ -7,6 +7,9 @@ usage: ftest_check.py udmf BOOT.TXT build/opt7-f/addons/UD.expected.json [--name
   udmf: every "FT_LEVEL map ..." of the log (written by -ftest-level) must have the counts and checksums that udmf_ref.py computed from
         the TEXTMAP lump; the flat/texture name checksum (FT_LNAM) is compared only for the maps in --names (the others use textures
         of the add-on that the test pack does not carry)
+usage: ftest_check.py same PS2_LOG PC_LOG [--skip tag1,tag2]
+  same: the FTLUA lines of the two logs (engine log of the PS2 run, stdout of the PC game running the same add-on) must be identical, line by line;
+        --skip names the line tags (second word, e.g. "live") that are left out of both
 Exit code 0 when everything agrees; the differences are printed.
 """
 import argparse
@@ -62,13 +65,29 @@ def lua_expect():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('kind', choices=['zip', 'lua', 'udmf'])
+    ap.add_argument('kind', choices=['zip', 'lua', 'udmf', 'same'])
+    ap.add_argument('--skip', default='')
     ap.add_argument('--names', default='17')
     ap.add_argument('log')
     ap.add_argument('expected', nargs='?', default='')
     ap.add_argument('--wad', type=int, default=4)
     ap.add_argument('--other', default='')
     a = ap.parse_args()
+    if a.kind == 'same':
+        skip = set(x for x in a.skip.split(',') if x)
+        def ft(path):
+            return [l.strip() for l in open(path, errors='replace') if l.startswith('FTLUA ') and l.split()[1:2] and l.split()[1] not in skip]
+        mine, theirs = ft(a.log), ft(a.expected)
+        bad = 0
+        for n in range(max(len(mine), len(theirs))):
+            x = mine[n] if n < len(mine) else '<missing>'
+            y = theirs[n] if n < len(theirs) else '<missing>'
+            if x != y:
+                print('DIFF line', n + 1, '\n  ps2:', x, '\n  pc: ', y)
+                bad += 1
+        print(f'same: {len(mine)} lines here, {len(theirs)} in the PC log, {bad} different')
+        print('OK' if not bad else 'FAILED')
+        return 1 if bad else 0
     text = open(a.log, errors='replace').read()
     if a.kind == 'lua':
         lines = [l.strip() for l in text.splitlines() if l.startswith('FTLUA ')]

@@ -45,6 +45,9 @@
 #include "doomtype.h"
 
 #include "w_wad.h"
+#if defined (PS2) && defined (HAS_ADDONS)
+#include "ps2/ps2_addons.h"
+#endif
 #include "z_zone.h"
 #include "fastcmp.h"
 
@@ -184,6 +187,10 @@ static char filenamebuf[MAX_WADPATH];
 FILE *W_OpenWadFile(const char **filename, boolean useerrors)
 {
 	FILE *handle;
+
+#if defined (PS2) && defined (HAS_ADDONS)
+	PS2Addons_Prepare(*filename); // PS2-103: mc0:/mass: drivers come up the first time a file on them is wanted
+#endif
 
 	// Officially, strncpy should not have overlapping buffers, since W_VerifyNMUSlumps is called after this, and it
 	// changes filename to point at filenamebuf, it would technically be doing that. I doubt any issue will occur since

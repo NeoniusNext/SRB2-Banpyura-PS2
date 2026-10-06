@@ -67,6 +67,9 @@ fixed_t R_GetShadowZ(mobj_t *thing, pslope_t **shadowslope);
 void R_AddSprites(sector_t *sec, INT32 lightlevel);
 void R_InitSprites(void);
 void R_ClearSprites(void);
+#ifdef PS2_PROFILE
+void R_ResetVisSprites(void); // PS2-87: frees the vissprite chunks (the screen width changed: R_ExecuteSetViewSize)
+#endif
 
 UINT8 R_GetBoundingBoxColor(mobj_t *thing);
 boolean R_ThingBoundingBoxVisible(mobj_t *thing);
@@ -225,7 +228,13 @@ typedef struct vissprite_s
 	skincolornum_t color;
 	UINT16 translation;
 
+#ifdef PS2_PROFILE
+	// PS2-87: the two clip arrays (one INT16 per screen column) belong to the vissprite but live behind its chunk (r_things.c R_GetVisSprite), sized for the
+	// current width of the view, not for MAXVIDWIDTH (640): 212 instead of 2764 bytes per sprite, 64 sprites to a chunk, chunks are PU_LEVEL
+	INT16 *clipbot, *cliptop;
+#else
 	INT16 clipbot[MAXVIDWIDTH], cliptop[MAXVIDWIDTH];
+#endif
 
 	INT32 dispoffset; // copy of mobj->dispoffset, affects ordering but not drawing
 } vissprite_t;

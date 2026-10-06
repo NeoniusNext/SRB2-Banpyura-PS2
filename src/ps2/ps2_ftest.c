@@ -8,6 +8,11 @@
 //   -ftest-level          after every level load: "FT_LEVEL map udmf nverts nsectors nlines nsides nthings" and "FT_LCRC" checksums of the
 //                         level structure (vertices, sectors, lines, sides, things; canonical little-endian records, texture names go to a separate FT_LNAM checksum, uppercase 8 bytes)
 //                         that tools/ps2/ftest_check.py udmf recomputes from the TEXTMAP lump with an independent Python parser
+//   -ftest-exec CMDS      at the first level load: the console commands CMDS ("addfile+ZF.pk3;map+2": '+' is a space, ';' separates commands),
+//                         i.e. add-ons added while a level (and its mobjs) exists
+//   -ftest-mc NAME        copies <data>/NAME to the memory card (mc0:/SRB2/NAME), reads it back, lists the folder: "FT_MC ..." lines (the card driver
+//                         is loaded on the way, ps2_addons.c); "-ftest-mcdev mass" does the same on mass:/SRB2 (only where a stick exists)
+//   -ftest-sprites A,B    at the first level load: "FT_SPR name sprnum numframes frames-with-a-patch" of the sprite definitions (sprites[]) of the sprite names
 //   -ftest-quit           I_Quit() after the hooks ran ("FT_DONE")
 
 #include "../doomdef.h"
@@ -21,9 +26,20 @@
 #include "../r_patch.h"
 #include "../r_picformats.h"
 #include "../r_state.h"
+#include "../r_things.h"
 #include "../doomstat.h"
 #include "../p_setup.h"
+#include "../command.h"
 #include "ps2_ftest.h"
+#include "ps2_boot.h"
+#ifdef HAS_ADDONS
+#include "ps2_addons.h"
+#endif
+#include <dirent.h>
+#include <stdio.h>
+#ifdef HAS_ADDONS
+#include <libmc.h>
+#endif
 
 static UINT32 crc_table[256];
 
@@ -183,12 +199,59 @@ static UINT32 crc_name(UINT32 crc, const char *name)
 	return PS2FTest_CRC32(crc, b, 8);
 }
 
+// -ftest-sprites: how many frames the sprite definition of a (long) sprite name has, and how many of them have a patch
+static void TestSprites(const char *list)
+{
+	char name[MAXSPRITENAME + 1];
+
+	while (NextName(&list, name, sizeof name))
+	{
+		spritenum_t num = R_GetSpriteNumByName(name);
+
+		if (num == LIMIT_NUMSPRITES || (size_t)num >= numsprites)
+			I_OutputMsg("FT_SPR %s MISSING\n", name);
+		else
+		{
+			const spritedef_t *def = &sprites[num];
+			unsigned f, withpatch = 0;
+
+			for (f = 0; f < def->numframes; f++)
+				if (def->spriteframes[f].rotate != SRF_NONE)
+					withpatch++;
+			I_OutputMsg("FT_SPR %s %d %u %u\n", name, (int)num, (unsigned)def->numframes, withpatch);
+		}
+	}
+}
+
 void PS2FTest_Level(void)
 {
 	UINT32 cv = 0, cs = 0, cl = 0, cd = 0, ct = 0, cn = 0;
 	size_t i;
 	int j;
 
+	static boolean execdone;
+
+	if (!execdone && M_CheckParm("-ftest-exec") && M_IsNextParm())
+	{
+		char cmds[256], *p;
+
+		execdone = true;
+		strlcpy(cmds, M_GetNextParm(), sizeof cmds);
+		for (p = cmds; *p; p++)
+			if (*p == '+')
+				*p = ' ';
+		I_OutputMsg("FT_EXEC %s\n", cmds);
+		COM_BufAddText(va("%s\n", cmds));
+	}
+	{
+		static boolean sprdone;
+
+		if (!sprdone && M_CheckParm("-ftest-sprites") && M_IsNextParm())
+		{
+			sprdone = true;
+			TestSprites(M_GetNextParm());
+		}
+	}
 	if (!M_CheckParm("-ftest-level"))
 		return;
 	for (i = 0; i < numvertexes; i++)
@@ -260,6 +323,100 @@ void PS2FTest_Level(void)
 	I_OutputMsg("FT_LNAM %08x flats %lu first %.8s last %.8s\n", (unsigned)cn, (unsigned long)numlevelflats, levelflats[0].name, levelflats[numlevelflats - 1].name);
 }
 
+#ifdef HAS_ADDONS
+// A card that was never formatted (an empty PCSX2 card file is all 0xFF; a PS2 game does not format cards, the BIOS does) is formatted through libmc, so that the test can write to it
+static void FormatCard(void)
+{
+	int type = 0, freeclusters = 0, format = 0, cmd = 0, ret = 0;
+
+	mcInit(MC_TYPE_XMC);
+	mcGetInfo(0, 0, &type, &freeclusters, &format);
+	mcSync(0, &cmd, &ret);
+	I_OutputMsg("FT_MC card type %d free %d format %d ret %d\n", type, freeclusters, format, ret);
+	if (format != 1)
+	{
+		mcFormat(0, 0);
+		mcSync(0, &cmd, &ret);
+		I_OutputMsg("FT_MC formatted ret %d\n", ret);
+		mcGetInfo(0, 0, &type, &freeclusters, &format);
+		mcSync(0, &cmd, &ret);
+		I_OutputMsg("FT_MC card type %d free %d format %d ret %d\n", type, freeclusters, format, ret);
+	}
+}
+
+// -ftest-mc: the add-on storage path (memory card): write, read back, list
+static void TestMC(const char *name)
+{
+	char src[PS2BOOT_PATHMAX + 64], dir[64], dst[PS2BOOT_PATHMAX + 64];
+	const char *dev = "mc0:";
+	FILE *f;
+	UINT8 *data;
+	long size;
+	UINT32 crc, crc2 = 0;
+	size_t got = 0;
+	DIR *d;
+	struct dirent *e;
+	int n = 0;
+
+	if (M_CheckParm("-ftest-mcdev") && M_IsNextParm())
+		dev = M_GetNextParm();
+	if (!strcmp(dev, "mass"))
+		dev = "mass:";
+	snprintf(src, sizeof src, "%s/%s", ps2boot.datadir, name);
+	snprintf(dir, sizeof dir, "%s/SRB2", dev);
+	snprintf(dst, sizeof dst, "%s/%s", dir, name);
+	I_OutputMsg("FT_MC prepare %s %d\n", dev, (int)PS2Addons_Prepare(dir));
+	if (!strcmp(dev, "mc0:") && M_CheckParm("-ftest-mcformat"))
+		FormatCard();
+	f = fopen(src, "rb");
+	if (!f)
+	{
+		I_OutputMsg("FT_MC FAILED cannot read %s\n", src);
+		return;
+	}
+	fseek(f, 0, SEEK_END);
+	size = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	data = Z_Malloc((size_t)size, PU_STATIC, NULL);
+	if (fread(data, 1, (size_t)size, f) != (size_t)size)
+		I_OutputMsg("FT_MC FAILED short read of %s\n", src);
+	fclose(f);
+	crc = PS2FTest_CRC32(0, data, (size_t)size);
+	I_OutputMsg("FT_MC source %s %ld %08x\n", name, size, (unsigned)crc);
+	I_mkdir(dir, 0755);
+	f = fopen(dst, "wb");
+	if (!f)
+	{
+		I_OutputMsg("FT_MC FAILED cannot create %s\n", dst);
+		return;
+	}
+	got = fwrite(data, 1, (size_t)size, f);
+	fclose(f);
+	I_OutputMsg("FT_MC wrote %s %lu\n", dst, (unsigned long)got);
+	memset(data, 0, (size_t)size);
+	f = fopen(dst, "rb");
+	if (!f)
+	{
+		I_OutputMsg("FT_MC FAILED cannot reopen %s\n", dst);
+		return;
+	}
+	got = fread(data, 1, (size_t)size, f);
+	fclose(f);
+	crc2 = PS2FTest_CRC32(0, data, got);
+	I_OutputMsg("FT_MC readback %lu %08x %s\n", (unsigned long)got, (unsigned)crc2, (got == (size_t)size && crc == crc2) ? "SAME" : "DIFFERENT");
+	d = opendir(dir);
+	while (d && (e = readdir(d)))
+	{
+		I_OutputMsg("FT_MC entry %s\n", e->d_name);
+		n++;
+	}
+	if (d)
+		closedir(d);
+	I_OutputMsg("FT_MC listed %d\n", n);
+	Z_Free(data);
+}
+#endif
+
 void PS2FTest_Startup(void)
 {
 	static boolean ran;
@@ -273,6 +430,10 @@ void PS2FTest_Startup(void)
 		TestPatches(M_GetNextParm());
 	if (M_CheckParm("-ftest-textures") && M_IsNextParm())
 		TestTextures(M_GetNextParm());
+#ifdef HAS_ADDONS
+	if (M_CheckParm("-ftest-mc") && M_IsNextParm())
+		TestMC(M_GetNextParm());
+#endif
 	if (M_CheckParm("-ftest-quit"))
 	{
 		I_OutputMsg("FT_DONE\n");

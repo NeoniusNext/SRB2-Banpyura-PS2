@@ -42,13 +42,28 @@ typedef enum
 } skinsound_t;
 
 // free sfx for S_AddSoundFx()
-#ifdef PS2_PROFILE
+#if defined(PS2_PROFILE) && !defined(PS2_LIMITS)
 // PS2-11: the vanilla game has 6 skins (<= NUMSKINSOUNDS slots each) and adds a handful of named sounds at run time
 #define NUMSFXFREESLOTS 256
 #define NUMSKINSFXSLOTS (16*NUMSKINSOUNDS)
 #else
 #define NUMSFXFREESLOTS 1600 // Matches SOC Editor.
 #define NUMSKINSFXSLOTS (128*NUMSKINSOUNDS)
+#endif
+#ifdef PS2_DYNLIMITS
+// PS2-104: the table starts with the PS2-11 sizes and grows to the PC sizes (PS2Limits_Grow, ps2_limits.c). The sound numbers of the
+// skin slots move with it: LIMIT_SFX_SKINSLOT0 is the first one of the live table.
+#define PS2_SMALL_SFXFREESLOTS 256
+#define PS2_SMALL_SKINSFXSLOTS (16*NUMSKINSOUNDS)
+#define LIMIT_SFXFREESLOTS (ps2_fullsfx ? NUMSFXFREESLOTS : PS2_SMALL_SFXFREESLOTS)
+#define LIMIT_SKINSFXSLOTS (ps2_fullsfx ? NUMSKINSFXSLOTS : PS2_SMALL_SKINSFXSLOTS)
+#define LIMIT_SFX_LASTFREESLOT (sfx_freeslot0 + LIMIT_SFXFREESLOTS - 1)
+#define LIMIT_SFX_SKINSLOT0 (sfx_freeslot0 + LIMIT_SFXFREESLOTS)
+#define LIMIT_NUMSFX (LIMIT_SFX_SKINSLOT0 + LIMIT_SKINSFXSLOTS)
+#else
+#define LIMIT_SFX_LASTFREESLOT sfx_lastfreeslot
+#define LIMIT_SFX_SKINSLOT0 sfx_skinsoundslot0
+#define LIMIT_NUMSFX NUMSFX
 #endif
 
 //
@@ -96,7 +111,12 @@ struct sfxinfo_struct
 };
 
 // the complete set of sound effects
+#ifdef PS2_DYNLIMITS
+extern sfxinfo_t *S_sfx;
+extern char (*freeslotnames)[7];
+#else
 extern sfxinfo_t S_sfx[];
+#endif
 
 //
 // Identifiers for all sfx in game.

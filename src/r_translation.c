@@ -1129,7 +1129,7 @@ UINT8 *R_GetTranslationRemap(int id, skincolornum_t skincolor, INT32 skinnum)
 	INT32 index = R_SkinTranslationToCacheIndex(skinnum);
 
 	if (!tr->skincolor_remaps[index])
-		tr->skincolor_remaps[index] = Z_Calloc(NUM_PALETTE_ENTRIES * (MAXSKINCOLORS - 1), PU_LEVEL, NULL);
+		tr->skincolor_remaps[index] = Z_Calloc(NUM_PALETTE_ENTRIES * (LIMIT_MAXSKINCOLORS - 1), PU_LEVEL, NULL);
 
 	colorcache_t *cache = tr->skincolor_remaps[index][skincolor - 1];
 	if (!cache)

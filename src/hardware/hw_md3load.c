@@ -84,6 +84,7 @@ typedef struct
 	short x, y, z, n;
 } md3Vertex;
 
+#ifndef PS2
 static float latlnglookup[256][256][3];
 
 static void GetNormalFromLatLong(short latlng, float *out)
@@ -94,6 +95,15 @@ static void GetNormalFromLatLong(short latlng, float *out)
 	out[1] = *lookup++;
 	out[2] = *lookup++;
 }
+#else
+// PS2-79: the 256x256x3 float table is 786 KB of BSS (and of arena) for the models of a few add-ons; here each normal is computed
+// from the same formula when the vertex is read (the table entry [n>>8][n&255] is LatLngToNormal of that very value: bit-identical)
+static void LatLngToNormal(short n, float *out);
+static void GetNormalFromLatLong(short latlng, float *out)
+{
+	LatLngToNormal(latlng, out);
+}
+#endif
 
 #if 0
 static void NormalToLatLng(float *n, short *out)
@@ -132,6 +142,7 @@ static inline void LatLngToNormal(short n, float *out)
 	out[2] = cosf(lng);
 }
 
+#ifndef PS2
 static void LatLngInit(void)
 {
 	int i, j;
@@ -141,6 +152,9 @@ static void LatLngInit(void)
 			LatLngToNormal((short)((i << 8) + j), latlnglookup[i][j]);
 	}
 }
+#else
+static void LatLngInit(void) {} // PS2-79: no table
+#endif
 
 static boolean latlnginit = false;
 

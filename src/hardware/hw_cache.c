@@ -28,6 +28,10 @@
 #include "../r_patch.h"
 #include "../r_picformats.h"
 #include "../p_setup.h"
+#ifdef PS2_PROFILE
+#include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
+static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
+#endif
 
 INT32 patchformat = GL_TEXFMT_AP_88; // use alpha for holes
 INT32 textureformat = GL_TEXFMT_P_8; // use chromakey for hole
@@ -394,6 +398,57 @@ static void HWR_DrawTexturePatchInCache(GLMipmap_t *mipmap,
 	// NOTE: should this actually be pblockwidth*bpp?
 	blockmodulo = pblockwidth*bpp;
 
+#ifdef PS2_PROFILE
+	// PS2-HW-36: a P_8 texture is row-major and the posts are columns: written column by column every byte lands in another cache line
+	// (about 25 EE cycles per texel, 1.2 M cycles for an average texture, and the GS driver asks for the texture again whenever the zone
+	// has dropped it). The same bytes (1:1 copy, no colormap, no blend style, no vertical flip) are written in bands of 64 rows instead: the
+	// lines of a band stay in the data cache while the columns go by.
+	if (!ps2_slow_composite && bpp == 1 && !mipmap->colormap && patch->style == AST_COPY && xfracstep == FRACUNIT && yfracstep == FRACUNIT && !(patch->flip & 2))
+	{
+		const INT32 sx0 = xfrac >> FRACBITS, originy = patch->originy;
+		UINT8 *colblock = block + col;
+		INT32 y0, j;
+
+		for (y0 = 0; y0 < pblockheight; y0 += 64)
+		{
+			const INT32 y1 = y0 + 64 > pblockheight ? pblockheight : y0 + 64;
+
+			for (j = 0; j < ncols; j++)
+			{
+				const column_t *pc = (patch->flip & 1) ? &realpatch->columns[(width-1)-(sx0+j)] : &realpatch->columns[sx0+j];
+				UINT8 *dcol = colblock + j;
+				unsigned i;
+
+				for (i = 0; i < pc->num_posts; i++)
+				{
+					const post_t *post = &pc->posts[i];
+					INT32 position = originy + (INT32)post->topdelta, count = (INT32)post->length, srcoff = 0, ys, ye, y;
+					const UINT8 *src;
+					UINT8 *d;
+
+					if (position < 0)
+					{
+						srcoff = -position;
+						count += position;
+						position = 0;
+					}
+					if (position + count > pblockheight)
+						count = pblockheight - position;
+					ys = position > y0 ? position : y0;
+					ye = position + count < y1 ? position + count : y1;
+					if (ys >= ye)
+						continue;
+					src = pc->pixels + post->data_offset + srcoff + (ys - position);
+					d = dcol + (size_t)ys * (size_t)pblockwidth;
+					for (y = ys; y < ye; y++, d += pblockwidth)
+						*d = *src++;
+				}
+			}
+		}
+		return;
+	}
+#endif
+
 	// Draw each column to the block cache
 	for (block += col*bpp; ncols--; block += bpp, xfrac += xfracstep)
 	{
@@ -501,6 +556,31 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 		}
 	}
 
+#ifdef PS2_PROFILE
+	if (!ps2_slow_composite && (ps2hwd_dbg_flags & 0x1000000) /* HWDBG_COMPOSE */ && mipmap->format == GL_TEXFMT_P_8)
+	{
+		// the same texture composed by the original loops: the bytes must be the same
+		static unsigned checked, bad;
+		GLMipmap_t chk = *mipmap;
+		GLMapTexture_t tmp = *grtex;
+
+		chk.data = NULL;
+		ps2_slow_composite = true;
+		HWR_GenerateTexture(texnum, &tmp, &chk);
+		ps2_slow_composite = false;
+		checked++;
+		if (!chk.data || memcmp(chk.data, mipmap->data, (size_t)blocksize))
+		{
+			bad++;
+			CONS_Printf("HWC composite MISMATCH texture %d %.8s %dx%d (%u of %u checked differ)\n", (int)texnum, texture->name, (int)texture->width, (int)texture->height, bad, checked);
+		}
+		else if (!(checked & 63))
+		{
+			CONS_Printf("HWC composite check: %u textures identical, %u differ\n", checked - bad, bad);
+		}
+		Z_Free(chk.data);
+	}
+#endif
 	grtex->scaleX = 1.0f/(texture->width*FRACUNIT);
 	grtex->scaleY = 1.0f/(texture->height*FRACUNIT);
 }
@@ -778,17 +858,14 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 			newMipmap->format = originalMipmap->format;
 			newMipmap->regen_kind = 1;
 			newMipmap->regen_id = tex;
+			newMipmap->ps2_twin = originalMipmap; // PS2-HW-30
 			originalMipmap->nextcolormap = newMipmap;
 		}
 		grMipmap = originalMipmap->nextcolormap;
 	}
 
 	if (!grMipmap->downloaded && !currently_batching)
-	{
-		if (!grMipmap->data)
-			HWR_GenerateTexture(tex, grtex, grMipmap);
-		HWD.pfnSetTexture(grMipmap);
-	}
+		HWD.pfnSetTexture(grMipmap); // PS2-HW-32: the driver asks for the texels (HWR_PS2_RegenerateMipmap) when its data cache has not got them
 	HWR_SetCurrentTexture(grMipmap);
 
 	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
@@ -942,17 +1019,14 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 			MakeLevelFlatMipmap(newMipmap, texturenum, TF_WRAPXY | TF_CHROMAKEYED);
 			newMipmap->regen_kind = 2;
 			newMipmap->regen_id = texturenum;
+			newMipmap->ps2_twin = originalMipmap; // PS2-HW-30
 			originalMipmap->nextcolormap = newMipmap;
 		}
 		grMipmap = originalMipmap->nextcolormap;
 	}
 
 	if (!grMipmap->downloaded && !currently_batching)
-	{
-		if (!grMipmap->data)
-			HWR_PS2_RegenerateMipmap(grMipmap);
-		HWD.pfnSetTexture(grMipmap);
-	}
+		HWD.pfnSetTexture(grMipmap); // PS2-HW-32: as HWR_GetTexture
 	HWR_SetCurrentTexture(grMipmap);
 
 	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
@@ -980,6 +1054,41 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)
 {
 	Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+}
+
+// PS2-HW-32: zero-copy uploads: the GS driver sends the texels with DMA references, so the zone must not move or purge them until the
+// transfer is done (the driver locks the block, and unlocks it when the GIF DMA of the packet that references it has completed)
+void HWR_PS2_LockData(void *data)
+{
+	Z_ChangeTag(data, PU_HWRCACHE);
+}
+
+void HWR_PS2_UnlockData(void *data)
+{
+	Z_ChangeTag(data, PU_HWRCACHE_UNLOCKED);
+}
+
+void HWR_PS2_FreeData(void *data)
+{
+	Z_Free(data);
+}
+
+// a purgable zone block owned by *newuser (the driver's data cache: decimated levels of a texture); NULL when the zone has no room
+void *HWR_PS2_AllocData(size_t bytes, void **newuser)
+{
+	return Z_TryMallocAlign(bytes, PU_HWRCACHE_UNLOCKED, newuser, 6);
+}
+
+// The driver takes the texels of a mipmap over (its data cache): the block stays a purgable zone block, owned by *newuser from now on, and
+// the engine's mipmap forgets it (it composes the texture again when it needs the texels, after the driver gave up its copy)
+void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser)
+{
+	void *p = m->data;
+
+	m->data = NULL;
+	Z_SetUser(p, newuser);
+	Z_ChangeTag(p, PU_HWRCACHE_UNLOCKED);
+	return p;
 }
 
 // name of the map texture / level flat behind a mipmap (driver diagnostics: -hwtrace)

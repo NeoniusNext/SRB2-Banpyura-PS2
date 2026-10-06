@@ -96,7 +96,11 @@ patch_t *Patch_GetRotatedSprite(
 
 		patch = W_CachePatchNum(lump, PU_SPRITE);
 
+#ifdef PS2_DYNLIMITS
+		if (sprinfo->available && sprinfo->pivot) // PS2-104: pivots are allocated on first use
+#else
 		if (sprinfo->available)
+#endif
 		{
 			xpivot = sprinfo->pivot[frame].x;
 			ypivot = sprinfo->pivot[frame].y;

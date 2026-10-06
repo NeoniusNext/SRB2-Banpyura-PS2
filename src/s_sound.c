@@ -441,7 +441,7 @@ void S_StartCaption(sfxenum_t sfx_id, INT32 cnum, UINT16 lifespan)
 
 	// check for bogus sound #
 	// I_Assert(sfx_id >= 0); -- allowing sfx_None; this shouldn't be allowed directly if S_StartCaption is ever exposed to Lua by itself
-	I_Assert(sfx_id < NUMSFX);
+	I_Assert(sfx_id < LIMIT_NUMSFX);
 
 	sfx = &S_sfx[sfx_id];
 
@@ -593,7 +593,7 @@ void S_StartSoundAtVolume(const void *origin_p, sfxenum_t sfx_id, INT32 volume)
 
 	// check for bogus sound #
 	I_Assert(sfx_id >= 1);
-	I_Assert(sfx_id < NUMSFX);
+	I_Assert(sfx_id < LIMIT_NUMSFX);
 
 	sfx = &S_sfx[sfx_id];
 
@@ -1034,7 +1034,7 @@ void S_SetSfxVolume(INT32 volume)
 void S_ClearSfx(void)
 {
 	size_t i;
-	for (i = 1; i < NUMSFX; i++)
+	for (i = 1; i < (unsigned)LIMIT_NUMSFX; i++)
 		I_FreeSfx(S_sfx + i);
 }
 
@@ -1274,7 +1274,7 @@ void S_StartSoundName(void *mo, const char *soundname)
 {
 	INT32 i, soundnum = 0;
 	// Search existing sounds...
-	for (i = sfx_None + 1; i < NUMSFX; i++)
+	for (i = sfx_None + 1; i < LIMIT_NUMSFX; i++)
 	{
 		if (!S_sfx[i].name)
 			continue;
@@ -1328,7 +1328,7 @@ void S_InitSfxChannels(INT32 sfxVolume)
 	SetChannelsNum();
 
 	// Note that sounds have not been cached (yet).
-	for (i = 1; i < NUMSFX; i++)
+	for (i = 1; i < LIMIT_NUMSFX; i++)
 	{
 		S_sfx[i].usefulness = -1; // for I_GetSfx()
 		S_sfx[i].lumpnum = LUMPERROR;
@@ -1340,7 +1340,7 @@ void S_InitSfxChannels(INT32 sfxVolume)
 		// Initialize external data (all sounds) at start, keep static.
 		CONS_Printf(M_GetText("Loading sounds... "));
 
-		for (i = 1; i < NUMSFX; i++)
+		for (i = 1; i < LIMIT_NUMSFX; i++)
 			if (S_sfx[i].name)
 				S_sfx[i].data = I_GetSfx(&S_sfx[i]);
 

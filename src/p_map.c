@@ -2191,7 +2191,7 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 				offset = by*bmapwidth + bx;
 
 				// haleyjd 02/22/06: consider polyobject lines
-				plink = polyblocklinks[offset];
+				plink = POLYBLOCKLINK(offset);
 
 				while (plink)
 				{
@@ -2431,7 +2431,7 @@ boolean P_CheckCameraPosition(fixed_t x, fixed_t y, camera_t *thiscam)
 				offset = by*bmapwidth + bx;
 
 				// haleyjd 02/22/06: consider polyobject lines
-				plink = polyblocklinks[offset];
+				plink = POLYBLOCKLINK(offset);
 
 				while (plink)
 				{

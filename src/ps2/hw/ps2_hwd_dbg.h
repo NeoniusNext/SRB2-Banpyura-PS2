@@ -27,6 +27,7 @@ typedef struct
 	int no_keep; // 1 = a new frame does not start as a copy of the previous one (the engine then has to redraw everything)
 	unsigned int screen_max_bytes; // EE capture backing budget; 0 = 8 MiB. Exhaustion preserves existing captures and reports failure.
 	unsigned int tex_cap_blocks; // footprint cap of one texture in 256-byte blocks; 0 = none. Bigger textures are stored decimated by powers of two (PS2-HW-20).
+	int tex_adapt; // OPT8 (PS2-HW-24): 1 = the cap follows the working set (tex_cap_blocks is then the starting cap, 0 = 512); 0 = fixed cap
 } ps2hwd_config_t;
 
 typedef struct
@@ -68,6 +69,10 @@ typedef struct
 	unsigned int flip_forced; // finished frames the EE had to flip itself because the vblank handler did not
 	unsigned int wd_recoveries; // watchdog resets of the GIF DMA channel (a wait ran out)
 	unsigned int cyc_flipwait; // EE cycles spent waiting for flips
+	unsigned int cap_changes; // OPT8: changes of the texture footprint cap (adaptive controller)
+	unsigned int pred_ws; // OPT8: working set of the last frame under the cap in force, in blocks
+	unsigned int cap_blocks; // OPT8: footprint cap in force (0 = none)
+	unsigned int tex_restamped; // OPT8: textures re-made after a cap change
 } ps2hwd_stats_t;
 
 typedef struct

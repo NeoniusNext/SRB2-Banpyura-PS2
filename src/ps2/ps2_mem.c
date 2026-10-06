@@ -200,12 +200,26 @@ size_t ZA_InitHeap(size_t reserve, size_t cap)
 	}
 	if (!mem || ZA_InitMem(mem, size))
 		return 0;
+#ifdef _EE
+	PS2Spill_Init();
+#endif
 	return size;
 }
 
 int ZA_Ready(void)
 {
 	return za_base != NULL;
+}
+
+// PS2-79: is this payload address inside the arena (src/ps2/ps2_spill.c routes free/realloc of a spilled C-heap block by it)
+int ZA_Contains(const void *p)
+{
+	return za_base && (const uint8_t *)p >= za_base && (const uint8_t *)p < za_end;
+}
+
+size_t ZA_PayloadBytes(const void *payload)
+{
+	return ZA_BLOCK(payload)->realsize;
 }
 
 void ZA_Shutdown(void)
@@ -1156,6 +1170,13 @@ void PS2Mem_Report(int owners)
 		(unsigned long)PS2Mem_HeapAvailable(PS2Mem_RamBytes(), PS2Mem_HeapLimit(), (size_t)sbrk(0), 0));
 	I_OutputMsg("ps2_mem: C heap peak above the arena %lu B; main stack used %lu B of %lu B (0 = -zstack off)\n",
 		(unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_StackUsed(), (unsigned long)za_stack_size);
+	{
+		size_t sn, sp, sb, st2, sf, sx;
+
+		PS2Spill_Stats(&sn, &sp, &sb, &st2, &sf, &sx);
+		I_OutputMsg("ps2_mem: C heap blocks taken from the arena (PS2-79): now %lu B in %lu blocks, peak %lu B, %lu in all, refused %lu, left by other threads %lu\n",
+			(unsigned long)sn, (unsigned long)sb, (unsigned long)sp, (unsigned long)st2, (unsigned long)sf, (unsigned long)sx);
+	}
 #endif
 #ifdef ZDEBUG
 	if (owners > 0)
@@ -1531,6 +1552,8 @@ void PS2Mem_Frame(void)
 		}
 		if (M_CheckParm("-zsizes"))
 			PS2Mem_Sizes();
+		if (M_CheckParm("-zsingle"))
+			singletics = true; // PS2-141: one game tic per displayed frame, no waiting for the clock (soak runs at the speed of the emulator, scripted pads)
 	}
 	allframes++;
 	PS2Mem_NoteBrk();
@@ -1595,17 +1618,19 @@ void PS2Mem_Frame(void)
 	{
 		zastats_t st;
 		char msg[160];
+		size_t sp_now, sp_peak, sp_b, sp_t, sp_f, sp_x;
 
 		ZA_Stats(&st);
+		PS2Spill_Stats(&sp_now, &sp_peak, &sp_b, &sp_t, &sp_f, &sp_x);
 		if (ZA_Check(msg, sizeof msg))
 			I_OutputMsg("ps2_mem: HEAP CHECK FAILED: %s\n", msg);
 		PS2Mem_Line("final");
 		PS2Mem_Report(M_CheckParm("-zowners") && M_IsNextParm() ? atoi(M_GetNextParm()) : 0);
-		I_OutputMsg("ZSTAT ram=%lu class=%d map=%d levelframes=%u frames=%u cycles=%u arena=%lu used=%lu peak=%lu gpeak=%lu free=%lu largest=%lu evicted=%lu evictedbytes=%lu failed=%lu libcfree=%lu flushes=%lu libcpeak=%lu stackused=%lu t_ms=%lu\n",
+		I_OutputMsg("ZSTAT ram=%lu class=%d map=%d levelframes=%u frames=%u cycles=%u arena=%lu used=%lu peak=%lu gpeak=%lu free=%lu largest=%lu evicted=%lu evictedbytes=%lu failed=%lu libcfree=%lu flushes=%lu libcpeak=%lu stackused=%lu spillpeak=%lu spillnow=%lu t_ms=%lu\n",
 			(unsigned long)PS2Mem_RamBytes(), PS2Mem_RamClass(), (int)gamemap, levelframes, allframes, PS2Mem_Cycles() - startcycles,
 			(unsigned long)st.arena, (unsigned long)st.used, (unsigned long)st.peakused, (unsigned long)st.globalpeak, (unsigned long)st.freebytes,
 			(unsigned long)st.largestfree, (unsigned long)st.evictions, (unsigned long)st.evictedbytes, (unsigned long)st.failures,
-			(unsigned long)PS2Mem_LibcFree(), (unsigned long)Z_TestFlushes(), (unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_StackUsed(),
+			(unsigned long)PS2Mem_LibcFree(), (unsigned long)Z_TestFlushes(), (unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_StackUsed(), (unsigned long)sp_peak, (unsigned long)sp_now,
 			(unsigned long)PS2Mem_Ms());
 		I_OutputMsg("ZQUIT DONE\n");
 		I_Quit();

@@ -80,6 +80,21 @@ typedef struct
 	// specific sounds per skin
 	sfxenum_t soundsid[NUMSKINSOUNDS]; // sound # in S_sfx table
 
+#ifdef PS2_DYNLIMITS
+	// PS2-104: the animation tables of NUMPLAYERSPRITES entries live in the block after the structure (R_AllocSkin); with the pivots of the
+	// spriteinfo_t allocated on demand a whole skin is ~66 KB at the PC limits (4.2 MB in the original, 0.32 MB in the old profile)
+	spritedef_t *sprites;
+	spriteinfo_t *sprinfo;
+
+	// contains super versions too
+	struct {
+		spritedef_t *sprites;
+		spriteinfo_t *sprinfo;
+	} super;
+
+	// TODO: 2.3: Delete
+	spritedef_t *sprites_compat; // NUMPLAYERSPRITES * 2
+#else
 	spritedef_t sprites[NUMPLAYERSPRITES];
 	spriteinfo_t sprinfo[NUMPLAYERSPRITES];
 
@@ -91,11 +106,15 @@ typedef struct
 
 	// TODO: 2.3: Delete
 	spritedef_t sprites_compat[NUMPLAYERSPRITES * 2];
+#endif
 } skin_t;
 
 /// Externs
 extern INT32 numskins;
 extern skin_t **skins;
+#ifdef PS2_DYNLIMITS
+extern skin_t *ps2_skin_pending; // the skin R_AddSkins is building (its sound numbers move with PS2Limits_Grow)
+#endif
 
 /// Function prototypes
 void R_InitSkins(void);

@@ -922,6 +922,9 @@ void R_ExecuteSetViewSize(void)
 	INT32 startmapl;
 
 	setsizeneeded = false;
+#ifdef PS2_PROFILE
+	R_ResetVisSprites(); // PS2-87: the clip arrays of the vissprites are sized for the width of the screen
+#endif
 
 	if (rendermode == render_none)
 		return;

@@ -45,6 +45,12 @@
 #if defined(PS2_ZIPPNG) || defined(PS2_ADDONS) || defined(PS2_LUA)
 #define PS2_FULLLOADER
 #endif
+// PS2-104: with PS2_LIMITS the constants of the tables (NUMSTATES, NUMMOBJTYPES, NUMSFX, ...) are the PC values, but the tables themselves start at the
+// vanilla size (the old profile sizes, in the code as PS2_SMALL_*) and grow once, to the PC size, when an add-on needs more (ps2_limits.c).
+// ps2_fulllimits tells which one is live; LIMIT_* macros (info.h, sounds.h, doomdef.h, doomstat.h) are the live sizes.
+#ifdef PS2_LIMITS
+#define PS2_DYNLIMITS
+#endif
 #endif
 
 // "Compiled in" tests: always true outside the PS2 profile (so the original code is untouched there)
@@ -434,6 +440,13 @@ unset_bit_array (bitarray_t * const array, const int value)
 }
 
 typedef UINT64 precise_t;
+
+#ifdef PS2_DYNLIMITS
+extern boolean ps2_fulllimits; // false: tables of the vanilla size, true: PC size (PS2Limits_Grow, ps2_limits.c)
+void PS2Limits_Grow(void); // idempotent; call before anything that needs a free slot beyond the vanilla range
+extern boolean ps2_fullsfx; // the sound tables (S_sfx, skin sounds) are PC size: they grow on their own, a skin with sounds of its own needs them at the PC sound numbers
+void PS2Limits_GrowSounds(void); // idempotent
+#endif
 
 #ifdef __cplusplus
 } // extern "C"

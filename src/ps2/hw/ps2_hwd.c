@@ -37,7 +37,14 @@
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
 
+// PS2-HW-67: the driver's diagnostics (limitation warnings, texture cap changes, HWT/HWFX/HWPROF traces) go to the log only: through CONS_Printf/CONS_Alert
+// they were drawn over the game picture as console lines ("HWD texture cap 512 -> 1024 blocks", "WARNING: PS2 GS experimental limitation ...")
+#include "../../i_system.h"
+#define CONS_Printf I_OutputMsg
+#define CONS_Alert(level, ...) I_OutputMsg(__VA_ARGS__)
+
 #include "ps2_hw_priv.inc"
+#include "ps2_hw_vif.inc" // PS2-HW-44: VIF1 as the transport of the GIF stream (-hwdbg 0x4000000)
 #include "ps2_hw_regs.inc"
 #include "ps2_hw_gs.inc"
 #include "ps2_hw_xform.inc"
@@ -45,6 +52,8 @@
 #include "ps2_hw_light.inc"
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
+#include "ps2_hw_plan.inc"
+#include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
 
 static FOutVector *sky_vertices;
@@ -79,6 +88,8 @@ int PS2HWD_Sync(void)
 
 	if (!H.up)
 		return 0;
+	if (H.gate && H.pend)
+		flip_wait(); // the CSR FINISH bit below must not take the finished frame's
 	ov_flush_all();
 	pk_flush();
 	ring_wait(0);
@@ -255,6 +266,11 @@ boolean PS2HWD_Init(void)
 	view_defaults();
 	H.tex_filter = cfg.linear ? HWD_SET_TEXTUREFILTER_BILINEAR : HWD_SET_TEXTUREFILTER_POINTSAMPLED;
 	H.tex_cap_blocks = cfg.tex_cap_blocks;
+	// OPT9 (PS2-HW-33): no adaptive decimation of textures (PS2-HW-24 is withdrawn): the working set is handled by sharing the image of the
+	// CLUT variants (PS2-HW-30), by drawing the batches texture by texture in alternating directions (PS2-HW-31) and by streaming
+	// uploads with DMA references (PS2-HW-32). cfg.tex_adapt is ignored; a fixed cap (-hwtexcap N) still decimates for experiments.
+	H.cap_adapt = 0;
+	H.gate = !(ps2hwd_dbg_flags & HWDBG_NOGATE); // -hwdbg 0x800000: the old frame start (wait for the flip of the previous frame)
 	H.up = 1;
 	if (!H.fb32)
 		hw_limit(HW_SCREEN_LOSS, "opt-in CT16S frame buffer loses RGB precision and continuous destination alpha");
@@ -299,10 +315,21 @@ void PS2HWD_Shutdown(void)
 		DisableDmac(DMAC_GIF);
 		RemoveDmacHandler(DMAC_GIF, H.dmac);
 	}
+	if (V.dmac_set) // PS2-HW-44
+	{
+		DisableDmac(DMAC_VIF1);
+		RemoveDmacHandler(DMAC_VIF1, V.dmac);
+		V.dmac_set = 0;
+	}
+	vu1_shutdown();
+	V.on = 0;
 	if (H.sema_vbl >= 0)
 		DeleteSema(H.sema_vbl);
 	if (H.sema_dma >= 0)
 		DeleteSema(H.sema_dma);
+	dma_fence();
+	rel_release_all();
+	dc_flush();
 	tex_free_all();
 	ramp_tex = NOREC;
 	OV.n = 0;
@@ -316,6 +343,7 @@ void PS2HWD_Shutdown(void)
 	sky_colors = NULL;
 	sky_indices = NULL;
 	sky_capacity = sky_index_capacity = 0;
+	sky_fast_free(); // PS2-HW-42
 	free(scratch);
 	scratch = NULL;
 	scratch_cap = 0;
@@ -562,6 +590,7 @@ void PS2HWD_GetStats(ps2hwd_stats_t *out, int reset)
 {
 	H.st.vblanks = H.vbl;
 	H.st.flips = H.flips;
+	H.st.cap_blocks = H.tex_cap_blocks;
 	*out = H.st;
 	if (reset)
 		memset(&H.st, 0, sizeof H.st);
@@ -656,8 +685,18 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	}
 	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
 		return;
+	if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
+	{
+		P.vu = 1;
+		VU.consts_ok = 0;
+	}
 	for (i = 0; i < nfans; i++)
 		emit_fan((const FOutVector *)base + desc[2 * i], NULL, (int)desc[2 * i + 1], NULL);
+	if (P.vu)
+	{
+		vu_sync();
+		P.vu = 0;
+	}
 }
 
 static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, UINT32 *IndexArray)
@@ -679,6 +718,8 @@ static void hw_RenderSkyDome(gl_sky_t *sky)
 	if (!H.up || !sky || !sky->data || !sky->loops || sky->vertex_count <= 0)
 		return;
 	n = sky->vertex_count;
+	if (sky_dome_fast(sky))
+		return; // PS2-HW-42
 	if (n > sky_capacity)
 	{
 		FOutVector *nv = malloc((size_t)n * sizeof *sv);
@@ -797,12 +838,30 @@ static void hw_ClearBuffer(FBOOLEAN ColorMask, FBOOLEAN DepthMask, FRGBAFloat *C
 	H.cur_flags = DepthMask ? (H.cur_flags | PF_Occlude) : (H.cur_flags & ~(u32)PF_Occlude);
 }
 
+// OPT9 (PS2-HW-30): the record of the other CLUT variant of a map texture / flat that is resident, or NULL
+static texrec_t *twin_rec(GLMipmap_t *m)
+{
+	GLMipmap_t *t;
+	texrec_t *o;
+
+	if (!m->regen_kind || m->format != GL_TEXFMT_P_8)
+		return NULL;
+	t = m->ps2_twin ? m->ps2_twin : m->nextcolormap;
+	if (!t || t->regen_kind != m->regen_kind || t->regen_id != m->regen_id || t->width != m->width || t->height != m->height)
+		return NULL;
+	o = rec_of(t);
+	if (!o || !H.rec[img_of((int)(o - H.rec))].shareable)
+		return NULL;
+	return o;
+}
+
 // Select a texture. While the engine collects batched polygons nothing is uploaded: the texture is made resident when its batch is
 // drawn (the GS pool cannot hold all the textures of a frame), asking the engine for the data again when the zone dropped it.
 static void hw_SetTexture(GLMipmap_t *TexInfo)
 {
 	texrec_t *r;
 	int ri;
+	u32 want = 0;
 
 	if (!H.up)
 		return;
@@ -813,15 +872,78 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		return;
 	}
 	r = rec_of(TexInfo);
+	if (!r && batch_phase != 1)
+	{
+		// the other variant of this texture is in VRAM already: a view of its image, nothing to upload (and no need for the data)
+		texrec_t *o = twin_rec(TexInfo);
+
+		if (o && (ri = tex_view(TexInfo, (int)(o - H.rec))) != NOREC)
+		{
+			r = &H.rec[ri];
+			TX.shared++;
+		}
+	}
+	if (TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= PLAN_MIN_TEXELS && batch_phase != 1)
+	{
+		// PS2-HW-34: the mip level the frame plan asks for (0 = full size); a texture drawn without a plan needs the full size
+		GLMipmap_t *pk = TexInfo->ps2_twin ? TexInfo->ps2_twin : TexInfo;
+		int vis = 1;
+
+		want = tex_want(TexInfo, &vis);
+		if (batch_phase == 0 || pk->ps2_planfr != H.frame_no + 1)
+			pk->ps2_full_fr = H.frame_no + 1;
+		if (!vis && !r)
+		{
+			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
+			H.cur_tex = NOREC;
+			H.cur_missing = 1;
+			TX.invisible++;
+			return;
+		}
+		if (r && !r->screen && (u32)r->dx > want)
+		{
+			// stored at a coarser level than this draw needs: the image is made again (every variant of it)
+			ov_flush_all();
+			tex_drop(img_of((int)(r - H.rec)), 0);
+			r = NULL;
+			TX.upgrades++;
+		}
+	}
+	if (r && H.cap_adapt && r->capi != H.cap_idx && !r->screen && !r->pin && batch_phase != 1 && r->sw)
+	{
+		// stored under another cap: re-make it when its size would differ (smaller at once; larger within the per-frame budget)
+		u32 dx, dy;
+
+		if (tex_plan(r->psm, r->sw, r->sh, H.tex_cap_blocks, &dx, &dy) && (dx != r->dx || dy != r->dy))
+		{
+			u32 nb = tex_plan_blocks(r->psm, r->sw, r->sh, dx, dy);
+
+			if (nb <= r->nblk || H.upg_blocks + nb <= CAP_UPGRADE_BLOCKS)
+			{
+				if (nb > r->nblk)
+					H.upg_blocks += nb;
+				ov_flush_all();
+				tex_drop((int)(r - H.rec), 0);
+				H.st.tex_restamped++;
+				r = NULL;
+			}
+		}
+		else
+		{
+			r->capi = (u8)H.cap_idx;
+		}
+	}
 	if (TRACING())
 		CONS_Printf("HWT settex %s %ux%u fmt=%d fl=0x%x data=%p %s phase=%d\n", HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height,
 			(int)TexInfo->format, (unsigned)TexInfo->flags, (void *)TexInfo->data, r ? "resident" : "upload", batch_phase);
+	if ((ps2hwd_dbg_flags & HWDBG_BATCHORDER) && batch_phase == 2 && H.frame_no % 105 == 60)
+		CONS_Printf("HWBO f=%u %s %ux%u %s fmt=%d blk=%u\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, r ? "hit" : "UPLOAD", (int)TexInfo->format, r ? (unsigned)r->nblk : 0u);
 	if (r)
 	{
 		H.cur_tex = (int)(r - H.rec);
 		H.cur_missing = 0;
 		if (batch_phase == 2)
-			r->done = H.frame_no + 1;
+			H.rec[img_of(H.cur_tex)].done = H.frame_no + 1;
 		return;
 	}
 	if (batch_phase == 1)
@@ -830,13 +952,19 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		H.cur_missing = 1;
 		return;
 	}
-	if (!TexInfo->data)
+	if (!TexInfo->data && !(TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= 2048
+		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want)))))
 	{
+		u32 c0 = cyc();
+
 		HWR_PS2_RegenerateMipmap(TexInfo);
+		TX.regen_cyc += cyc() - c0;
+		TX.regen_n++;
 		H.st.tex_regen++;
 	}
 	ri = tex_upload(TexInfo);
-	HWR_PS2_ReleaseMipmapData(TexInfo);
+	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
+		HWR_PS2_ReleaseMipmapData(TexInfo);
 	if (ri == NOREC)
 	{
 		// Recoverable: the draws that need the texture are skipped (the engine asks again next frame). PC's GL driver never
@@ -857,12 +985,19 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		H.rec[ri].done = H.frame_no + 1;
 }
 
+// The batched polygon of this texture is drawn later in the frame: the texture (or the image of its other variant) must stay in VRAM until then.
+// Only the frame stamp is set: the order of the LRU list is the order of DRAWING (PS2-HW-31).
 void PS2HWD_TouchTexture(GLMipmap_t *TexInfo)
 {
 	texrec_t *r;
 
-	if (H.up && TexInfo && (r = rec_of(TexInfo)) != NULL)
-		lru_touch((int)(r - H.rec));
+	if (!H.up || !TexInfo)
+		return;
+	r = rec_of(TexInfo);
+	if (!r)
+		r = twin_rec(TexInfo);
+	if (r)
+		H.rec[img_of((int)(r - H.rec))].stamp = H.frame_no;
 }
 
 static void hw_UpdateTexture(GLMipmap_t *TexInfo)
@@ -875,6 +1010,7 @@ static void hw_UpdateTexture(GLMipmap_t *TexInfo)
 	if (r)
 	{
 		ov_flush_all();
+		dma_fence(); // the engine has changed the texels: no queued reference may still read the old ones
 		tex_drop((int)(r - H.rec), 0);
 	}
 	hw_SetTexture(TexInfo);
@@ -886,6 +1022,8 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 
 	if (!TexInfo)
 		return;
+	if (H.up)
+		dma_fence(); // the engine frees the texels after this call: no queued DMA may read them (also when the image was evicted meanwhile)
 	if (H.up && (r = rec_of(TexInfo)) != NULL)
 	{
 		ov_flush_all();
@@ -909,6 +1047,8 @@ static void hw_ClearMipMapCache(void)
 	if (!H.up)
 		return;
 	ov_flush_all();
+	dma_fence();
+	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)
 		if (H.rec[i].used && !H.rec[i].screen)
@@ -970,21 +1110,27 @@ static INT32 hw_GetTextureUsed(void)
 
 // ---- shaders: an experimental subset has fixed GS passes; this is not built-in/custom GLSL capability ----
 
+// PS2-HW-61 (OPT9): the base shaders (floor/wall/sprite/water/fog/sky) exist as GS passes: sector light as depth bands (GS fog) or a depth
+// ramp overlay, tint through CLUT entries, fog blocks, wipes. The engine then lights with LightInfo instead of its flat per-polygon
+// fallback colour. -hwdbg 2048 = the old behaviour (engine fallback lighting), for A/B pictures.
 static boolean hw_InitShaders(void)
 {
-	return false; // GS passes cover a subset; advertising complete shader support disables engine fallbacks
+	CONS_Printf("HWD shaders %s (-hwdbg %d)\n", (ps2hwd_dbg_flags & 2048) ? "off" : "on", ps2hwd_dbg_flags);
+	return !(ps2hwd_dbg_flags & 2048);
 }
 
 static void hw_LoadShader(int slot, char *code, hwdshaderstage_t stage)
 {
-	(void)slot; (void)code; (void)stage;
-	hw_limit(HW_SHADER, "GLSL loading unavailable; experimental fixed GS passes are not shader parity");
+	(void)code; (void)stage;
+	if (slot >= NUMSHADERTARGETS) // the built-in GLSL is stood for by the GS passes; only a custom shader is a loss
+		hw_limit(HW_SHADER, "custom GLSL cannot run on the GS; the base shader of its target is used");
 }
 
 static boolean hw_CompileShader(int slot)
 {
-	(void)slot;
-	hw_limit(HW_SHADER, "GLSL compilation unavailable");
+	if (slot >= 0 && slot < NUMSHADERTARGETS)
+		return true; // built-in: the fixed GS passes stand for the GLSL
+	hw_limit(HW_SHADER, "custom GLSL shaders cannot run on the GS (the base shader of the target is used)");
 	return false;
 }
 

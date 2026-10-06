@@ -3980,8 +3980,12 @@ static boolean P_LoadBlockMap(UINT8 *data, size_t count)
 	blockmap = blockmaplump+4;
 
 	// haleyjd 2/22/06: setup polyobject blockmap
+#ifdef PS2_PROFILE
+	polyblocklinks = NULL; // PS2-88: allocated by the first polyobject that is linked (p_polyobj.c)
+#else
 	count = sizeof(*polyblocklinks) * bmapwidth * bmapheight;
 	polyblocklinks = Z_Calloc(count, PU_LEVEL, NULL);
+#endif
 	return true;
 }
 
@@ -4358,8 +4362,12 @@ static void P_CreateBlockMap(void)
 		blockmap = blockmaplump + 4;
 
 		// haleyjd 2/22/06: setup polyobject blockmap
+#ifdef PS2_PROFILE
+		polyblocklinks = NULL; // PS2-88
+#else
 		count = sizeof(*polyblocklinks) * bmapwidth * bmapheight;
 		polyblocklinks = Z_Calloc(count, PU_LEVEL, NULL);
+#endif
 	}
 }
 
@@ -6734,7 +6742,7 @@ static void P_ConvertBinaryThingTypes(void)
 	mobjtype_t mobjtypeofthing[4096] = {0};
 	mobjtype_t mobjtype;
 
-	for (i = 0; i < NUMMOBJTYPES; i++)
+	for (i = 0; i < LIMIT_NUMMOBJTYPES; i++)
 	{
 		if (mobjinfo[i].doomednum < 0 || mobjinfo[i].doomednum >= 4096)
 			continue;
@@ -7606,7 +7614,9 @@ static boolean P_LoadMapFromFile(void)
 #ifdef PS2_PROFILE
 	// PS2-50: the spawn state only serves P_NetArchiveWorld (netgame gamestate transfer, p_saveg.c), which the single-player
 	// profile never reaches: 3 MB on MAP11. -keepspawn keeps the (reduced) copy for experiments; the archive refuses to run without it.
-	if (M_CheckParm("-keepspawn"))
+	// PS2-126: a network game needs it (the server sends every joining client the state of the world), so the copy is made whenever netgame is set
+	// when the level is loaded - the hosting menu and -server both set it before the map is started - and never in the single-player game.
+	if (netgame || M_CheckParm("-keepspawn"))
 		P_CopySpawnState();
 	else
 		spawnsectors = NULL, spawnlines = NULL, spawnsides = NULL;
@@ -8688,7 +8698,7 @@ void P_LoadSoundsRange(UINT16 wadnum, UINT16 first, UINT16 num)
 	for (; num > 0; num--, lumpinfo++)
 	{
 		// Let's check whether it's replacing an existing sound or it's a brand new one.
-		for (j = 1; j < NUMSFX; j++)
+		for (j = 1; j < (unsigned)LIMIT_NUMSFX; j++)
 		{
 			if (S_sfx[j].name && !strnicmp(S_sfx[j].name, lumpinfo->name + 2, 6))
 			{
@@ -8826,7 +8836,7 @@ static boolean P_LoadAddon(UINT16 numlumps)
 			{
 				if (name[1] == 'S')
 				{
-					for (j = 1; j < NUMSFX; j++)
+					for (j = 1; j < (unsigned)LIMIT_NUMSFX; j++)
 					{
 						if (S_sfx[j].name && !strnicmp(S_sfx[j].name, name + 2, 6))
 						{

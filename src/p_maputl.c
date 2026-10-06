@@ -1006,7 +1006,7 @@ boolean P_BlockLinesIterator(INT32 x, INT32 y, boolean (*func)(line_t *))
 	offset = y*bmapwidth + x;
 
 	// haleyjd 02/22/06: consider polyobject lines
-	plink = polyblocklinks[offset];
+	plink = POLYBLOCKLINK(offset);
 
 	while (plink)
 	{

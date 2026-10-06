@@ -482,6 +482,10 @@ void readfreeslots(MYFILE *f)
 					if (in_bit_array(used_spr, i - SPR_FIRSTFREESLOT))
 						continue; // Already allocated, next.
 					// Found a free slot!
+#ifdef PS2_DYNLIMITS
+					if (i >= LIMIT_NUMSPRITES) // PS2-104: past the vanilla-size tables
+						PS2Limits_Grow();
+#endif
 					strcpy(sprnames[i], word);
 					set_bit_array(used_spr, i - SPR_FIRSTFREESLOT); // Okay, this sprite slot has been named now.
 					// Lua needs to update the value in _G if it exists
@@ -493,7 +497,8 @@ void readfreeslots(MYFILE *f)
 			}
 			else if (fastcmp(type, "S"))
 			{
-				for (i = 0; i < NUMSTATEFREESLOTS; i++)
+				PS2_FREESLOT_CHECK(FREE_STATES, LIMIT_STATEFREESLOTS);
+				for (i = 0; i < LIMIT_STATEFREESLOTS; i++)
 					if (!FREE_STATES[i]) {
 						FREE_STATES[i] = Z_Malloc(strlen(word)+1, PU_STATIC, NULL);
 						strcpy(FREE_STATES[i],word);
@@ -504,7 +509,8 @@ void readfreeslots(MYFILE *f)
 			}
 			else if (fastcmp(type, "MT"))
 			{
-				for (i = 0; i < NUMMOBJFREESLOTS; i++)
+				PS2_FREESLOT_CHECK(FREE_MOBJS, LIMIT_MOBJFREESLOTS);
+				for (i = 0; i < LIMIT_MOBJFREESLOTS; i++)
 					if (!FREE_MOBJS[i]) {
 						FREE_MOBJS[i] = Z_Malloc(strlen(word)+1, PU_STATIC, NULL);
 						strcpy(FREE_MOBJS[i],word);
@@ -515,7 +521,8 @@ void readfreeslots(MYFILE *f)
 			}
 			else if (fastcmp(type, "SKINCOLOR"))
 			{
-				for (i = 0; i < NUMCOLORFREESLOTS; i++)
+				PS2_FREESLOT_CHECK(FREE_SKINCOLORS, LIMIT_COLORFREESLOTS);
+				for (i = 0; i < LIMIT_COLORFREESLOTS; i++)
 					if (!FREE_SKINCOLORS[i]) {
 						FREE_SKINCOLORS[i] = Z_Malloc(strlen(word)+1, PU_STATIC, NULL);
 						strcpy(FREE_SKINCOLORS[i],word);
@@ -535,7 +542,11 @@ void readfreeslots(MYFILE *f)
 				if (i < (int)free_spr2)
 					continue;
 				// Copy in the spr2 name and increment free_spr2.
-				if (free_spr2 < NUMPLAYERSPRITES) {
+#ifdef PS2_DYNLIMITS
+				if (free_spr2 >= (playersprite_t)LIMIT_NUMPLAYERSPRITES && !ps2_fulllimits)
+					PS2Limits_Grow();
+#endif
+				if (free_spr2 < LIMIT_NUMPLAYERSPRITES) {
 					strncpy(spr2names[free_spr2],word,4);
 					spr2defaults[free_spr2] = 0;
 					spr2names[free_spr2++][4] = 0;
@@ -964,9 +975,9 @@ static void readspriteframe(MYFILE *f, spriteinfo_t *sprinfo, UINT8 frame)
 			value = atoi(word2); // used for numerical settings
 
 			if (fastcmp(word, "XPIVOT"))
-				sprinfo->pivot[frame].x = value;
+				R_SpriteInfoPivot(sprinfo)[frame].x = value;
 			else if (fastcmp(word, "YPIVOT"))
-				sprinfo->pivot[frame].y = value;
+				R_SpriteInfoPivot(sprinfo)[frame].y = value;
 			// TODO: 2.3: Delete
 			else if (fastcmp(word, "ROTAXIS"))
 				deh_warning("SpriteInfo: ROTAXIS is deprecated and will be removed.");
@@ -1125,11 +1136,11 @@ void readspriteinfo(MYFILE *f, INT32 num, boolean sprite2)
 					{
 						skin_t *skin = skins[skinnumbers[i]];
 						spriteinfo_t *sprinfo = skin->sprinfo;
-						M_Memcpy(&sprinfo[num], info, sizeof(spriteinfo_t));
+						R_SpriteInfoCopy(&sprinfo[num], info);
 					}
 				}
 				else
-					M_Memcpy(&spriteinfo[num], info, sizeof(spriteinfo_t));
+					R_SpriteInfoCopy(&spriteinfo[num], info);
 			}
 			else
 			{
@@ -1141,6 +1152,7 @@ void readspriteinfo(MYFILE *f, INT32 num, boolean sprite2)
 	} while (!myfeof(f)); // finish when the line is empty
 
 	Z_Free(s);
+	R_SpriteInfoFree(info);
 	Z_Free(info);
 	if (skinnumbers)
 		Z_Free(skinnumbers);
@@ -4214,7 +4226,7 @@ mobjtype_t get_mobjtype(const char *word)
 		return atoi(word);
 	if (fastncmp("MT_",word,3))
 		word += 3; // take off the MT_
-	for (i = 0; i < NUMMOBJFREESLOTS; i++) {
+	for (i = 0; i < LIMIT_MOBJFREESLOTS; i++) {
 		if (!FREE_MOBJS[i])
 			break;
 		if (fastcmp(word, FREE_MOBJS[i]))
@@ -4234,7 +4246,7 @@ statenum_t get_state(const char *word)
 		return atoi(word);
 	if (fastncmp("S_",word,2))
 		word += 2; // take off the S_
-	for (i = 0; i < NUMSTATEFREESLOTS; i++) {
+	for (i = 0; i < LIMIT_STATEFREESLOTS; i++) {
 		if (!FREE_STATES[i])
 			break;
 		if (fastcmp(word, FREE_STATES[i]))
@@ -4254,7 +4266,7 @@ skincolornum_t get_skincolor(const char *word)
 		return atoi(word);
 	if (fastncmp("SKINCOLOR_",word,10))
 		word += 10; // take off the SKINCOLOR_
-	for (i = 0; i < NUMCOLORFREESLOTS; i++) {
+	for (i = 0; i < LIMIT_COLORFREESLOTS; i++) {
 		if (!FREE_SKINCOLORS[i])
 			break;
 		if (fastcmp(word, FREE_SKINCOLORS[i]))
@@ -4275,7 +4287,7 @@ spritenum_t get_sprite(const char *word)
 	if (fastncmp("SPR_",word,4))
 		word += 4; // take off the SPR_
 	i = R_GetSpriteNumByName(word);
-	if (i != NUMSPRITES)
+	if (i != LIMIT_NUMSPRITES)
 		return i;
 	deh_warning("Couldn't find sprite named 'SPR_%s'",word);
 	return SPR_NULL;
@@ -4288,7 +4300,7 @@ playersprite_t get_sprite2(const char *word)
 		return atoi(word);
 	if (fastncmp("SPR2_",word,5))
 		word += 5; // take off the SPR2_
-	for (i = 0; i < NUMPLAYERSPRITES; i++)
+	for (i = 0; i < LIMIT_NUMPLAYERSPRITES; i++)
 		if (!spr2names[i][4] && memcmp(word,spr2names[i],4)==0)
 			return i;
 	deh_warning("Couldn't find sprite named 'SPR2_%s'",word);
@@ -4304,7 +4316,7 @@ sfxenum_t get_sfx(const char *word)
 		word += 4; // take off the SFX_
 	else if (fastncmp("DS",word,2))
 		word += 2; // take off the DS
-	for (i = 0; i < NUMSFX; i++)
+	for (i = 0; i < (unsigned)LIMIT_NUMSFX; i++)
 		if (S_sfx[i].name && fasticmp(word, S_sfx[i].name))
 			return i;
 	deh_warning("Couldn't find sfx named 'SFX_%s'",word);

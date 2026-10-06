@@ -56,6 +56,8 @@
 #include "../filesrch.h"
 #ifdef PS2_PROFILE
 boolean P_AddFolder(const char *folderpath); // PS2-124: p_setup.h hides it until the add-on system is restored (p_setup.c has the stub)
+#include "../ps2/ps2_curl.h" // PS2-137: streaming HTTP GET of the add-on download
+#include "../ps2/ps2_net.h"
 #endif
 
 #include <errno.h>
@@ -1922,20 +1924,150 @@ void CURLGetFile(void)
 }
 
 #else
-// PS2-124: no libcurl - HTTP downloads of add-ons are not available; the transfer over the game connection (SendFile/PT_FILEFRAGMENT) is.
+// PS2-124/PS2-137: no libcurl and no threads. The HTTP source of the server is read by the streaming GET of src/ps2/ps2_curl.c, one step per pass of
+// the connection loop (CL_ServerConnectionTicker calls CURLGetFile while filedownload.http_running); the same state changes as the libcurl thread.
+// The transfer over the game connection (SendFile/PT_FILEFRAGMENT) is the fallback, exactly as with libcurl.
+static ps2_httpget_t *ps2dl;
+static fileneeded_t *ps2dl_file;
+static UINT32 ps2dl_origsize, ps2dl_origtotal;
+static char ps2dl_errbuf[CURL_ERROR_SIZE];
+
+static size_t PS2DL_Write(char *data, size_t size, size_t nmemb, void *ud)
+{
+	const size_t n = fwrite(data, size, nmemb, (FILE *)ud);
+
+	getbytes += (INT32)n; // the speed readout of the download screen
+	return n;
+}
+
 boolean CURLPrepareFile(const char* url, int dfilenum)
 {
-	(void)url;
-	(void)dfilenum;
-	return false;
+	char md5tmp[33];
+	char *realname;
+	char fullurl[MAX_MIRROR_LENGTH + MAX_WADPATH + 64];
+	char agent[64];
+
+	if (ps2dl || !PS2Net_Up())
+		return false;
+	I_mkdir(downloaddir, 0755);
+
+	ps2dl_file = &fileneeded[dfilenum];
+	realname = ps2dl_file->filename;
+	nameonly(realname);
+	ps2dl_origsize = ps2dl_file->currentsize;
+	ps2dl_origtotal = ps2dl_file->totalsize;
+
+	for (INT32 j = 0; j < 16; j++)
+		sprintf(&md5tmp[j*2], "%02x", ps2dl_file->md5sum[j]);
+
+	CONS_Printf("Downloading addon \"%s\" from %s\n", realname, url);
+	// (not va(): its one static buffer would hold the user agent in place of the address by the time the call is made)
+	{
+		char enc[MAX_WADPATH * 3 + 1], *e = enc; // the name goes into the URL path: percent-encode what is not safe there (libcurl does the same for spaces)
+
+		for (const char *c = realname; *c && e < enc + sizeof enc - 4; c++)
+		{
+			const unsigned char ch = (unsigned char)*c;
+
+			if ((ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '-' || ch == '.' || ch == '_' || ch == '~')
+				*e++ = (char)ch;
+			else
+				e += sprintf(e, "%%%02X", ch);
+		}
+		*e = '\0';
+		snprintf(fullurl, sizeof fullurl, "%s/%s?md5=%s", url, enc, md5tmp);
+	}
+	snprintf(agent, sizeof agent, "Sonic Robo Blast 2 Banpyura/%s", VERSIONSTRING);
+	ps2dl = PS2HttpGet_Open(fullurl, 20, 30, agent);
+	if (!ps2dl)
+	{
+		filedownload.http_running = false;
+		return false;
+	}
+
+	strcatbf(ps2dl_file->filename, downloaddir, "/");
+	ps2dl_file->file = fopen(ps2dl_file->filename, "wb");
+	if (!ps2dl_file->file)
+	{
+		PS2HttpGet_Close(ps2dl);
+		ps2dl = NULL;
+		filedownload.http_running = false;
+		return false;
+	}
+	ps2dl_file->status = FS_DOWNLOADING;
+	filedownload.current = dfilenum;
+	filedownload.http_running = true;
+	return true;
 }
 
 void CURLAbortFile(void)
 {
+	if (ps2dl)
+	{
+		PS2HttpGet_Close(ps2dl);
+		ps2dl = NULL;
+		if (ps2dl_file && ps2dl_file->file)
+		{
+			fclose(ps2dl_file->file);
+			ps2dl_file->file = NULL;
+			remove(ps2dl_file->filename);
+		}
+	}
+	filedownload.http_running = false;
 }
 
 void CURLGetFile(void)
 {
+	long status = 0, total = -1, got = 0;
+	int rc;
+	char *filename;
+
+	if (!ps2dl || !filedownload.http_running)
+		return;
+	rc = PS2HttpGet_Step(ps2dl, PS2DL_Write, ps2dl_file->file, &status, &total, &got, ps2dl_errbuf, sizeof ps2dl_errbuf);
+	ps2dl_file->currentsize = (UINT32)got;
+	if (total >= 0)
+		ps2dl_file->totalsize = (UINT32)total;
+	if (rc > 0)
+		return;
+
+	filename = Z_StrDup(ps2dl_file->filename);
+	nameonly(filename);
+	if (rc < 0)
+	{
+		ps2dl_file->failed = status == 404 ? FDOWNLOAD_FAIL_NOTFOUND : FDOWNLOAD_FAIL_OTHER;
+		ps2dl_file->status = FS_FALLBACK;
+		ps2dl_file->currentsize = ps2dl_origsize;
+		ps2dl_file->totalsize = ps2dl_origtotal;
+		filedownload.http_failed = true;
+		fclose(ps2dl_file->file);
+		remove(ps2dl_file->filename);
+		CONS_Alert(CONS_ERROR, M_GetText("Failed to download addon \"%s\" (%s)\n"), filename, ps2dl_errbuf[0] ? ps2dl_errbuf : "error");
+	}
+	else
+	{
+		fclose(ps2dl_file->file);
+		CONS_Printf(M_GetText("Finished download of \"%s\"\n"), filename);
+		if (checkfilemd5(ps2dl_file->filename, ps2dl_file->md5sum) == FS_MD5SUMBAD)
+		{
+			CONS_Alert(CONS_WARNING, M_GetText("File \"%s\" does not match the version used by the server\n"), filename);
+			ps2dl_file->status = FS_FALLBACK;
+			ps2dl_file->failed = FDOWNLOAD_FAIL_MD5SUMBAD;
+			filedownload.http_failed = true;
+		}
+		else
+		{
+			filedownload.completednum++;
+			filedownload.completedsize += ps2dl_file->totalsize;
+			ps2dl_file->status = FS_FOUND;
+		}
+	}
+	Z_Free(filename);
+	ps2dl_file->file = NULL;
+	filedownload.remaining--;
+	PS2HttpGet_Close(ps2dl);
+	ps2dl = NULL;
+	filedownload.http_running = false;
 }
 #endif
 

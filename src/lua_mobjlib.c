@@ -773,8 +773,8 @@ static int mobj_set(lua_State *L)
 	case mobj_type: // yeah sure, we'll let you change the mobj's type.
 	{
 		mobjtype_t newtype = luaL_checkinteger(L, 3);
-		if (newtype >= NUMMOBJTYPES)
-			return luaL_error(L, "mobj.type %d out of range (0 - %d).", newtype, NUMMOBJTYPES-1);
+		if (newtype >= LIMIT_NUMMOBJTYPES)
+			return luaL_error(L, "mobj.type %d out of range (0 - %d).", newtype, LIMIT_NUMMOBJTYPES-1);
 		mo->type = newtype;
 		mo->info = &mobjinfo[newtype];
 		P_SetScale(mo, mo->scale, false);

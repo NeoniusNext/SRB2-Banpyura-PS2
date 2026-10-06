@@ -410,8 +410,17 @@ typedef struct
 typedef struct
 {
 	UINT8 col[2];
+#ifdef PS2_DYNLIMITS
+	const char *notes; // PS2-104: 128 custom gametypes of 441 bytes each would be 56 KB of .bss; the text is allocated when a gametype sets it
+#else
 	char notes[441];
+#endif
 } gtdesc_t;
+#ifdef PS2_DYNLIMITS
+#define GTDESC_NOTES(gt) (gametypedesc[gt].notes ? gametypedesc[gt].notes : "")
+#else
+#define GTDESC_NOTES(gt) (gametypedesc[gt].notes)
+#endif
 extern gtdesc_t gametypedesc[NUMGAMETYPES];
 
 // mode descriptions for video mode menu

@@ -410,6 +410,13 @@ boolean EV_DoPolyObjFade(polyfadedata_t *);
 extern polyobj_t *PolyObjects;
 extern INT32 numPolyObjects;
 extern polymaplink_t **polyblocklinks; // polyobject blockmap
+#ifdef PS2_PROFILE
+// PS2-88: the array (4 bytes per blockmap cell: 283 KB on MAP11) exists only in levels that have polyobjects: P_LoadBlockMap leaves it NULL,
+// Polyobj_linkToBlockmap makes it
+#define POLYBLOCKLINK(offset) (polyblocklinks ? polyblocklinks[offset] : NULL)
+#else
+#define POLYBLOCKLINK(offset) (polyblocklinks[offset])
+#endif
 
 #endif
 
