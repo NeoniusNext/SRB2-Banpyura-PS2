@@ -31,6 +31,7 @@ def main():
     ap.add_argument('--shots', required=True)
     ap.add_argument('--warp', default='')
     ap.add_argument('--sw', action='store_true')
+    ap.add_argument('--demo', default='', help='attract demo DEMO_001..4 played with -timedemo')
     ap.add_argument('--out', default=str(ROOT / 'build/ref'))
     ap.add_argument('--cfg', default='')
     ap.add_argument('--keys', default='')
@@ -48,6 +49,9 @@ def main():
     exe = a.exe or find_exe()
     args = ['xvfb-run', '-a', exe, '-home', str(o / 'home'), '-win', '-width', w, '-height', h, '-software' if a.sw else '-opengl', '-skipintro',
             '-nosound', '-config', 'reference.cfg', '-ps2ref-shot', a.shots]
+    if a.demo:
+        shutil.copy2(ROOT / 'golden/phase0-v2' / (a.demo + '.lmp'), o / 'home/.srb2' / (a.demo + '.lmp'))
+        args += ['-timedemo', a.demo + '.lmp']
     if a.warp:
         args += ['-warp', a.warp]
     if a.keys:

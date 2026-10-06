@@ -219,6 +219,8 @@ static boolean Impl_HWAcquire(void)
 		c.screen_w = vid.width;
 		c.screen_h = vid.height;
 		c.linear = M_CheckParm("-linear") ? 1 : 0;
+		if (M_CheckParm("-hwfbh") && M_IsNextParm())
+			c.fbh = atoi(M_GetNextParm()); // PS2-HW-68 (diagnostics): internal frame buffer height (200 = one pixel per engine pixel, no 200->224 stretch: pixel-exact comparison with the PC picture)
 		c.tex_adapt = 1; // PS2-HW-24: the footprint cap follows the working set ...
 		if (M_CheckParm("-hwtexcap") && M_IsNextParm())
 		{
@@ -1073,7 +1075,7 @@ static void Impl_VidShot(void)
 {
 	static boolean parsed;
 	static char spec[1536];
-	static INT32 titlen, leveln, anyn, wipen, left, done;
+	static INT32 titlen, leveln, anyn, wipen, intern, left, done;
 	static INT32 knext;
 	static boolean klow = true;
 	INT32 kord = 0;
@@ -1087,7 +1089,7 @@ static void Impl_VidShot(void)
 			strlcpy(spec, M_GetNextParm(), sizeof spec);
 			for (p = spec; *p;) // one shot per item 't35' / 'l70' / 'f200' (an optional '=command' follows the number)
 			{
-				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w');
+				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w' || *p == 'i');
 				while (*p && *p != ',')
 					p++;
 				if (*p == ',')
@@ -1106,6 +1108,8 @@ static void Impl_VidShot(void)
 		titlen++;
 	else if (gamestate == GS_LEVEL)
 		leveln++;
+	else if (gamestate == GS_INTERMISSION)
+		intern++; // OPT10-HF: i30 = the 30th intermission frame
 	for (p = spec; *p;)
 	{
 		const char kind = *p++;
@@ -1129,7 +1133,7 @@ static void Impl_VidShot(void)
 		if (*p == ',')
 			p++;
 		hit = (kind == 'w' && WipeInAction && n == wipen)
-			|| (!WipeInAction && ((kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn)))
+			|| (!WipeInAction && ((kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn) || (kind == 'i' && n == intern)))
 			|| (!WipeInAction && (kind == 'k' || kind == 'K') && kord++ == knext && gamestate == GS_LEVEL && (INT32)leveltime >= n && (klow || kind == 'k')); // PS2-HW-60: k300 = first frame with leveltime >= 300, K300 = the same but only in a level that started after the previous shot; k/K items fire in order (the same tic as the PC reference at any frame rate)
 		if (hit && (kind == 'k' || kind == 'K'))
 		{

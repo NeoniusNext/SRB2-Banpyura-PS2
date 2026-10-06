@@ -246,21 +246,21 @@ static void shot_keys(INT32 framen)
 }
 static void shot_frame(void)
 {
-    static boolean parsed, quitnext; static INT32 titlen, leveln, anyn, wipen, left, done, knext; static boolean klow=true; static char spec[1536];
+    static boolean parsed, quitnext; static INT32 titlen, leveln, anyn, wipen, intern, left, done, knext; static boolean klow=true; static char spec[1536];
     INT32 kord=0; const char *p;
     if(quitnext) { CONS_Printf("PS2SHOT COMPLETE %d\n",(int)done); I_Quit(); }
     if(!parsed) {
         parsed=true;
         if(M_CheckParm("-ps2ref-shot") && M_IsNextParm()) {
             snprintf(spec,sizeof spec,"%s",M_GetNextParm());
-            for(p=spec;*p;) { left+=(*p=='t'||*p=='l'||*p=='f'||*p=='k'||*p=='K'||*p=='w'); while(*p && *p!=',') p++; if(*p==',') p++; }
+            for(p=spec;*p;) { left+=(*p=='t'||*p=='l'||*p=='f'||*p=='k'||*p=='K'||*p=='w'||*p=='i'); while(*p && *p!=',') p++; if(*p==',') p++; }
         }
     }
     anyn++;
     shot_keys(anyn);
     if(!left) return;
     if(gamestate==GS_LEVEL && leveltime<20) klow=true;
-    if(WipeInAction) wipen++; else if(gamestate==GS_TITLESCREEN) titlen++; else if(gamestate==GS_LEVEL) leveln++;
+    if(WipeInAction) wipen++; else if(gamestate==GS_TITLESCREEN) titlen++; else if(gamestate==GS_LEVEL) leveln++; else if(gamestate==GS_INTERMISSION) intern++;
     for(p=spec;*p;) {
         const char kind=*p++; INT32 n=0, hit; char cmd[64]; size_t cl=0;
         while(*p>='0' && *p<='9') n=n*10+(*p++-'0');
@@ -269,7 +269,7 @@ static void shot_frame(void)
         while(*p && *p!=',') p++;
         if(*p==',') p++;
         hit=(kind=='w' && WipeInAction && n==wipen)
-            || (!WipeInAction && ((kind=='t' && n==titlen) || (kind=='l' && n==leveln) || (kind=='f' && n==anyn)))
+            || (!WipeInAction && ((kind=='t' && n==titlen) || (kind=='l' && n==leveln) || (kind=='f' && n==anyn) || (kind=='i' && n==intern)))
             || (!WipeInAction && (kind=='k' || kind=='K') && kord++==knext && gamestate==GS_LEVEL && (INT32)leveltime>=n && (klow || kind=='k'));
         if(hit && (kind=='k' || kind=='K')) { knext++; klow=false; }
         if(!hit) continue;

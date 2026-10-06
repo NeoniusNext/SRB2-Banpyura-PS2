@@ -25,13 +25,15 @@ def main():
     ap.add_argument('--timeout', type=float, default=600)
     ap.add_argument('--cfg', default='', help='extra lines for reference.cfg, ";" separates lines')
     ap.add_argument('--until', default='')
+    ap.add_argument('--demo', default='', help='attract demo (DEMO_001..4): staged and played with -timedemo')
     ap.add_argument('--pak', default=str(PAK))
+    ap.add_argument('--emu', default='', help='AppRun of another emulator copy (e.g. /opt/pcsx2/hwgl: PCSX2 with the OpenGL hardware renderer)')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     run = Path(a.out).resolve() / a.name
     cfg = ''.join(x.strip() + '\n' for x in a.cfg.split(';') if x.strip())
-    opt_run.stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), None, cfg)
-    args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt'] + a.extra
+    opt_run.stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None, cfg)
+    args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt'] + (['-timedemo', a.demo + '.lmp'] if a.demo else []) + a.extra
     until = a.until
     if not until:
         until = 'VIDSHOT COMPLETE' if '-vidshot' in a.extra else ('ZQUIT DONE' if any(x in ('-zquit', '-zquitall') for x in a.extra) else '')
@@ -40,7 +42,7 @@ def main():
            '--args=' + ' '.join(args[:2]), '--timeout', str(a.timeout)]
     if until:
         cmd += ['--until-file', str(run / 'boot.txt'), '--until', until]
-    env = dict(os.environ, SRB2_PCSX2=opt_run.PCSX2[32])
+    env = dict(os.environ, SRB2_PCSX2=a.emu or opt_run.PCSX2[32])
     p = subprocess.run(cmd, env=env, capture_output=True, text=True)
     (run / 'run.log').write_text(p.stdout + p.stderr, encoding='utf-8')
     boot = run / 'boot.txt'
