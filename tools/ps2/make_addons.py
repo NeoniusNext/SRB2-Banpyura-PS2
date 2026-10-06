@@ -579,6 +579,37 @@ end)
 """
 
 
+HUD_LUA = r"""
+-- OPT10-X Lua HUD add-on (PS2-101): fill, strings, a scaled sprite, numbers and an on-screen counter, drawn through the game HUD hook; the same
+-- pictures in software and in the hardware renderer (tools/ps2/net_specs9 / docs/GATES/g1/opt10-X.md).
+local function out(s) print("FTLUA "..s) end
+out("hud loaded")
+local ring, calls = nil, 0
+hud.add(function(v, p, c)
+	calls = calls + 1
+	if calls == 1 then out("hud first call "..tostring(v.width()).."x"..tostring(v.height()).." "..tostring(p ~= nil)) end
+	if not ring then ring = v.cachePatch("RINGA0") end
+	local f = V_SNAPTOLEFT|V_SNAPTOBOTTOM
+	v.drawFill(4, 140, 128, 56, 35|f)
+	v.drawFill(6, 142, 124, 52, 31|f)
+	v.drawString(10, 145, "LUA HUD", f, "left")
+	v.drawString(10, 156, "rings "..(p and p.rings or 0), f|V_YELLOWMAP, "thin")
+	v.drawString(10, 166, "calls "..calls, f|V_GREENMAP, "small")
+	v.drawScaled(116*FRACUNIT, 176*FRACUNIT, FRACUNIT*3/2, ring, f)
+	v.drawNum(100, 186, calls % 1000, f)
+	v.drawString(160, 100, "centre", V_ALLOWLOWERCASE, "center")
+	if calls == 40 then out("hud calls 40") end
+end, "game")
+"""
+
+
+def make_hud(out):
+    path = out / 'ZH.pk3'
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('Lua/ZHUD.lua', HUD_LUA.replace(chr(10), chr(13) + chr(10)))
+    print('wrote', path, path.stat().st_size, 'bytes')
+
+
 def make_demo(out):
     path = out / 'ZD.pk3'
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -628,6 +659,8 @@ def main():
         make_sum(out)
     if 'demo' in which:
         make_demo(out)
+    if 'hud' in which:
+        make_hud(out)
 
 
 if __name__ == '__main__':

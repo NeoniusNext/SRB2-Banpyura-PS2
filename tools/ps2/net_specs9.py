@@ -251,7 +251,7 @@ def pair(name, srv, cli, tics, pollsrv=None, pollcli=None, srv_args=None, srv_cm
                  'until': [{'node': 'srv', 'text': f'NETSYNC gametic={tics}'}, {'node': 'cli', 'text': f'NETSYNC gametic={tics}'}], 'grace': 3})
 
 
-SOAK = 5250
+SOAK = 6500
 pair('soak-ps2srv-ps2cli', 'ps2', 'ps2', SOAK)
 pair('soak-pcsrv-ps2cli', 'pc', 'ps2', SOAK)
 pair('soak-ps2srv-pccli', 'ps2', 'pc', SOAK)
