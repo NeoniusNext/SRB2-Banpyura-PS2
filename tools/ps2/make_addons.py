@@ -388,6 +388,11 @@ addHook("ThinkFrame", function()
 end)
 """
 
+def make_nsk(out):
+    """NSK.pk3: the skin add-on of ZS.pk3 without the Lua line that makes the server quit (a network add-on: served to joiners, OPT9-N / OPT10-X)."""
+    make_skin(out, name='NSK.pk3', lua=SKIN_LUA.replace('\t\tCOM_BufInsertText(server, "quit")\n', '\t\tout("nsk running")\n'))
+
+
 SKIN_SOC = """# OPT8-F add-on test: a sprite, a sound, an object
 Freeslot
 SPR_ZTSP
@@ -422,10 +427,13 @@ def wav_bytes(freq=11025, ms=300):
     return b.getvalue()
 
 
-def make_skin(out, assets='D:/Ai-Project3/SRB2-PS2-Port/srb2-assets'):
+ASSETS = os.environ.get('SRB2WADDIR', '/opt/srb2-assets')
+
+
+def make_skin(out, assets=ASSETS, name='ZS.pk3', lua=None):
     """ZS.pk3: skin "ztest" = Tails' sprites under the folder 9_ZTest, a new sprite (PNG), a sound lump (WAV) and an OGG music lump (a small one of music.pk3)."""
     from PIL import Image
-    path = out / 'ZS.pk3'
+    path = out / name
     skin_def = '\n'.join(['name = ztest', 'realname = ZTest', 'hudname = ZTEST', 'startcolor = 96', 'prefcolor = Red', 'supercolor = Red', 'ability = CA_FLY',
                           'actionspd = 100', 'normalspeed = 40', 'thrustfactor = 5', 'accelstart = 96', 'acceleration = 40', 'sfx_jump = ZTJMP', ''])
     with zipfile.ZipFile(Path(assets) / 'characters.pk3') as zc, zipfile.ZipFile(Path(assets) / 'music.pk3') as zm, zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -444,7 +452,7 @@ def make_skin(out, assets='D:/Ai-Project3/SRB2-PS2-Port/srb2-assets'):
         ogg = sorted((i for i in zm.infolist() if i.filename.split('/')[-1].startswith('O_') and i.file_size > 0), key=lambda i: i.file_size)[0]
         z.writestr('Music/O_ZTMUS', zm.read(ogg.filename))
         z.writestr('SOC/ZTSOC.soc', SKIN_SOC.replace('\n', '\r\n'))
-        z.writestr('Lua/ZTSKIN.lua', SKIN_LUA.replace('\n', '\r\n'))
+        z.writestr('Lua/ZTSKIN.lua', (lua or SKIN_LUA).replace('\n', '\r\n'))
     print('wrote', path, path.stat().st_size, 'bytes, music from', ogg.filename, ogg.file_size)
 
 
@@ -614,6 +622,8 @@ def main():
         make_lim(out)
     if 'skin' in which:
         make_skin(out)
+    if 'nsk' in which:
+        make_nsk(out)
     if 'sum' in which:
         make_sum(out)
     if 'demo' in which:
