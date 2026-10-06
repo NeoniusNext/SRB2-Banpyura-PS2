@@ -2176,6 +2176,9 @@ void V_DrawAlignedFontStringAtFixed(fixed_t x, fixed_t y, INT32 option, fixed_t 
 
 		line = xstrtok(NULL, "\n");
 	}
+#ifdef PS2
+	free(text); // PS2-145: the copy was never released (116 strings per level title card: 2 KB of the libc reserve per level change, found by --leaktrace)
+#endif
 }
 
 // Draws a tallnum.  Replaces two functions in y_inter and st_stuff
