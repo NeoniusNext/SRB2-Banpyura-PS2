@@ -55,6 +55,7 @@
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
+#include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
 
 static FOutVector *sky_vertices;
 static float *sky_colors;
@@ -892,7 +893,7 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		want = tex_want(TexInfo, &vis);
 		if (batch_phase == 0 || pk->ps2_planfr != H.frame_no + 1)
 			pk->ps2_full_fr = H.frame_no + 1;
-		if (!vis && !r)
+		if (!vis && !r && !TT.on) // PS2-HW-69: the conformance test draws textures no frame plan sees
 		{
 			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
 			H.cur_tex = NOREC;
@@ -962,6 +963,8 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		TX.regen_n++;
 		H.st.tex_regen++;
 	}
+	if (TT.on)
+		tt_capture(TexInfo); // PS2-HW-69: the texels as the engine hands them over
 	ri = tex_upload(TexInfo);
 	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
 		HWR_PS2_ReleaseMipmapData(TexInfo);

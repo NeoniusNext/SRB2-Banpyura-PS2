@@ -2246,6 +2246,23 @@ static void sprite_tex(texrec_t *r, int linear, u64 frame, u64 alpha, int abe, i
 	s.use_tex = 1;
 	s.rgbaq = rgbaq_of(0x80808080u);
 	state_flush(&s);
+	// PS2-HW-70: the UV register holds 14 bits (1/16 texel units): U or V = 1024.0 (the far edge of a 1024 texel tile) would wrap to 0. The span is kept and
+	// the whole range moves down by the excess (at most 1/16 texel; pixel centres sample half a texel inside, so the nearest texel does not change).
+	// Found by -hwtextest on the 1024 texel textures: clamping only the end shortened the span, the GS truncates the per pixel step.
+	if (u1 > 1023.9375f)
+	{
+		u0 -= u1 - 1023.9375f;
+		u1 = 1023.9375f;
+	}
+	if (v1 > 1023.9375f)
+	{
+		v0 -= v1 - 1023.9375f;
+		v1 = 1023.9375f;
+	}
+	if (u0 < 0.0f)
+		u0 = 0.0f;
+	if (v0 < 0.0f)
+		v0 = 0.0f;
 	p = pk_alloc(1 + 2 * 3);
 	p[0].d[0] = HWGIF_TAG(2, 1, 1, PRIM_SPRITE | PRIM_TME | (1u << 8) | (abe ? PRIM_ABE : 0), 0, 3);
 	p[0].d[1] = 3ull | (1ull << 4) | (5ull << 8); // UV, RGBAQ, XYZ2

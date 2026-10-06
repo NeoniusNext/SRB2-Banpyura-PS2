@@ -193,6 +193,7 @@ static INT32 hwtitleframes;
 static INT32 hwstats_every; // -hwstats N: memory line every N hardware frames
 static INT32 hwtoggle_every; // -hwtoggle N: switch software <-> hardware every N frames (test of the runtime switch)
 static INT32 hwexit_frames; // -hwexit N: quit after N frames (either renderer)
+static boolean hwtextest; // -hwtextest: PS2HWD_TextureTest() on the 12th level frame, then quit
 static boolean hwprof; // -ps2prof: HWPROF lines (the phase profiler of ps2_prof.c is on)
 static INT32 totalframes;
 
@@ -480,6 +481,7 @@ void I_StartupGraphics(void)
 		hwtoggle_every = atoi(M_GetNextParm());
 	if (M_CheckParm("-hwexit") && M_IsNextParm())
 		hwexit_frames = atoi(M_GetNextParm());
+	hwtextest = M_CheckParm("-hwtextest") != 0; // PS2-HW-69: texture conformance self-test (needs -hwfbh 200)
 	hwprof = M_CheckParm("-ps2prof") != 0;
 #else
 	// Software is the only renderer there is
@@ -951,6 +953,11 @@ static void Impl_FinishUpdateHW(void)
 		Impl_HWStats();
 	if (hwdump_frame && gamestate == GS_TITLESCREEN && !WipeInAction && hwtitleframes == hwdump_frame)
 		Impl_DumpHW();
+	if (hwtextest && gamestate == GS_LEVEL && !WipeInAction && leveltime >= 12)
+	{
+		PS2HWD_TextureTest();
+		I_Quit();
+	}
 	Impl_VidKeys(); // PS2-HW-17: -vidkeys / -vidshot also drive and photograph the hardware renderer (the frame just presented)
 	Impl_VidShot();
 }
