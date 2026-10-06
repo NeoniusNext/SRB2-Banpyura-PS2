@@ -645,6 +645,7 @@ int ZA_Check(char *msg, size_t msglen)
 	int prevfree = 0;
 	size_t used = 0, nused = 0, nfree = 0, listed = 0;
 	unsigned bin;
+	zablock_t *prevb = NULL; // the block before the one being looked at: named in the messages (who overran into the header)
 
 	if (!za_base)
 		ZA_BAD("arena not initialised");
@@ -658,8 +659,18 @@ int ZA_Check(char *msg, size_t msglen)
 		if (size < ZA_MINBLK || size > (size_t)(za_end - p))
 			ZA_BAD("block at +%lu: bad size %lu", (unsigned long)(p - za_base), (unsigned long)size);
 		if (((b->sf & ZAF_PREVFREE) != 0) != prevfree)
-			ZA_BAD("block at +%lu: prev-free flag %d but previous block is %s", (unsigned long)(p - za_base),
-				(b->sf & ZAF_PREVFREE) != 0, prevfree ? "free" : "used");
+#ifdef ZDEBUG
+			ZA_BAD("block at +%lu: prev-free flag %d but previous block is %s (previous: +%lu %lu B tag %d real %lu owner %s:%d; this: tag %d real %lu %s:%d)",
+				(unsigned long)(p - za_base), (b->sf & ZAF_PREVFREE) != 0, prevfree ? "free" : "used", prevb ? (unsigned long)((uint8_t *)prevb - za_base) : 0ul,
+				prevb ? (unsigned long)ZA_SIZE(prevb) : 0ul, prevb ? ZA_TAG(prevb) : -1, prevb ? (unsigned long)prevb->realsize : 0ul,
+				prevb && prevb->ownerfile ? prevb->ownerfile : "?", prevb ? prevb->ownerline : 0, ZA_TAG(b), (unsigned long)b->realsize,
+				b->ownerfile ? b->ownerfile : "?", b->ownerline);
+#else
+			ZA_BAD("block at +%lu: prev-free flag %d but previous block is %s (previous: +%lu %lu B tag %d real %lu; this: tag %d real %lu used %d)",
+				(unsigned long)(p - za_base), (b->sf & ZAF_PREVFREE) != 0, prevfree ? "free" : "used", prevb ? (unsigned long)((uint8_t *)prevb - za_base) : 0ul,
+				prevb ? (unsigned long)ZA_SIZE(prevb) : 0ul, prevb ? ZA_TAG(prevb) : -1, prevb ? (unsigned long)prevb->realsize : 0ul, ZA_TAG(b),
+				(unsigned long)b->realsize, (b->sf & ZAF_USED) != 0);
+#endif
 		if (b->sf & ZAF_USED)
 		{
 			if (b->realsize > size - ZA_HDR)
@@ -684,6 +695,7 @@ int ZA_Check(char *msg, size_t msglen)
 			nfree++;
 			prevfree = 1;
 		}
+		prevb = b;
 		p += size;
 	}
 	if (p != za_end)
