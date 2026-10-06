@@ -2367,7 +2367,16 @@ void A_VultureFly(void *data)
 
 	P_VultureHoverParticle(actor);
 
+#ifdef PS2
+	{ // PS2-141: unspecified argument order, right to left as the PC builds (see A_LightBeamReset)
+		const fixed_t dz_ = actor->z + actor->height/2 + P_RandomFixed() - FRACUNIT/2;
+		const fixed_t dy_ = actor->y + P_RandomFixed() - FRACUNIT/2;
+		const fixed_t dx_ = actor->x + P_RandomFixed() - FRACUNIT/2;
+		dust = P_SpawnMobj(dx_, dy_, dz_, MT_PARTICLE);
+	}
+#else
 	dust = P_SpawnMobj(actor->x + P_RandomFixed() - FRACUNIT/2, actor->y + P_RandomFixed() - FRACUNIT/2, actor->z + actor->height/2 + P_RandomFixed() - FRACUNIT/2, MT_PARTICLE);
+#endif
 	if (!P_MobjWasRemoved(dust))
 	{
 		P_SetScale(dust, 2*FRACUNIT, true);
@@ -3049,7 +3058,15 @@ void A_Boss1Laser(void *data)
 					P_SetScale(steam, size*actor->scale, false);
 					steam->old_scale = steam->scale;
 					P_SetObjectMomZ(steam, FRACUNIT + 2*P_RandomFixed(), true);
-					P_InstaThrust(steam, FixedAngle(P_RandomKey(360)*FRACUNIT), 2*P_RandomFixed());
+					{
+#ifdef PS2
+							// PS2-141: unspecified argument order, right to left as the PC builds
+							const fixed_t thrust_ = 2*P_RandomFixed();
+							P_InstaThrust(steam, FixedAngle(P_RandomKey(360)*FRACUNIT), thrust_);
+#else
+							P_InstaThrust(steam, FixedAngle(P_RandomKey(360)*FRACUNIT), 2*P_RandomFixed());
+#endif
+						}
 					if (point->info->painsound)
 						S_StartSound(steam, point->info->painsound);
 				}
@@ -4855,7 +4872,16 @@ void A_FishJump(void *data)
 		if (i < MAXPLAYERS)
 		{
 			fixed_t rad = actor->radius>>FRACBITS;
-			P_SpawnMobjFromMobj(actor, P_RandomRange(rad, -rad)<<FRACBITS, P_RandomRange(rad, -rad)<<FRACBITS, 0, (mobjtype_t)locvar2);
+			{
+#ifdef PS2
+				// PS2-141: unspecified argument order, right to left as the PC builds
+				const fixed_t yofs_ = P_RandomRange(rad, -rad)<<FRACBITS;
+				const fixed_t xofs_ = P_RandomRange(rad, -rad)<<FRACBITS;
+				P_SpawnMobjFromMobj(actor, xofs_, yofs_, 0, (mobjtype_t)locvar2);
+#else
+				P_SpawnMobjFromMobj(actor, P_RandomRange(rad, -rad)<<FRACBITS, P_RandomRange(rad, -rad)<<FRACBITS, 0, (mobjtype_t)locvar2);
+#endif
+			}
 		}
 	}
 
@@ -12661,11 +12687,20 @@ void A_FlameParticle(void *data)
 
 	rad = actor->radius>>FRACBITS;
 	hei = actor->height>>FRACBITS;
+#ifdef PS2
+	{ // PS2-141: unspecified argument order, right to left as the PC builds
+		const fixed_t pz_ = P_RandomRange(hei/2, hei)<<FRACBITS;
+		const fixed_t py_ = P_RandomRange(rad, -rad)<<FRACBITS;
+		const fixed_t px_ = P_RandomRange(rad, -rad)<<FRACBITS;
+		particle = P_SpawnMobjFromMobj(actor, px_, py_, pz_, type);
+	}
+#else
 	particle = P_SpawnMobjFromMobj(actor,
 		P_RandomRange(rad, -rad)<<FRACBITS,
 		P_RandomRange(rad, -rad)<<FRACBITS,
 		P_RandomRange(hei/2, hei)<<FRACBITS,
 		type);
+#endif
 	if (!P_MobjWasRemoved(particle))
 		P_SetObjectMomZ(particle, 2<<FRACBITS, false);
 }
@@ -12814,10 +12849,21 @@ void A_LightBeamReset(void *data)
 	actor->momy = (P_SignedRandom()*FINECOSINE(((actor->spawnpoint->angle*ANG1)>>ANGLETOFINESHIFT) & FINEMASK))/128;
 	actor->momz = (P_SignedRandom()*FRACUNIT)/128;
 
+#ifdef PS2
+	// PS2-141: the order of evaluation of function arguments is unspecified; the PC builds (x86 GCC/MSVC) go right to left (z, y, x), MIPS GCC
+	// left to right, which handed the three random numbers to other coordinates (DEMO_003 state_hash from tic 45, PC golden). Right to left here.
+	{
+		const fixed_t oz = actor->spawnpoint->z*FRACUNIT + (P_SignedRandom()*FRACUNIT)/2;
+		const fixed_t oy = actor->spawnpoint->y*FRACUNIT + (P_SignedRandom()*FINECOSINE(((actor->spawnpoint->angle*ANG1)>>ANGLETOFINESHIFT) & FINEMASK))/2;
+		const fixed_t ox = actor->spawnpoint->x*FRACUNIT - (P_SignedRandom()*FINESINE(((actor->spawnpoint->angle*ANG1)>>ANGLETOFINESHIFT) & FINEMASK))/2;
+		P_SetOrigin(actor, ox, oy, oz);
+	}
+#else
 	P_SetOrigin(actor,
 		actor->spawnpoint->x*FRACUNIT - (P_SignedRandom()*FINESINE(((actor->spawnpoint->angle*ANG1)>>ANGLETOFINESHIFT) & FINEMASK))/2,
 		actor->spawnpoint->y*FRACUNIT + (P_SignedRandom()*FINECOSINE(((actor->spawnpoint->angle*ANG1)>>ANGLETOFINESHIFT) & FINEMASK))/2,
 		actor->spawnpoint->z*FRACUNIT + (P_SignedRandom()*FRACUNIT)/2);
+#endif
 }
 
 // Function: A_MineExplode
@@ -12854,10 +12900,18 @@ void A_MineExplode(void *data)
 		P_SpawnMobj(actor->x, actor->y, actor->z, type);
 		for (i = 0; i < 16; i++)
 		{
+#ifdef PS2
+			// PS2-141: unspecified argument order, right to left as the PC builds
+			const fixed_t bz_ = actor->z+P_RandomRange(((actor->eflags & MFE_UNDERWATER) ? -dist : 0), dist)*FRACUNIT;
+			const fixed_t by_ = actor->y+P_RandomRange(-dist, dist)*FRACUNIT;
+			const fixed_t bx_ = actor->x+P_RandomRange(-dist, dist)*FRACUNIT;
+			mobj_t *b = P_SpawnMobj(bx_, by_, bz_, type);
+#else
 			mobj_t *b = P_SpawnMobj(actor->x+P_RandomRange(-dist, dist)*FRACUNIT,
 				actor->y+P_RandomRange(-dist, dist)*FRACUNIT,
 				actor->z+P_RandomRange(((actor->eflags & MFE_UNDERWATER) ? -dist : 0), dist)*FRACUNIT,
 				type);
+#endif
 			if (P_MobjWasRemoved(b))
 				continue;
 			fixed_t dx = b->x - actor->x, dy = b->y - actor->y, dz = b->z - actor->z;
