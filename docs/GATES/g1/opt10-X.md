@@ -31,10 +31,41 @@
 | то же по HTTP-источнику (`addons-http`: NSK.pk3+ZT.pk3, `+http_source http://HOSTIP:8091`, `tools/ps2/http_static.py`) | `addons-http` | 94 с; 51 тик (35..1785), **0 отличий**; запросы GET в `build/opt10-x/run/addons-http/http/http.jsonl` |
 | HTTP-источник всегда 404 -> откат на UDP (`addons-http-404`) | `addons-http-404` | 96 с; 51 тик, **0 отличий** |
 
-## 2. Среда: почему сессии PS2<->PS2 нестабильны при нагрузке и что с этим сделано
+| **PS2-сервер <-> PS2-клиент, соак** (`soak-ps2srv-ps2cli`, два PCSX2 `net1`/`net2`, оба игрока ходят и прыгают по `-padscript`, `resynchattempts 0`, `blamecfail On`) | `net_batch.py soak-ps2srv-ps2cli`, `netsync_compare.py srv/boot.txt cli/boot.txt --min-players 2` | сервер дошёл до gametic 13 335, клиент до 8 470: **216 общих отсчётов NETSYNC, gametic 945..8470 (7 525 тиков с двумя игроками), 0 отличий** (`state`, `cons`, `rnd` совпадают); ошибок/ресинхронизаций/таймаутов нет (`build/opt10-x/run/soak-ps2srv-ps2cli/compare.json`). Сборка с BACKUPTICS 1024 (см. раздел 3). |
 
-* Контейнер: 4 ядра, в моменты проверки load average 14-15 (шесть агентов с эмуляторами и LTO-сборками). Два PCSX2 идут в разных темпах (время гостя — эмулируемое, не стенное):
-  клиент, загружающий уровень после входа, молчит для **сервера** дольше `nettimeout` (350 тиков по умолчанию) -> `*Soni left the game (Connection timeout)` (`d_net.c:Net_AckTicker`), клиент через 350 тиков своего времени:
-  `PS2 net: server timeout (no packet from the server for 350 tics)`. Обнаружено сниффером `udp_sniff.py` (поток сервер->клиент сразу после загрузки сейва превращался в одни `punch`), `udp_sniff_sum.py` печатает пакеты по секундам.
-* Лечение в тестовых сценариях (не в движке): `nettimeout "2100"`/`jointimeout "2100"` (максимум cvar) в `reference.cfg` обоих PS2-узлов и `+nettimeout 2100 +jointimeout 2100` у ПК-сервера (`CFG_SYNC`, `pcsrv(longto=True)` в `net_specs9.py`);
-  сценарии таймаутов (`server-kill`, `client-kill`, `reconnect`) остаются на умолчаниях. В копиях `/opt/pcsx2/net1`, `net2` `extrathreads = 0` (программный GS без своих потоков: меньше CPU).
+## 2. PS2-сервер выбрасывал присоединяющегося PS2-клиента: причина и исправление (PS2-139)
+
+Симптом (воспроизводился на нагруженной машине, load average 12-15 при шести агентах с эмуляторами и LTO-сборками): `soak-ps2srv-ps2cli`: клиент входит, грузит сейв, затем сервер печатает `*Soni left the game (Connection timeout)`,
+клиент через `nettimeout` тиков своего времени — `PS2 net: server timeout (no packet from the server for N tics), back to the title screen`; поток сервер->клиент превращается в одни `punch` (сниффер `udp_sniff.py`, `udp_sniff_sum.py`: пакеты по секундам).
+
+Поиск (запуском): сначала считал причиной `nettimeout`/`jointimeout` — подняты до максимума 2100 в `reference.cfg` обоих узлов: **не помогло** (сервер выбрасывал клиента через те же ~220 тиков после входа).
+Диагностическая строка в `Net_ConnectionTimeout` (`PS2 net: timeout node N: now .. lastrecv .. freeze .. connectiontimeout .. jointimeout ..`, PS2-139) показала: `now 1959 lastrecv 1957 freeze 3863 connectiontimeout 2100` — ни один из часов не истёк.
+Вызывал `d_clisrv.c:TryRunTics`: `if (maketic + realtics >= netnodes[i].tic + BACKUPTICS - TICRATE) Net_ConnectionTimeout(i)`: узел, чей подтверждённый тик отстаёт от `maketic` на `BACKUPTICS - TICRATE`, выбрасывается (иначе кольцо тиков переполнилось бы).
+На PS2 `BACKUPTICS = 256` (PS2-123) => предел **221 игровой тик** (6.3 с игрового времени; PS2-сервер работает медленнее 35 тиков/с, `I_GetTime` у него убегал вперёд ~1.7x: `now 1959` при gametic 1140). Клиенту на загрузку уровня после входа этого не хватает.
+Совпало точно: вход на gametic ~920, выброс на ~1140.
+
+Исправление: `src/netcode/protocol.h`: `BACKUPTICS = 1024` (как на ПК; терпит 28 с отставания). Цена: `netcmds` 74 КБ -> 295 КБ (+221 КБ статической памяти); измерено `opt_run.py --map MAP01 -zquit 120`: арена `24379392 -> 24158208` (-216 КБ), свободно на MAP01 7 677 536 -> 7 456 352 Б, `used` тот же (16 701 856).
+Координатору/S: если памяти не хватает на самых больших картах — 512 (терпит 13.6 с) — промежуточный вариант; с 256 PS2-сервер выбрасывает клиентов, которым нужно больше 6 с на загрузку.
+После исправления `soak-ps2srv-ps2cli`: таймаутов нет (см. строку таблицы выше). Прежние прогоны `nettimeout 2100` в тестах оставлены (`CFG_SYNC`, `pcsrv(longto=True)`); сценарии таймаутов (`server-kill`, `client-kill`, `reconnect`) на умолчаниях.
+В копиях `/opt/pcsx2/net1`, `net2` `extrathreads = 0` (программный GS без своих потоков: меньше CPU при двух эмуляторах).
+
+## 3. Контент в полной конфигурации (проверено запуском)
+
+Сборка `SRB2_PS2_NO= SRB2_PS2_HW=1` (ELF 10 649 648 Б), все прогоны через `ftest_run.py`/`addon_compare.py`/`opt_run.py`. Тестовые аддоны — `tools/ps2/make_addons.py` (`zip lua lim skin nsk sum demo hud`) и `tools/ps2/make_udmf_map.py`;
+настоящие аддоны пользователя с `D:\games\SRB2\addons` и ZombieEscape2 на Linux недоступны, а чужие публичные аддоны с GitHub скачать не удалось (репозитории вне доступа сессии: `Access denied: repository ... is not configured for this session`) — их проверка из OPT9 (Windows, 10 аддонов) не повторялась.
+
+| Что | Команда | Результат |
+|---|---|---|
+| ZIP/PNG (`ZT.pk3`, 34 записи, 6 PNG) | `ftest_run.py ... -- -file ZT.pk3 -ftest-lumps 4 -ftest-patches ...`, `ftest_check.py zip` | `lumps: 34 expected, 35 found, 0 problems` |
+| Lua (`ZL.pk3`: математика, строки, таблицы, pcall, хуки, freeslot, SOC с выражениями) | `addon_compare.py --name zl --files ZL.pk3 --until "FTLUA think36"` (ПК-сборка `build/pc-net` и PS2 с одним списком аддонов + `ZSUM.pk3`) | 37 строк FTLUA на PS2 = 37 на ПК, **0 отличий**, предупреждений нет |
+| Лимиты (`ZF.pk3`: 300 состояний, 40 типов, 300 звуков, 40 цветов, 20 sprite2, `G_AddGametype`, длинный спрайт, userdata до роста таблиц) | `addon_compare.py --name zf --until "FTLUA done"` | 41 строка = 41, **0 отличий**; 130 одинаковых предупреждений на обеих сторонах |
+| Скин+звук+музыка+Lua+SOC (`ZS.pk3`) | `addon_compare.py --name zs` | 28 = 28, 0 отличий, 0 предупреждений |
+| База без аддонов (`ZSUM.pk3` печатает через Lua-API скины/типы/состояния/цвета/звуки/карту) | `addon_compare.py --name sum-base --files ""` | 17 = 17, 0 отличий |
+| **UDMF-карта** (`make_udmf_map.py`: 12 комнат 4x3, 31 линия, 20 вершин, XGL3-узлы, построенные самим генератором с проверкой обхода дерева) | `ftest_run.py -- -file UM.pk3 -ftest-level -warp 99 -zquit 100`, `ftest_check.py udmf` | счётчики `[20, 12, 31, 48, 15]` и CRC вершин/секторов/линий/сторон/вещей = независимый Python-парсер `udmf_ref.py` (`1 maps expected, 1 levels loaded, 0 problems`); `addon_compare.py --name um --warp 99`: 17 строк PS2 = ПК (хэши секторов/линий/вещей) |
+| **Lua-HUD** (`ZH.pk3`: `v.drawFill/drawString/drawScaled/drawNum/cachePatch`, `hud.add(..., "game")`) в **software** и в **HW** | `ftest_run.py -- -file ZH.pk3 -skipintro -warp 1 [-renderer Hardware -zreserve 3072] -vidshot l90 -zquit 120` | `FTLUA hud first call 320x200 true`, `hud calls 40` в обоих режимах; снимки `docs/GATES/g1/opt10-X/hud-software.png`, `hud-hardware.png`: рамка, строки, масштабированное кольцо, счётчики на месте в обоих. `addon_compare --name zh`: единственное отличие — `v.width()`: 320 на PS2, 1280 на ПК (размер окна ПК) |
+| **Меню Add-ons** с пада | `ftest_run.py --files ...ZH.pk3=.srb2/addons/ZH.pk3,... -- -padscript file:pad.txt -vidshot ...` (`padseq.py`: start, down x2, cross, cross, cross) | меню открывается, папка `.srb2/addons` показывает `ZH.pk3`, `ZL.pk3`; Cross на файле: `Added file host:/.srb2/addons/ZH.pk3 (1 lumps)`, `FTLUA hud loaded`, значок «загружен» (`docs/GATES/g1/opt10-X/menu-addons.jpg`) |
+| **Автозагрузка** `<data>/autoload` | `ftest_run.py --files ZH.pk3=autoload/ZH.pk3,NSK.pk3=autoload/NSK.pk3 -- -skipintro -warp 1 -zquit 100` | `Loading Lua script from host:/autoload/ZH.pk3|Lua/ZHUD.lua`, скин `ztest`, `FTLUA nsk running`, HUD вызывается |
+| **mc0:** (карта памяти) из каталога дистрибутива | `-ftest-mc ZF.pk3 -ftest-mcformat` из `dist/SRB2-PS2` | `module mcman.irx id=35 ret=0`, `mcserv.irx`, `FT_MC wrote mc0:/SRB2/ZF.pk3 4590`, `readback 4590 1daf12c4 SAME`, каталог `. .. ZF.pk3` |
+| **mass:** (USB-накопитель) | то же с `-ftest-mcdev mass` | модули `bdm.irx`, `bdmfs_fatfs.irx`, `usbmass_bd.irx` загружены из `<data>/modules`, `FT_MC prepare mass: 0` — **накопителя в PCSX2 нет** (USB mass storage не эмулируется), чтение/запись `mass:` **не проверены** |
+| **Ваниль не меняется** (все четыре демо, полная конфигурация без аддонов, `--ps2ref`, `tools/ps2/golden_full.sh`) | `SRB2_PS2_OUT=build/out-ref SRB2_PS2_NO= build.py --ps2ref`; `golden_check.py --run ... --ref golden/ps2-head/DEMO_00n --pixels` | **DEMO_001..004: тики идентичны (1050 строк), 30 кадров каждого — 0 differ (побитно)**; к ПК-golden тики DEMO_001/002/004 идентичны, DEMO_003: `state_hash` с тика 45 (известно, задача S) |
+
