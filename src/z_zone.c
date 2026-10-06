@@ -193,8 +193,13 @@ static int Z_SideForTag(INT32 tag)
 {
 	switch (tag)
 	{
-		case PU_LEVEL: case PU_LEVSPEC:
+		case PU_LEVEL: case PU_LEVSPEC: case PU_HWRPLANE:
 			return zlevel_play ? ZA_TOP : ZA_BOTTOM;
+		// PS2-144 (OPT10-S): the small bookkeeping blocks of the hardware renderer (GLPatch_t/GLMipmap_t records, light tables, the batching arrays) are
+		// long-lived next to the big, short-lived texture data (PU_HWRCACHE): in the cache zone, 750 of them sat between the freed texture blocks
+		// and cut the free space into 200 pieces (HW DEMO_003, frame 948: 4.5 MB free, largest block 454 KB, "Out of memory allocating 524288")
+		case PU_HWRPATCHINFO: case PU_HWRPATCHCOLMIPMAP: case PU_HWRLIGHTTABLEDATA: case PU_HWRBATCH:
+			return ZA_TOP;
 		case PU_CACHE: case PU_RENDERWORK: case PU_SPRITE:
 			// the transient blocks take the end the level does not grow from. PS2-72: sprite patches are evictable like the caches (Z_Evictable);
 			// among the long-lived blocks at the other end every one that was evicted left a hole that small long-lived blocks then pinned
