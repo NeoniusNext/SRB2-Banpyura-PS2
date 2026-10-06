@@ -1100,6 +1100,18 @@ static void Impl_VidShot(void)
 	if (!left)
 		return;
 	anyn++;
+	if (anyn == 3 && M_CheckParm("-vidcmd") && M_IsNextParm()) // OPT10-HF: -vidcmd 'con_hudlines~0;gr_filtermode~1': console commands ('~' = space, ';' = next command) on the third frame
+	{
+		char cmdline[160];
+		size_t ci;
+
+		strlcpy(cmdline, M_GetNextParm(), sizeof cmdline - 1);
+		for (ci = 0; cmdline[ci]; ci++)
+			cmdline[ci] = cmdline[ci] == '~' ? ' ' : cmdline[ci] == ';' ? '\n' : cmdline[ci];
+		cmdline[ci++] = '\n';
+		cmdline[ci] = '\0';
+		COM_BufAddText(cmdline);
+	}
 	if (gamestate == GS_LEVEL && leveltime < 20)
 		klow = true;
 	if (WipeInAction)

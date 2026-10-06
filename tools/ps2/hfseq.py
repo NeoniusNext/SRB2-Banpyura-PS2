@@ -25,6 +25,9 @@ def main():
     res = {}
     for i, tag in enumerate(a.tags.split(',')):
         pc = Path(a.pc) / f'shot-{i}.png'
+        if not pc.exists():  # the reference may be another PS2 run (software renderer): vidshot-<w>x<h>-<tag>.ppm
+            alt = glob.glob(str(Path(a.pc) / f'vidshot-*-{tag}.ppm'))
+            pc = Path(alt[0]) if alt else pc
         hw = glob.glob(str(Path(a.hw) / f'vidshot-*-{tag}.ppm')) or glob.glob(str(Path(a.hw) / f'vidshot-*-{tag}_*.ppm'))
         if not pc.exists() or not hw:
             print(tag, 'missing', 'pc' if not pc.exists() else '', 'hw' if not hw else '')

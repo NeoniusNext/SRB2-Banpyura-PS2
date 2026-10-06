@@ -257,6 +257,12 @@ static void shot_frame(void)
         }
     }
     anyn++;
+    if(anyn==3 && M_CheckParm("-ps2ref-cmd") && M_IsNextParm()) { /* console commands on the third frame ('~' = space, ';' = next command), like -vidcmd on the PS2 */
+        char cmdline[160]; size_t ci; snprintf(cmdline,sizeof cmdline-1,"%s",M_GetNextParm());
+        for(ci=0;cmdline[ci];ci++) cmdline[ci]=cmdline[ci]=='~'?' ':cmdline[ci]==';'?'\n':cmdline[ci];
+        cmdline[ci++]='\n'; cmdline[ci]='\0';
+        COM_BufAddText(cmdline);
+    }
     shot_keys(anyn);
     if(!left) return;
     if(gamestate==GS_LEVEL && leveltime<20) klow=true;

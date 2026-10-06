@@ -35,6 +35,7 @@ def main():
     ap.add_argument('--out', default=str(ROOT / 'build/ref'))
     ap.add_argument('--cfg', default='')
     ap.add_argument('--keys', default='')
+    ap.add_argument('--cmd', default='', help='console commands on the third frame: con_hudlines~0;gr_paletterendering~Off')
     ap.add_argument('--exe', default='')
     ap.add_argument('--timeout', type=float, default=240)
     ap.add_argument('--size', default='320x200')
@@ -54,6 +55,8 @@ def main():
         args += ['-timedemo', a.demo + '.lmp']
     if a.warp:
         args += ['-warp', a.warp]
+    if a.cmd:
+        args += ['-ps2ref-cmd', a.cmd]
     if a.keys:
         args += ['-ps2ref-keys', a.keys]
     args += a.extra
