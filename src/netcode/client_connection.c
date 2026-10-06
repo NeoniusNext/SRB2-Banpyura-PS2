@@ -418,7 +418,8 @@ static void CL_DrawDownloadAddonList(void)
 	/* MSVC has no VLAs; capacity is the same as the source file list. */
 	fileneeded_t *filelist = _alloca(fileneedednum * sizeof(*filelist));
 #else
-	fileneeded_t filelist[fileneedednum];
+	/* alloca instead of a VLA: the SDL build compiles with -Werror=vla */
+	fileneeded_t *filelist = __builtin_alloca(fileneedednum * sizeof(*filelist));
 #endif
 	INT32 filelistsize = 0;
 	for (int j = 0; j < fileneedednum; j++)
