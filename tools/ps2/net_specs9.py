@@ -65,8 +65,10 @@ def mock(name, extra=None):
                      (ROOT / BASE / f'run/{name}/mock.jsonl').as_posix()] + (extra or []), 'start': 0}
 
 
-def pcsrv(extra=None, home=HOME1, start=0, ms=False, warp='MAP01', **kw):
+def pcsrv(extra=None, home=HOME1, start=0, ms=False, warp='MAP01', longto=True, **kw):
     a = ['-dedicated', '-server', '-nomusic', '-nosound', '-netsync', '-home', home, '-warp', warp]
+    if longto:  # see CFG_SYNC: a slow PS2 client must not be dropped while its level loads (the timeout scenarios pass longto=False)
+        a += ['+nettimeout', '2100', '+jointimeout', '2100']
     if ms:
         a += ['-room', '1', '+masterserver', MSURL, '+servername', 'PC test server']
     d = {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR, 'args': a + (extra or []), 'start': start}
@@ -99,13 +101,21 @@ write('menu-browse', {
                   cfg=f'masterserver "{MSURL}"\n', start=10, may_exit=True)],
     'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
 
-# 2. the REAL master server, read only (HTTP GET: versions, rooms, servers): DNS through the emulator's network, the Room menu of the server browser
-# (nothing is chosen there, so no listed server is contacted) and "listserv" (the raw list in the console). Nothing is registered.
+# 2. the REAL master server, READ ONLY (HTTP GET: versions, rooms, servers). The container reaches ds.ms.srb2.org only over HTTPS through its egress proxy and the
+# PS2 speaks plain HTTP, so the PS2 asks tools/ps2/ms_relay.py (own port 8092) which forwards nothing but GET of rooms/servers/versions to the real server and
+# refuses everything else (no registration can reach it). The Room menu of the server browser is opened (nothing is chosen there, so no listed server is
+# contacted) and "listserv" prints the raw list in the console. Nothing is registered; no server of the real list is contacted.
+def relay(name):
+    return {'id': 'relay', 'kind': 'pc', 'exe': PY, 'cwd': BASE,
+            'args': ['-u', (ROOT / 'tools/ps2/ms_relay.py').as_posix(), '--port', '8092', '--bind', '0.0.0.0', '--log', (ROOT / BASE / f'run/{name}/relay.jsonl').as_posix()], 'start': 0}
+
+
 write('real-ms-read', {
-    'timeout': 400,
-    'nodes': [ps2('cli', EMU1, ['-skipintro', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt', '-vidshot', 'f800,f1000'],
+    'timeout': 500,
+    'nodes': [relay('real-ms-read'),
+              ps2('cli', EMU1, ['-skipintro', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt', '-vidshot', 'f800,f1000'],
                   files={'pad.txt': pad((250, 'start'), (330, 'down'), (400, 'cross'), (540, 'cross')), 'cmd.txt': '900:listserv'},
-                  cfg='masterserver_debug "On"\n', may_exit=True)],
+                  cfg=f'masterserver "http://{H}:8092/MS/0"\nmasterserver_debug "On"\n', may_exit=True, start=2)],
     'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
 
 # 3. add-ons from a PC server: the client has none, the server loads -file ... (the file list reaches the joiner with the server info); the join
@@ -195,14 +205,14 @@ write('osk-connect', osk_spec(False))
 # 5. life of a connection: leave and join again, a server that disappears, a client that disappears.
 write('reconnect', {
     'timeout': 1200,
-    'nodes': [pcsrv(start=0),
+    'nodes': [pcsrv(start=0, longto=False),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'],
                   files={'pad.txt': pad(*crosses(200, 5000)), 'cmd.txt': f'1500:exitgame|1760:connect {H}'}, start=8)],
     'until': [{'node': 'cli', 'text': 'NETSYNC gametic=3000'}, {'node': 'srv', 'text': 'NETSYNC gametic=3000'}], 'grace': 3})
 
 write('server-kill', {
     'timeout': 900,
-    'nodes': [dict(pcsrv(start=0), stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0}),
+    'nodes': [dict(pcsrv(start=0, longto=False), stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0}),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
                   files={'pad.txt': pad(*crosses(200, 5000))}, start=8)],
     'until': [{'node': 'cli', 'text': 'PS2 net: server timeout'}], 'grace': 3})
@@ -218,7 +228,10 @@ write('client-kill', {
 
 # 6. soaks: every pairing for N game tics, both sides walking and jumping (pad scripts / the PC player stands still), the state hash of both
 # sides compared with tools/ps2/netsync_compare.py afterwards. extra = console commands/args of the server (gametype, map...).
-CFG_SYNC = 'resynchattempts "0"\nblamecfail "On"\n'  # a desync is a failure, not something to repair quietly
+# OPT10-X: nettimeout/jointimeout 2100 tics (the cvar maximum) (the default is 350 = 10 s): in the Linux container six agents share four cores and a PS2 client that loads the
+# level after the join can stay silent for longer than 10 s of wall time, then the server drops it ("Connection timeout") - not what these runs measure.
+# The timeout scenarios (server-kill, client-kill, reconnect) keep the defaults.
+CFG_SYNC = 'resynchattempts "0"\nblamecfail "On"\nnettimeout "2100"\njointimeout "2100"\n'  # a desync is a failure, not something to repair quietly
 
 
 def pair(name, srv, cli, tics, pollsrv=None, pollcli=None, srv_args=None, srv_cmds='', timeout=2400, cli_args=None, cli_extra_cfg=''):

@@ -13,7 +13,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 EMU1 = 'net1'
 EMU2 = 'net2'
-PAK = 'build/pak'
+PAK = 'build/pakx'  # links of the cooked packs of the main tree + FINEACON.DAT (python3 tools/ps2/net_env.py makes it)
 BASE = 'build/opt10-x'
 
 
@@ -23,3 +23,24 @@ def pc_exe(kind='pc-net'):
     if not hits:
         raise SystemExit(f'no PC engine in build/{kind}/bin: see tools/ps2/net_env.py')
     return Path(hits[0]).relative_to(ROOT).as_posix() if Path(hits[0]).is_relative_to(ROOT) else hits[0]
+
+
+def make_pak(src='/home/user/SRB2-Banpyura-PS2/build/pak'):
+    """build/pakx = hard links of the cooked packs of the main tree (read-only there) + FINEACON.DAT (the arccos table Lua's acos/asin read, tools/ps2/gen_fineacon.py)"""
+    import os
+    import shutil
+    import subprocess
+    import sys
+    dst = ROOT / PAK
+    dst.mkdir(parents=True, exist_ok=True)
+    for f in Path(src).iterdir():
+        if not (dst / f.name).exists():
+            try:
+                os.link(f, dst / f.name)
+            except OSError:
+                shutil.copy2(f, dst / f.name)
+    subprocess.run([sys.executable, str(ROOT / 'tools/ps2/gen_fineacon.py'), str(dst)], check=True)
+
+
+if __name__ == '__main__':
+    make_pak()

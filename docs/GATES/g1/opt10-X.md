@@ -27,3 +27,14 @@
 |---|---|---|
 | PS2-сервер (MAP01) + ПК-клиент | `net_session.py build/opt10-x/specs/ps2srv-pccli.json` | клиент вошёл (`players=2`), 68.5 с; `netsync_compare` srv/cli: 37 общих тиков (210..1470), **0 отличий** |
 | ПК dedicated + PS2-клиент | `.../pcsrv-ps2cli.json` | 75.8 с; 43 общих тика (35..1505), **0 отличий** (`players=1`: dedicated не игрок) |
+| PS2-клиент -> ПК dedicated, аддон NSK.pk3 (скин+Lua+SOC, 408 КиБ) по UDP игрового соединения (`addons-udp`) | `net_batch.py addons-udp` | скачан (`Downloading addon "NSK.pk3" from the server`), `Added file host:/.srb2/DOWNLOAD/NSK.pk3 (514 lumps)`, `Added skin 'ztest'`, Lua `FTLUA skin ... nsk running`, `$$$.sav` принят; 88 с; 43 общих тика (35..1505), **0 отличий** |
+| то же по HTTP-источнику (`addons-http`: NSK.pk3+ZT.pk3, `+http_source http://HOSTIP:8091`, `tools/ps2/http_static.py`) | `addons-http` | 94 с; 51 тик (35..1785), **0 отличий**; запросы GET в `build/opt10-x/run/addons-http/http/http.jsonl` |
+| HTTP-источник всегда 404 -> откат на UDP (`addons-http-404`) | `addons-http-404` | 96 с; 51 тик, **0 отличий** |
+
+## 2. Среда: почему сессии PS2<->PS2 нестабильны при нагрузке и что с этим сделано
+
+* Контейнер: 4 ядра, в моменты проверки load average 14-15 (шесть агентов с эмуляторами и LTO-сборками). Два PCSX2 идут в разных темпах (время гостя — эмулируемое, не стенное):
+  клиент, загружающий уровень после входа, молчит для **сервера** дольше `nettimeout` (350 тиков по умолчанию) -> `*Soni left the game (Connection timeout)` (`d_net.c:Net_AckTicker`), клиент через 350 тиков своего времени:
+  `PS2 net: server timeout (no packet from the server for 350 tics)`. Обнаружено сниффером `udp_sniff.py` (поток сервер->клиент сразу после загрузки сейва превращался в одни `punch`), `udp_sniff_sum.py` печатает пакеты по секундам.
+* Лечение в тестовых сценариях (не в движке): `nettimeout "2100"`/`jointimeout "2100"` (максимум cvar) в `reference.cfg` обоих PS2-узлов и `+nettimeout 2100 +jointimeout 2100` у ПК-сервера (`CFG_SYNC`, `pcsrv(longto=True)` в `net_specs9.py`);
+  сценарии таймаутов (`server-kill`, `client-kill`, `reconnect`) остаются на умолчаниях. В копиях `/opt/pcsx2/net1`, `net2` `extrathreads = 0` (программный GS без своих потоков: меньше CPU).

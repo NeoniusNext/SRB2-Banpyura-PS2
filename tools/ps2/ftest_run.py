@@ -40,9 +40,7 @@ def main():
     boot = run / 'boot.txt'
     if boot.exists():
         boot.unlink()
-    for extra in ('FINEACON.DAT',):  # lazily read data files that live next to the packs
-        if (Path(a.pak) / extra).exists():
-            shutil.copy2(Path(a.pak) / extra, run / extra)
+    # FINEACON.DAT (lazily read data file next to the packs) is linked by opt_run.stage() together with the packs
     for f in [x for x in a.files.split(',') if x]:
         rel = None
         if '=' in f:  # SRC=REL/PATH: the file goes to <run>/REL/PATH (e.g. build/x/ZH.pk3=.srb2/addons/ZH.pk3 for the Add-ons menu folder)
