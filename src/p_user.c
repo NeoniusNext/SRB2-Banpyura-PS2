@@ -7014,7 +7014,7 @@ static void P_DoNiGHTSCapsule(player_t *player)
 			if (!((tictimer - firstpoptic) % 2))
 			{
 #ifdef PS2
-				// PS2-141: unspecified argument order, right to left as the PC builds
+				// PS2-142: unspecified argument order, right to left as the PC builds
 				const fixed_t popz = player->capsule->z + (player->capsule->height/2) + ((P_SignedRandom()/2)<<FRACBITS);
 				const fixed_t popy = player->capsule->y + ((P_SignedRandom()/2)<<FRACBITS);
 				const fixed_t popx = player->capsule->x + ((P_SignedRandom()/2)<<FRACBITS);

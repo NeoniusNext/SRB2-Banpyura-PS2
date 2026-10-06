@@ -7991,7 +7991,7 @@ static boolean P_MobjPushableThink(mobj_t *mobj)
 }
 
 #ifdef PS2
-// PS2-141: C leaves the order in which function arguments are evaluated unspecified. The PC builds (x86 GCC, MSVC) evaluate them right to left,
+// PS2-142: C leaves the order in which function arguments are evaluated unspecified. The PC builds (x86 GCC, MSVC) evaluate them right to left,
 // MIPS GCC left to right: the same three random numbers ended up in other coordinates (DEMO_003 state_hash from tic 45, A_LightBeamReset).
 // The RNG state is the same either way, but the position of these (cosmetic) mobjs and with it PC<->PS2 demos and netgames are not: the PS2 build
 // evaluates right to left, like the PC reference, wherever one call has several random arguments (tools/ps2/rng_order_scan.py lists them).
@@ -8032,7 +8032,7 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
 #ifdef PS2
-				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-141
+				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
 #else
 				mobj_t *particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
@@ -8068,7 +8068,7 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
 #ifdef PS2
-				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-141
+				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
 #else
 				mobj_t *particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
@@ -8090,7 +8090,7 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
 #ifdef PS2
-				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-141
+				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
 #else
 				mobj_t *particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
@@ -8112,7 +8112,7 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
 #ifdef PS2
-				mobj_t* particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-141
+				mobj_t* particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
 #else
 				mobj_t* particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
@@ -8300,7 +8300,7 @@ static boolean P_MobjDeadThink(mobj_t *mobj)
 			{
 				fixed_t r = mobj->radius >> FRACBITS;
 #ifdef PS2
-				mobj_t *explosion = P_SpawnPlayerExplosion(mobj, r); // PS2-141
+				mobj_t *explosion = P_SpawnPlayerExplosion(mobj, r); // PS2-142
 #else
 				mobj_t *explosion = P_SpawnMobj(
 					mobj->x + (P_RandomRange(r, -r) << FRACBITS),
@@ -8323,7 +8323,7 @@ static boolean P_MobjDeadThink(mobj_t *mobj)
 		{
 			fixed_t r = mobj->radius >> FRACBITS;
 #ifdef PS2
-			mobj_t *explosion = P_SpawnPlayerExplosion(mobj, r); // PS2-141
+			mobj_t *explosion = P_SpawnPlayerExplosion(mobj, r); // PS2-142
 #else
 			mobj_t *explosion = P_SpawnMobj(
 				mobj->x + (P_RandomRange(r, -r) << FRACBITS),
@@ -9853,7 +9853,7 @@ static boolean P_MobjRegularThink(mobj_t *mobj)
 	case MT_TRAINSTEAMSPAWNER:
 		if (leveltime % 5 == 0) {
 #ifdef PS2
-			// PS2-141: unspecified argument order, right to left as the PC builds
+			// PS2-142: unspecified argument order, right to left as the PC builds
 			const fixed_t steamy = mobj->y + FRACUNIT*P_SignedRandom()/2;
 			const fixed_t steamx = mobj->x + FRACUNIT*P_SignedRandom()/2;
 			mobj_t *steam = P_SpawnMobj(steamx, steamy, mobj->z, MT_PARTICLE);
