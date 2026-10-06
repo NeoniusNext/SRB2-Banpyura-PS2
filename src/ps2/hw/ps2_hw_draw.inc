@@ -628,7 +628,24 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 				TX.need_blk += im->nblk;
 				TX.need_n++;
 				if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+				{
 					H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
+				}
+				else
+				{
+					const GLMipmap_t *pk = im->owner->ps2_twin ? im->owner->ps2_twin : im->owner;
+
+					if (pk->ps2_planfr == H.frame_no + 1)
+					{
+						TX.need_in_plan += im->nblk;
+					}
+					else
+					{
+						TX.need_out_plan += im->nblk; // a big map texture drawn without the plan (sky dome, translucent walls, ...): stored at full size
+						if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)
+							CONS_Printf("HWNP %s %ux%u lvl=%d blk=%u phase=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->sw, (unsigned)im->sh, (int)im->dx, (unsigned)im->nblk, batch_phase);
+					}
+				}
 			}
 		}
 		if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame

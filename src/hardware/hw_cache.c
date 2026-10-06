@@ -1051,6 +1051,25 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 	}
 }
 
+// OPT10 (PS2-HW-38): the mip levels of a big flat (the 1 MiB cloud planes) are made from the engine's own converted flat, pinned while the driver
+// reads it: no second copy of 1 MiB (two of them at once ran the 22 MiB arena out of a contiguous 1 MiB block)
+const UINT8 *HWR_PS2_FlatPin(const GLMipmap_t *m)
+{
+	UINT8 *p;
+
+	if (m->regen_kind != 2 || m->regen_id < 0 || (size_t)m->regen_id >= gl_numtextures)
+		return NULL;
+	p = R_GetFlatForTexture((size_t)m->regen_id);
+	if (p)
+		Z_ChangeTag(p, PU_STATIC);
+	return p;
+}
+
+void HWR_PS2_FlatUnpin(const UINT8 *p)
+{
+	Z_ChangeTag((void *)p, PU_CACHE);
+}
+
 void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)
 {
 	Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);

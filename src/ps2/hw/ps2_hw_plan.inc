@@ -233,6 +233,17 @@ void PS2HWD_PlanEnd(void)
 		sum -= bsave;
 		lx[best]++;
 	}
+	if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)
+		for (i = 0; i < plan_n; i++)
+		{
+			const GLMipmap_t *k = plan_list[i];
+			const texrec_t *r = rec_of(k);
+
+			if (!r && k->nextcolormap)
+				r = rec_of(k->nextcolormap);
+			CONS_Printf("HWPLAN %s %ux%u su=%.3f sv=%.3f vis=%d exact=%d relax=%d want=%d blk=%u stored=%s lvl %d blk %u\n", HWR_PS2_TexName(k), (unsigned)k->width, (unsigned)k->height, k->ps2_su, k->ps2_sv,
+				(int)k->ps2_vis, (int)lod_level_for(k->ps2_su > k->ps2_sv ? k->ps2_su : k->ps2_sv, PLAN_TOL_EXACT), (int)lr[i], (int)lx[i], (unsigned)plan_blocks(k, lx[i]), r ? "yes" : "no", r ? (int)r->dx : -1, r ? (unsigned)r->nblk : 0u);
+		}
 	H.plan_last = sum; // diagnostics: the planned working set of the last plan
 	H.plan_exact = exact_sum;
 	for (i = 0; i < plan_n; i++)

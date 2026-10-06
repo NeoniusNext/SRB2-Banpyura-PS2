@@ -970,6 +970,9 @@ extern void HWR_PS2_UnlockData(void *data);
 extern void HWR_PS2_FreeData(void *data);
 extern void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser);
 extern void *HWR_PS2_AllocData(size_t bytes, void **newuser);
+extern const u8 *HWR_PS2_FlatPin(const GLMipmap_t *m);
+extern void HWR_PS2_FlatUnpin(const u8 *p);
+static const u8 *tex_flatpin; // PS2-HW-38: the engine's flat pinned by the last tex_upload (the caller unpins it)
 
 #define DC_MAX 192
 #define DC_BUDGET (4u * 1024u * 1024u) // bytes of texels the cache may hold (the zone may take them back sooner)
@@ -1545,6 +1548,8 @@ static int tex_upload(GLMipmap_t *m)
 		if (!dce && (l0 = dc_find(dc_key(m), sw, sh, 0)) != NULL)
 			data = l0->p; // the texels of this texture (or its other variant) are in the data cache: the engine need not make them again
 	}
+	if (!data && lv && m->regen_kind == 2 && m->format == GL_TEXFMT_P_8 && (tex_flatpin = HWR_PS2_FlatPin(m)) != NULL)
+		data = tex_flatpin; // PS2-HW-38: a level of a flat is made from the engine's flat itself
 	if (!data || !sw || !sh)
 	{
 		tex_fail_why = !data ? "no data (purged)" : "zero size";
@@ -2026,14 +2031,14 @@ static void tx_report(void)
 	static int win;
 	u32 f = TX.frames ? TX.frames : 1;
 
-	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u invis=%u plan=%u/%u unpl=%u res=%u\n",
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u\n",
 		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
 		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
 		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
 		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
 		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
 		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.invisible,
-		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve);
+		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f));
 	memset(&TX, 0, sizeof TX);
 }
 

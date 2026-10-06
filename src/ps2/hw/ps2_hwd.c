@@ -953,7 +953,8 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		return;
 	}
 	if (!TexInfo->data && !(TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= 2048
-		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want)))))
+		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want))
+			|| (want && TexInfo->regen_kind == 2)))) // PS2-HW-38: a level of a flat needs no copy of the flat (tex_upload pins the engine's)
 	{
 		u32 c0 = cyc();
 
@@ -963,6 +964,11 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		H.st.tex_regen++;
 	}
 	ri = tex_upload(TexInfo);
+	if (tex_flatpin)
+	{
+		HWR_PS2_FlatUnpin(tex_flatpin);
+		tex_flatpin = NULL;
+	}
 	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
 		HWR_PS2_ReleaseMipmapData(TexInfo);
 	if (ri == NOREC)
