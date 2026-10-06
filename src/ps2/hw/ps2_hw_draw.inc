@@ -627,6 +627,8 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 				im->imgws = H.frame_no + 1;
 				TX.need_blk += im->nblk;
 				TX.need_n++;
+				if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+					H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
 			}
 		}
 		if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame

@@ -519,6 +519,21 @@ static void frame_end(void)
 	H.have_drawn = 1;
 	H.frame_open = 0;
 	tex_cap_control();
+	{
+		// PS2-HW-37: the room the frame plan leaves for the textures it does not plan: what this frame drew of them (+15 %), falling slowly
+		u32 cur = H.unplanned_cur + H.unplanned_cur / 7u, dec = H.plan_reserve - (H.plan_reserve >> 4);
+
+		H.plan_reserve = cur > dec ? cur : dec;
+		if (H.plan_reserve < 512u)
+			H.plan_reserve = 512u;
+		if (H.plan_reserve > H.pool_blocks / 3u)
+			H.plan_reserve = H.pool_blocks / 3u;
+		TX.unplanned += H.unplanned_cur;
+		TX.plan_blk += H.plan_last;
+		TX.plan_exact += H.plan_exact;
+		H.unplanned_cur = 0;
+		H.plan_last = H.plan_exact = 0;
+	}
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_frame_end();
 	H.frame_no++;

@@ -76,7 +76,8 @@ struct GLMipmap_s
 	UINT8                 ps2_h255; // 0 unknown, 1 no texel has index 255, 2 some has (cached: scanning 512 KiB costs 0.6 M cycles)
 	// PS2-HW-34: what the batches of this frame need of the texture (ps2_hw_plan.inc): on the original mipmap of a variant pair
 	UINT32                ps2_planfr; // driver frame + 1 the plan belongs to (0 = none)
-	UINT8                 ps2_want; // the coarsest mip level (0 = full size) at which no polygon of the frame magnifies a texel
+	UINT8                 ps2_want; // the mip level (0 = full size) the frame plan resolved for the texture (OPT10: ps2_hw_plan.inc)
+	float                 ps2_su, ps2_sv; // OPT10: the largest texel (screen pixels at full size) along u and v over what the polygons of the frame show of it
 	UINT8                 ps2_vis; // some polygon of the frame is visible at all
 	UINT32                ps2_full_fr; // driver frame + 1 of the last draw that needed the full size without a plan (the next plans keep the full size)
 #endif

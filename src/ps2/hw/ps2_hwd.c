@@ -900,9 +900,9 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 			TX.invisible++;
 			return;
 		}
-		if (r && !r->screen && (u32)r->dx > want)
+		if (r && !r->screen && plan_too_coarse(TexInfo, (u32)r->dx, want))
 		{
-			// stored at a coarser level than this draw needs: the image is made again (every variant of it)
+			// stored at a coarser level than this draw needs (beyond the tolerance of the plan): the image is made again (every variant of it)
 			ov_flush_all();
 			tex_drop(img_of((int)(r - H.rec)), 0);
 			r = NULL;

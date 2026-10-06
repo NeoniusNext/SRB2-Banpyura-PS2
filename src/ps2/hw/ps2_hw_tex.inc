@@ -1925,36 +1925,59 @@ static void poly_plane(const cv_t *un, int n, float sw, float sh)
 	lodc_ok = 1;
 }
 
-static int poly_lod(const cv_t *cl, int cnt)
-{
-	float px = 0.5f * H.vpw, py = 0.5f * H.vph, smax = 0.0f;
-	int i, lvl = 0;
+static float lod_su, lod_sv; // the largest texel (pixels) along u and v that poly_lod found (the plan, ps2_hw_plan.inc; -hwdbg 0x8000000)
 
+// the screen size (pixels) of one texel along u and along v at every vertex of the clipped polygon `cl` (in the viewport, w > 0): the plane
+// coefficients lodc come from poly_plane. lod_su / lod_sv = the largest; returns 0 when the polygon cannot be measured.
+static int poly_density(const cv_t *cl, int cnt)
+{
+	float px = 0.5f * H.vpw, py = 0.5f * H.vph, su = 0.0f, sv = 0.0f;
+	int i;
+
+	lod_su = lod_sv = 0.0f;
 	if (!lodc_ok || cnt < 3)
 		return 0;
 	for (i = 0; i < cnt; i++)
 	{
-		float w = cl[i].w, iw2;
-		int axis;
+		float w = cl[i].w, iw2, dxs, dys, sz;
 
 		if (w < 1e-4f)
 			return 0;
 		iw2 = 1.0f / (w * w);
-		for (axis = 0; axis < 2; axis++)
-		{
-			float dxs = (lodc[0][axis] * w - cl[i].x * lodc[2][axis]) * iw2 * px, dys = (lodc[1][axis] * w - cl[i].y * lodc[2][axis]) * iw2 * py, sz = dxs * dxs + dys * dys;
-
-			if (sz > smax)
-				smax = sz;
-		}
+		dxs = (lodc[0][0] * w - cl[i].x * lodc[2][0]) * iw2 * px;
+		dys = (lodc[1][0] * w - cl[i].y * lodc[2][0]) * iw2 * py;
+		sz = dxs * dxs + dys * dys;
+		if (sz > su)
+			su = sz;
+		dxs = (lodc[0][1] * w - cl[i].x * lodc[2][1]) * iw2 * px;
+		dys = (lodc[1][1] * w - cl[i].y * lodc[2][1]) * iw2 * py;
+		sz = dxs * dxs + dys * dys;
+		if (sz > sv)
+			sv = sz;
 	}
-	smax = sqrtf(smax);
-	while (lvl < 5 && smax * 2.0f <= 1.0f)
+	lod_su = sqrtf(su);
+	lod_sv = sqrtf(sv);
+	return 1;
+}
+
+// the coarsest level at which no texel is magnified by more than `tol` (1 = nothing is magnified compared with the full size)
+static int lod_level_for(float smax, float tol)
+{
+	int lvl = 0;
+
+	while (lvl < 5 && smax * 2.0f <= tol)
 	{
 		smax *= 2.0f;
 		lvl++;
 	}
 	return lvl;
+}
+
+static int poly_lod(const cv_t *cl, int cnt)
+{
+	if (!poly_density(cl, cnt))
+		return 0;
+	return lod_level_for(lod_su > lod_sv ? lod_su : lod_sv, 1.0f);
 }
 
 static void lod_note(const cv_t *cl, int cnt)
@@ -2003,13 +2026,14 @@ static void tx_report(void)
 	static int win;
 	u32 f = TX.frames ? TX.frames : 1;
 
-	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u invis=%u\n",
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u invis=%u plan=%u/%u unpl=%u res=%u\n",
 		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
 		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
 		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
 		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
 		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
-		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.invisible);
+		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.invisible,
+		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve);
 	memset(&TX, 0, sizeof TX);
 }
 
