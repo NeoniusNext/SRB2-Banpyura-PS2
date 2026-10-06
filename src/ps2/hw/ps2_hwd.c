@@ -44,6 +44,7 @@
 #define CONS_Alert(level, ...) I_OutputMsg(__VA_ARGS__)
 
 #include "ps2_hw_priv.inc"
+#include "ps2_hw_hg.inc" // OPT10 HG: geometry-path counters (HWPROF3)
 #include "ps2_hw_vif.inc" // PS2-HW-44: VIF1 as the transport of the GIF stream (-hwdbg 0x4000000)
 #include "ps2_hw_regs.inc"
 #include "ps2_hw_gs.inc"
@@ -666,6 +667,7 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		CONS_Printf("HWT poly n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u\n", (unsigned)iNumPts, (unsigned)PolyFlags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u);
 	}
+	G.single++;
 	if (begin_draw((u32)PolyFlags, pSurf))
 		emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
 }
@@ -683,6 +685,8 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		CONS_Printf("HWT fans n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u psm=%d clut=%d\n", nfans, flags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u, tr ? (int)tr->psm : -1, tr ? (int)tr->clut : -1);
 	}
+	G.batches++;
+	G.fans += nfans;
 	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
 		return;
 	if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
@@ -869,6 +873,33 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 	{
 		H.cur_tex = NOREC;
 		H.cur_missing = 0;
+		return;
+	}
+	if (ps2hwd_dbg_flags & HWDBG_NOUP) // OPT10 HG measurement: one dummy image for every texture
+	{
+		static GLMipmap_t noup_mip;
+		static u8 noup_data[256 * 256] __attribute__((aligned(64)));
+		texrec_t *d = rec_of(&noup_mip);
+
+		if (!d)
+		{
+			int x, y;
+
+			for (y = 0; y < 256; y++)
+				for (x = 0; x < 256; x++)
+					noup_data[y * 256 + x] = (u8)((x ^ y) & 127);
+			memset(&noup_mip, 0, sizeof noup_mip);
+			noup_mip.format = GL_TEXFMT_P_8;
+			noup_mip.width = noup_mip.height = 256;
+			noup_mip.flags = TF_WRAPXY;
+			noup_mip.data = noup_data;
+			ri = tex_upload(&noup_mip);
+			if (ri != NOREC)
+				H.rec[ri].pin = 1;
+			d = ri != NOREC ? &H.rec[ri] : NULL;
+		}
+		H.cur_tex = d ? (int)(d - H.rec) : NOREC;
+		H.cur_missing = d == NULL;
 		return;
 	}
 	r = rec_of(TexInfo);

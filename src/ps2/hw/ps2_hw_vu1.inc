@@ -255,6 +255,7 @@ static void vu_chunk_end(void)
 	vu_next_run();
 	VU.open = 0;
 	VU.stat_chunks++;
+	G.vu_chunks++;
 }
 
 // Everything that goes into the ring in another way ends the chunk first (the order of the stream is the order of the draws).

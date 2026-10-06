@@ -480,7 +480,19 @@ static void fx_report(void)
 }
 
 // Prepare everything for a polygon with these engine flags. Returns 0 when the polygon must not be drawn.
+static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf);
+
 static int begin_draw(u32 flags, const FSurfaceInfo *surf)
+{
+	u32 t0 = cyc();
+	int r = begin_draw_inner(flags, surf);
+
+	G.begin_n++;
+	G.begin_cyc += cyc() - t0;
+	return r;
+}
+
+static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 {
 	u32 blend;
 	int textured, dbg = ps2hwd_dbg_flags, lit = 0, wall = 0, partial_tex = 0, i;
@@ -1868,7 +1880,10 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	if (P.vu)
 	{
 		if (!idx && !vcol && vu_poly(base, n))
+		{
+			G.p_vu++;
 			return; // PS2-HW-45: the VU1 program transforms, clips and packs it
+		}
 		vu_sync();
 	}
 	for (i = 0; i < n; i++)
@@ -1943,16 +1958,16 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		lod_note(v, cnt); // OPT9 instrumentation: the mip level this polygon needs
 	if (P.fast && !P.vcol && !vcol && !big)
 #ifdef HW_VU0
-		emit_fast_fan(v, (vu0 && !or_) ? (const void *)pvbuf : NULL, cnt, pc.sb, pc.tb);
+		G.p_fast++, emit_fast_fan(v, (vu0 && !or_) ? (const void *)pvbuf : NULL, cnt, pc.sb, pc.tb);
 #else
 		emit_fast_fan(v, NULL, cnt, pc.sb, pc.tb);
 #endif
 	else if (P.litfast && !big && !vcol && !P.vcol && !(ps2hwd_dbg_flags & 8192) && lit_fast_poly(v, LF_PV(vu0, or_), cnt, pc.sb, pc.tb))
-		; // PS2-HW-43: drawn
+		G.p_lit++; // PS2-HW-43: drawn
 	else if (P.water && P.textured && !P.vcol && !vcol && !big)
-		emit_water_poly(v, cnt, pc, na);
+		G.p_water++, emit_water_poly(v, cnt, pc, na);
 	else
-		cut_and_emit(v, cnt, 0, pc, na);
+		G.p_cut++, cut_and_emit(v, cnt, 0, pc, na);
 	H.st.cyc_draw += cyc() - t0;
 }
 

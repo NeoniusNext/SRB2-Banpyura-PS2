@@ -906,6 +906,7 @@ static void Impl_HWProf(void)
 		(unsigned)(ps2hwp_cyc[HWP_PLANE] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames), (unsigned)(ps2hwp_cyc[HWP_SUBSEC] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
+	PS2HWD_ProfExtra((unsigned int)frames); // OPT10 HG
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);
 	wall = 0;
 	frames = 0;
