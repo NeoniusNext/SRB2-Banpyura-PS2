@@ -20,6 +20,78 @@
 #include <stdlib.h>
 #endif
 
+// PS2-16: exact fixed math is enabled in the profile. PS2-81 (2026-10-04): the slope/seg replacements are enabled as well
+// (the brief allows a few pixels per frame; measured 3 of 60 sampled golden frames differ, by 1-2 pixels).
+// PS2_NOOPT (all) or PS2_NOOPT_<GROUP> selects the original code for measurements.
+#if defined(PS2) || defined(PS2_PROFILE)
+#if !defined(PS2_NOOPT)
+#if !defined(PS2_NOOPT_MATH) && !defined(PS2_OPT_MATH)
+#define PS2_OPT_MATH // FixedMul/FixedDiv/FixedSqrt on 32-bit instructions
+#endif
+#if !defined(PS2_NOOPT_DRAW) && !defined(PS2_OPT_DRAW)
+#define PS2_OPT_DRAW // column/span drawer inner loops
+#endif
+#if !defined(PS2_NOOPT_REND) && !defined(PS2_OPT_REND)
+#define PS2_OPT_REND // BSP/segs/planes/sprites bookkeeping, bit-identical (PS2-30)
+#endif
+#if !defined(PS2_NOOPT_SPR) && !defined(PS2_OPT_SPR)
+#define PS2_OPT_SPR // PS2-90: sprite/drawseg bookkeeping with an exact acceleration structure (bit-identical)
+#endif
+#if !defined(PS2_NOOPT_PTICK) && !defined(PS2_OPT_PTICK)
+#define PS2_OPT_PTICK // PS2-96/97: tic-side bookkeeping (interpolator copies, ring shield search) without redundant work, bit-identical
+#endif
+#if !defined(PS2_NOOPT_BSPC) && !defined(PS2_OPT_BSPC)
+#define PS2_OPT_BSPC // PS2-98: R_PointInSubsector starts below the node that decides a whole grid cell, bit-identical
+#endif
+#if !defined(PS2_NOOPT_ANIM) && !defined(PS2_OPT_ANIM)
+#define PS2_OPT_ANIM // PS2-99: animated texture bookkeeping and the mobj trigger pre-check, bit-identical
+#endif
+#if !defined(PS2_NOOPT_SLOPE) && !defined(PS2_OPT_SLOPE)
+#define PS2_OPT_SLOPE // PS2-81: slope planes/spans without soft-double (single precision + 64-bit integers), <= 1-2 px per frame
+#endif
+#if !defined(PS2_NOOPT_SEGS) && !defined(PS2_OPT_SEGS)
+#define PS2_OPT_SEGS // PS2-81: wall/ray intersection of slope walls in 64-bit integers
+#endif
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_MATH)
+#undef PS2_OPT_MATH
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_SLOPE)
+#undef PS2_OPT_SLOPE
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_SEGS)
+#undef PS2_OPT_SEGS
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_SPR)
+#undef PS2_OPT_SPR
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_PTICK)
+#undef PS2_OPT_PTICK
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_BSPC)
+#undef PS2_OPT_BSPC
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_ANIM)
+#undef PS2_OPT_ANIM
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_DRAW)
+#undef PS2_OPT_DRAW
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_REND)
+#undef PS2_OPT_REND
+#endif
+#else
+#undef PS2_OPT_MATH
+#undef PS2_OPT_SLOPE
+#undef PS2_OPT_SEGS
+#undef PS2_OPT_DRAW
+#undef PS2_OPT_REND
+#undef PS2_OPT_SPR
+#undef PS2_OPT_PTICK
+#undef PS2_OPT_BSPC
+#undef PS2_OPT_ANIM
+#endif
+
 /*!
   \brief bits of the fraction
 */
@@ -68,6 +140,65 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t DoubleToFixed(double f)
 #define FIXED_TO_FLOAT(x) FixedToFloat(x) // (((float)(x)) / ((float)FRACUNIT))
 #define FLOAT_TO_FIXED(f) FloatToFixed(f) // (fixed_t)((f) * ((float)FRACUNIT))
 
+#if defined(PS2_OPT_MATH) || defined(PS2_OPT_SLOPE) || defined(PS2_OPT_SEGS)
+// EE R5900: no 64-bit divide and no 64x64 multiply instruction; libgcc's __divdi3 costs
+// hundreds of cycles. Everything below is bit-identical to the original 64-bit formulas
+// for all inputs (tools/ps2/math_hosttest.py), using only 32-bit mult/divu.
+#include <math.h>
+
+// Count of leading zero bits of a non-zero word. The R5900 has no CLZ (libgcc's __clzdi2 is a call);
+// MMI PLZCW counts the bits equal to the sign bit minus one, so shift the top bit out first.
+#if !defined(_EE) && !defined(__GNUC__)
+unsigned char _BitScanReverse(unsigned long *index, unsigned long mask);
+#pragma intrinsic(_BitScanReverse)
+#endif
+static ATTRINLINE UINT32 PS2_Clz(UINT32 x)
+{
+#if defined(_EE) && defined(__GNUC__)
+	UINT32 r;
+	x >>= 1;
+	__asm__("plzcw %0,%1" : "=r"(r) : "r"(x));
+	return r & 0xFF;
+#elif defined(__GNUC__)
+	return (UINT32)__builtin_clz(x);
+#else
+	unsigned long i;
+	_BitScanReverse(&i, x);
+	return 31u - (UINT32)i;
+#endif
+}
+#endif
+
+#ifdef PS2_OPT_MATH
+
+// Low 32 bits of (ua << FRACBITS) / ud for any ua, ud != 0 (the exact quotient may need up to 47 bits).
+// Out of line (m_fixed.c): the inlined form would add tens of KiB to the ELF.
+FUNCMATH UINT32 PS2_FixedDivMag(UINT32 ua, UINT32 ud);
+
+// sqrt of a non-negative float: the R5900 FPU instruction (newlib's sqrtf goes through double)
+static ATTRINLINE float PS2_SqrtF(float f)
+{
+#if defined(_EE) && defined(__GNUC__)
+	float r;
+	__asm__("sqrt.s %0,%1" : "=f"(r) : "f"(f));
+	return r;
+#else
+	return sqrtf(f);
+#endif
+}
+
+// Exact floor(sqrt((UINT64)x << FRACBITS)) from any estimate r that is off by a few units.
+static ATTRINLINE UINT32 PS2_FixedSqrtFix(UINT32 x, UINT32 r)
+{
+	const UINT64 n = (UINT64)x << FRACBITS;
+	while ((UINT64)r * r > n)
+		r--;
+	while ((UINT64)(r + 1) * (r + 1) <= n)
+		r++;
+	return r;
+}
+#endif
+
 /**	\brief	The FixedMul function
 
 	\param	a	fixed_t number
@@ -78,9 +209,21 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t DoubleToFixed(double f)
 */
 FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedMul(fixed_t a, fixed_t b)
 {
+#ifdef PS2_OPT_MATH
+	// bits 16..47 of the 64-bit product: one mult, no libgcc call
+#if defined(_EE) && defined(__GNUC__)
+	UINT32 lo, hi;
+	__asm__("mult %0,%2,%3\n\tmfhi %1" : "=&r"(lo), "=r"(hi) : "r"(a), "r"(b) : "hi", "lo");
+	return (fixed_t)((lo >> FRACBITS) | (hi << (32 - FRACBITS)));
+#else
+	const INT64 p = (INT64)a * b;
+	return (fixed_t)(((UINT32)p >> FRACBITS) | ((UINT32)((UINT64)p >> 32) << (32 - FRACBITS)));
+#endif
+#else
 	// Need to cast to unsigned before shifting to avoid undefined behaviour
 	// for negative integers
 	return (fixed_t)(((UINT64)((INT64)a * b)) >> FRACBITS);
+#endif
 }
 
 /**	\brief	The FixedDiv2 function
@@ -95,7 +238,15 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedDiv2(fixed_t a, fixed_t b)
 {
 	// This does not check for division overflow or division by 0!
 	// That is the caller's responsibility.
+#ifdef PS2_OPT_MATH
+	// magnitude division (low 32 bits of the truncated quotient), then the sign
+	const UINT32 ua = (a < 0) ? 0u - (UINT32)a : (UINT32)a;
+	const UINT32 ub = (b < 0) ? 0u - (UINT32)b : (UINT32)b;
+	const UINT32 q = PS2_FixedDivMag(ua, ub);
+	return (fixed_t)(((a ^ b) < 0) ? 0u - q : q);
+#else
 	return (fixed_t)(((INT64)a * FRACUNIT) / b);
+#endif
 }
 
 /**	\brief	The FixedInt function
@@ -107,7 +258,11 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedDiv2(fixed_t a, fixed_t b)
 
 FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedInt(fixed_t a)
 {
+#ifdef PS2_OPT_MATH
+	return a >> FRACBITS; // == FixedMul(a, 1): arithmetic shift
+#else
 	return FixedMul(a, 1);
+#endif
 }
 
 /**	\brief	The FixedDiv function
@@ -121,10 +276,22 @@ FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedInt(fixed_t a)
 */
 FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FixedDiv(fixed_t a, fixed_t b)
 {
+#ifdef PS2_OPT_MATH
+	// abs() of INT32_MIN stays 0x80000000 as unsigned, like the original
+	const UINT32 ua = (a < 0) ? 0u - (UINT32)a : (UINT32)a;
+	const UINT32 ub = (b < 0) ? 0u - (UINT32)b : (UINT32)b;
+	if ((ua >> (FRACBITS-2)) >= ub)
+		return (a^b) < 0 ? INT32_MIN : INT32_MAX;
+	{ // here ua < ub<<14, so the quotient is below 2^30 and hi (ua>>16) < ub
+		const UINT32 q = PS2_FixedDivMag(ua, ub);
+		return (fixed_t)(((a ^ b) < 0) ? 0u - q : q);
+	}
+#else
 	if (((ufixed_t)abs(a) >> (FRACBITS-2)) >= (ufixed_t)abs(b))
 		return (a^b) < 0 ? INT32_MIN : INT32_MAX;
 
 	return FixedDiv2(a, b);
+#endif
 }
 
 /**	\brief	The FixedSqrt function

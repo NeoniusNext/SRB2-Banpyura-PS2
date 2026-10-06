@@ -64,7 +64,20 @@ const char *const sfxinfo_wopt[] = {
 	"caption",
 	NULL};
 
+#ifdef PS2_PROFILE
+int (*actionsoverridden)[MAX_ACTION_RECURSION]; // allocated by the first Lua A_ definition
+
+void LUA_AllocActionsOverridden(void)
+{
+	if (!actionsoverridden)
+	{
+		actionsoverridden = Z_Malloc(sizeof (*actionsoverridden) * NUMACTIONS, PU_STATIC, &actionsoverridden);
+		memset(actionsoverridden, LUA_REFNIL, sizeof (*actionsoverridden) * NUMACTIONS);
+	}
+}
+#else
 int actionsoverridden[NUMACTIONS][MAX_ACTION_RECURSION];
+#endif
 
 //
 // Sprite Names
@@ -803,6 +816,10 @@ boolean LUA_CallAction(enum actionnum actionnum, mobj_t *actor)
 {
 	I_Assert(actor != NULL);
 
+#ifdef PS2_PROFILE
+	if (!actionsoverridden)
+		return false;
+#endif
 	if (actionsoverridden[actionnum][0] == LUA_REFNIL)
 	{
 		// The action was not overridden at all,

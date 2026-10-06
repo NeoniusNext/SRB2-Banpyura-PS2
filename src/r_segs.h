@@ -23,5 +23,8 @@ void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2);
 void R_RenderThickSideRange(drawseg_t *ds, INT32 x1, INT32 x2, ffloor_t *pffloor);
 void R_StoreWallRange(INT32 start, INT32 stop);
 void R_ClearSegTables(void);
+#ifdef PS2_PROFILE
+void R_AllocDrawSegFrontScale(drawseg_t *ds);
+#endif
 
 #endif

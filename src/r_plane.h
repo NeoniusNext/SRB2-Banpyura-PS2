@@ -44,8 +44,13 @@ typedef struct visplane_s
 	extracolormap_t *extra_colormap;
 
 	// leave pads for [minx-1]/[maxx+1]
+#if defined(PS2) || defined(PS2_PROFILE)
+	UINT16 *top, *bottom; // coallocated strips, including one pad at each end
+	INT32 clipwidth;
+#else
 	UINT16 padtopstart, top[MAXVIDWIDTH], padtopend;
 	UINT16 padbottomstart, bottom[MAXVIDWIDTH], padbottomend;
+#endif
 	INT32 high, low; // R_PlaneBounds should set these.
 
 	INT64 xoffs, yoffs; // Scrolling flats.

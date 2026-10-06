@@ -20,6 +20,10 @@
 
 #include "m_aatree.h"
 
+#if defined(PS2_PROFILE) && !defined(PS2_ZIPPNG)
+#undef HAVE_ZLIB // PS2-20: without PS2_ZIPPNG the profile reads cooked packs only (LZ4); no deflate/ZIP anywhere
+#endif
+
 #ifdef __GNUG__
 #pragma interface
 #endif
@@ -88,16 +92,28 @@ typedef struct {
 	char name[9];
 	UINT8* data;
 	size_t size;
+#ifdef PS2_PROFILE
+	size_t filepos; // PS2-52: offset of the lump in the embedded map WAD; data stays NULL until vres_Data
+#endif
 } virtlump_t;
 
 typedef struct {
 	size_t numlumps;
 	virtlump_t* vlumps;
+#ifdef PS2_PROFILE
+	lumpnum_t wadlump; // the embedded map WAD the lumps are read from
+#endif
 } virtres_t;
 
 virtres_t* vres_GetMap(lumpnum_t);
 void vres_Free(virtres_t*);
 virtlump_t* vres_Find(const virtres_t*, const char*);
+#ifdef PS2_PROFILE
+// PS2-52: the map lumps are read one at a time (vres_Data) and freed as soon as the level structure was built from them
+// (vres_Drop), instead of keeping all of them (3.3 MB on MAP11) next to the structures.
+UINT8 *vres_Data(const virtres_t *vres, virtlump_t *vlump);
+void vres_Drop(virtlump_t *vlump);
+#endif
 
 // =========================================================================
 //                         DYNAMIC WAD LOADING
@@ -168,16 +184,20 @@ void W_Shutdown(void);
 FILE *W_OpenWadFile(const char **filename, boolean useerrors);
 // Load and add a wadfile to the active wad files, returns numbers of lumps, INT16_MAX on error
 UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boolean local);
+#ifdef HAS_ADDONS // PS2-103: folder add-ons come with PS2_ADDONS
 // Adds a folder as a file
 UINT16 W_InitFolder(const char *path, boolean mainfile, boolean startup, boolean local);
+#endif
 
 // W_InitMultipleFiles exits if a file was not found, but not if all is okay.
 void W_InitMultipleFiles(addfilelist_t *list);
 
 #define W_FileHasFolders(wadfile) ((wadfile)->type == RET_PK3 || (wadfile)->type == RET_FOLDER)
 
+#ifdef HAS_ADDONS
 INT32 W_IsPathToFolderValid(const char *path);
 char *W_GetFullFolderPath(const char *path);
+#endif
 
 const char *W_CheckNameForNumPwad(UINT16 wad, UINT16 lump);
 const char *W_CheckNameForNum(lumpnum_t lumpnum);
@@ -229,6 +249,9 @@ void W_ReadLumpPwad(UINT16 wad, UINT16 lump, void *dest);
 void W_ReadLump(lumpnum_t lump, void *dest);
 
 void *W_CacheLumpNumPwad(UINT16 wad, UINT16 lump, INT32 tag);
+#ifdef PS2_PROFILE
+void *W_TakeLumpNumPwad(UINT16 wad, UINT16 lump, INT32 tag, void **owner);
+#endif
 void *W_CacheLumpNum(lumpnum_t lump, INT32 tag);
 void *W_CacheLumpNumForce(lumpnum_t lumpnum, INT32 tag);
 
@@ -249,7 +272,9 @@ boolean W_ReadPatchHeader(lumpnum_t lumpnum, INT16 *width, INT16 *height, INT16 
 
 void W_UnlockCachedPatch(void *patch);
 
+#ifdef HAS_ADDONS
 void W_VerifyFileMD5(UINT16 wadfilenum, const char *matchmd5);
+#endif
 
 int W_VerifyNMUSlumps(const char *filename, boolean exit_on_error);
 

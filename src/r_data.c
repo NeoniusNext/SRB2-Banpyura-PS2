@@ -1219,6 +1219,19 @@ void R_InitData(void)
 //
 // Preloads all relevant graphics for the level.
 //
+#ifdef PS2_PROFILE
+// PS2-51: on 32 MB the free zone after a big level is a few MB; the vanilla precache (every texture and sprite of the level,
+// 14+ MB of composites on MAP11) would evict what it just built (and the oldest caches the first frames need). It stops once
+// half of what was free when it started is used up: the rest is built by the renderer on first use, exactly as the caches
+// are rebuilt after an eviction, so the picture does not change.
+static size_t precachefloor = 0;
+
+boolean R_PrecacheHasRoom(void)
+{
+	return Z_ArenaFree() > precachefloor;
+}
+#endif
+
 void R_PrecacheLevel(void)
 {
 	char *texturepresent, *spritepresent;
@@ -1234,6 +1247,14 @@ void R_PrecacheLevel(void)
 	// do not flush the memory, Z_Malloc twice with same user will cause error in Z_CheckHeap()
 	if (rendermode != render_soft)
 		return;
+
+#ifdef PS2_PROFILE
+	precachefloor = Z_ArenaFree() / 2;
+#ifdef PS2
+	if (precachefloor < Z_RenderHeadroom())
+		precachefloor = Z_RenderHeadroom();
+#endif
+#endif
 
 	// Precache flats.
 	flatmemory = P_PrecacheLevelFlats();
@@ -1267,6 +1288,10 @@ void R_PrecacheLevel(void)
 	{
 		if (!texturepresent[j])
 			continue;
+#ifdef PS2_PROFILE
+		if (!R_PrecacheHasRoom())
+			break;
+#endif
 
 		if (!texturecache[j])
 			R_GenerateTexture(j);
@@ -1290,6 +1315,10 @@ void R_PrecacheLevel(void)
 	{
 		if (!spritepresent[i])
 			continue;
+#ifdef PS2_PROFILE
+		if (!R_PrecacheHasRoom())
+			break;
+#endif
 
 		for (j = 0; j < sprites[i].numframes; j++)
 		{

@@ -1,0 +1,16 @@
+# Extra sources of the optional GS hardware renderer build (SRB2_PS2_HW=1); see tools/ps2/build.py, docs/HW_INTEGRATION.md.
+# 'a || b' = the first existing file. r_opengl/, hw3sound/s_* (OpenAL, DS3D, FMOD) are never built.
+src/hardware/hw_bsp.c
+src/hardware/hw_draw.c
+src/hardware/hw_light.c
+src/hardware/hw_main.c
+src/hardware/hw_clip.c
+src/hardware/hw_cache.c
+src/hardware/hw_batching.c
+src/hardware/hw_shaders.c
+src/hardware/hw_md2.c
+src/hardware/hw_md2load.c
+src/hardware/hw_md3load.c
+src/hardware/hw_model.c
+# GS driver (ps2_hwd.c) when present, otherwise the logging stub
+src/ps2/hw/ps2_hwd.c || src/ps2/hw/ps2_hwd_null.c

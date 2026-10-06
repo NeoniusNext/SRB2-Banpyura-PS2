@@ -16,6 +16,8 @@ Documentation available here.
 
 #ifdef HAVE_CURL
 #include <curl/curl.h>
+#elif defined (PS2)
+#include "../ps2/ps2_curl.h" // PS2-130: the libcurl subset this file uses, over the PS2 IP stack (http:// only)
 #endif
 
 #include "../doomdef.h"

@@ -56,6 +56,10 @@ enum
 	PU_HWRPATCHCOLMIPMAP     = 22, // Hardware GLMipmap_t struct colormap variation of patch
 	PU_HWRMODELTEXTURE       = 23, // Hardware model texture
 	PU_HWRLIGHTTABLEDATA     = 24, // Hardware light table data
+	PU_HWRBATCH              = 25, // persistent CPU-side batching arrays; never a purgeable texture cache
+#ifdef PS2_PROFILE
+	PU_RENDERWORK            = 26, // pinned renderer construction scratch, allocated beside reconstructible caches
+#endif
 
 	PU_HWRCACHE              = 48, // static until unlocked
 	PU_CACHE                 = 49, // static until unlocked
@@ -114,10 +118,32 @@ void *Z_ReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignb
 #define Z_FreeTag(tagnum) Z_FreeTags(tagnum, tagnum)
 void Z_FreeTags(INT32 lowtag, INT32 hightag);
 #ifdef PS2
-void Z_PurgeLock(boolean lock); // nestable: no PU_CACHE eviction while locked (3D view rendering)
+// NULL on physical exhaustion after normal cache retries; invalid requests still report programming errors.
+// A failed request leaves the supplied owner unchanged. Other eligible caches may have been evicted.
+void *Z_TryMallocAlign(size_t size, INT32 tag, void *user, INT32 alignbits) FUNCALLOC(1);
+void Z_PurgeLock(boolean lock); // nestable: current-frame roots protected; earlier-frame caches may be evicted
+void Z_NextFrame(void); // frame boundary (once per displayed frame): blocks used since the last call become evictable
+void Z_Touch(void *ptr); // allocation root, never an interior pointer: used this frame (Z_ChangeTag/Z_SetUser do it too)
+void Z_ReleaseCache(void *ptr); // root only, after all aliases consumed: enables pressure eviction in this frame
+void Z_FlushCache(void); // P_LoadLevel, nothing held: every owner-backed cache block (PU_CACHE, evictable sprites) goes
+void Z_LevelPhase(boolean playing); // P_SetupLevel: false while the level loads, true from its end (PU_LEVEL blocks then come from the long-lived end)
+UINT32 Z_FrameCount(void);
+size_t Z_ArenaFree(void); // free bytes of the arena (the sum of all free blocks, not one contiguous block)
+size_t Z_RenderHeadroom(void); // configured contiguous workspace target, also reserved from optional precaching
+// PS2-71: a subsystem that keeps rebuildable memory outside the zone caches (the audio effects cache, tag PU_SOUND) registers a hook. The zone calls
+// it, game thread only, when an allocation does not fit and no cache block is left to evict: the hook frees what it can (returns the bytes,
+// 0 = nothing) by calling Z_Free, and may free any number of its own blocks; it must not allocate.
+typedef size_t (*z_reclaim_fn)(size_t want);
+void Z_SetReclaimHook(z_reclaim_fn fn);
 #elif defined(PS2_PROFILE)
-// The host profile uses the unchanged host allocator; render lock calls have no effect there.
+// The host profile uses the unchanged host allocator; render lock and frame calls have no effect there.
 static inline void Z_PurgeLock(boolean lock) { (void)lock; }
+static inline void Z_NextFrame(void) {}
+static inline void Z_Touch(void *ptr) { (void)ptr; }
+static inline void Z_ReleaseCache(void *ptr) { (void)ptr; }
+static inline void Z_LevelPhase(boolean playing) { (void)playing; }
+static inline void Z_FlushCache(void) {}
+static inline size_t Z_ArenaFree(void) { return (size_t)-1; }
 #endif
 
 // Iterate memory by tag

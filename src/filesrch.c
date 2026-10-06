@@ -39,7 +39,9 @@
 #include "netcode/d_netfil.h"
 #include "m_misc.h"
 #include "z_zone.h"
+#ifdef HAS_ADDONS
 #include "m_menu.h" // Addons_option_Onchange
+#endif
 #include "w_wad.h"
 
 #if defined (_WIN32) && defined (_MSC_VER)
@@ -351,6 +353,7 @@ FILE *fopenfile(const char *path, const char *mode)
 	return NULL;
 }
 
+#ifdef HAS_ADDONS // PS2-20: add-ons cvars and menu state
 static CV_PossibleValue_t addons_cons_t[] = {{0, "Default"},
 #if 1
 												{1, "HOME"}, {2, "SRB2"},
@@ -379,6 +382,7 @@ char menusearch[MAXSTRINGLENGTH+1];
 char **dirmenu, **coredirmenu; // core only local for this file
 size_t sizedirmenu, sizecoredirmenu; // ditto
 size_t dir_on[menudepth];
+#endif
 UINT8 refreshdirmenu = 0;
 char *refreshdirname = NULL;
 
@@ -681,6 +685,7 @@ INT32 samepaths(const char *path1, const char *path2)
 	return 0;
 }
 
+#ifdef HAS_ADDONS // PS2-20: folder add-ons and the add-ons menu exist only with PS2_ADDONS; the path/search helpers above always remain
 //
 // Directory loading
 //
@@ -1267,3 +1272,4 @@ boolean preparefilemenu(boolean samedepth)
 
 	return true;
 }
+#endif // HAS_ADDONS

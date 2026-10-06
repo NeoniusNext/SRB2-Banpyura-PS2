@@ -1,0 +1,2 @@
+# Per-unit compiler flags (path, flags...), appended after the global flags of tools/ps2/build.py. Measured choices only.
+# (empty: the engine is built with -G8 -flto, see build.py; with LTO a per-unit -G cannot work, the link-time compile uses one -G.)

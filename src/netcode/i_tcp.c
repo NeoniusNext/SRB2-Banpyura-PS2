@@ -52,7 +52,17 @@
 		#include <sys/socket.h>
 		#include <netinet/in.h>
 		#include <netdb.h>
+		#ifdef PS2
+		#include <fcntl.h>
+		#include "../ps2/ps2_net.h"
+		#include "../i_time.h"
+		#include "../command.h"
+		#ifndef FIONBIO
+		#define FIONBIO 1 // PS2-120: only selects the non-blocking branches below (fcntl is used)
+		#endif
+		#else
 		#include <sys/ioctl.h>
+		#endif
 	#endif //normal BSD API
 
 	#include <errno.h>
@@ -254,7 +264,7 @@ static const char* inet_ntopA(short af, const void *cp, char *buf, socklen_t len
 		return NULL;
 	return buf;
 }
-#elif !defined (USE_WINSOCK1)
+#elif !defined (USE_WINSOCK1) && !defined (PS2) // PS2-120: lwIP has no inet_ntop (IPv4 only: inet_ntoa)
 #define HAVE_NTOP
 #endif
 
@@ -582,6 +592,10 @@ void Command_Numnodes(void)
 }
 #endif
 
+#ifdef PS2
+static void Command_Punch_f(void); // PS2-121, below
+#endif
+
 // Returns true if a packet was received from a new node, false in all other cases
 static boolean SOCK_Get(void)
 {
@@ -593,6 +607,18 @@ static boolean SOCK_Get(void)
 
 	for (size_t n = 0; n < mysocketses; n++)
 	{
+#ifdef PS2
+		{
+			// PS2-121: lwIP's O_NONBLOCK through libcglue did not make recvfrom() return: ask select() first (zero timeout)
+			fd_set rfds;
+			struct timeval tv = {0, 0};
+
+			FD_ZERO(&rfds);
+			FD_SET(mysockets[n], &rfds);
+			if (select(mysockets[n] + 1, &rfds, NULL, NULL, &tv) <= 0)
+				continue;
+		}
+#endif
 		fromlen = (socklen_t)sizeof(fromaddress);
 		c = recvfrom(mysockets[n], (char *)&doomcom->data, MAXPACKETLENGTH, 0,
 			(void *)&fromaddress, &fromlen);
@@ -759,6 +785,7 @@ static SOCKET_TYPE UDP_Bind(int family, struct sockaddr *addr, socklen_t addrlen
 	socklen_t opts;
 #ifdef FIONBIO
 	unsigned long trueval = true;
+	(void)trueval;
 #endif
 	mysockaddr_t straddr;
 	socklen_t len = sizeof(straddr);
@@ -878,7 +905,11 @@ static SOCKET_TYPE UDP_Bind(int family, struct sockaddr *addr, socklen_t addrlen
 
 #ifdef FIONBIO
 	// make it non blocking
+#ifdef PS2
+	rc = fcntl(s, F_SETFL, fcntl(s, F_GETFL, 0) | O_NONBLOCK); // PS2-120: libcglue forwards it to the lwIP socket
+#else
 	rc = ioctl(s, FIONBIO, &trueval);
+#endif
 	if (rc == -1)
 	{
 		e = errno;
@@ -1122,6 +1153,17 @@ static boolean UDP_Socket(void)
 
 boolean I_InitTcpDriver(void)
 {
+#ifdef PS2
+	// PS2-120: nothing is loaded here - D_CheckNetGame runs on every boot. The IP stack (modules, link, DHCP) comes up when a
+	// socket is opened (SOCK_OpenSocket: hosting or connecting), so the single-player game never pays for it.
+	if (!init_tcp_driver)
+	{
+		init_tcp_driver = true;
+		I_AddExitFunc(I_ShutdownTcpDriver);
+		COM_AddCommand("punch", Command_Punch_f, 0);
+	}
+	return init_tcp_driver;
+#endif
 	boolean tcp_was_up = init_tcp_driver;
 
 #ifdef __EMSCRIPTEN__
@@ -1273,8 +1315,49 @@ static SINT8 SOCK_NetMakeNodewPort(const char *address, const char *port)
 	return newnode;
 }
 
+#ifdef PS2
+// PS2-121: PCSX2's DEV9 (Sockets mode) hands a datagram that arrives from outside to the guest only if the guest has already sent to that address
+// (the host side is a NAT: DEV9 logs "UDP: Unexpected packet, dropping"). A server under PCSX2 therefore cannot be joined unless it first sends
+// something to the client, which is the "punch" command below. On a real console this is never needed.
+// punch <ip> [port]: one datagram from the bound game socket to that address. Under PCSX2 (DEV9 Sockets) the host only passes a datagram to the
+// guest from an address the guest has already sent to, so a server there cannot be joined unless it first "calls" the client: that is what NAT
+// hole punching is, and a real console behind a router needs the same when the client's address is known (-clientport N on the client).
+static void Command_Punch_f(void)
+{
+	struct sockaddr_in to;
+	const char b = 0;
+
+	if (COM_Argc() < 2)
+	{
+		CONS_Printf("punch <ip> [port]: send a datagram from the game socket to that address (opens the way for a client behind NAT or PCSX2)\n");
+		return;
+	}
+	if (!mysocketses)
+	{
+		CONS_Printf("punch: no game socket is open (host a game or connect first)\n");
+		return;
+	}
+	memset(&to, 0, sizeof to);
+	to.sin_family = AF_INET;
+	to.sin_port = htons((unsigned short)(COM_Argc() > 2 ? atoi(COM_Argv(2)) : 5029));
+	to.sin_addr.s_addr = inet_addr(COM_Argv(1));
+	if (to.sin_addr.s_addr == INADDR_NONE)
+	{
+		CONS_Printf("punch: %s is not an IPv4 address\n", COM_Argv(1));
+		return;
+	}
+	sendto(mysockets[0], &b, 1, 0, (struct sockaddr *)&to, sizeof to);
+	CONS_Printf("punch: sent to %s:%d\n", COM_Argv(1), (int)ntohs(to.sin_port));
+}
+#endif
+
 static boolean SOCK_OpenSocket(void)
 {
+#ifdef PS2
+	if (!PS2Net_Up())
+		return false;
+	Net_GrowAckTable();
+#endif
 	memset(clientaddress, 0, sizeof (clientaddress));
 
 	nodeconnected[0] = true; // always connected to self
@@ -1289,7 +1372,11 @@ static boolean SOCK_OpenSocket(void)
 
 	// build the socket but close it first
 	SOCK_CloseSocket();
+#ifdef PS2
 	return UDP_Socket();
+#else
+	return UDP_Socket();
+#endif
 }
 
 static boolean SOCK_Ban(INT32 node)
@@ -1480,4 +1567,6 @@ boolean Net_IsNodeIPv6(INT32 node)
 #endif
 }
 
+#ifndef PS2 // PS2-120: lwIP provides getaddrinfo (mapped by i_addrinfo.h); the wrappers are for the other platforms
 #include "i_addrinfo.c"
+#endif

@@ -622,6 +622,7 @@ light_t *t_lspr[NUMSPRITES] =
 	&lspr[NOLIGHT],		// SPR_OLDK,
 
 	// Free slots
+#ifndef PS2_PROFILE // PS2-HW: the table is only read under ALAM_LIGHTING (off); NUMSPRITES is smaller here (PS2-11)
 	&lspr[NOLIGHT],
 	&lspr[NOLIGHT],
 	&lspr[NOLIGHT],
@@ -748,6 +749,7 @@ light_t *t_lspr[NUMSPRITES] =
 	&lspr[NOLIGHT],
 	&lspr[NOLIGHT],
 	&lspr[NOLIGHT],
+#endif // PS2_PROFILE
 };
 
 #ifdef ALAM_LIGHTING

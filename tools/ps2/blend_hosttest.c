@@ -63,7 +63,7 @@ static void reset_candidate(void)
 			Z_Free(blendtab_lazy[tab][i]);
 			blendtab_lazy[tab][i] = NULL;
 		}
-	Z_Free(transtab_lutp); // explicit loss: the next request must reconstruct canonical state
+		Z_Free(transtab_lutp); // explicit loss: the next request must reconstruct canonical state
 	host_check(transtab_lutp == NULL, "LUT owner cleared");
 }
 
@@ -154,9 +154,42 @@ int main(void)
 	{
 		UINT8 *table = R_GetTranslucencyTable(i);
 		host_check(!memcmp(table, Ref_GetTranslucencyTable(i), 65536), "all nine TRANS tables equal eager reference");
+#ifdef PS2
+		size_t slot = host_allocation(table);
+		host_check(host_allocs[slot].tag == PU_CACHE && host_allocs[slot].owner == (void **)&transtab_lazy[i-1],
+			"TRANS cache has stable owner");
+		host_purge_old_cache();
+		host_check(transtab_lazy[i-1] == table, "TRANS current-frame pointer survives pressure");
+		host_frame++;
+		host_check(R_GetTranslucencyTable(i) == table, "TRANS cache hit retouches root");
+		host_purge_old_cache();
+		host_check(transtab_lazy[i-1] == table, "retouched TRANS remains live");
+		host_frame++;
+		size_t before = host_live_bytes;
+		host_purge_old_cache();
+		host_check(transtab_lazy[i-1] == NULL, "unused TRANS owner cleared on eviction");
+		host_check(before - host_live_bytes == 65536, "unused TRANS releases exact payload");
+		host_check(!memcmp(R_GetTranslucencyTable(i), Ref_GetTranslucencyTable(i), 65536), "evicted TRANS reloads exactly");
+#else
 		host_purge_cache();
 		host_check(R_GetTranslucencyTable(i) == table, "TRANS table retained across cache purge");
+#endif
 	}
+#ifdef PS2
+	host_purge_cache();
+	size_t trans_before = host_live_bytes;
+	for (INT32 i = 1; i <= 9; i++)
+		host_check(!memcmp(R_GetTranslucencyTable(i), Ref_GetTranslucencyTable(i), 65536), "all TRANS roots reloaded");
+	host_check(host_live_bytes - trans_before == 9 * 65536, "nine TRANS cache payloads counted");
+	host_purge_old_cache();
+	host_check(host_live_bytes - trans_before == 9 * 65536, "entire current-frame TRANS working set survives");
+	host_frame++;
+	host_purge_old_cache();
+	host_check(host_live_bytes == trans_before, "all unused TRANS payloads reclaimed");
+	for (INT32 i = 0; i < 9; i++)
+		host_check(transtab_lazy[i] == NULL, "all reclaimed TRANS owners cleared");
+	printf("TRANS current-frame working set protected; 589824 unused payload bytes reclaimed PASS\n");
+#endif
 	host_check(R_GetTranslucencyTable(-3) == R_GetTranslucencyTable(1), "low translucency clipping");
 	host_check(R_GetTranslucencyTable(99) == R_GetTranslucencyTable(9), "high translucency clipping");
 	host_check(R_GetBlendTable(AST_ADD, -3) == R_GetBlendTable(AST_ADD, 0), "low blend clipping");

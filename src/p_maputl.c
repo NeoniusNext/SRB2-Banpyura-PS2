@@ -500,8 +500,8 @@ void P_LineOpening(line_t *linedef, mobj_t *mobj)
 			INT32 texnum = R_GetTextureNum(side->midtexture); // make sure the texture is actually valid
 
 			if (texnum) {
-				fixed_t scaley = abs(side->scaley_mid);
-				fixed_t offsetvalue = FixedDiv(side->rowoffset + side->offsety_mid, scaley);
+				fixed_t scaley = abs(SIDE_SCALEY_MID(side));
+				fixed_t offsetvalue = FixedDiv(side->rowoffset + SIDE_OFFSETY_MID(side), scaley);
 				fixed_t midopentop, midopenbottom;
 
 				if (linedef->flags & ML_NOSKEW)
@@ -1030,6 +1030,23 @@ boolean P_BlockLinesIterator(INT32 x, INT32 y, boolean (*func)(line_t *))
 	}
 
 	offset = *(blockmap + offset); // offset = blockmap[y*bmapwidth+x];
+
+#ifdef PS2_PROFILE
+	if (ps2_blockmaplists)
+	{
+		const UINT16 *shortlist;
+		for (shortlist = ps2_blockmaplists + offset + 1; *shortlist != UINT16_MAX; shortlist++)
+		{
+			ld = &lines[*shortlist];
+			if (ld->validcount == validcount)
+				continue;
+			ld->validcount = validcount;
+			if (!func(ld))
+				return false;
+		}
+		return true;
+	}
+#endif
 
 	// First index is really empty, so +1 it.
 	for (list = blockmaplump + offset + 1; *list != -1; list++)

@@ -4,17 +4,27 @@ usage: verify_pack.py [--src DIR] [--pak DIR]
 For every pack: header/table sanity, entry count and ORDER and names equal the zip central directory, the SHA-256 of EVERY
 decoded lump equals the SHA-256 of the lump read from the pk3, name/hash/longname derived like ResGetLumpsZip,
 alignment rules, no overlaps. Exit code 0 only if there are 0 discrepancies.
+
+PS2-20: a pack with a <PACK>.pics.json sidecar has its PNG lumps replaced by cooked pictures (tools/ps2/strip_pics.py).
+For those entries the pk3 side must hash to the sidecar's PNG hash, the pack side to the cooked hash, the lump must be a
+cooked picture, its Doom patch must equal what the independent pure-Python model of the original PNG decoder makes of the
+pk3's PNG (pixels, transparency, offsets), and no PNG lump may remain anywhere in the pack.
 """
 import argparse
 import hashlib
 import struct
 import sys
 import zipfile
+import zlib
 from pathlib import Path
+
+import json
 
 import lz4.block
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import strip_pics  # noqa: E402
 PAIRS = [('srb2.pk3', 'SRB2.PAK'), ('zones.pk3', 'ZONES.PAK'), ('characters.pk3', 'CHARS.PAK'), ('music.pk3', 'MUSIC.PAK')]
 
 
@@ -67,16 +77,25 @@ def decode(f, pos, disksize, size, codec, block):
     return bytes(out)
 
 
-def verify(pk3, pak):
+def verify(pk3, pak, model=None, require_cooked=False, log=print):
     bad = []
+    sidecar = Path(str(pak) + '.pics.json')
+    entries = json.loads(sidecar.read_text())['entries'] if sidecar.exists() else []
+    pics = {e['index']: e for e in entries}
+    cooked_mode = require_cooked or sidecar.exists()
 
     def err(msg):
         bad.append(msg)
         if len(bad) <= 20:
-            print('   ', msg)
+            log('    ' + msg)
 
     zf = zipfile.ZipFile(pk3)
     infos = zf.infolist()
+    if len(pics) != len(entries):
+        err('duplicate picture indices in sidecar')
+    for i in pics:
+        if not isinstance(i, int) or not 0 <= i < len(infos):
+            err(f'sidecar picture index outside archive: {i!r}')
     f = open(pak, 'rb')
     hdr = f.read(64)
     magic, version, hsize, flags, n, table_off, pool_off, pool_size, data_off, file_size, block, rsv = struct.unpack('<4s11I', hdr[:48])
@@ -85,6 +104,12 @@ def verify(pk3, pak):
         return len(bad), 0, {}
     if file_size != Path(pak).stat().st_size:
         err('file_size field != actual size')
+    if flags & ~1 or hdr[44:] != bytes(20):
+        err('unknown flags or nonzero reserved header bytes')
+    if any(off % 2048 for off in (table_off, pool_off, data_off, file_size)):
+        err('header regions/end are not sector aligned')
+    if not (64 <= table_off and table_off + n * 24 <= pool_off and pool_off + pool_size <= data_off <= file_size):
+        err('header/table/pool/data regions overlap or leave the file')
     if n != len(infos):
         err(f'entry count {n} != zip {len(infos)}')
     f.seek(table_off)
@@ -102,13 +127,13 @@ def verify(pk3, pak):
         name, h, longname = derive(full)
         if cstr(pool, lo) != longname:
             err(f'[{i}] longname {cstr(pool, lo)!r} != derived {longname!r}')
-        if size != zi.file_size:
+        if size != zi.file_size and i not in pics:
             err(f'[{i}] size {size} != zip {zi.file_size}')
         if zi.is_dir() and not (size == 0 and full.endswith(b'/')):
             err(f'[{i}] directory not stored as an empty entry')
         if size == 0:
-            if disksize != 0:
-                err(f'[{i}] empty lump with data')
+            if pos != 0 or disksize != 0 or codec != 0:
+                err(f'[{i}] empty lump with nonzero position/disksize/codec')
             data = b''
         else:
             a = 2048 if size >= block else 64
@@ -127,9 +152,39 @@ def verify(pk3, pak):
         if len(data) != size:
             err(f'[{i}] decoded {len(data)} bytes, expected {size}')
         ref = b'' if zi.is_dir() else zf.read(zi)
+        if i in pics:
+            e = pics[i]
+            if ref[:8] != strip_pics.PNG_SIG or e['name'] != zi.filename or e['png_size'] != len(ref):
+                err(f'[{i}] sidecar does not identify this original PNG entry')
+            if hashlib.sha256(ref).hexdigest() != e['png_sha256']:
+                err(f'[{i}] {full!r}: pk3 PNG differs from the sidecar record')
+            if hashlib.sha256(data).hexdigest() != e['cooked_sha256'] or len(data) != e['cooked_size']:
+                err(f'[{i}] {full!r}: pack lump differs from the sidecar record')
+            if zlib.crc32(ref) != e['png_crc32'] or zlib.crc32(data) != e['cooked_crc32']:
+                err(f'[{i}] sidecar CRC mismatch')
+            if not strip_pics.is_cooked(data):
+                err(f'[{i}] {full!r}: not a cooked picture')
+            elif model is not None:
+                try:
+                    want = model.convert(ref)
+                    got = strip_pics.decode_doom_patch(data[8:])
+                    if got[:4] != (e['width'], e['height'], e['leftoffset'], e['topoffset']):
+                        err(f'[{i}] sidecar dimensions/offsets mismatch')
+                    if want != got:
+                        err(f'[{i}] {full!r}: cooked picture differs from the Python model of the original decoder')
+                except Exception as ex:
+                    err(f'[{i}] {full!r}: cooked picture check failed: {ex}')
+            stats[codec] = stats.get(codec, 0) + 1
+            continue
+        if cooked_mode and data[:8] == strip_pics.PNG_SIG:
+            err(f'[{i}] {full!r}: PNG lump left in a cooked pack')
+        if cooked_mode and ref[:8] == strip_pics.PNG_SIG:
+            err(f'[{i}] {full!r}: missing PNG conversion record')
         if hashlib.sha256(data).digest() != hashlib.sha256(ref).digest():
             err(f'[{i}] {full!r}: sha256 mismatch')
         stats[codec] = stats.get(codec, 0) + 1
+    f.close()
+    zf.close()
     return len(bad), n, stats
 
 
@@ -137,15 +192,41 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--src', default=str(ROOT / 'srb2-assets'))
     ap.add_argument('--pak', default=str(ROOT / 'build/pak'))
+    ap.add_argument('--require-cooked', action='store_true', help='reject raw PNGs and missing conversion records in every pack')
+    ap.add_argument('--log', type=Path, help='save verification output and before/after SHA256 of all inputs')
     a = ap.parse_args()
+    messages = []
+
+    def log(message):
+        print(message, flush=True)
+        messages.append(message)
+        if a.log:
+            a.log.parent.mkdir(parents=True, exist_ok=True)
+            a.log.write_text('\n'.join(messages) + '\n', encoding='utf-8')
+
+    inputs = [Path(root) / name for pk3, pak in PAIRS for root, name in [(a.src, pk3), (a.pak, pak)]]
+    inputs += [Path(a.pak) / (pak + '.pics.json') for _pk3, pak in PAIRS if (Path(a.pak) / (pak + '.pics.json')).exists()]
+    def sha(path):
+        with path.open('rb') as f:
+            return hashlib.file_digest(f, 'sha256').hexdigest()
+    before = {p: sha(p) for p in inputs}
+    for p, digest in before.items():
+        log(f'INPUT {p} {p.stat().st_size} bytes SHA256 {digest}')
     total = 0
+    model = None
+    if any((Path(a.pak) / (pak + '.pics.json')).exists() for _pk3, pak in PAIRS):
+        with zipfile.ZipFile(Path(a.src) / 'srb2.pk3') as z:
+            model = strip_pics.PyOracle(strip_pics.read_palette(z.read('PLAYPAL')))   # shared: the memo is order dependent
     for pk3, pak in PAIRS:
-        print(f'{pak} vs {pk3} ...', flush=True)
-        nbad, n, stats = verify(Path(a.src) / pk3, Path(a.pak) / pak)
+        log(f'{pak} vs {pk3} ...')
+        nbad, n, stats = verify(Path(a.src) / pk3, Path(a.pak) / pak, model, a.require_cooked, log)
         total += nbad
-        print(f'  {n} lumps compared (sha256 of every decoded lump), raw {stats.get(0, 0)}, lz4 {stats.get(1, 0)}: '
+        log(f'  {n} lumps compared (sha256 of every decoded lump), raw {stats.get(0, 0)}, lz4 {stats.get(1, 0)}: '
               f'{nbad} discrepancies')
-    print('TOTAL discrepancies:', total)
+    changed = sum(sha(p) != digest for p, digest in before.items())
+    total += changed
+    log(f'Input preservation: {len(inputs)} packs/archives/sidecars hashed before and after, {changed} changed')
+    log(f'TOTAL discrepancies: {total}')
     return 1 if total else 0
 
 

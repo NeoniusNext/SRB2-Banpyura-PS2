@@ -24,6 +24,7 @@
 */
 void R_DrawColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	INT32 count;
 	register UINT8 *dest;
 	register fixed_t frac;
@@ -35,14 +36,15 @@ void R_DrawColumn_8(void)
 		return;
 
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		return;
 #endif
 
 	// Framebuffer destination address.
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	count++;
+	PS2SUB_ADD(40, count); PS2SUB_N(41);
 
 	// Determine scaling, which is the only mapping to be done.
 	fracstep = dc_iscale;
@@ -65,13 +67,67 @@ void R_DrawColumn_8(void)
 				while (frac >= heightmask)
 					frac -= heightmask;
 
+#ifdef PS2_OPT_DRAW
+			// A bounded positive step cannot overflow or wrap more than once.
+			if (count >= 8 && heightmask > 0 && heightmask <= 0x40000000
+				&& fracstep >= 0 && fracstep < heightmask)
+			{
+				if (fracstep <= (heightmask >> 2))
+				{
+					const fixed_t limit = heightmask - 3 * fracstep;
+					while (count >= 4)
+					{
+						if (frac >= limit)
+						{
+							*dest = colormap[source[frac >> FRACBITS]];
+							dest += vwidth;
+							frac += fracstep;
+							if (frac >= heightmask)
+								frac -= heightmask;
+							count--;
+							continue;
+						}
+						*dest = colormap[source[frac >> FRACBITS]];
+						dest += vwidth;
+						frac += fracstep;
+						*dest = colormap[source[frac >> FRACBITS]];
+						dest += vwidth;
+						frac += fracstep;
+						*dest = colormap[source[frac >> FRACBITS]];
+						dest += vwidth;
+						frac += fracstep;
+						*dest = colormap[source[frac >> FRACBITS]];
+						dest += vwidth;
+						frac += fracstep;
+						if (frac >= heightmask)
+							frac -= heightmask;
+						count -= 4;
+					}
+					if (!count)
+						return;
+				}
+				do
+				{
+					// Re-map color indices from wall texture column
+					//  using a lighting/special effects LUT.
+					// heightmask is the Tutti-Frutti fix
+					*dest = colormap[source[frac>>FRACBITS]];
+					dest += vwidth;
+					frac += fracstep;
+					if (frac >= heightmask)
+						frac -= heightmask;
+				} while (--count);
+				return;
+			}
+#endif
+
 			do
 			{
 				// Re-map color indices from wall texture column
 				//  using a lighting/special effects LUT.
 				// heightmask is the Tutti-Frutti fix
 				*dest = colormap[source[frac>>FRACBITS]];
-				dest += vid.width;
+				dest += vwidth;
 
 				// Avoid overflow.
 				if (fracstep > 0x7FFFFFFF - frac)
@@ -88,10 +144,10 @@ void R_DrawColumn_8(void)
 			while ((count -= 2) >= 0) // texture height is a power of 2
 			{
 				*dest = colormap[source[(frac>>FRACBITS) & heightmask]];
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 				*dest = colormap[source[(frac>>FRACBITS) & heightmask]];
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 			}
 			if (count & 1)
@@ -105,6 +161,7 @@ void R_DrawColumn_8(void)
 */
 void R_DrawColumnClamped_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	INT32 count;
 	UINT8 *dest;
 	fixed_t frac;
@@ -115,13 +172,25 @@ void R_DrawColumnClamped_8(void)
 	if (count < 0) // Zero length, column does not exceed a pixel.
 		return;
 
+#ifdef PS2_OPT_DRAW
+	// A complete texture post needs no per-pixel clipping test.
+	if (count >= 7 && dc_texheight > 0 && dc_postlength >= dc_texheight
+		&& (!(dc_texheight & (dc_texheight - 1))
+			|| (dc_texheight <= 16384 && dc_iscale >= 0
+				&& dc_iscale < (dc_texheight << FRACBITS))))
+	{
+		R_DrawColumn_8();
+		return;
+	}
+#endif
+
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		return;
 #endif
 
 	// Framebuffer destination address.
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	count++;
 
@@ -147,6 +216,28 @@ void R_DrawColumnClamped_8(void)
 				while (frac >= heightmask)
 					frac -= heightmask;
 
+#ifdef PS2_OPT_DRAW
+			// A bounded positive step cannot overflow or wrap more than once.
+			if (count >= 8 && heightmask > 0 && heightmask <= 0x40000000
+				&& fracstep >= 0 && fracstep < heightmask)
+			{
+				do
+				{
+					// Re-map color indices from wall texture column
+					//  using a lighting/special effects LUT.
+					// heightmask is the Tutti-Frutti fix
+					idx = frac>>FRACBITS;
+					if (idx >= 0 && idx < dc_postlength)
+						*dest = colormap[source[idx]];
+					dest += vwidth;
+					frac += fracstep;
+					if (frac >= heightmask)
+						frac -= heightmask;
+				} while (--count);
+				return;
+			}
+#endif
+
 			do
 			{
 				// Re-map color indices from wall texture column
@@ -155,7 +246,7 @@ void R_DrawColumnClamped_8(void)
 				idx = frac>>FRACBITS;
 				if (idx >= 0 && idx < dc_postlength)
 					*dest = colormap[source[idx]];
-				dest += vid.width;
+				dest += vwidth;
 
 				// Avoid overflow.
 				if (fracstep > 0x7FFFFFFF - frac)
@@ -174,12 +265,12 @@ void R_DrawColumnClamped_8(void)
 				idx = (frac>>FRACBITS) & heightmask;
 				if (idx >= 0 && idx < dc_postlength)
 					*dest = colormap[source[idx]];
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 				idx = (frac>>FRACBITS) & heightmask;
 				if (idx >= 0 && idx < dc_postlength)
 					*dest = colormap[source[idx]];
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 			}
 			if (count & 1)
@@ -194,6 +285,7 @@ void R_DrawColumnClamped_8(void)
 
 void R_Draw2sMultiPatchColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	INT32 count;
 	register UINT8 *dest;
 	register fixed_t frac;
@@ -205,14 +297,15 @@ void R_Draw2sMultiPatchColumn_8(void)
 		return;
 
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		return;
 #endif
 
 	// Framebuffer destination address.
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	count++;
+	PS2SUB_ADD(42, count); PS2SUB_N(43);
 
 	// Determine scaling, which is the only mapping to be done.
 	fracstep = dc_iscale;
@@ -236,6 +329,75 @@ void R_Draw2sMultiPatchColumn_8(void)
 				while (frac >= heightmask)
 					frac -= heightmask;
 
+#ifdef PS2_OPT_DRAW
+			// A bounded positive step cannot overflow or wrap more than once.
+			if (count >= 8 && heightmask > 0 && heightmask <= 0x40000000
+				&& fracstep >= 0 && fracstep < heightmask)
+			{
+				if (fracstep <= (heightmask >> 2))
+				{
+					const fixed_t limit = heightmask - 3 * fracstep;
+					while (count >= 4)
+					{
+						if (frac >= limit)
+						{
+							val = source[frac >> FRACBITS];
+							if (val != TRANSPARENTPIXEL)
+								*dest = colormap[val];
+							dest += vwidth;
+							frac += fracstep;
+							if (frac >= heightmask)
+								frac -= heightmask;
+							count--;
+							continue;
+						}
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = colormap[val];
+						dest += vwidth;
+						frac += fracstep;
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = colormap[val];
+						dest += vwidth;
+						frac += fracstep;
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = colormap[val];
+						dest += vwidth;
+						frac += fracstep;
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = colormap[val];
+						dest += vwidth;
+						frac += fracstep;
+						if (frac >= heightmask)
+							frac -= heightmask;
+						count -= 4;
+					}
+					if (!count)
+						return;
+				}
+
+				do
+				{
+					// Re-map color indices from wall texture column
+					//  using a lighting/special effects LUT.
+					// heightmask is the Tutti-Frutti fix
+					val = source[frac>>FRACBITS];
+
+					if (val != TRANSPARENTPIXEL)
+						*dest = colormap[val];
+
+					dest += vwidth;
+					frac += fracstep;
+					if (frac >= heightmask)
+						frac -= heightmask;
+				} while (--count);
+				return;
+			}
+#endif
+
 			do
 			{
 				// Re-map color indices from wall texture column
@@ -246,7 +408,7 @@ void R_Draw2sMultiPatchColumn_8(void)
 				if (val != TRANSPARENTPIXEL)
 					*dest = colormap[val];
 
-				dest += vid.width;
+				dest += vwidth;
 
 				// Avoid overflow.
 				if (fracstep > 0x7FFFFFFF - frac)
@@ -265,12 +427,12 @@ void R_Draw2sMultiPatchColumn_8(void)
 				val = source[(frac>>FRACBITS) & heightmask];
 				if (val != TRANSPARENTPIXEL)
 					*dest = colormap[val];
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 				val = source[(frac>>FRACBITS) & heightmask];
 				if (val != TRANSPARENTPIXEL)
 					*dest = colormap[val];
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 			}
 			if (count & 1)
@@ -285,6 +447,7 @@ void R_Draw2sMultiPatchColumn_8(void)
 
 void R_Draw2sMultiPatchTranslucentColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	INT32 count;
 	register UINT8 *dest;
 	register fixed_t frac;
@@ -296,12 +459,12 @@ void R_Draw2sMultiPatchTranslucentColumn_8(void)
 		return;
 
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		return;
 #endif
 
 	// Framebuffer destination address.
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	count++;
 
@@ -328,6 +491,75 @@ void R_Draw2sMultiPatchTranslucentColumn_8(void)
 				while (frac >= heightmask)
 					frac -= heightmask;
 
+#ifdef PS2_OPT_DRAW
+			// A bounded positive step cannot overflow or wrap more than once.
+			if (count >= 8 && heightmask > 0 && heightmask <= 0x40000000
+				&& fracstep >= 0 && fracstep < heightmask)
+			{
+				if (fracstep <= (heightmask >> 2))
+				{
+					const fixed_t limit = heightmask - 3 * fracstep;
+					while (count >= 4)
+					{
+						if (frac >= limit)
+						{
+							val = source[frac >> FRACBITS];
+							if (val != TRANSPARENTPIXEL)
+								*dest = transmap[(colormap[val] << 8) + *dest];
+							dest += vwidth;
+							frac += fracstep;
+							if (frac >= heightmask)
+								frac -= heightmask;
+							count--;
+							continue;
+						}
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = transmap[(colormap[val] << 8) + *dest];
+						dest += vwidth;
+						frac += fracstep;
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = transmap[(colormap[val] << 8) + *dest];
+						dest += vwidth;
+						frac += fracstep;
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = transmap[(colormap[val] << 8) + *dest];
+						dest += vwidth;
+						frac += fracstep;
+						val = source[frac >> FRACBITS];
+						if (val != TRANSPARENTPIXEL)
+							*dest = transmap[(colormap[val] << 8) + *dest];
+						dest += vwidth;
+						frac += fracstep;
+						if (frac >= heightmask)
+							frac -= heightmask;
+						count -= 4;
+					}
+					if (!count)
+						return;
+				}
+
+				do
+				{
+					// Re-map color indices from wall texture column
+					//  using a lighting/special effects LUT.
+					// heightmask is the Tutti-Frutti fix
+					val = source[frac>>FRACBITS];
+
+					if (val != TRANSPARENTPIXEL)
+						*dest = *(transmap + (colormap[val]<<8) + (*dest));
+
+					dest += vwidth;
+					frac += fracstep;
+					if (frac >= heightmask)
+						frac -= heightmask;
+				} while (--count);
+				return;
+			}
+#endif
+
 			do
 			{
 				// Re-map color indices from wall texture column
@@ -338,7 +570,7 @@ void R_Draw2sMultiPatchTranslucentColumn_8(void)
 				if (val != TRANSPARENTPIXEL)
 					*dest = *(transmap + (colormap[val]<<8) + (*dest));
 
-				dest += vid.width;
+				dest += vwidth;
 
 				// Avoid overflow.
 				if (fracstep > 0x7FFFFFFF - frac)
@@ -357,12 +589,12 @@ void R_Draw2sMultiPatchTranslucentColumn_8(void)
 				val = source[(frac>>FRACBITS) & heightmask];
 				if (val != TRANSPARENTPIXEL)
 					*dest = *(transmap + (colormap[val]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 				val = source[(frac>>FRACBITS) & heightmask];
 				if (val != TRANSPARENTPIXEL)
 					*dest = *(transmap + (colormap[val]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 			}
 			if (count & 1)
@@ -380,12 +612,13 @@ void R_Draw2sMultiPatchTranslucentColumn_8(void)
 */
 void R_DrawShadeColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	register INT32 count;
 	register UINT8 *dest;
 	register fixed_t frac, fracstep;
 
 	// check out coords for src*
-	if ((dc_yl < 0) || (dc_x >= vid.width))
+	if ((dc_yl < 0) || (dc_x >= vwidth))
 		return;
 
 	count = dc_yh - dc_yl;
@@ -393,11 +626,11 @@ void R_DrawShadeColumn_8(void)
 		return;
 
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		I_Error("R_DrawShadeColumn_8: %d to %d at %d", dc_yl, dc_yh, dc_x);
 #endif
 
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	// Looks familiar.
 	fracstep = dc_iscale;
@@ -407,7 +640,7 @@ void R_DrawShadeColumn_8(void)
 	do
 	{
 		*dest = colormaps[(dc_source[frac>>FRACBITS] <<8) + (*dest)];
-		dest += vid.width;
+		dest += vwidth;
 		frac += fracstep;
 	} while (count--);
 }
@@ -419,6 +652,7 @@ void R_DrawShadeColumn_8(void)
 */
 void R_DrawTranslucentColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	register INT32 count;
 	register UINT8 *dest;
 	register fixed_t frac, fracstep;
@@ -428,12 +662,13 @@ void R_DrawTranslucentColumn_8(void)
 	if (count <= 0) // Zero length, column does not exceed a pixel.
 		return;
 
+	PS2SUB_ADD(44, count); PS2SUB_N(45);
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		I_Error("R_DrawTranslucentColumn_8: %d to %d at %d", dc_yl, dc_yh, dc_x);
 #endif
 
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	// Looks familiar.
 	fracstep = dc_iscale;
@@ -458,13 +693,52 @@ void R_DrawTranslucentColumn_8(void)
 				while (frac >= heightmask)
 					frac -= heightmask;
 
+#ifdef PS2_OPT_DRAW
+			// Four samples before the wrap; keep the original LUT order.
+			if (count >= 8 && heightmask > 0 && heightmask <= 0x40000000
+				&& fracstep >= 0 && fracstep <= (heightmask >> 2))
+			{
+				const fixed_t limit = heightmask - 3 * fracstep;
+				while (count >= 4)
+				{
+					if (frac >= limit)
+					{
+						*dest = transmap[(colormap[source[frac >> FRACBITS]] << 8) + *dest];
+						dest += vwidth;
+						frac += fracstep;
+						if (frac >= heightmask)
+							frac -= heightmask;
+						count--;
+						continue;
+					}
+					*dest = transmap[(colormap[source[frac >> FRACBITS]] << 8) + *dest];
+					dest += vwidth;
+					frac += fracstep;
+					*dest = transmap[(colormap[source[frac >> FRACBITS]] << 8) + *dest];
+					dest += vwidth;
+					frac += fracstep;
+					*dest = transmap[(colormap[source[frac >> FRACBITS]] << 8) + *dest];
+					dest += vwidth;
+					frac += fracstep;
+					*dest = transmap[(colormap[source[frac >> FRACBITS]] << 8) + *dest];
+					dest += vwidth;
+					frac += fracstep;
+					if (frac >= heightmask)
+						frac -= heightmask;
+					count -= 4;
+				}
+				if (!count)
+					return;
+			}
+#endif
+
 			do
 			{
 				// Re-map color indices from wall texture column
 				// using a lighting/special effects LUT.
 				// heightmask is the Tutti-Frutti fix
 				*dest = *(transmap + (colormap[source[frac>>FRACBITS]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				if ((frac += fracstep) >= heightmask)
 					frac -= heightmask;
 			}
@@ -475,10 +749,10 @@ void R_DrawTranslucentColumn_8(void)
 			while ((count -= 2) >= 0) // texture height is a power of 2
 			{
 				*dest = *(transmap + (colormap[source[(frac>>FRACBITS)&heightmask]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 				*dest = *(transmap + (colormap[source[(frac>>FRACBITS)&heightmask]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 			}
 			if (count & 1)
@@ -492,6 +766,7 @@ void R_DrawTranslucentColumn_8(void)
 */
 void R_DrawTranslucentColumnClamped_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	INT32 count;
 	UINT8 *dest;
 	fixed_t frac, fracstep;
@@ -501,12 +776,23 @@ void R_DrawTranslucentColumnClamped_8(void)
 	if (count <= 0) // Zero length, column does not exceed a pixel.
 		return;
 
+#ifdef PS2_OPT_DRAW
+	if (count >= 8 && dc_texheight > 0 && dc_postlength >= dc_texheight
+		&& (!(dc_texheight & (dc_texheight - 1))
+			|| (dc_texheight <= 16384 && dc_iscale >= 0
+				&& dc_iscale < (dc_texheight << FRACBITS))))
+	{
+		R_DrawTranslucentColumn_8();
+		return;
+	}
+#endif
+
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		I_Error("R_DrawTranslucentColumnClamped_8: %d to %d at %d", dc_yl, dc_yh, dc_x);
 #endif
 
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	// Looks familiar.
 	fracstep = dc_iscale;
@@ -540,7 +826,7 @@ void R_DrawTranslucentColumnClamped_8(void)
 				idx = frac>>FRACBITS;
 				if (idx >= 0 && idx < dc_postlength)
 					*dest = *(transmap + (colormap[source[idx]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				if ((frac += fracstep) >= heightmask)
 					frac -= heightmask;
 			}
@@ -553,12 +839,12 @@ void R_DrawTranslucentColumnClamped_8(void)
 				idx = (frac>>FRACBITS)&heightmask;
 				if (idx >= 0 && idx < dc_postlength)
 					*dest = *(transmap + (colormap[source[idx]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 				idx = (frac>>FRACBITS)&heightmask;
 				if (idx >= 0 && idx < dc_postlength)
 					*dest = *(transmap + (colormap[source[idx]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 			}
 			if (count & 1)
@@ -578,6 +864,7 @@ void R_DrawTranslucentColumnClamped_8(void)
 // by not using those variables at all.
 void R_DrawDropShadowColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	register INT32 count;
 	register UINT8 *dest;
 
@@ -586,7 +873,7 @@ void R_DrawDropShadowColumn_8(void)
 	if (count <= 0) // Zero length, column does not exceed a pixel.
 		return;
 
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	{
 #define DSCOLOR 31 // palette index for the color of the shadow
@@ -595,9 +882,9 @@ void R_DrawDropShadowColumn_8(void)
 		while ((count -= 2) >= 0)
 		{
 			*dest = *(transmap_offset + (*dest));
-			dest += vid.width;
+			dest += vwidth;
 			*dest = *(transmap_offset + (*dest));
-			dest += vid.width;
+			dest += vwidth;
 		}
 		if (count & 1)
 			*dest = *(transmap_offset + (*dest));
@@ -610,6 +897,7 @@ void R_DrawDropShadowColumn_8(void)
 */
 void R_DrawTranslatedTranslucentColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	register INT32 count;
 	register UINT8 *dest;
 	register fixed_t frac, fracstep;
@@ -619,7 +907,7 @@ void R_DrawTranslatedTranslucentColumn_8(void)
 	if (count <= 0) // Zero length, column does not exceed a pixel.
 		return;
 
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	// Looks familiar.
 	fracstep = dc_iscale;
@@ -649,7 +937,7 @@ void R_DrawTranslatedTranslucentColumn_8(void)
 
 				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]]<<8) + (*dest));
 
-				dest += vid.width;
+				dest += vwidth;
 				if ((frac += fracstep) >= heightmask)
 					frac -= heightmask;
 			}
@@ -660,10 +948,10 @@ void R_DrawTranslatedTranslucentColumn_8(void)
 			while ((count -= 2) >= 0) // texture height is a power of 2
 			{
 				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
-				dest += vid.width;
+				dest += vwidth;
 				frac += fracstep;
 			}
 			if (count & 1)
@@ -679,6 +967,7 @@ void R_DrawTranslatedTranslucentColumn_8(void)
 */
 void R_DrawTranslatedColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	register INT32 count;
 	register UINT8 *dest;
 	register fixed_t frac, fracstep;
@@ -688,11 +977,11 @@ void R_DrawTranslatedColumn_8(void)
 		return;
 
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		I_Error("R_DrawTranslatedColumn_8: %d to %d at %d", dc_yl, dc_yh, dc_x);
 #endif
 
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	// Looks familiar.
 	fracstep = dc_iscale;
@@ -708,7 +997,7 @@ void R_DrawTranslatedColumn_8(void)
 		//  is mapped to gray, red, black/indigo.
 		*dest = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
 
-		dest += vid.width;
+		dest += vwidth;
 
 		frac += fracstep;
 	} while (count--);
@@ -718,8 +1007,18 @@ void R_DrawTranslatedColumn_8(void)
 // SPANS
 // ==========================================================================
 
+
 #define SPANSIZE 16
 #define INVSPAN 0.0625f
+
+#ifdef PS2_OPT_SLOPE
+// Slope drawers in single precision (hardware FPU on the R5900); see R_SetSlopePlane / DEVIATIONS PS2-16
+typedef float slopereal_t;
+#define SLOPE_U32(x) R_SlopeToU32(x)
+#else
+typedef double slopereal_t;
+#define SLOPE_U32(x) ((UINT32)(INT64)(x))
+#endif
 
 /**	\brief The R_DrawSpan_8 function
 	Draws the actual span.
@@ -736,6 +1035,7 @@ void R_DrawSpan_8 (void)
 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
 
 	size_t count = (ds_x2 - ds_x1 + 1);
+	PS2SUB_ADD(46, count); PS2SUB_N(47);
 
 	xposition = ds_xfrac; yposition = ds_yfrac;
 	xstep = ds_xstep; ystep = ds_ystep;
@@ -756,6 +1056,7 @@ void R_DrawSpan_8 (void)
 
 	if (dest+8 > deststop)
 		return;
+
 
 	while (count >= 8)
 	{
@@ -812,7 +1113,8 @@ void R_DrawTiltedSpan_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	PS2SUB_ADD(48, width + 1); PS2SUB_N(49);
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -820,9 +1122,9 @@ void R_DrawTiltedSpan_8(void)
 	UINT8 *colormap;
 	UINT8 *dest;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
@@ -840,7 +1142,7 @@ void R_DrawTiltedSpan_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -872,10 +1174,10 @@ void R_DrawTiltedSpan_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -893,14 +1195,14 @@ void R_DrawTiltedSpan_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			*dest = colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]];
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -909,10 +1211,10 @@ void R_DrawTiltedSpan_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -934,7 +1236,7 @@ void R_DrawTiltedTranslucentSpan_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -942,9 +1244,9 @@ void R_DrawTiltedTranslucentSpan_8(void)
 	UINT8 *colormap;
 	UINT8 *dest;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
@@ -962,7 +1264,7 @@ void R_DrawTiltedTranslucentSpan_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -993,10 +1295,10 @@ void R_DrawTiltedTranslucentSpan_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1014,14 +1316,14 @@ void R_DrawTiltedTranslucentSpan_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dest);
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1030,10 +1332,10 @@ void R_DrawTiltedTranslucentSpan_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -1055,7 +1357,7 @@ void R_DrawTiltedWaterSpan_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1064,9 +1366,9 @@ void R_DrawTiltedWaterSpan_8(void)
 	UINT8 *dest;
 	UINT8 *dsrc;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
@@ -1085,7 +1387,7 @@ void R_DrawTiltedWaterSpan_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -1116,10 +1418,10 @@ void R_DrawTiltedWaterSpan_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1137,14 +1439,14 @@ void R_DrawTiltedWaterSpan_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dsrc++);
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1153,10 +1455,10 @@ void R_DrawTiltedWaterSpan_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -1175,7 +1477,7 @@ void R_DrawTiltedSplat_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1185,9 +1487,9 @@ void R_DrawTiltedSplat_8(void)
 
 	UINT8 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
@@ -1205,7 +1507,7 @@ void R_DrawTiltedSplat_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -1240,10 +1542,10 @@ void R_DrawTiltedSplat_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1263,8 +1565,8 @@ void R_DrawTiltedSplat_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
 			if (val != TRANSPARENTPIXEL)
@@ -1272,7 +1574,7 @@ void R_DrawTiltedSplat_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1281,10 +1583,10 @@ void R_DrawTiltedSplat_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -1305,7 +1607,7 @@ void R_DrawTiltedTranslucentSplat_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1315,9 +1617,9 @@ void R_DrawTiltedTranslucentSplat_8(void)
 
 	UINT8 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
@@ -1335,7 +1637,7 @@ void R_DrawTiltedTranslucentSplat_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -1370,10 +1672,10 @@ void R_DrawTiltedTranslucentSplat_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1393,8 +1695,8 @@ void R_DrawTiltedTranslucentSplat_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
 			if (val != TRANSPARENTPIXEL)
@@ -1402,7 +1704,7 @@ void R_DrawTiltedTranslucentSplat_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1411,10 +1713,10 @@ void R_DrawTiltedTranslucentSplat_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -1873,7 +2175,7 @@ void R_DrawTiltedFloorSprite_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1883,9 +2185,9 @@ void R_DrawTiltedFloorSprite_8(void)
 	UINT8 *dest;
 	UINT16 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
@@ -1916,10 +2218,10 @@ void R_DrawTiltedFloorSprite_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1939,15 +2241,15 @@ void R_DrawTiltedFloorSprite_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
 			if (val & 0xFF00)
 				*dest = colormap[translation[val & 0xFF]];
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1956,10 +2258,10 @@ void R_DrawTiltedFloorSprite_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -1982,7 +2284,7 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1992,9 +2294,9 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
 	UINT8 *dest;
 	UINT16 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
@@ -2025,10 +2327,10 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -2048,15 +2350,15 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
 			if (val & 0xFF00)
 				*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -2065,10 +2367,10 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -2099,6 +2401,7 @@ void R_DrawTranslucentSpan_8 (void)
 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
 
 	size_t count = (ds_x2 - ds_x1 + 1);
+	PS2SUB_ADD(50, count); PS2SUB_N(51);
 	UINT32 val;
 
 	xposition = ds_xfrac; yposition = ds_yfrac;
@@ -2413,6 +2716,7 @@ void R_DrawTiltedWaterSolidColorSpan_8(void)
 */
 void R_DrawFogColumn_8(void)
 {
+	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
 	INT32 count;
 	UINT8 *dest;
 
@@ -2423,19 +2727,19 @@ void R_DrawFogColumn_8(void)
 		return;
 
 #ifdef RANGECHECK
-	if ((unsigned)dc_x >= (unsigned)vid.width || dc_yl < 0 || dc_yh >= vid.height)
+	if ((unsigned)dc_x >= (unsigned)vwidth || dc_yl < 0 || dc_yh >= vid.height)
 		I_Error("R_DrawFogColumn_8: %d to %d at %d", dc_yl, dc_yh, dc_x);
 #endif
 
 	// Framebuffer destination address.
-	dest = &topleft[dc_yl*vid.width + dc_x];
+	dest = &topleft[dc_yl*vwidth + dc_x];
 
 	// Determine scaling, which is the only mapping to be done.
 	do
 	{
 		// Simple. Apply the colormap to what's already on the screen.
 		*dest = dc_colormap[*dest];
-		dest += vid.width;
+		dest += vwidth;
 	} while (count--);
 }
 

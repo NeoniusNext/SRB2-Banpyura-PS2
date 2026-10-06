@@ -25,6 +25,9 @@ typedef struct
 {
 	mtag_t* tags;
 	UINT16 count;
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_taginline)
+	mtag_t inline_tag; // Uses the existing EE padding; singleton lists need no separate zone block.
+#endif
 } taglist_t;
 
 void Tag_Add (taglist_t* list, const mtag_t tag);
@@ -65,11 +68,15 @@ extern taggroups_t tags_sectors_t, tags_lines_t, tags_mapthings_t;
 #define tags_lines (&tags_lines_t)
 #define tags_mapthings (&tags_mapthings_t)
 #define TAGGROUPS_PARAM taggroups_t *garray
+#define TAGGROUPS_TYPE taggroups_t *
+taggroup_t *Taggroup_Lookup(const taggroups_t *garray, const mtag_t tag); // PS2-101: Lua's tag iterators; NULL if the tag has no group
 #else
 extern taggroup_t* tags_sectors[];
 extern taggroup_t* tags_lines[];
 extern taggroup_t* tags_mapthings[];
 #define TAGGROUPS_PARAM taggroup_t *garray[]
+#define TAGGROUPS_TYPE taggroup_t **
+#define Taggroup_Lookup(garray, tag) ((garray)[(tag)])
 #endif
 
 void Taggroup_Add (TAGGROUPS_PARAM, const mtag_t tag, size_t id);

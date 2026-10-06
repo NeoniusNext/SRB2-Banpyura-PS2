@@ -35,9 +35,9 @@
 // we try to re-allocate a minimum of buffers for stability of the memory,
 // so all the small-enough tables based on screen size, are allocated once
 // and for all at the maximum size.
-#ifdef PS2
-#define MAXVIDWIDTH 320 // fixed 320x200 output; shrinks every MAX-sized table
-#define MAXVIDHEIGHT 240
+#if defined (PS2) || defined (PS2_VIDLIMIT) // PS2_VIDLIMIT: host test build (tools/ps2/build_host_video.ps1) with the PS2 table sizes
+#define MAXVIDWIDTH 640 // the biggest PS2 video mode (src/ps2/ps2_vmodes.h, docs/VIDEO_MODES.md) is 640x512;
+#define MAXVIDHEIGHT 512 // every MAX-sized table is sized for it
 #else
 #define MAXVIDWIDTH 1920 // don't set this too high because actually
 #define MAXVIDHEIGHT 1200 // lots of tables are allocated with the MAX size.
@@ -164,6 +164,10 @@ extern INT32 scr_bpp;
 
 extern consvar_t cv_scr_width, cv_scr_height, cv_scr_width_w, cv_scr_height_w, cv_scr_depth, cv_fullscreen;
 extern consvar_t cv_renderer;
+#ifdef PS2
+extern consvar_t cv_vidoutput, cv_vidfit, cv_vidfilter; // src/ps2/i_video.c: GS output format, picture placement, smoothing
+const char *PS2Video_OutputNote(void); // a line for the Video Options menu about the selected output format, or NULL
+#endif
 // wait for page flipping to end or not
 extern consvar_t cv_vidwait;
 extern consvar_t cv_timescale;

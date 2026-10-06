@@ -712,9 +712,21 @@ static inline void P_DoCTFStuff(void)
 //
 // P_Ticker
 //
+#ifdef PS2_OPT_PTICK
+extern UINT32 ps2_ingamemask; // p_enemy.c, PS2-97
+#endif
 void P_Ticker(boolean run)
 {
 	INT32 i;
+
+#ifdef PS2_OPT_PTICK
+	{
+		UINT32 m = 0;
+		for (i = 0; i < MAXPLAYERS; i++)
+			m |= (UINT32)(playeringame[i] != 0) << i;
+		ps2_ingamemask = m;
+	}
+#endif
 
 	// Increment jointime even if paused
 	for (i = 0; i < MAXPLAYERS; i++)

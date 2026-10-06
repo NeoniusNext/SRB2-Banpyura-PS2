@@ -61,8 +61,19 @@ extern UINT8 *ds_source;
 extern UINT8 *ds_transmap;
 
 // Vectors for Software's tilted slope drawers
+#ifdef PS2_OPT_SLOPE
+// The R5900 FPU is single precision only (double = libgcc soft-float): the span drawers take float vectors
+// prepared in fixed point by R_SetSlopePlane (PS2-16).
+typedef struct
+{
+	float x, y, z;
+} fvector3_t;
+extern fvector3_t ds_su, ds_sv, ds_sz, ds_slopelight;
+extern float ds_lightscale; // slope light -> light index factor of the current plane
+#else
 extern dvector3_t ds_su, ds_sv, ds_sz, ds_slopelight;
 extern double zeroheight;
+#endif
 extern float focallengthf;
 
 // Variable flat sizes

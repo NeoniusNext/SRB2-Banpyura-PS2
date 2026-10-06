@@ -17,7 +17,7 @@
 #include "d_clisrv.h"
 
 #ifdef PS2_PROFILE
-#define MAXSERVERLIST 16 // PS2-11: no network, the list stays empty (1.3 KB per entry)
+#define MAXSERVERLIST 16 // PS2-11/PS2-125: no master server, the list holds LAN/direct answers only (1.3 KB per entry)
 #else
 #define MAXSERVERLIST (MAXNETNODES-1)
 #endif

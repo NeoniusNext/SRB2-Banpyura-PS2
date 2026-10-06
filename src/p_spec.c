@@ -5343,11 +5343,28 @@ void P_UpdateSpecials(void)
 	// ANIMATE TEXTURES
 	for (anim_t *anim = anims; anim < lastanim; anim++)
 	{
+#ifdef PS2_OPT_ANIM
+		// PS2-99: ((q + i) % n) == ((q % n) + i) % n: one division per animation instead of two per frame of it
+		const tic_t n = (tic_t)anim->numpics;
+		const tic_t r = n ? (leveltime/anim->speed) % n : 0;
+		for (INT32 i = 0; i < anim->numpics; i++)
+		{
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 7 // negative control: the animation runs one picture ahead
+			tic_t idx = r + (tic_t)i + 1;
+#else
+			tic_t idx = r + (tic_t)i;
+#endif
+			if (idx >= n)
+				idx -= n;
+			texturetranslation[anim->basepic+i] = anim->basepic + (INT32)idx;
+		}
+#else
 		for (INT32 i = 0; i < anim->numpics; i++)
 		{
 			INT32 pic = anim->basepic + ((leveltime/anim->speed + i) % anim->numpics);
 			texturetranslation[anim->basepic+i] = pic;
 		}
+#endif
 	}
 }
 

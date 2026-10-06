@@ -1342,7 +1342,7 @@ void HWR_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color)
  #endif
 #endif
 
-#ifndef USE_PNG
+#if !defined(USE_PNG) || defined(PS2_PROFILE)
 // --------------------------------------------------------------------------
 // save screenshots with TGA format
 // --------------------------------------------------------------------------
@@ -1418,7 +1418,7 @@ boolean HWR_Screenshot(const char *pathname)
 	// returns 24bit 888 RGB
 	HWD.pfnReadScreenTexture(tex, (void *)buf);
 
-#ifdef USE_PNG
+#if defined(USE_PNG) && !defined(PS2_PROFILE) // PS2-HW-22: m_misc.c compiles M_SavePNG out of the PS2 profile (PS2-20); TGA
 	ret = M_SavePNG(pathname, buf, vid.width, vid.height, NULL);
 #else
 	ret = saveTGA(pathname, buf, vid.width, vid.height);

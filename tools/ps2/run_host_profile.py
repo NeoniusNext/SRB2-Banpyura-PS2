@@ -61,23 +61,33 @@ def main():
     parser.add_argument("--exe", type=Path, default=ROOT / "build/host-profile-g1/bin/Release/srb2-host-profile-g1.exe")
     parser.add_argument("--golden", type=Path, default=ROOT / "golden/phase0-v2/run1")
     parser.add_argument("--output", type=Path, default=ROOT / "build/host-profile-g1/equivalence")
-    parser.add_argument("--packs", type=Path, default=ROOT / "build/pak")
+    parser.add_argument("--packs", type=Path, default=ROOT / "build/pak-a")
     parser.add_argument("--dependencies", type=Path, default=Path("D:/AI-projects/SRB2B-plus/build/deps/vcpkg_installed"))
     parser.add_argument("--timeout", type=int, default=240)
     args = parser.parse_args()
     exe, golden, base, packs = (p.resolve() for p in (args.exe, args.golden, args.output, args.packs))
     inputs = [exe] + [packs / name for name in ("SRB2.PAK", "ZONES.PAK", "CHARS.PAK", "MUSIC.PAK")]
+    inputs += sorted(packs.glob("*.pics.json"))
     for demo in DEMOS:
         inputs += [golden.parent / (demo + ".lmp"), golden / demo / "command.json",
                    golden / demo / "home/srb2/reference.cfg"]
         inputs += [p for p in (golden / demo).iterdir() if p.is_file()]
+    dependencies = args.dependencies.resolve()
+    depbin = dependencies / "x64-windows/bin"
+    if not depbin.is_dir():
+        parser.error(f"missing host dependency DLL directory: {depbin}")
+    # Audio codecs in the shared SDL_mixer DLL can transitively depend on zlib;
+    # these are host playback dependencies, not the engine PNG/ZIP runtime.
+    inputs += sorted(depbin.glob("*.dll"))
+    inputs = list(dict.fromkeys(inputs))
     before = {str(p): digest(p) for p in inputs}
     base.mkdir(parents=True, exist_ok=False)
     report = {"executable": str(exe), "golden": str(golden), "packs": str(packs),
-              "input_sha256": before, "demos": {}}
+               "dependencies": str(dependencies), "dependency_bin": str(depbin),
+               "input_sha256": before, "demos": {}}
     (base / "report.json").write_text(json.dumps(report, indent=2))
     env = dict(os.environ, SRB2WADDIR=str(packs))
-    env["PATH"] = str(args.dependencies / "x64-windows/bin") + os.pathsep + env.get("PATH", "")
+    env["PATH"] = str(depbin) + os.pathsep + env.get("PATH", "")
     startup = None
     if os.name == "nt":
         startup = subprocess.STARTUPINFO()
@@ -127,6 +137,7 @@ def main():
                     result["end_leveltic"] = data[-1]["leveltic"]
         result["idx_files"] = len(list(out.glob("*.idx")))
         result["comparison"] = compare(reference, out)
+        result["pcm_files"] = len(list(out.glob("*.pcm")))
         failed |= bool(result["comparison"]["differences"])
         report["demos"][demo] = result
         (base / "report.json").write_text(json.dumps(report, indent=2))
@@ -136,8 +147,18 @@ def main():
     report["inputs_changed"] = [str(p) for p in inputs if digest(p) != before[str(p)]]
     failed |= bool(report["inputs_changed"])
     report["passed"] = not failed
+    report["totals"] = {
+        "tics": sum(r.get("tics.csv_rows", 0) for r in report["demos"].values()),
+        "frames": sum(r["idx_files"] for r in report["demos"].values()),
+        "soc_rows": sum(r.get("soc.tsv_rows", 0) for r in report["demos"].values()),
+        "pcm_files": sum(r["pcm_files"] for r in report["demos"].values()),
+        "compared_files": sum(r["comparison"]["compared_files"] for r in report["demos"].values()),
+        "differences": sum(len(r["comparison"]["differences"]) for r in report["demos"].values()),
+        "inputs": len(inputs), "inputs_changed": len(report["inputs_changed"]),
+    }
     (base / "report.json").write_text(json.dumps(report, indent=2))
     print("Report:", base / "report.json", flush=True)
+    print("Totals:", json.dumps(report["totals"], sort_keys=True), flush=True)
     return int(failed)
 
 

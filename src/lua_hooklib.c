@@ -53,7 +53,12 @@ typedef struct {
 
 static hook_t hookIds[HOOK(MAX)];
 static hook_t hudHookIds[HUD_HOOK(MAX)];
+#ifdef PS2_PROFILE
+// PS2-101: NUMMOBJTYPES rows of hook lists is 100 KB of .bss with the base game's types, more with freeslots: allocated by the first mobj hook
+static hook_t (*mobjHookIds)[MOBJ_HOOK(MAX)];
+#else
 static hook_t mobjHookIds[NUMMOBJTYPES][MOBJ_HOOK(MAX)];
+#endif
 
 // Lua tables are used to lookup string hook ids.
 static stringhook_t stringHooks[STRING_HOOK(MAX)];
@@ -69,6 +74,10 @@ static int errorRef;
 
 static boolean mobj_hook_available(int hook_type, mobjtype_t mobj_type)
 {
+#ifdef PS2_PROFILE
+	if (!mobjHookIds)
+		return false;
+#endif
 	return
 		(
 				mobjHookIds [MT_NULL] [hook_type].numHooks > 0 ||
@@ -170,6 +179,10 @@ static void add_mobj_hook(lua_State *L, int hook_type)
 
 	luaL_argcheck(L, mobj_type < NUMMOBJTYPES, 3, "invalid mobjtype_t");
 
+#ifdef PS2_PROFILE
+	if (!mobjHookIds)
+		mobjHookIds = Z_Calloc(sizeof (*mobjHookIds) * NUMMOBJTYPES, PU_STATIC, &mobjHookIds);
+#endif
 	add_hook(&mobjHookIds[mobj_type][hook_type]);
 }
 

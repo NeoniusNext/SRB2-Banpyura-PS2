@@ -26,7 +26,7 @@ extern "C" {
 
 typedef struct huddrawlist_s *huddrawlist_h;
 
-#ifdef PS2_PROFILE
+#ifndef HAS_LUA
 // no Lua: draw lists are never filled, so the handle is always NULL and drawing is a no-op
 static inline huddrawlist_h LUA_HUD_CreateDrawList(void) { return NULL; }
 static inline void LUA_HUD_ClearDrawList(huddrawlist_h list) {}
@@ -152,7 +152,7 @@ void LUA_HUD_AddFadeScreen(
 
 // Draws the given draw list
 void LUA_HUD_DrawList(huddrawlist_h list);
-#endif // !PS2_PROFILE
+#endif // !HAS_LUA
 
 #ifdef __cplusplus
 } // extern "C"

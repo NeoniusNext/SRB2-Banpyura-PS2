@@ -97,9 +97,70 @@ src/ps2/i_system.c
 src/ps2/i_video.c
 src/ps2/ps2_gs.c
 src/ps2/i_sound.c
+src/ps2/ps2_audio.c
+src/ps2/ps2_athread.c
+src/ps2/ps2_music.c
+src/ps2/ps2_midi.c
 src/ps2/i_joy.c
-src/ps2/lua_stub.c
+src/ps2/lua_stub.c  # unless:lua
 src/ps2/soc_numbers.c
 src/ps2/net_stub.c
+src/ps2/ps2_curl.c
+src/ps2/ps2_osk.c
+src/netcode/mserv.c
+src/netcode/http-mserv.c
+src/ps2/ps2_net.c
+src/netcode/i_tcp.c
+src/netcode/d_netfil.c
 src/ps2/ps2_boot.c
 src/ps2/ps2_padmap.c
+src/ps2/ps2_mem.c
+src/ps2/ps2_ftest.c
+# OPT6-F: the Lua VM (blua) and the Lua libraries, compiled only with the lua feature (SRB2_PS2_NO=lua leaves them out and uses lua_stub.c)
+src/deh_lua.c  # feature:lua
+src/lua_script.c  # feature:lua
+src/lua_baselib.c  # feature:lua
+src/lua_mathlib.c  # feature:lua
+src/lua_hooklib.c  # feature:lua
+src/lua_consolelib.c  # feature:lua
+src/lua_infolib.c  # feature:lua
+src/lua_mobjlib.c  # feature:lua
+src/lua_playerlib.c  # feature:lua
+src/lua_skinlib.c  # feature:lua
+src/lua_thinkerlib.c  # feature:lua
+src/lua_maplib.c  # feature:lua
+src/lua_taglib.c  # feature:lua
+src/lua_polyobjlib.c  # feature:lua
+src/lua_blockmaplib.c  # feature:lua
+src/lua_hudlib.c  # feature:lua
+src/lua_hudlib_drawlist.c  # feature:lua
+src/lua_colorlib.c  # feature:lua
+src/lua_inputlib.c  # feature:lua
+src/lua_banpyura.c  # feature:lua
+src/lua_httplib.c  # feature:lua
+src/blua/lapi.c  # feature:lua
+src/blua/lbaselib.c  # feature:lua
+src/blua/ldo.c  # feature:lua
+src/blua/lfunc.c  # feature:lua
+src/blua/linit.c  # feature:lua
+src/blua/liolib.c  # feature:lua
+src/blua/llex.c  # feature:lua
+src/blua/lmem.c  # feature:lua
+src/blua/lobject.c  # feature:lua
+src/blua/lstate.c  # feature:lua
+src/blua/lstrlib.c  # feature:lua
+src/blua/ltablib.c  # feature:lua
+src/blua/lundump.c  # feature:lua
+src/blua/lzio.c  # feature:lua
+src/blua/lauxlib.c  # feature:lua
+src/blua/lcode.c  # feature:lua
+src/blua/ldebug.c  # feature:lua
+src/blua/ldump.c  # feature:lua
+src/blua/lgc.c  # feature:lua
+src/blua/lopcodes.c  # feature:lua
+src/blua/lparser.c  # feature:lua
+src/blua/lstring.c  # feature:lua
+src/blua/ltable.c  # feature:lua
+src/blua/ltm.c  # feature:lua
+src/blua/lvm.c  # feature:lua
+src/blua/loslib.c  # feature:lua

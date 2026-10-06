@@ -571,7 +571,13 @@ void A_DragonWing(void *actor);
 void A_DragonSegment(void *actor);
 void A_ChangeHeight(void *actor);
 
+#ifdef PS2_PROFILE
+// PS2-101: the Lua action overrides (NUMACTIONS x MAX_ACTION_RECURSION references, 32 KB) exist only once a script defines an A_ function
+extern int (*actionsoverridden)[MAX_ACTION_RECURSION];
+void LUA_AllocActionsOverridden(void);
+#else
 extern int actionsoverridden[NUMACTIONS][MAX_ACTION_RECURSION];
+#endif
 
 // ratio of states to sprites to mobj types is roughly 6 : 1 : 1
 #ifdef PS2_PROFILE

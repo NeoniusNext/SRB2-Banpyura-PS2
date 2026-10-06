@@ -75,5 +75,8 @@ void Net_CloseConnection(INT32 node);
 void Net_ConnectionTimeout(INT32 node);
 void Net_AbortPacketType(UINT8 packettype);
 void Net_SendAcks(INT32 node);
+#ifdef PS2_PROFILE
+void Net_GrowAckTable(void); // PS2-123: 16 loopback slots -> the full table when the sockets open
+#endif
 
 #endif

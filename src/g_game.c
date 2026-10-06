@@ -843,7 +843,11 @@ const char *G_BuildMapName(INT32 map)
 	I_Assert(map <= NUMMAPS);
 
 	if (map < 100)
-		sprintf(&mapname[3], "%.2d", map);
+	{
+		mapname[3] = (char)('0' + map / 10);
+		mapname[4] = (char)('0' + map % 10);
+		mapname[5] = '\0';
+	}
 	else
 	{
 		mapname[3] = (char)('A' + (char)((map - 100) / 36));

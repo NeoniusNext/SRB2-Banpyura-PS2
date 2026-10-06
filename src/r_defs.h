@@ -620,6 +620,101 @@ typedef struct line_s
 	struct pslope_s *midtexslope;
 } line_t;
 
+// PS2-OPT-02: the per-texture UDMF fields of a sidedef (offsets, scales, light) can only differ from their binary-map
+// defaults (0, FRACUNIT, 0, false) when a UDMF map or Lua sets them; the PS2 profile has neither, so there they are
+// not stored (36 bytes per side instead of 96) and the software renderer reads the defaults. The GS hardware renderer
+// (HWRENDER) reads them, so it keeps the full structure.
+// PS2-74: the hardware build keeps them only until src/hardware/hw_main.c reads them through the accessors below (tools/ps2/hw_side_accessors.py
+// rewrites it); -DPS2_HW_SIDE_COMPACT selects the 36-byte side for that build (2.6 MB on MAP11).
+#if !defined(PS2_PROFILE) || (defined(HWRENDER) && !defined(PS2_HW_SIDE_COMPACT))
+#define SIDE_UDMF
+#endif
+
+// Accessors of the UDMF-only fields for the code that reads them (the software renderer): where the fields are not
+// stored they are the binary-map defaults. Use only for reading.
+// PS2-102: with UDMF maps or Lua (HAS_UDMF/HAS_LUA) the compact side still can have these fields: they live in a per-level array parallel to sides[]
+// (sideudmf, 60 bytes per side, allocated by the first write: a UDMF map that sets one, a Lua script that assigns one), NULL for the binary maps of the
+// base game. SIDER(s) is the side for reading (the defaults without the array), SIDEW(s) for writing (allocates the array); the full struct is its own.
+#ifdef SIDE_UDMF
+#define SIDER(s) (s)
+#define SIDEW(s) (s)
+#define SIDE_OFFSETX_TOP(s) ((s)->offsetx_top)
+#define SIDE_OFFSETX_MID(s) ((s)->offsetx_mid)
+#define SIDE_OFFSETX_BOTTOM(s) ((s)->offsetx_bottom)
+#define SIDE_OFFSETY_TOP(s) ((s)->offsety_top)
+#define SIDE_OFFSETY_MID(s) ((s)->offsety_mid)
+#define SIDE_OFFSETY_BOTTOM(s) ((s)->offsety_bottom)
+#define SIDE_SCALEX_TOP(s) ((s)->scalex_top)
+#define SIDE_SCALEX_MID(s) ((s)->scalex_mid)
+#define SIDE_SCALEX_BOTTOM(s) ((s)->scalex_bottom)
+#define SIDE_SCALEY_TOP(s) ((s)->scaley_top)
+#define SIDE_SCALEY_MID(s) ((s)->scaley_mid)
+#define SIDE_SCALEY_BOTTOM(s) ((s)->scaley_bottom)
+#define SIDE_LIGHT(s) ((s)->light)
+#define SIDE_LIGHT_TOP(s) ((s)->light_top)
+#define SIDE_LIGHT_MID(s) ((s)->light_mid)
+#define SIDE_LIGHT_BOTTOM(s) ((s)->light_bottom)
+#define SIDE_LIGHTABSOLUTE(s) ((s)->lightabsolute)
+#define SIDE_LIGHTABSOLUTE_TOP(s) ((s)->lightabsolute_top)
+#define SIDE_LIGHTABSOLUTE_MID(s) ((s)->lightabsolute_mid)
+#define SIDE_LIGHTABSOLUTE_BOTTOM(s) ((s)->lightabsolute_bottom)
+#elif defined(HAS_UDMF) || defined(HAS_LUA)
+typedef struct
+{
+	fixed_t offsetx_top, offsetx_mid, offsetx_bottom;
+	fixed_t offsety_top, offsety_mid, offsety_bottom;
+	fixed_t scalex_top, scalex_mid, scalex_bottom;
+	fixed_t scaley_top, scaley_mid, scaley_bottom;
+	INT16 light, light_top, light_mid, light_bottom;
+	boolean lightabsolute, lightabsolute_top, lightabsolute_mid, lightabsolute_bottom;
+} sideudmf_t;
+extern sideudmf_t *sideudmf; // NULL: every side has the binary-map defaults
+extern const sideudmf_t sideudmf_default;
+#define SIDER(s) (sideudmf ? &sideudmf[(s) - sides] : &sideudmf_default)
+#define SIDEW(s) R_SideUDMFW(s)
+#define SIDE_OFFSETX_TOP(s) (SIDER(s)->offsetx_top)
+#define SIDE_OFFSETX_MID(s) (SIDER(s)->offsetx_mid)
+#define SIDE_OFFSETX_BOTTOM(s) (SIDER(s)->offsetx_bottom)
+#define SIDE_OFFSETY_TOP(s) (SIDER(s)->offsety_top)
+#define SIDE_OFFSETY_MID(s) (SIDER(s)->offsety_mid)
+#define SIDE_OFFSETY_BOTTOM(s) (SIDER(s)->offsety_bottom)
+#define SIDE_SCALEX_TOP(s) (SIDER(s)->scalex_top)
+#define SIDE_SCALEX_MID(s) (SIDER(s)->scalex_mid)
+#define SIDE_SCALEX_BOTTOM(s) (SIDER(s)->scalex_bottom)
+#define SIDE_SCALEY_TOP(s) (SIDER(s)->scaley_top)
+#define SIDE_SCALEY_MID(s) (SIDER(s)->scaley_mid)
+#define SIDE_SCALEY_BOTTOM(s) (SIDER(s)->scaley_bottom)
+#define SIDE_LIGHT(s) (SIDER(s)->light)
+#define SIDE_LIGHT_TOP(s) (SIDER(s)->light_top)
+#define SIDE_LIGHT_MID(s) (SIDER(s)->light_mid)
+#define SIDE_LIGHT_BOTTOM(s) (SIDER(s)->light_bottom)
+#define SIDE_LIGHTABSOLUTE(s) (SIDER(s)->lightabsolute)
+#define SIDE_LIGHTABSOLUTE_TOP(s) (SIDER(s)->lightabsolute_top)
+#define SIDE_LIGHTABSOLUTE_MID(s) (SIDER(s)->lightabsolute_mid)
+#define SIDE_LIGHTABSOLUTE_BOTTOM(s) (SIDER(s)->lightabsolute_bottom)
+#else
+#define SIDE_OFFSETX_TOP(s) ((void)(s), (fixed_t)0)
+#define SIDE_OFFSETX_MID(s) ((void)(s), (fixed_t)0)
+#define SIDE_OFFSETX_BOTTOM(s) ((void)(s), (fixed_t)0)
+#define SIDE_OFFSETY_TOP(s) ((void)(s), (fixed_t)0)
+#define SIDE_OFFSETY_MID(s) ((void)(s), (fixed_t)0)
+#define SIDE_OFFSETY_BOTTOM(s) ((void)(s), (fixed_t)0)
+#define SIDE_SCALEX_TOP(s) ((void)(s), (fixed_t)FRACUNIT)
+#define SIDE_SCALEX_MID(s) ((void)(s), (fixed_t)FRACUNIT)
+#define SIDE_SCALEX_BOTTOM(s) ((void)(s), (fixed_t)FRACUNIT)
+#define SIDE_SCALEY_TOP(s) ((void)(s), (fixed_t)FRACUNIT)
+#define SIDE_SCALEY_MID(s) ((void)(s), (fixed_t)FRACUNIT)
+#define SIDE_SCALEY_BOTTOM(s) ((void)(s), (fixed_t)FRACUNIT)
+#define SIDE_LIGHT(s) ((void)(s), (INT16)0)
+#define SIDE_LIGHT_TOP(s) ((void)(s), (INT16)0)
+#define SIDE_LIGHT_MID(s) ((void)(s), (INT16)0)
+#define SIDE_LIGHT_BOTTOM(s) ((void)(s), (INT16)0)
+#define SIDE_LIGHTABSOLUTE(s) ((void)(s), (boolean)false)
+#define SIDE_LIGHTABSOLUTE_TOP(s) ((void)(s), (boolean)false)
+#define SIDE_LIGHTABSOLUTE_MID(s) ((void)(s), (boolean)false)
+#define SIDE_LIGHTABSOLUTE_BOTTOM(s) ((void)(s), (boolean)false)
+#endif
+
 typedef struct
 {
 	// add this to the calculated texture column
@@ -628,6 +723,7 @@ typedef struct
 	// add this to the calculated texture top
 	fixed_t rowoffset;
 
+#ifdef SIDE_UDMF
 	// per-texture offsets for UDMF
 	fixed_t offsetx_top, offsetx_mid, offsetx_bottom;
 	fixed_t offsety_top, offsety_mid, offsety_bottom;
@@ -639,6 +735,7 @@ typedef struct
 	// TODO: implement per-texture lighting
 	INT16 light, light_top, light_mid, light_bottom;
 	boolean lightabsolute, lightabsolute_top, lightabsolute_mid, lightabsolute_bottom;
+#endif
 
 	// Texture indices.
 	// We do not maintain names here.
@@ -655,6 +752,61 @@ typedef struct
 
 	extracolormap_t *colormap_data; // storage for colormaps; not applied to sectors.
 } side_t;
+
+#if !defined(SIDE_UDMF) && (defined(HAS_UDMF) || defined(HAS_LUA))
+sideudmf_t *R_SideUDMFW(const side_t *side); // p_setup.c: the UDMF part of this side for writing (allocates the array on first use)
+#endif
+
+#ifdef PS2_PROFILE
+// PS2-OPT-02: the state of the level as it spawned, kept for the save game diffs (p_saveg.c compares the live
+// sectors/lines/sides with it). Only the fields those diffs read are kept (the vanilla copies are whole structures:
+// 9.2 MB of the 31 MB that MAP11 needs on the EE).
+typedef struct
+{
+	fixed_t floorheight, ceilingheight;
+	INT32 floorpic, ceilingpic;
+	INT16 lightlevel, special;
+	taglist_t tags;
+	fixed_t floorxoffset, flooryoffset, ceilingxoffset, ceilingyoffset;
+	fixed_t floorxscale, flooryscale, ceilingxscale, ceilingyscale;
+	angle_t floorangle, ceilingangle;
+	INT16 floorlightlevel, ceilinglightlevel;
+	boolean floorlightabsolute, ceilinglightabsolute;
+	extracolormap_t *extra_colormap;
+	fixed_t gravity;
+	sectorflags_t flags;
+	sectorspecialflags_t specialflags;
+	UINT32 portal_floor, portal_ceiling;
+	mtag_t triggertag;
+	UINT8 damagetype, triggerer;
+} spawnsector_t;
+
+typedef struct
+{
+	INT32 args[NUMLINEARGS];
+	char *stringargs[NUMLINESTRINGARGS];
+	INT32 executordelay;
+	UINT32 secportal;
+	INT16 special;
+} spawnline_t;
+
+typedef struct
+{
+	fixed_t textureoffset, rowoffset;
+	INT32 toptexture, bottomtexture, midtexture;
+	INT16 repeatcnt;
+#ifdef SIDE_UDMF
+	fixed_t offsetx_top, offsetx_mid, offsetx_bottom, offsety_top, offsety_mid, offsety_bottom;
+	fixed_t scalex_top, scalex_mid, scalex_bottom, scaley_top, scaley_mid, scaley_bottom;
+	INT16 light, light_top, light_mid, light_bottom;
+	boolean lightabsolute, lightabsolute_top, lightabsolute_mid, lightabsolute_bottom;
+#endif
+} spawnside_t;
+#else
+typedef sector_t spawnsector_t;
+typedef line_t spawnline_t;
+typedef side_t spawnside_t;
+#endif
 
 //
 // A subsector.
@@ -855,7 +1007,12 @@ typedef struct drawseg_s
 	struct ffloor_s *thicksides[MAXFFLOORS];
 	fixed_t *thicksidecol;
 	INT32 numthicksides;
+#ifdef PS2_PROFILE
+	fixed_t *frontscale; // allocated only for drawsegs that own FOF planes
+	INT32 frontscalewidth;
+#else
 	fixed_t frontscale[MAXVIDWIDTH];
+#endif
 
 	UINT8 portalpass; // if > 0 and <= portalrender, do not affect sprite clipping
 
@@ -889,6 +1046,9 @@ typedef struct
 
 #ifdef ROTSPRITE
 	rotsprite_t *rotated; // Rotated patches
+#endif
+#ifdef PS2_PROFILE
+	UINT8 embedded; // PS2-OPT-03: pixels/columns/posts live in the same zone block as this structure (r_patch.c)
 #endif
 } patch_t;
 

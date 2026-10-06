@@ -1269,42 +1269,42 @@ static int side_get(lua_State *L)
 		lua_pushfixed(L, side->rowoffset);
 		return 1;
 	case side_offsetx_top:
-		lua_pushfixed(L, side->offsetx_top);
+		lua_pushfixed(L, SIDER(side)->offsetx_top);
 		return 1;
 	case side_offsety_top:
-		lua_pushfixed(L, side->offsety_top);
+		lua_pushfixed(L, SIDER(side)->offsety_top);
 		return 1;
 	case side_offsetx_mid:
-		lua_pushfixed(L, side->offsetx_mid);
+		lua_pushfixed(L, SIDER(side)->offsetx_mid);
 		return 1;
 	case side_offsety_mid:
-		lua_pushfixed(L, side->offsety_mid);
+		lua_pushfixed(L, SIDER(side)->offsety_mid);
 		return 1;
 	case side_offsetx_bottom:
 	case side_offsetx_bot:
-		lua_pushfixed(L, side->offsetx_bottom);
+		lua_pushfixed(L, SIDER(side)->offsetx_bottom);
 		return 1;
 	case side_offsety_bottom:
 	case side_offsety_bot:
-		lua_pushfixed(L, side->offsety_bottom);
+		lua_pushfixed(L, SIDER(side)->offsety_bottom);
 		return 1;
 	case side_scalex_top:
-		lua_pushfixed(L, side->scalex_top);
+		lua_pushfixed(L, SIDER(side)->scalex_top);
 		return 1;
 	case side_scaley_top:
-		lua_pushfixed(L, side->scaley_top);
+		lua_pushfixed(L, SIDER(side)->scaley_top);
 		return 1;
 	case side_scalex_mid:
-		lua_pushfixed(L, side->scalex_mid);
+		lua_pushfixed(L, SIDER(side)->scalex_mid);
 		return 1;
 	case side_scaley_mid:
-		lua_pushfixed(L, side->scaley_mid);
+		lua_pushfixed(L, SIDER(side)->scaley_mid);
 		return 1;
 	case side_scalex_bottom:
-		lua_pushfixed(L, side->scalex_bottom);
+		lua_pushfixed(L, SIDER(side)->scalex_bottom);
 		return 1;
 	case side_scaley_bottom:
-		lua_pushfixed(L, side->scaley_bottom);
+		lua_pushfixed(L, SIDER(side)->scaley_bottom);
 		return 1;
 	case side_toptexture:
 		lua_pushinteger(L, side->toptexture);
@@ -1328,28 +1328,28 @@ static int side_get(lua_State *L)
 		lua_pushinteger(L, side->repeatcnt);
 		return 1;
 	case side_light:
-		lua_pushinteger(L, side->light);
+		lua_pushinteger(L, SIDER(side)->light);
 		return 1;
 	case side_light_top:
-		lua_pushinteger(L, side->light_top);
+		lua_pushinteger(L, SIDER(side)->light_top);
 		return 1;
 	case side_light_mid:
-		lua_pushinteger(L, side->light_mid);
+		lua_pushinteger(L, SIDER(side)->light_mid);
 		return 1;
 	case side_light_bottom:
-		lua_pushinteger(L, side->light_bottom);
+		lua_pushinteger(L, SIDER(side)->light_bottom);
 		return 1;
 	case side_lightabsolute:
-		lua_pushboolean(L, side->lightabsolute);
+		lua_pushboolean(L, SIDER(side)->lightabsolute);
 		return 1;
 	case side_lightabsolute_top:
-		lua_pushboolean(L, side->lightabsolute_top);
+		lua_pushboolean(L, SIDER(side)->lightabsolute_top);
 		return 1;
 	case side_lightabsolute_mid:
-		lua_pushboolean(L, side->lightabsolute_mid);
+		lua_pushboolean(L, SIDER(side)->lightabsolute_mid);
 		return 1;
 	case side_lightabsolute_bottom:
-		lua_pushboolean(L, side->lightabsolute_bottom);
+		lua_pushboolean(L, SIDER(side)->lightabsolute_bottom);
 		return 1;
 	// TODO: 2.3: Delete
 	case side_text:
@@ -1404,42 +1404,42 @@ static int side_set(lua_State *L)
 		side->rowoffset = luaL_checkfixed(L, 3);
 		break;
 	case side_offsetx_top:
-		side->offsetx_top = luaL_checkfixed(L, 3);
+		SIDEW(side)->offsetx_top = luaL_checkfixed(L, 3);
 		break;
 	case side_offsety_top:
-		side->offsety_top = luaL_checkfixed(L, 3);
+		SIDEW(side)->offsety_top = luaL_checkfixed(L, 3);
 		break;
 	case side_offsetx_mid:
-		side->offsetx_mid = luaL_checkfixed(L, 3);
+		SIDEW(side)->offsetx_mid = luaL_checkfixed(L, 3);
 		break;
 	case side_offsety_mid:
-		side->offsety_mid = luaL_checkfixed(L, 3);
+		SIDEW(side)->offsety_mid = luaL_checkfixed(L, 3);
 		break;
 	case side_offsetx_bot:
 	case side_offsetx_bottom:
-		side->offsetx_bottom = luaL_checkfixed(L, 3);
+		SIDEW(side)->offsetx_bottom = luaL_checkfixed(L, 3);
 		break;
 	case side_offsety_bot:
 	case side_offsety_bottom:
-		side->offsety_bottom = luaL_checkfixed(L, 3);
+		SIDEW(side)->offsety_bottom = luaL_checkfixed(L, 3);
 		break;
 	case side_scalex_top:
-		side->scalex_top = luaL_checkfixed(L, 3);
+		SIDEW(side)->scalex_top = luaL_checkfixed(L, 3);
 		break;
 	case side_scaley_top:
-		side->scaley_top = luaL_checkfixed(L, 3);
+		SIDEW(side)->scaley_top = luaL_checkfixed(L, 3);
 		break;
 	case side_scalex_mid:
-		side->scalex_mid = luaL_checkfixed(L, 3);
+		SIDEW(side)->scalex_mid = luaL_checkfixed(L, 3);
 		break;
 	case side_scaley_mid:
-		side->scaley_mid = luaL_checkfixed(L, 3);
+		SIDEW(side)->scaley_mid = luaL_checkfixed(L, 3);
 		break;
 	case side_scalex_bottom:
-		side->scalex_bottom = luaL_checkfixed(L, 3);
+		SIDEW(side)->scalex_bottom = luaL_checkfixed(L, 3);
 		break;
 	case side_scaley_bottom:
-		side->scaley_bottom = luaL_checkfixed(L, 3);
+		SIDEW(side)->scaley_bottom = luaL_checkfixed(L, 3);
 		break;
 	case side_toptexture:
 		side->toptexture = luaL_checkinteger(L, 3);
@@ -1454,28 +1454,28 @@ static int side_set(lua_State *L)
 		side->repeatcnt = luaL_checkinteger(L, 3);
 		break;
 	case side_light:
-		side->light = luaL_checkinteger(L, 3);
+		SIDEW(side)->light = luaL_checkinteger(L, 3);
 		break;
 	case side_light_top:
-		side->light_top = luaL_checkinteger(L, 3);
+		SIDEW(side)->light_top = luaL_checkinteger(L, 3);
 		break;
 	case side_light_mid:
-		side->light_mid = luaL_checkinteger(L, 3);
+		SIDEW(side)->light_mid = luaL_checkinteger(L, 3);
 		break;
 	case side_light_bottom:
-		side->light_bottom = luaL_checkinteger(L, 3);
+		SIDEW(side)->light_bottom = luaL_checkinteger(L, 3);
 		break;
 	case side_lightabsolute:
-		side->lightabsolute = luaL_checkboolean(L, 3);
+		SIDEW(side)->lightabsolute = luaL_checkboolean(L, 3);
 		break;
 	case side_lightabsolute_top:
-		side->lightabsolute_top = luaL_checkboolean(L, 3);
+		SIDEW(side)->lightabsolute_top = luaL_checkboolean(L, 3);
 		break;
 	case side_lightabsolute_mid:
-		side->lightabsolute_mid = luaL_checkboolean(L, 3);
+		SIDEW(side)->lightabsolute_mid = luaL_checkboolean(L, 3);
 		break;
 	case side_lightabsolute_bottom:
-		side->lightabsolute_bottom = luaL_checkboolean(L, 3);
+		SIDEW(side)->lightabsolute_bottom = luaL_checkboolean(L, 3);
 		break;
 	}
 	return 0;

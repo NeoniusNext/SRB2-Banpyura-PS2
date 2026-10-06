@@ -1,0 +1,283 @@
+# PS2 GS hardware renderer — experimental
+
+Status on 2026-10-02: **a working GS driver, not full PC HW parity**. The
+requirement is a fast renderer with all PC HW features and no graphics loss.
+The implementation below does **not** yet satisfy that requirement. The
+primitive tests do not approve reduced precision, downsampling, missing shaders
+or approximate blending as permanent deviations. Software remains the default
+and the established 1:1 reference under PLAN §0a. G1 is not closed by this work.
+
+Current evidence and commands: [renderer progress](PS2_RENDERER_PROGRESS.md).
+Historical evidence: [continuation report](GATES/g1/continuation-hw.md).
+Engine integration: [HW_INTEGRATION.md](HW_INTEGRATION.md).
+
+## Implementation
+
+`src/ps2/hw/ps2_hwd.c` fills the PS2 `struct hwdriver_s`. Its translation unit
+includes `ps2_hw_priv.inc`, `ps2_hw_regs.inc`, `ps2_hw_gs.inc`,
+`ps2_hw_xform.inc`, `ps2_hw_light.inc`, `ps2_hw_tex.inc`, `ps2_hw_draw.inc`,
+`ps2_hw_model.inc`, `ps2_hw_screen.inc`.
+The null driver is a separate **logging-only** integration aid.
+
+* EE float matrices reproduce the PC fixed-function camera/object transforms.
+  Convex fans and indexed triangle lists are clipped in homogeneous coordinates
+  against near/far and a GS-safe guard band, then packed as ST/Q, RGBAQ, XYZ2.
+  The GS scissor enforces the viewport. Z24 is reversed: larger values are nearer.
+* Indexed vertices are cached, but each triangle snapshots its three cache
+  entries before another index can alias the same slot. Lists close their GIF
+  tag before a ring flush; packets never straddle producer buffers.
+* Float model frames use expanded triangles; tiny frames use 16-bit indices
+  and the PC 1/64 scale. CPU frame interpolation, object transforms, pivot roll,
+  vertical/horizontal flip and front-face selection feed bounded 192-vertex
+  staging. The camera matrix is restored. No normal-lighting implementation yet.
+* Palette textures use PSMT8 and CT32 CSM1 CLUTs with the required index-bit
+  3/4 swap. Four fixed CLUT images hold opaque, keyed, alpha-ramp and white-keyed
+  palettes. Non-keyed AP88 with partial alpha or opaque index 255 uses CT32,
+  preserving RGB and the GS 0..128 alpha scale instead of thresholding alpha.
+  Arbitrary opaque RGBA also uses CT32. Opaque palette index 255 is retained;
+  mixed opaque-255/transparent RGBA falls back to CT32. Alpha-zero RGB is preserved
+  too: RGBA/AP88 holes use CT32 if a keyed CLUT would change their filtered colour.
+  No automatic texture
+  decimation remains. NPOT repeat polygons are cut into bounded chunks, including
+  >40 repeats per axis; the staging limit no longer truncates remaining periods.
+* VRAM allocation uses sorted, merged block ranges and LRU texture records.
+  The range table can represent the worst-case alternating-block layout; the
+  former 256-entry table silently lost ranges. Ordinary texture eviction clears
+  the owner's `downloaded` handle. Current-frame textures are preferred over
+  older ones; an ordinary texture can still be recycled within the frame because
+  uploads/draws are ordered in one GIF stream. Captures spill losslessly to aligned
+  EE RAM only after successful synchronized readback. GS restoration uploads the
+  original pixels, without palette/alpha conversion. Impossible allocations fail
+  before evicting the working set. Texture budgets include GS padding; capture
+  backing has a separate bounded EE budget.
+* A frame starts with the previous frame's local-to-local copy unless a complete
+  colour clear makes it unnecessary. Vblank exposes only a frame-end FINISH.
+  Starting a frame cancels the old pending flip; frame-end clears any FINISH
+  left by a mid-frame readback. ReadScreenTexture reads the requested stored slot
+  without modifying the current frame.
+* Sky staging grows transactionally, is freed at Shutdown, and dome transforms
+  are restored. Large valid loops are no longer silently omitted at 1024 indices.
+* PACKED ST only latches Q in GIF: perspective vertices explicitly commit it with
+  PACKED RGBAQ before XYZ. Untextured primitives emit flat colour once; Q=1 affine
+  fans retain compact ST/XYZ packets. Packed colour/Q writes invalidate the A+D
+  cache so subsequent affine draws cannot inherit stale Q or sky colours.
+* Full-resolution captures and identity screen draws use exact local GS copies,
+  avoiding rasterization and bilinear interpolation rounding. The implicit final
+  path never clears its source; letterboxing saves it before clearing. RGB readback
+  uses top-down bilinear pixel-centre sampling without altering the framebuffer.
+* Explicit built-in lighting uses actual depth-staircase cuts and GS fog for
+  ordinary solid/translucent surfaces. Lit fog retains experimental depth ramps.
+  These passes are not GLSL: InitShaders/CompileShader refuse shader capability,
+  preserving engine fallbacks. Water ripple is diagnosed as missing.
+
+## Complete callback matrix
+
+`P` = implementation exercised by standalone primitive/readback tests;
+`H` = pure logic tested on x86/x64; `U` = engine scenario unverified.
+Every row remains **U for full engine/PC comparison**, including rows marked P.
+
+| `hwdriver_s` callback | GS implementation / result | Evidence or outstanding gap |
+|---|---|---|
+| Init | gsKit CRTC setup, own FB/Z/pool and GIF ring | P: NTSC CT16S and CT32, two Init/Shutdown cycles; PAL/480p unverified here |
+| SetTexturePalette | opaque/keyed CLUT update, baked direct-colour invalidation | P: 256 cells, palette change causes 0 indexed reuploads |
+| FinishUpdate | FINISH, vblank flip, optional pacing | P: 30/30 paced flips; unpaced frames can be replaced before display |
+| Draw2DLine | screen-space one-pixel quad, colour/alpha | Implemented; automap/line fixture not verified |
+| DrawPolygon | convex triangle fan, transform/clip/state | P/H: edges, transform, Z, texture/blend fixtures |
+| DrawIndexedTriangles | cached transform, triangle-list packet runs | P/H: equals fans; colliding indices 0/256/512 verified |
+| RenderSkyDome | colour vertices, fan/strip loops, bounded allocation, restored view | P: dome draws and repeat is identical; cap colours/real engine sky unverified |
+| SetBlend | stores flags consumed by drawing | P/H for basic modes; see equations below |
+| ClearBuffer | independent colour/depth write masks, full-target clear | P: every colour/Z pixel; viewport-specific engine behaviour unverified |
+| SetTexture | existing record or converted, banded upload | P/H: indexed/keyed/CT32 exact shapes and LRU; CT16 used only for explicit framebuffer/capture mode |
+| UpdateTexture | discard record and reupload | Implemented; engine update/lifetime fixture outstanding |
+| DeleteTexture | free record and clear owner handle | Used by P fixtures; engine owner destruction ordering outstanding |
+| ReadScreenTexture | selected GS/EE slot -> top-down bilinear RGB888 | P/H: selected slots and unchanged FB; absent GENERIC2 reads completed FB; GENERIC3 requires an explicit capture |
+| GClipRect | viewport/scissor and 2D near projection | P/H: inset/edge/full viewports and clipping; engine splitscreen unverified |
+| ClearMipMapCache | invalidate ordinary records, preserve screen slots | Implemented; cache/mode switch lifetime outstanding |
+| SetSpecialState | nearest/bilinear; diagnostics for other requested states | H/P basic filter; models lighting, anisotropy, wireframe absent; mixed/mipmap filters approximated |
+| DrawModel | CPU float/tiny interpolation, object transform, UVs, culling | P: 8 fixture cases, 0 pixel differences; H: 16 cases including roll/restoration/culling. Real MD2/MD3 loading/skins unverified |
+| CreateModelVBOs | CPU path uses current mesh UVs; no GS VBO required | No geometry discarded; records current max UV metadata; hardware VBO IDs unused |
+| SetTransform | float view/projection, flips/mirror/shear/roll code | P/H basic camera/roll; full engine combinations outstanding |
+| GetTextureUsed | allocated pool blocks × 256, includes captures | P: reported pool usage; not total EE/GS consumption |
+| Shutdown | drain DMA/GS, remove handlers/semaphores, clear handles, free staging | P: second-cycle heap returns to baseline; requires live owners when handles cleared |
+| PostImgRedraw | textured 10×10 grid, black behind displaced edges | Implemented; actual underwater/heat grid not verified |
+| FlushScreenTextures | release resident slots and EE backing | P: capture pressure allocations return to zero; engine lifecycle outstanding |
+| DoScreenWipe | CT32 destination-alpha mask blend; tinted per-channel CLUT/add/subtract | P: 64 continuous mask levels and four tinted directions within 2 RGB levels. CT16S one-bit destination alpha is explicitly lossy |
+| DrawScreenTexture | full-screen slot draw, clear, surface flags | P basic roundtrip; tint/fog/shader differences remain |
+| MakeScreenTexture | GS framebuffer -> full-resolution copy, recoverable EE backing | P: all five slots under 3-MiB texture pressure; one complete capture still must fit the pool |
+| DrawScreenFinalTexture | aspect/letterboxing; exact identity copy or zero-copy implicit final | P/H: picture retained, black bars, one-pixel stripes unchanged |
+| InitShaders | returns false | Honest capability refusal; programmable shader path unavailable |
+| LoadShader | warns for all GLSL sources, no executable created | Fixed GS pass subset does not establish built-in/custom shader equivalence |
+| CompileShader | warning, returns false | Missing |
+| SetShader | stores requested slot; custom slots warn | Explicit experimental built-in passes; capability refusal keeps engine fallback routing |
+| UnSetShader | fixed-function state already active | No shader allocation to release |
+| SetShaderInfo | stores LEVELTIME | Water/ripple/time-driven texture effects remain missing |
+| SetPaletteLookup | warning; no RGB-to-index LUT shader | Missing palette-rendering postprocess |
+| CreateLightTable | warning; returns invalid handle 0 | Missing per-fragment palette light table |
+| UpdateLightTable | warning; no table | Missing |
+| ClearLightTables | empty since no tables allocated | Safe cleanup of unsupported subsystem |
+| SetScreenPalette | warning; no screen palette shader | Missing palette fade/postprocess |
+| GetModeList (`_WINDOWS` only) | not a member of the PS2 build's struct | Platform-specific PC callback; PS2 mode enumeration belongs to i_video |
+
+## PC HW capability matrix
+
+This is a feature inventory, not a claim that engine geometry reaches every
+implemented primitive path correctly.
+
+| PC HW capability | Current GS coverage | Required validation / implementation |
+|---|---|---|
+| Solid/masked/translucent walls | Textured fan/list primitives, Z24, alpha test | Real BSP/wall joins, texture pegging, ordering and overdraw |
+| Floors/ceilings, FOFs | Engine plane polygons can use same primitive path | FOF side/top/bottom, translucent stacks, horizon, fog-block scenarios |
+| Slopes | Arbitrary 3D vertices and perspective texture coordinates | Slope seams, stacked slopes, near-plane/intersection cases in engine |
+| Sprites/rotated/flipped sprites, HUD patches | Palette/AP88 and polygon paths | Camera-facing geometry, sprite clipping/translucency/colormaps, HUD scaling |
+| Sky dome/skybox | Dome path and ordinary polygon path | Real cap/strip textures, skybox viewpoint and depth handling |
+| Sector lighting/tint/fade | CPU engine fallback; explicit GS depth bands/fog and palette tint CLUTs | P: seven banded fixtures within 2 RGB levels; direct-colour/modulated tint and full engine references outstanding |
+| Fog | Flat four-pass SRC_ALPHA/SRC_COLOR blend; explicit lit fog ramps | P flat blend; sampled lit fog and full fade/tint equivalence outstanding |
+| Models | Geometry/interpolation/culling implemented | Normal/directional lighting, all skin/material and frame layouts in engine |
+| Dynamic/static lights/coronas | ALAM lighting is not enabled; corona draw rejects with warning | Resolve PC optional feature configuration, depth visibility and light geometry |
+| Translucent/additive/reverse-subtract blending | Native GS equations | Tested independently, GS rounding differs from PC; textured/partial-alpha coverage needs expansion |
+| Subtractive/multiplicative/environment blending | Native source-minus-destination after polygon alpha scaling; palette channel multiply; two-pass environment | P flat/opaque palette within 2 RGB levels. Partial-alpha subtract, direct-colour multiply, keyed multiply/depth and lit combinations remain gaps |
+| Alpha/keyed holes | Keyed index 255, CT32 AP88, masked source-alpha scaling | GS alpha quantization/general partial-alpha threshold parity remain gaps; polygon alpha 128 correctly passes >0.5 |
+| Water shader/refraction/ripple | No water fragment shader; PF_Ripple carries no implemented shader | Built-in water effect and engine water scenarios |
+| Underwater/heat screen distortion | CPU grid redraw exists | Grid input/orientation/reference frames; not equivalent to missing fragment shaders |
+| Built-in/custom shaders | Unsupported, Init/Compile false | Fixed-function or multipass equivalents for built-ins; custom programmable code has no interpreter |
+| Palette rendering/light LUT/colormap postprocessing | Unsupported shader callbacks warn | Complete colour lookup and light-table effects |
+| Near/far/frustum/scissor clipping | CPU homogeneous clip, GS guard band/scissor | H/P independent reference; full map occlusion and splitscreen not verified |
+| Framebuffer/depth readback | Aligned local-to-host transfer, bounded synchronization | P NTSC CT16S/CT32; real cache, error injection and physical hardware outstanding |
+| Capture/screenshot | Selected GS/EE slot RGB888; explicit boolean status API | Engine GENERIC2/3 freshness, callback failure routing and exact PC readback references |
+| Screen textures/presentation | Full-size captures, GS/EE residency, exact identity copies, aspect/letterbox | P five default-mode slots; larger-than-pool high-resolution captures need tiled storage/compositing |
+| Wipes (normal/tinted/continuous) | CT32 continuous destination-alpha and per-channel tinted compositions | Engine flags/masks/reference frames outstanding; CT16S cannot preserve continuous mask alpha |
+| Texture filtering/wrap/mipmaps/anisotropy | Repeat/clamp, nearest/bilinear; TF_TRANSPARENT nearest matches PC driver policy | Mip chains, mixed LOD, anisotropy and shader-filtered alpha reference frames outstanding |
+| Texture colour/resolution | PSMT8 exact palette indices or CT32 RGB; exact supported dimensions | No RGB555 conversion/remap/decimation. >1024 axes, larger-than-pool textures and insufficient budgets fail explicitly; lossless tiling required |
+| Wireframe | Not implemented; diagnostic | Line/edge emission and state semantics |
+
+### Blend equations
+
+`Cs`, `Cd`, `As` are source RGB, destination RGB, source alpha. GS divides
+alpha by 128; PC uses normalized alpha. Clamping and rounding differ.
+
+| Mode | PC intent | GS now |
+|---|---|---|
+| Ordinary opaque | Cs | Cs |
+| Masked | Cs×As, alpha > 0.5 | Source-alpha scaling folded into modulation where valid; polygon alpha 128 boundary corrected; general partial-alpha quantization remains |
+| Translucent | Cs×As + Cd×(1−As) | `(Cs−Cd)×As + Cd` |
+| Additive | Cs×As + Cd | Same equation |
+| Reverse subtract | Cd − Cs×As | Same equation |
+| Subtractive | Cs×As − Cd | Pre-scale polygon colour, native Cs−Cd; partial texel alpha factor missing |
+| Environment | Cs + Cd×(1−As) | Destination attenuation followed by source addition |
+| Multiplicative | Cs×Cd | Palette per-channel CLUT factors, quantized once after modulation; direct-colour fallback warns |
+| Fog block | Cs×As + Cd×Cs | Three destination-channel scale passes plus source addition; lit ramp experimental |
+
+GS ALPHA exposes one **scalar** factor As/Ad/FIX, not a per-channel destination
+colour factor. Palette multiply and flat fog therefore require channel passes.
+General direct-colour multiply and source-minus-destination with partial texel
+alpha still need compositing. Primitive checks use stated GS rounding tolerances,
+not bit-identical PC framebuffer output.
+
+## Real memory budgets
+
+All sizes below include GS page padding. GS VRAM is exactly **4,194,304 bytes**.
+FB CT16S pages are 64×64; CT32 and Z24 allocation pages are 64×32. Z24 consumes
+a 32-bit-layout allocation. The four fixed and 120 dynamic CLUT images reserve
+16 pages (**131072 bytes**). Internal size is selected from engine resolution
+and CRTC magnification; default 320×200 engine coordinates use **320×224 NTSC**.
+CT32 is the default. CT16S is explicitly lossy opt-in. No automatic CT32-to-CT16S
+fallback remains; a layout that cannot fit returns Init failure.
+
+| Mode | Each CT16S FB | Z24 | CT16S texture pool | Each CT32 FB | CT32 texture pool |
+|---|---:|---:|---:|---:|---:|
+| NTSC 320×224 (current measured default) | 163840 | 286720 | 3448832 (13472 blocks) | 286720 | 3203072 (12512 blocks) |
+| NTSC 640×448 (calculated current layout) | 573440 | 1146880 | 1769472 | 1146880 | 622592 |
+| PAL 640×512 (calculated, not run here) | 655360 | 1310720 | 1441792 | 1310720 | 131072 |
+| 480p 640×480 (calculated, not run here) | 655360 | 1228800 | 1523712 | 1228800 | 376832 |
+
+Two FBs + Z + 131072 + pool = 4194304. Default captures are full 320×224,
+not decimated 640×448 images. Each GS capture occupies one FB-sized allocation.
+All five CT32 slots fit by themselves, and can spill to EE RAM under texture
+pressure: measured peak backing **1433600 bytes**, with five spills and five
+restores. CT16S backing stores visible raw rows (not GS page padding): measured
+peak **716800 bytes**. Resident captures may retain backing until overwritten
+or flushed, avoiding repeated readback on subsequent evictions.
+
+`screen_max_bytes=0` selects an 8-MiB EE backing cap; a positive value sets a hard
+budget. Readback/allocation failure does not authorize capture eviction. Ordinary
+textures are evicted first; a currently needed wipe mask/ramp/selected texture
+cannot be sacrificed to make a capture appear successful. `tex_max_bytes=0` uses
+the pool limit; a positive limit counts allocated GS blocks, not source bytes.
+
+At full 640-wide CT32 NTSC/PAL/480p, **one full-resolution capture exceeds the
+pool**. EE spilling alone does not solve that single-object limit. Lossless tiled
+capture/upload/compositing or a coordinated framebuffer/Z layout redesign is
+still required for those modes. Large textures (>1024 per axis or larger than
+pool) also fail explicitly rather than silently shrinking.
+
+Measured EE allocations/state after the standalone workload:
+
+| Component | Bytes | Scope |
+|---|---:|---|
+| Driver H state | 69392 | Includes worst-case free ranges, CLUT cache and capture pointers; not all translation-unit statics |
+| GIF producer ring | 524288 | 4 × 131072, memalign(64) |
+| Texture record capacity | 30720 | 512 EE records × 60 bytes; grows on demand |
+| RGBA index conversion scratch | 64000 | High-water allocation in this workload; not a fixed upper bound |
+| Sky staging | 840 | Tiny test dome; grows with engine dome |
+| Frame readback temporary, default CT16S / CT32 | 143360 / 286720 | Plus caller's RGB/u32 destination; scales with internal stride/rows |
+| Depth readback temporary, default | 286720 | Plus caller destination |
+| Capture EE backing, default CT16S / CT32 high-water | 716800 / 1433600 | Pressure fixture; configurable cap, released at Flush/Shutdown |
+| Model staging | 4608 | 192 × (20-byte vertex + 4-byte index), CPU-only static |
+| Polygon clip buffers | 16320 | Two × 204 × 40-byte clip vertices, CPU-only static |
+| Indexed transform cache | 13312 | 256 × 52-byte entries, CPU-only static |
+| Cut staging | 79200 | 9 × 220 × 40-byte vertices; bounded regardless of repeat count |
+| Overlay queue | 65536 | Experimental lit fog/ramp support; ordinary lighting now uses exact-boundary bands |
+
+Other state/CLUT/hash arrays, gsKit 8-KiB queues, libc/stack, hardware-engine
+poly pool, caches and models also consume EE RAM. `GetInfo` deliberately labels
+H-state versus dynamic buffers; these numbers are **not** a total 32-MiB engine
+peak measurement. The default standalone retains three 286720-byte readback
+arrays (860160 bytes); its eviction fixture also intentionally retains 240
+128×128 RGBA source textures (15728640 bytes). This is not engine ownership.
+
+Initial engine batching uses 8192 final vertices, 24576 indices, 8192 unsorted
+vertices, 2048 polygons and 2048 polygon indices: **434176 bytes +
+2048×sizeof(PolygonArrayEntry)**. Arrays double without dropping polygons;
+growth briefly retains the old and new buffers. PS2 allocation failures now
+reach I_Error before memcpy through NULL. Map-scale high-water RAM and OOM
+behaviour remain to be measured by the integrated build.
+
+## DMA/cache and resource ownership
+
+1. Ring base addresses are `memalign(64)`, GIF words aligned 16. Upload rows/CLUTs
+   and CPU vertex staging are copied into these owned packets; engine pointers
+   are never submitted by DMA reference. CPU-only scratch need not be DMA aligned.
+2. `pk_flush` calls `SyncDCache(start,end)` on the written packet range before
+   enqueueing the physical address. IRQ-protected queue transitions transfer
+   ownership to GIF DMA; the next producer buffer is reused only after the FIFO
+   completion count proves it is free.
+3. DMAC completion means RAM packets can be reused, not that rasterization is
+   finished. GS FINISH is required before framebuffer readback/reuse. Polling
+   backs up the GIF interrupt path; loss of an interrupt cannot authorize reuse.
+4. A DMA/FINISH timeout logs an error and stops rendering instead of returning
+   a busy buffer or unresolved framebuffer to the producer. Fault-injection
+   recovery is not implemented/tested. This is intentionally fail-stop.
+5. ReadVram rejects NULL/unaligned destinations and unsupported formats/layouts.
+   Local-to-host buffers are aligned 64 and synchronized before and after DMA.
+   ReadFrame/ReadDepth use aligned temporaries; their caller output is CPU-only.
+6. Engine GLMipmap owners must stay alive until DeleteTexture/ClearMipMapCache/
+   Shutdown clears their handles. The GS stream is single-producer; software and
+   HW drivers must not own GIF/CRTC handlers concurrently.
+
+PCSX2 success does not validate physical PS2 cache coherence, GIF stalls or
+EE cache-miss timings. No toolchain/assets/golden changes are needed by this driver.
+
+## Diagnostics and completion criteria
+
+Unsupported effects, missing texture/capture data and quality approximations
+increment `unsupported_calls` / `unsupported_mask` and issue a once-per-category
+warning. Test runs with a nonzero limitation mask are **not parity successes**.
+Current result counts and masks are recorded in `PS2_RENDERER_PROGRESS.md`.
+A zero mask means only that this workload did not request a diagnosed limitation;
+it does not cover absent shaders, other blend/alpha combinations or engine scenes.
+
+Completion requires engine scenarios for walls/FOFs/slopes/sprites/sky,
+colormaps/fog/blends, models, water/heat, every wipe/capture slot and mode switches;
+paired PC HW reference frames using the same camera/settings; all unacceptable
+matrix gaps implemented; actual 32-MiB peak accounting; and engine-scene timing.
+An integrated boot or a colourful primitive dump is not that evidence.

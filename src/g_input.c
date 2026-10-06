@@ -751,7 +751,11 @@ void G_DefineDefaultControls(void)
 		gamecontroldefault[i][GC_CUSTOM3      ][1] = KEY_JOY1+8; // Left Stick
 		gamecontroldefault[i][GC_CAMTOGGLE    ][1] = KEY_JOY1+4; // LB
 		gamecontroldefault[i][GC_CENTERVIEW   ][1] = KEY_JOY1+5; // RB
+#ifdef PS2 // PS2-137: Select talks (the chat line, with the on-screen keyboard) - a screenshot on a console has nowhere to go
+		gamecontroldefault[i][GC_TALKKEY      ][1] = KEY_JOY1+6; // Select
+#else
 		gamecontroldefault[i][GC_SCREENSHOT   ][1] = KEY_JOY1+6; // Back
+#endif
 		gamecontroldefault[i][GC_SYSTEMMENU   ][0] = KEY_JOY1+7; // Start
 		gamecontroldefault[i][GC_WEAPONPREV   ][1] = KEY_HAT1+2; // D-Pad Left
 		gamecontroldefault[i][GC_WEAPONNEXT   ][1] = KEY_HAT1+3; // D-Pad Right

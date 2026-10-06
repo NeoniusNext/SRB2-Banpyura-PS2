@@ -263,6 +263,7 @@ static void W_LoadDehackedLumpsPK3(UINT16 wadnum, boolean mainfile)
 	}
 }
 
+#if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: without PS2_FULLLOADER WAD add-ons are not loaded
 // search for all DEHACKED lump in all wads and load it
 static void W_LoadDehackedLumps(UINT16 wadnum, boolean mainfile)
 {
@@ -319,6 +320,7 @@ static void W_LoadDehackedLumps(UINT16 wadnum, boolean mainfile)
 #endif
 }
 
+#endif
 /** Compute MD5 message digest for bytes read from STREAM of this filname.
   *
   * The resulting message digest number will be written into the 16 bytes
@@ -358,6 +360,7 @@ static void W_InvalidateLumpnumCache(void)
 	memset(lumpnumcache, 0, sizeof (lumpnumcache));
 }
 
+#if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: without PS2_FULLLOADER no wad/ZIP/folder/soc/lua resources, only cooked packs
 /** Detect a file type.
  * \todo Actually detect the wad/pkzip headers and whatnot, instead of just checking the extensions.
  */
@@ -816,12 +819,15 @@ char *W_GetFullFolderPath(const char *path)
 	return NULL;
 }
 
+#ifdef HAS_ADDONS
 // Loads files from a folder into a lumpinfo structure.
 static lumpinfo_t *ResGetLumpsFolder(const char *path, UINT16 *nlmp, UINT16 *nfolders)
 {
 	return getdirectoryfiles(path, nlmp, nfolders);
 }
+#endif
 
+#endif
 static UINT16 W_InitFileError (const char *filename, boolean exitworthy)
 {
 	if (exitworthy)
@@ -857,6 +863,7 @@ static void W_LoadTrnslateLumps(UINT16 w)
 	}
 }
 
+#if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: original loader (wad/pk3/soc/lua/folder); a cooked pack is recognised inside it (PS2-100)
 //  Allocate a wadfile, setup the lumpinfo (directory) and
 //  lumpcache, add the wadfile to the current active wadfiles
 //
@@ -886,12 +893,14 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 
 	if (refreshdirname)
 		Z_Free(refreshdirname);
+#ifdef HAS_ADDONS
 	if (dirmenu)
 	{
 		refreshdirname = Z_StrDup(filename);
 		nameonly(refreshdirname);
 	}
 	else
+#endif
 		refreshdirname = NULL;
 
 	//CONS_Debug(DBG_SETUP, "Loading %s\n", filename);
@@ -1075,6 +1084,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	return wadfile->numlumps;
 }
 
+#ifdef HAS_ADDONS
 //
 // Loads a folder as a WAD.
 //
@@ -1254,6 +1264,104 @@ UINT16 W_InitFolder(const char *path, boolean mainfile, boolean startup, boolean
 
 	return wadfile->numlumps;
 }
+#endif // HAS_ADDONS
+
+#else
+// PS2-20: only cooked SRP2 packs (docs/PACK_FORMAT.md) can be added. A pack is a RET_PK3 to the rest of the engine,
+// but nothing parses a ZIP and nothing is inflated; wad/soc/lua files, folders and the MD5/NMUS scans do not exist.
+UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boolean local)
+{
+	FILE *handle;
+	lumpinfo_t *lumpinfo;
+	wadfile_t *wadfile;
+	UINT16 numlumps = 0;
+	void *pool = NULL, *iobuf;
+	boolean nonmusic = false;
+
+	if (local || !startup)
+	{
+		CONS_Alert(CONS_ERROR, "Add-ons are not supported on the PS2 profile\n");
+		return W_InitFileError(filename, startup);
+	}
+
+	// Check if the game reached the limit of active wadfiles.
+	if (numwadfiles >= MAX_WADFILES)
+	{
+		CONS_Alert(CONS_ERROR, M_GetText("Maximum wad files reached\n"));
+		return W_InitFileError(filename, startup);
+	}
+
+	// open wad file
+	if ((handle = W_OpenWadFile(&filename, true)) == NULL)
+		return W_InitFileError(filename, startup);
+
+	iobuf = WPack_SetupHandle(handle); // setvbuf must precede every operation on this stream
+	if (!iobuf)
+		I_Error("Cannot allocate resource I/O buffer");
+
+	lumpinfo = NULL;
+	if (WPack_Detect(handle))
+		lumpinfo = WPack_GetLumps(handle, &numlumps, &pool, &nonmusic);
+	else
+		CONS_Alert(CONS_ERROR, "%s is not a cooked pack (SRP2)\n", filename);
+
+	if (lumpinfo == NULL)
+	{
+		fclose(handle);
+		free(iobuf);
+		return W_InitFileError(filename, startup);
+	}
+
+	if (nonmusic && !mainfile)
+		modifiedgame = true; // avoid savemoddata being set to false
+
+	//
+	// link wad file to search files
+	//
+	wadfile = Z_Malloc(sizeof (*wadfile), PU_STATIC, NULL);
+	wadfile->filename = Z_StrDup(filename);
+	wadfile->path = NULL;
+	wadfile->type = RET_PK3;
+	wadfile->handle = handle;
+	wadfile->numlumps = numlumps;
+	wadfile->foldercount = 0;
+	wadfile->lumpinfo = lumpinfo;
+	wadfile->important = nonmusic;
+	wadfile->pool = pool;
+	wadfile->iobuf = iobuf;
+	fseek(handle, 0, SEEK_END);
+	wadfile->filesize = (unsigned)ftell(handle);
+	wadfile->startfolders = M_AATreeAlloc(0);
+	wadfile->endfolders = M_AATreeAlloc(0);
+	memset(wadfile->md5sum, 0, sizeof wadfile->md5sum); // not computed on this profile
+
+	//
+	// set up caching
+	//
+	Z_Calloc(numlumps * sizeof (*wadfile->lumpcache), PU_STATIC, &wadfile->lumpcache);
+	Z_Calloc(numlumps * sizeof (*wadfile->patchcache), PU_STATIC, &wadfile->patchcache);
+
+	//
+	// add the wadfile
+	//
+	CONS_Printf(M_GetText("Added file %s (%u lumps)\n"), filename, numlumps);
+	wadfiles = Z_Realloc(wadfiles, sizeof(wadfile_t *) * (numwadfiles + 1), PU_STATIC, NULL);
+	wadfiles[numwadfiles] = wadfile;
+	numwadfiles++;
+
+	// Read shaders from file
+	W_ReadFileShaders(wadfile);
+
+	// The below hack makes me load this here.
+	W_LoadTrnslateLumps(numwadfiles - 1);
+
+	// SOC lumps of the pack (SOC/ folder); Lua does not exist on this profile
+	W_LoadDehackedLumpsPK3(numwadfiles - 1, mainfile);
+
+	W_InvalidateLumpnumCache();
+	return wadfile->numlumps;
+}
+#endif
 
 /** Tries to load a series of files.
   * All files are wads unless they have an extension of ".soc" or ".lua".
@@ -1271,14 +1379,18 @@ void W_InitMultipleFiles(addfilelist_t *list)
 	for (; i < list->numfiles; i++)
 	{
 		const char *fn = list->files[i];
+#if !defined(PS2_PROFILE) || defined(HAS_ADDONS)
 		char pathsep = fn[strlen(fn) - 1];
+#endif
 		boolean mainfile = (numwadfiles < mainwads);
 
 		//CONS_Debug(DBG_SETUP, "Loading %s\n", fn);
 
+#if !defined(PS2_PROFILE) || defined(HAS_ADDONS)
 		if (pathsep == '\\' || pathsep == '/')
 			W_InitFolder(fn, mainfile, true, false);
 		else
+#endif
 			W_InitFile(fn, mainfile, true, false);
 	}
 
@@ -2129,6 +2241,24 @@ void zerr(int ret)
   */
 size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
 {
+#if defined(PS2_PROFILE) && !defined(PS2_FULLLOADER)
+	lumpinfo_t *l;
+	size_t bytesread;
+
+	if (!TestValidLump(wad, lump))
+		return 0;
+	if (!wadfiles[wad]->pool)
+		I_Error("wad %d: resource is not a cooked pack", wad);
+	l = wadfiles[wad]->lumpinfo + lump;
+	if (!l->size || offset >= l->size)
+		return 0;
+	if (!size || size > l->size - offset)
+		size = l->size - offset;
+	bytesread = WPack_ReadLump(wadfiles[wad]->handle, l, dest, size, offset);
+	if (bytesread != size)
+		I_Error("wad %d, lump %d: cannot read pack data", wad, lump);
+	return bytesread;
+#else
 	size_t lumpsize, bytesread;
 	lumpinfo_t *l;
 	FILE *handle = NULL;
@@ -2196,7 +2326,14 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 		return bytesread;
 	}
 #endif
+#ifdef PS2_PROFILE
+	// PS2-103: a compressed lump is always read from its start: the offset is into the decompressed data (the original seeks into
+	// the compressed stream and copies from the start of the decompressed one: wrong for any partial read of a deflated lump, e.g.
+	// the sublumps of a map WAD in a pk3, which vres_GetMap reads one at a time)
+	fseek(handle, (long)(l->position + (wadfiles[wad]->lumpinfo[lump].compression == CM_NOCOMPRESSION ? offset : 0)), SEEK_SET);
+#else
 	fseek(handle, (long)(l->position + offset), SEEK_SET);
+#endif
 
 	// But let's not copy it yet. We support different compression formats on lumps, so we need to take that into account.
 	switch(wadfiles[wad]->lumpinfo[lump].compression)
@@ -2280,7 +2417,11 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 				zErr = inflate(&strm, Z_FINISH);
 				if (zErr == Z_STREAM_END)
 				{
+#ifdef PS2_PROFILE
+					M_Memcpy(dest, decData + offset, size); // PS2-103: see the seek above
+#else
 					M_Memcpy(dest, decData, size);
+#endif
 				}
 				else
 				{
@@ -2306,6 +2447,7 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 		I_Error("wad %d, lump %d: unsupported compression type!", wad, lump);
 	}
 	return 0;
+#endif
 }
 
 size_t W_ReadLumpHeader(lumpnum_t lumpnum, void *dest, size_t size, size_t offset)
@@ -2351,6 +2493,22 @@ void *W_CacheLumpNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
 
 	return lumpcache[lump];
 }
+
+#ifdef PS2_PROFILE
+// Transfer raw storage to a derived cache that uses identical bytes, without a second allocation/copy.
+void *W_TakeLumpNumPwad(UINT16 wad, UINT16 lump, INT32 tag, void **owner)
+{
+	void *ptr;
+	I_Assert(owner != NULL);
+	ptr = W_CacheLumpNumPwad(wad, lump, PU_STATIC);
+	if (ptr == NULL)
+		return NULL;
+	wadfiles[wad]->lumpcache[lump] = NULL;
+	Z_SetUser(ptr, owner);
+	Z_ChangeTag(ptr, tag);
+	return ptr;
+}
+#endif
 
 void *W_CacheLumpNum(lumpnum_t lumpnum, INT32 tag)
 {
@@ -2469,7 +2627,13 @@ static void *W_GetPatchPwad(UINT16 wad, UINT16 lump, INT32 tag)
 	if (!lumpcache[lump])
 	{
 		size_t len = W_LumpLengthPwad(wad, lump);
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXPLACE)
+		// PS2-60: the raw lump is a temporary; carved from the short-lived end of the arena (PU_STATIC is the long-lived end) the patch
+		// built from it cannot land below it and leave a hole of its size behind when it goes (MAP11: 1.4 MB of holes after frame 2)
+		void *ptr, *dest, *lumpdata = Z_Malloc(len, PU_RENDERWORK, NULL);
+#else
 		void *ptr, *dest, *lumpdata = Z_Malloc(len, PU_STATIC, NULL);
+#endif
 
 		// read the lump in full
 		W_ReadLumpHeaderPwad(wad, lump, lumpdata, 0, 0);
@@ -2622,6 +2786,7 @@ void *W_CachePatchLongName(const char *name, INT32 tag)
 		return W_CachePatchNum(W_GetNumForLongPatchName("MISSING"), tag);
 	return W_CachePatchNum(num, tag);
 }
+#if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: MD5/ZIP/WAD content scans exist with the full loader (a cooked pack is recognised in W_VerifyFile)
 #ifndef NOMD5
 #define MD5_LEN 16
 
@@ -3056,6 +3221,33 @@ int W_VerifyNMUSlumps(const char *filename, boolean exit_on_error)
 	return status;
 }
 
+#else
+// PS2-20: W_VerifyNMUSlumps for a cooked pack: the cooker stored the verdict in the pack header
+// (1 = only music/sound lumps, 0 = other lumps, -1 = not a pack / unreadable).
+int W_VerifyNMUSlumps(const char *filename, boolean exit_on_error)
+{
+	FILE *handle;
+	void *iobuf;
+	int status = -1;
+
+	if ((handle = W_OpenWadFile(&filename, false)) != NULL)
+	{
+		iobuf = WPack_SetupHandle(handle);
+		if (!iobuf)
+			I_Error("Cannot allocate verification I/O buffer");
+		if (WPack_Detect(handle))
+			status = WPack_VerifyNMUS(handle);
+		fclose(handle);
+		free(iobuf);
+	}
+
+	if (status == -1)
+		W_InitFileError(filename, exit_on_error);
+
+	return status;
+}
+#endif
+
 /** \brief Generates a virtual resource used for level data loading.
  *
  * \param lumpnum_t reference
@@ -3071,6 +3263,39 @@ virtres_t* vres_GetMap(lumpnum_t lumpnum)
 
 	if (W_IsLumpWad(lumpnum))
 	{
+#ifdef PS2_PROFILE
+		// Cooked packs support bounded partial reads, including indexed LZ4 blocks. Read the directory
+		// and each sublump directly, instead of retaining the entire embedded WAD plus its copied lumps.
+		wadinfo_t header;
+		filelump_t *fileinfo;
+		size_t wadsize = W_LumpLength(lumpnum), dirpos, dirbytes;
+		if (wadsize < sizeof header
+			|| W_ReadLumpHeader(lumpnum, &header, sizeof header, 0) != sizeof header)
+			I_Error("vres_GetMap: truncated map WAD header");
+		numlumps = (UINT32)LONG(header.numlumps);
+		dirpos = (UINT32)LONG(header.infotableofs);
+		if (dirpos > wadsize || numlumps > (wadsize - dirpos) / sizeof(*fileinfo)
+			|| numlumps > SIZE_MAX / sizeof(*vlumps))
+			I_Error("vres_GetMap: invalid map WAD directory");
+		dirbytes = numlumps * sizeof(*fileinfo);
+		fileinfo = Z_Malloc(dirbytes, PU_STATIC, NULL);
+		if (dirbytes && W_ReadLumpHeader(lumpnum, fileinfo, dirbytes, dirpos) != dirbytes)
+			I_Error("vres_GetMap: truncated map WAD directory");
+		vlumps = Z_Calloc(sizeof(*vlumps) * numlumps, PU_LEVEL, NULL);
+		for (i = 0; i < numlumps; i++)
+		{
+			size_t pos = (UINT32)LONG(fileinfo[i].filepos);
+			size_t len = (UINT32)LONG(fileinfo[i].size);
+			if (pos > wadsize || len > wadsize - pos)
+				I_Error("vres_GetMap: map sublump %lu lies outside WAD", (unsigned long)i);
+			vlumps[i].size = len;
+			vlumps[i].filepos = pos;
+			memcpy(vlumps[i].name, fileinfo[i].name, 8);
+			vlumps[i].name[8] = '\0';
+			vlumps[i].data = NULL; // PS2-52: read by vres_Data when the level loader needs it
+		}
+		Z_Free(fileinfo);
+#else
 		// Remember that we're assuming that the WAD will have a specific set of lumps in a specific order.
 		UINT8 *wadData = W_CacheLumpNum(lumpnum, PU_LEVEL);
 		filelump_t *fileinfo = (filelump_t *)(wadData + ((wadinfo_t *)wadData)->infotableofs);
@@ -3089,6 +3314,7 @@ virtres_t* vres_GetMap(lumpnum_t lumpnum)
 		}
 
 		Z_Free(wadData);
+#endif
 	}
 	else
 	{
@@ -3111,9 +3337,32 @@ virtres_t* vres_GetMap(lumpnum_t lumpnum)
 	vres = Z_Malloc(sizeof(virtres_t), PU_LEVEL, NULL);
 	vres->vlumps = vlumps;
 	vres->numlumps = numlumps;
+#ifdef PS2_PROFILE
+	vres->wadlump = lumpnum;
+#endif
 
 	return vres;
 }
+
+#ifdef PS2_PROFILE
+// PS2-52: the data of a lump of an embedded map WAD, read on first use (the pack reader's bounded partial read).
+UINT8 *vres_Data(const virtres_t *vres, virtlump_t *vlump)
+{
+	if (!vlump->data && vlump->size)
+	{
+		vlump->data = Z_Malloc(vlump->size, PU_LEVEL, NULL);
+		if (W_ReadLumpHeader(vres->wadlump, vlump->data, vlump->size, vlump->filepos) != vlump->size)
+			I_Error("vres_Data: truncated map sublump %s", vlump->name);
+	}
+	return vlump->data;
+}
+
+void vres_Drop(virtlump_t *vlump)
+{
+	Z_Free(vlump->data);
+	vlump->data = NULL;
+}
+#endif
 
 /** \brief Frees zone memory for a given virtual resource.
  *

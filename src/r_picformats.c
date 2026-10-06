@@ -29,7 +29,7 @@
 #include "hardware/hw_glob.h"
 #endif
 
-#ifdef HAVE_PNG
+#ifdef HAVE_PNG // PS2-100: libpng is there only with PS2_ZIPPNG (tools/ps2/build.py)
 
 #ifndef _MSC_VER
 #ifndef _LARGEFILE64_SOURCE
@@ -872,7 +872,11 @@ void *Picture_TextureToFlat(size_t texnum)
 
 	// Allocate the flat
 	flatsize = texture->width * texture->height;
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXPLACE)
+	converted = Z_Malloc(flatsize, PU_RENDERWORK, NULL);
+#else
 	converted = Z_Malloc(flatsize, PU_STATIC, NULL);
+#endif
 	memset(converted, TRANSPARENTPIXEL, flatsize);
 
 	// Now we're gonna write to it
@@ -899,6 +903,7 @@ void *Picture_TextureToFlat(size_t texnum)
 	return converted;
 }
 
+#if !defined(PS2_PROFILE) || defined(PS2_ZIPPNG) // PS2-20: without PS2_ZIPPNG the profile has no PNG decoder (cooked pictures below)
 /** Returns true if the lump is a valid PNG.
   *
   * \param d The lump to be checked.
@@ -907,6 +912,10 @@ void *Picture_TextureToFlat(size_t texnum)
   */
 boolean Picture_IsLumpPNG(const UINT8 *d, size_t s)
 {
+#ifdef PS2_PROFILE
+	if (Picture_IsLumpCooked(d, s)) // PS2-100: the cooked pictures of the packs are "PNG lumps" too
+		return true;
+#endif
 	if (s < 67) // https://web.archive.org/web/20230524232139/http://garethrees.org/2007/11/14/pngcrush/
 		return false;
 	// Check for PNG file signature using memcmp
@@ -1185,6 +1194,11 @@ void *Picture_PNGConvert(
 	if (png == NULL)
 		I_Error("Picture_PNGConvert: picture was NULL!");
 
+#ifdef PS2_PROFILE
+	if (Picture_IsLumpCooked(png, insize)) // PS2-100: a cooked picture of a pack (no libpng)
+		return Picture_CookedConvert(png, outformat, w, h, topoffset, leftoffset, insize, outsize, flags);
+#endif
+
 	if (w == NULL)
 		w = &pngwidth;
 	if (h == NULL)
@@ -1419,6 +1433,11 @@ boolean Picture_PNGDimensions(UINT8 *png, INT32 *width, INT32 *height, INT16 *to
 	png_io_t png_io;
 	png_voidp *user_chunk_ptr;
 
+#ifdef PS2_PROFILE
+	if (Picture_IsLumpCooked(png, size)) // PS2-100: a cooked picture of a pack
+		return Picture_CookedDimensions(png, width, height, topoffset, leftoffset, size);
+#endif
+
 	png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, PNG_error, PNG_warn);
 	if (!png_ptr)
 	{
@@ -1491,6 +1510,81 @@ boolean Picture_PNGDimensions(UINT8 *png, INT32 *width, INT32 *height, INT16 *to
 #endif
 #endif
 
+#endif // real PNG
+
+#ifdef PS2_PROFILE
+// PS2-20 cooked picture lump: marker (0x89 "SRPIC" CR LF) followed by a Doom patch (softwarepatch_t, little-endian).
+// tools/ps2/cook.py writes one in place of every PNG lump of the pk3s: the patch holds exactly what the original
+// Picture_PNGConvert(PICFMT_PATCH) built from the PNG (nearest palette colour, alpha 0 = no post, grAb offsets).
+#define COOKEDPIC_MARKER_SIZE PNG_HEADER_SIZE
+static const UINT8 cookedpic_marker[COOKEDPIC_MARKER_SIZE] = {0x89, 'S', 'R', 'P', 'I', 'C', 0x0D, 0x0A};
+
+/** Returns true if the lump is a cooked picture (Picture_IsLumpPNG). */
+boolean Picture_IsLumpCooked(const UINT8 *d, size_t s)
+{
+	// marker + the 8 byte Doom patch header
+	return s >= COOKEDPIC_MARKER_SIZE + 8 && memcmp(d, cookedpic_marker, sizeof cookedpic_marker) == 0;
+}
+
+/** Converts a cooked picture to a picture (Picture_PNGConvert). */
+void *Picture_CookedConvert(
+	const UINT8 *cooked, pictureformat_t outformat,
+	INT32 *w, INT32 *h,
+	INT16 *topoffset, INT16 *leftoffset,
+	size_t insize, size_t *outsize,
+	pictureflags_t flags)
+{
+	softwarepatch_t *patch;
+	INT32 width, height, loffs, toffs;
+
+	if (cooked == NULL)
+		I_Error("Picture_PNGConvert: picture was NULL!");
+	if (!Picture_IsLumpCooked(cooked, insize))
+		I_Error("Picture_PNGConvert: lump is not a cooked picture (PNG lumps do not exist on this profile)!");
+
+	patch = (softwarepatch_t *)(cooked + COOKEDPIC_MARKER_SIZE);
+	width = SHORT(patch->width);
+	height = SHORT(patch->height);
+	loffs = SHORT(patch->leftoffset);
+	toffs = SHORT(patch->topoffset);
+
+	if (w)
+		*w = width;
+	if (h)
+		*h = height;
+	if (leftoffset)
+		*leftoffset = (INT16)loffs;
+	if (topoffset)
+		*topoffset = (INT16)toffs;
+
+	if (Picture_IsPatchFormat(outformat))
+		return Picture_PatchConvert(PICFMT_DOOMPATCH, patch, outformat, outsize, width, height, loffs, toffs, flags);
+
+	// flats are never flipped here (the PNG converter did not look at the flags for them)
+	return Picture_FlatConvert(PICFMT_DOOMPATCH, patch, outformat, outsize, width, height, 0);
+}
+
+/** Returns the dimensions and offsets of a cooked picture (Picture_PNGDimensions). */
+boolean Picture_CookedDimensions(UINT8 *cooked, INT32 *width, INT32 *height, INT16 *topoffset, INT16 *leftoffset, size_t size)
+{
+	softwarepatch_t *patch;
+
+	if (!Picture_IsLumpCooked(cooked, size))
+		return false;
+
+	patch = (softwarepatch_t *)(cooked + COOKEDPIC_MARKER_SIZE);
+	if (SHORT(patch->width) <= 0 || SHORT(patch->height) <= 0)
+		return false;
+
+	*width = SHORT(patch->width);
+	*height = SHORT(patch->height);
+	if (leftoffset)
+		*leftoffset = SHORT(patch->leftoffset);
+	if (topoffset)
+		*topoffset = SHORT(patch->topoffset);
+	return true;
+}
+#endif
 //
 // R_ParseSpriteInfoFrame
 //

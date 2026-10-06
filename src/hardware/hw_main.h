@@ -129,4 +129,19 @@ extern boolean gl_maptexturesloaded;
 extern boolean gl_sessioncommandsadded;
 extern boolean gl_shadersavailable;
 
+#ifdef PS2_PROFILE
+// Called by the GS driver (src/ps2/hw/ps2_hwd.c) when a texture that is not in VRAM is drawn: make the data of the mipmap again
+// (when the zone dropped it) / let the zone drop it again after the upload.
+void HWR_PS2_RegenerateMipmap(GLMipmap_t *mipmap);
+void HWR_PS2_ReleaseMipmapData(GLMipmap_t *mipmap);
+const char *HWR_PS2_TexName(const GLMipmap_t *mipmap);
+#endif
+
+// label of the hardware renderer in the renderer cvar and the menus (PS2-HW-02: the GS renderer is not OpenGL)
+#ifdef PS2_PROFILE
+#define HWR_RENDERER_NAME "Hardware"
+#else
+#define HWR_RENDERER_NAME "OpenGL"
+#endif
+
 #endif

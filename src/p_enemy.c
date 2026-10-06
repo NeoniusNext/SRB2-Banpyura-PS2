@@ -33,7 +33,7 @@
 #include "hardware/hw3sound.h"
 #endif
 
-#ifndef PS2_PROFILE // PS2: LUA_CallAction is a stub in lua_hook.h
+#ifdef HAS_LUA // PS2: without PS2_LUA LUA_CallAction is a stub in lua_hook.h
 boolean LUA_CallAction(enum actionnum actionnum, mobj_t *actor);
 #endif
 
@@ -528,6 +528,9 @@ boolean P_LookForPlayers(mobj_t *actor, boolean allaround, boolean tracer, fixed
   * \return True if a player with ring shield is found, otherwise false.
   * \sa A_AttractChase
   */
+#ifdef PS2_OPT_PTICK
+UINT32 ps2_ingamemask; // PS2-97: bit n = playeringame[n], refreshed at the top of every P_Ticker (thinkers run only there)
+#endif
 static boolean P_LookForShield(mobj_t *actor)
 {
 	INT32 c = 0, stop;
@@ -540,6 +543,59 @@ static boolean P_LookForShield(mobj_t *actor)
 	actor->lastlook %= MAXPLAYERS;
 
 	stop = (actor->lastlook - 1) & PLAYERSMASK;
+
+#ifdef PS2_OPT_PTICK
+	// PS2-97: the same walk over the slots lastlook .. stop-1 (the stop slot is never examined), but jumping from one player in
+	// the game to the next instead of stepping through the (usually 31) empty slots; lastlook ends exactly where the loop below
+	// would leave it (on the examined slot of a return, on stop when the walk runs out).
+	{
+		const INT32 first = actor->lastlook;
+		UINT32 todo = ps2_ingamemask;
+		todo = first ? ((todo >> first) | (todo << (MAXPLAYERS - first))) : todo; // bit k = slot (first + k) & PLAYERSMASK
+		todo &= ~(1u << (MAXPLAYERS - 1)); // offset 31 is the stop slot
+
+		while (todo)
+		{
+			const UINT32 low = todo & (0u - todo);
+			INT32 k = 0;
+			if (!(low & 0xffffu)) k += 16;
+			if (!(low & (0x00ff00ffu))) k += 8;
+			if (!(low & 0x0f0f0f0fu)) k += 4;
+			if (!(low & 0x33333333u)) k += 2;
+			if (!(low & 0x55555555u)) k += 1;
+			todo ^= low;
+			actor->lastlook = (first + k) & PLAYERSMASK;
+
+			if (c++ == 2)
+				return false;
+
+			player = &players[actor->lastlook];
+
+			if (!player->mo || player->mo->health <= 0)
+				continue; // dead
+
+			//When in CTF, don't pull rings that you cannot pick up.
+			if ((actor->type == MT_REDTEAMRING && player->ctfteam != 1) ||
+				(actor->type == MT_BLUETEAMRING && player->ctfteam != 2))
+				continue;
+
+			if ((player->powers[pw_shield] & SH_PROTECTELECTRIC)
+				&& (R_PointToDist2(0, 0, R_PointToDist2(0, 0, actor->x-player->mo->x, actor->y-player->mo->y), actor->z-player->mo->z) < FixedMul(RING_DIST, player->mo->scale)))
+			{
+				P_SetTarget(&actor->tracer, player->mo);
+
+				if (actor->hnext)
+					P_SetTarget(&actor->hnext->hprev, actor->hprev);
+				if (actor->hprev)
+					P_SetTarget(&actor->hprev->hnext, actor->hnext);
+
+				return true;
+			}
+		}
+		actor->lastlook = stop;
+		return false;
+	}
+#endif
 
 	for (; ; actor->lastlook = ((actor->lastlook + 1) & PLAYERSMASK))
 	{

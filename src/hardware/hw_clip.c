@@ -75,7 +75,9 @@
 #include "../r_main.h"
 #include "../r_state.h"
 #include "../tables.h"
+#ifndef PS2_PROFILE // PS2-HW: no OpenGL headers; the sphere frustum code below is disabled anyway
 #include "r_opengl/r_opengl.h"
+#endif
 
 #ifdef HAVE_SPHEREFRUSTRUM
 static GLdouble viewMatrix[16];

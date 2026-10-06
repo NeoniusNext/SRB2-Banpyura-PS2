@@ -11,6 +11,7 @@
 /// \file  r_things.c
 /// \brief Refresh of things, i.e. objects represented by sprites
 
+#include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
 #include "doomdef.h"
 #include "console.h"
 #include "g_game.h"
@@ -108,6 +109,64 @@ static drawsegs_xrange_t drawsegs_xranges[DS_RANGES_COUNT];
 static drawseg_xrange_item_t *drawsegs_xrange;
 static size_t drawsegs_xrange_size = 0;
 static INT32 drawsegs_xrange_count = 0;
+
+#ifdef PS2_OPT_SPR
+// PS2-90: index of the draw segments by screen column. Every sprite scanned all draw segments with a silhouette or a masked
+// texture (about 270 per sprite, 180 sprites per frame) and rejected most of them by the x range. drawsegs_bins[b][w] has
+// bit (i & 31) of word (i >> 5) set when entry i of drawsegs_xranges[0] touches column bin b (2 columns); a sprite ORs the
+// rows of the bins it covers and visits the set bits in ascending order, which is the original scan order.
+#define DSBIN_SHIFT 1
+#define DSBIN_MAXSPAN 12 // bins a sprite may cover for the bit-set query; wider sprites scan the (shorter) half lists as before
+#define DSBIN_MAXENT 1024
+#define DSBIN_MAXBINS ((MAXVIDWIDTH >> DSBIN_SHIFT) + 1)
+static UINT32 drawsegs_bins[DSBIN_MAXBINS * (DSBIN_MAXENT / 32)];
+static INT32 drawsegs_bin_words, drawsegs_bin_count;
+static boolean drawsegs_bin_active;
+
+static const UINT8 ds_debruijn[32] =
+{
+	0, 1, 28, 2, 29, 14, 24, 3, 30, 22, 20, 15, 25, 17, 4, 8,
+	31, 27, 13, 23, 21, 19, 16, 7, 26, 12, 18, 6, 11, 5, 10, 9
+};
+
+static void R_BuildDrawsegBins(void)
+{
+	const drawseg_xrange_item_t *it = drawsegs_xranges[0].items;
+	const INT32 n = drawsegs_xranges[0].count;
+	const INT32 words = (n + 31) >> 5;
+	const INT32 nb = ((viewwidth > 0 ? viewwidth - 1 : 0) >> DSBIN_SHIFT) + 1;
+	INT32 i;
+
+	drawsegs_bin_active = false;
+	if (n > DSBIN_MAXENT || nb > DSBIN_MAXBINS)
+		return;
+	drawsegs_bin_words = words;
+	drawsegs_bin_count = nb;
+	memset(drawsegs_bins, 0, (size_t)nb * (size_t)words * sizeof drawsegs_bins[0]);
+	for (i = 0; i < n; i++)
+	{
+		INT32 lo = it[i].x1, hi = it[i].x2, b;
+		const UINT32 m = 1u << (i & 31);
+		UINT32 *p;
+		if (lo > hi)
+		{
+			const INT32 t = lo;
+			lo = hi;
+			hi = t;
+		}
+		if (lo < 0) lo = 0;
+		if (hi < 0) hi = 0;
+		lo >>= DSBIN_SHIFT;
+		hi >>= DSBIN_SHIFT;
+		if (lo > nb - 1) lo = nb - 1;
+		if (hi > nb - 1) hi = nb - 1;
+		p = drawsegs_bins + (size_t)lo * words + (i >> 5);
+		for (b = lo; b <= hi; b++, p += words)
+			*p |= m;
+	}
+	drawsegs_bin_active = true;
+}
+#endif
 
 // ==========================================================================
 //
@@ -841,6 +900,76 @@ INT16 *mceilingclip;
 fixed_t spryscale = 0, sprtopscreen = 0, sprbotscreen = 0;
 fixed_t windowtop = 0, windowbottom = 0;
 
+#ifdef PS2_OPT_SPR
+// PS2-91: the same statements with the loop invariants (nothing in the column drawers writes them) in locals
+void R_DrawMaskedColumn(column_t *column, unsigned lengthcol)
+{
+	const fixed_t basetexturemid = dc_texturemid;
+	const INT32 x = dc_x;
+	const fixed_t topscr = sprtopscreen, yscale = spryscale;
+	const fixed_t wintop = windowtop, winbottom = windowbottom;
+	const boolean windowed = wintop != INT32_MAX && winbottom != INT32_MAX;
+	const INT32 floorlim = mfloorclip[x], ceillim = mceilingclip[x];
+	const INT32 vheight = vid.height;
+	const unsigned numposts = column->num_posts;
+	const post_t *post = column->posts;
+	UINT8 *const pixels = column->pixels;
+	unsigned i;
+
+	(void)lengthcol;
+
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 3 // negative control: the last post of every column is lost
+	for (i = 0; i + 1 < numposts; i++, post++)
+#else
+	for (i = 0; i < numposts; i++, post++)
+#endif
+	{
+		INT32 topscreen, bottomscreen, yl, yh;
+
+		dc_postlength = post->length;
+
+		topscreen = topscr + yscale*post->topdelta;
+		bottomscreen = topscreen + yscale*dc_postlength;
+
+		yl = (topscreen+FRACUNIT-1)>>FRACBITS;
+		yh = (bottomscreen-1)>>FRACBITS;
+
+		if (windowed)
+		{
+			if (wintop > topscreen)
+				yl = (wintop + FRACUNIT - 1)>>FRACBITS;
+			if (winbottom < bottomscreen)
+				yh = (winbottom - 1)>>FRACBITS;
+		}
+
+		if (yh >= floorlim)
+			yh = floorlim-1;
+		if (yl <= ceillim)
+			yl = ceillim+1;
+		if (yl < 0)
+			yl = 0;
+		if (yh >= vheight) // yl must be < vid.height, so reduces number of checks in tight loop
+			yh = vheight - 1;
+
+		if (yl <= yh && yh > 0)
+		{
+			dc_yl = yl;
+			dc_yh = yh;
+			dc_source = pixels + post->data_offset;
+			dc_texturemid = basetexturemid - (post->topdelta<<FRACBITS);
+
+			colfunc();
+		}
+		else
+		{
+			dc_yl = yl; // the original left the clipped values in the globals
+			dc_yh = yh;
+		}
+	}
+
+	dc_texturemid = basetexturemid;
+}
+#else
 void R_DrawMaskedColumn(column_t *column, unsigned lengthcol)
 {
 	fixed_t basetexturemid = dc_texturemid;
@@ -887,6 +1016,7 @@ void R_DrawMaskedColumn(column_t *column, unsigned lengthcol)
 
 	dc_texturemid = basetexturemid;
 }
+#endif
 
 static UINT8 *flippedcol = NULL;
 static size_t flippedcolsize = 0;
@@ -2724,7 +2854,9 @@ void R_AddSprites(sector_t *sec, INT32 lightlevel)
 
 			if (R_ThingVisible(thing))
 			{
+				PS2SUB_B(22);
 				R_ProjectSprite(thing);
+				PS2SUB_E(22);
 			}
 
 			// I'm so smart :^)
@@ -2969,7 +3101,13 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 				// Put it in!
 				entry = R_CreateDrawNode(head);
 				if (r_renderwalls)
+				{
+#ifdef PS2_PROFILE
+					// Polyobject planes can use a slot that never owned FOF planes.
+					R_AllocDrawSegFrontScale(ds);
+#endif
 					entry->seg = ds;
+				}
 				if (r_renderfloors)
 					entry->plane = plane;
 			}
@@ -3047,7 +3185,9 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 	if (mask->vissprites[1] - mask->vissprites[0] == 0)
 		return;
 
+	PS2SUB_B(24);
 	R_SortVisSprites(&vsprsortedhead, mask->vissprites[0], mask->vissprites[1]);
+	PS2SUB_E(24);
 
 	for (rover = vsprsortedhead.prev; rover != &vsprsortedhead; rover = rover->prev)
 	{
@@ -3225,9 +3365,14 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link)
 
 	if (node == &nodebankhead)
 	{
+#ifdef PS2
+		// Nodes are retained in the bank across PU_LEVEL resets.
+		node = Z_Malloc(sizeof (*node), PU_STATIC, NULL);
+#else
 		node = malloc(sizeof (*node));
 		if (!node)
 			I_Error("No more free memory to CreateDrawNode");
+#endif
 	}
 	else
 		(nodebankhead.next = node->next)->prev = &nodebankhead;
@@ -3282,6 +3427,7 @@ void R_InitDrawNodes(void)
 //
 static void R_DrawSprite(vissprite_t *spr)
 {
+	PS2SUB_B(26);
 	mfloorclip = spr->clipbot;
 	mceilingclip = spr->cliptop;
 
@@ -3291,6 +3437,7 @@ static void R_DrawSprite(vissprite_t *spr)
 		R_DrawFloorSplat(spr);
 	else
 		R_DrawVisSprite(spr);
+	PS2SUB_E(26);
 }
 
 // Special drawer for precipitation sprites Tails 08-18-2002
@@ -3390,6 +3537,78 @@ static boolean R_CheckSpriteVisible(vissprite_t *spr, INT32 x1, INT32 x2)
 	return false;
 }
 
+#ifdef PS2_OPT_SPR
+// The body of the original scan for one draw segment that touches the sprite's columns (same statements, same order).
+static void R_ClipVisSpriteSeg(vissprite_t *spr, const drawseg_xrange_item_t *curr, INT32 x1, INT32 x2)
+{
+	drawseg_t *ds = curr->user;
+	INT32 x, r1, r2, silhouette;
+	fixed_t scale, lowscale;
+
+	PS2SUB_N(62);
+	if (ds->portalpass > 0 && ds->portalpass <= portalrender)
+		return; // is a portal
+
+	if (ds->scale1 > ds->scale2)
+	{
+		lowscale = ds->scale2;
+		scale = ds->scale1;
+	}
+	else
+	{
+		lowscale = ds->scale1;
+		scale = ds->scale2;
+	}
+
+	if (scale < spr->sortscale ||
+		(lowscale < spr->sortscale &&
+		 !R_PointOnSegSide (spr->gx, spr->gy, ds->curline)))
+	{
+		// seg is behind sprite
+		return;
+	}
+
+	PS2SUB_N(63);
+	r1 = ds->x1 < x1 ? x1 : ds->x1;
+	r2 = ds->x2 > x2 ? x2 : ds->x2;
+
+	// clip this piece of the sprite
+	silhouette = ds->silhouette;
+
+	if (spr->gz >= ds->bsilheight)
+		silhouette &= ~SIL_BOTTOM;
+
+	if (spr->gzt <= ds->tsilheight)
+		silhouette &= ~SIL_TOP;
+
+	if (silhouette == SIL_BOTTOM)
+	{
+		// bottom sil
+		for (x = r1; x <= r2; x++)
+			if (spr->clipbot[x] == -2)
+				spr->clipbot[x] = ds->sprbottomclip[x];
+	}
+	else if (silhouette == SIL_TOP)
+	{
+		// top sil
+		for (x = r1; x <= r2; x++)
+			if (spr->cliptop[x] == -2)
+				spr->cliptop[x] = ds->sprtopclip[x];
+	}
+	else if (silhouette == (SIL_TOP|SIL_BOTTOM))
+	{
+		// both
+		for (x = r1; x <= r2; x++)
+		{
+			if (spr->clipbot[x] == -2)
+				spr->clipbot[x] = ds->sprbottomclip[x];
+			if (spr->cliptop[x] == -2)
+				spr->cliptop[x] = ds->sprtopclip[x];
+		}
+	}
+}
+#endif
+
 // R_ClipVisSprite
 // Clips vissprites without drawing, so that portals can work. -Red
 static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* portal)
@@ -3402,6 +3621,8 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 	fixed_t		lowscale;
 	INT32		silhouette;
 
+	PS2SUB_N(55);
+	PS2SUB_ADD(54, x2 - x1 + 1);
 	for (x = x1; x <= x2; x++)
 		spr->clipbot[x] = spr->cliptop[x] = -2;
 
@@ -3412,6 +3633,40 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 	// Pointer check was originally nonportable
 	// and buggy, by going past LEFT end of array:
 
+#ifdef PS2_OPT_SPR
+	if (drawsegs_bin_active && (((x2 < 0 ? 0 : x2) >> DSBIN_SHIFT) - ((x1 < 0 ? 0 : x1) >> DSBIN_SHIFT)) < DSBIN_MAXSPAN)
+	{
+		// PS2-90: only the entries of the column bins the sprite covers, in ascending order (the original order)
+		const drawseg_xrange_item_t *const items = drawsegs_xranges[0].items;
+		const INT32 words = drawsegs_bin_words;
+		const INT32 nbm1 = drawsegs_bin_count - 1;
+		INT32 b1 = (x1 < 0 ? 0 : x1) >> DSBIN_SHIFT, b2 = (x2 < 0 ? 0 : x2) >> DSBIN_SHIFT, w;
+		if (b1 > nbm1) b1 = nbm1;
+		if (b2 > nbm1) b2 = nbm1;
+		for (w = 0; w < words; w++)
+		{
+			const UINT32 *row = drawsegs_bins + (size_t)b1 * words + w;
+			UINT32 m = *row;
+			INT32 b;
+			for (b = b1 + 1; b <= b2; b++)
+				m |= *(row += words);
+			while (m)
+			{
+				const UINT32 low = m & (0u - m);
+				const drawseg_xrange_item_t *curr = &items[(w << 5) + ds_debruijn[(low * 0x077CB531u) >> 27]];
+				m ^= low;
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 1 // negative control of tools/ps2 host tests: a broken scan must change frames
+				if (curr - items == 3) continue;
+#endif
+				PS2SUB_N(61);
+				if (curr->x1 > x2 || curr->x2 < x1)
+					continue; // does not cover sprite
+				R_ClipVisSpriteSeg(spr, curr, x1, x2);
+			}
+		}
+	}
+	else
+#endif
 	// e6y: optimization
 	if (drawsegs_xrange_size)
 	{
@@ -3420,6 +3675,7 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 
 		while (++curr <= last)
 		{
+			PS2SUB_N(61);
 			// determine if the drawseg obscures the sprite
 			if (curr->x1 > x2 || curr->x2 < x1)
 			{
@@ -3427,6 +3683,7 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 				continue;
 			}
 
+			PS2SUB_N(62);
 			ds = curr->user;
 
 			if (ds->portalpass > 0 && ds->portalpass <= portalrender)
@@ -3451,6 +3708,7 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 				continue;
 			}
 
+			PS2SUB_N(63);
 			r1 = ds->x1 < x1 ? x1 : ds->x1;
 			r2 = ds->x2 > x2 ? x2 : ds->x2;
 
@@ -3581,6 +3839,10 @@ void R_ClipSprites(drawseg_t* dsstart, portal_t* portal)
 		drawsegs_xranges[i].count = 0;
 	}
 
+#ifdef PS2_OPT_SPR
+	drawsegs_bin_active = false;
+#endif
+
 	if (visspritecount - clippedvissprites <= 0)
 	{
 		return;
@@ -3588,7 +3850,15 @@ void R_ClipSprites(drawseg_t* dsstart, portal_t* portal)
 
 	if (drawsegs_xrange_size < maxdrawsegs)
 	{
+#if defined(PS2) || defined(PS2_PROFILE)
+		if (maxdrawsegs > SIZE_MAX - maxdrawsegs / 2)
+			I_Error("R_ClipSprites: range capacity overflow");
+		drawsegs_xrange_size = maxdrawsegs + maxdrawsegs / 2;
+		if (drawsegs_xrange_size > SIZE_MAX / sizeof (drawsegs_xranges[0].items[0]))
+			I_Error("R_ClipSprites: range allocation overflow");
+#else
 		drawsegs_xrange_size = 2 * maxdrawsegs;
+#endif
 
 		for (i = 0; i < DS_RANGES_COUNT; i++)
 		{
@@ -3627,6 +3897,10 @@ void R_ClipSprites(drawseg_t* dsstart, portal_t* portal)
 		}
 	}
 
+#ifdef PS2_OPT_SPR
+	R_BuildDrawsegBins();
+#endif
+
 	for (; clippedvissprites < visspritecount; clippedvissprites++)
 	{
 		vissprite_t *spr = R_GetVisSprite(clippedvissprites);
@@ -3664,7 +3938,9 @@ void R_ClipSprites(drawseg_t* dsstart, portal_t* portal)
 			drawsegs_xrange_count = drawsegs_xranges[0].count;
 		}
 
+		PS2SUB_B(23);
 		R_ClipVisSprite(spr, x1, x2, portal);
+		PS2SUB_E(23);
 
 		if ((spr->cut & SC_NOTVISIBLE) == 0)
 			numvisiblesprites++;
@@ -3828,7 +4104,9 @@ static void R_DrawMaskedList (drawnode_t* head)
 		else if (r2->seg && r2->seg->maskedtexturecol != NULL)
 		{
 			next = r2->prev;
+			PS2SUB_B(27);
 			R_RenderMaskedSegRange(r2->seg, r2->seg->x1, r2->seg->x2);
+			PS2SUB_E(27);
 			r2->seg->maskedtexturecol = NULL;
 			R_DoneWithNode(r2);
 			r2 = next;
@@ -3836,7 +4114,9 @@ static void R_DrawMaskedList (drawnode_t* head)
 		else if (r2->thickseg)
 		{
 			next = r2->prev;
+			PS2SUB_B(28);
 			R_RenderThickSideRange(r2->thickseg, r2->thickseg->x1, r2->thickseg->x2, r2->ffloor);
+			PS2SUB_E(28);
 			R_DoneWithNode(r2);
 			r2 = next;
 		}
@@ -3892,7 +4172,9 @@ void R_DrawMasked(maskcount_t* masks, INT32 nummasks)
 		viewz = masks[i].viewz;
 		viewsector = masks[i].viewsector;
 
+		PS2SUB_B(25);
 		R_CreateDrawNodes(&masks[i], &heads[i], false);
+		PS2SUB_E(25);
 	}
 
 	//for (i = 0; i < nummasks; i++)

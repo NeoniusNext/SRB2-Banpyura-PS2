@@ -69,14 +69,18 @@ static void Got_NameAndColor(UINT8 **cp, INT32 playernum);
 static void Got_WeaponPref(UINT8 **cp, INT32 playernum);
 static void Got_Mapcmd(UINT8 **cp, INT32 playernum);
 static void Got_ExitLevelcmd(UINT8 **cp, INT32 playernum);
+#ifdef HAS_ADDONS // PS2-20: no add-ons
 static void Got_RequestAddfilecmd(UINT8 **cp, INT32 playernum);
 static void Got_RequestAddfoldercmd(UINT8 **cp, INT32 playernum);
 static void Got_Addfilecmd(UINT8 **cp, INT32 playernum);
 static void Got_Addfoldercmd(UINT8 **cp, INT32 playernum);
+#endif
 static void Got_Pause(UINT8 **cp, INT32 playernum);
 static void Got_Suicide(UINT8 **cp, INT32 playernum);
 static void Got_RandomSeed(UINT8 **cp, INT32 playernum);
+#ifdef HAS_ADDONS
 static void Got_RunSOCcmd(UINT8 **cp, INT32 playernum);
+#endif
 static void Got_Teamchange(UINT8 **cp, INT32 playernum);
 static void Got_Clearscores(UINT8 **cp, INT32 playernum);
 
@@ -123,17 +127,23 @@ static void Command_Timedemo_f(void);
 static void Command_Stopdemo_f(void);
 static void Command_StartMovie_f(void);
 static void Command_StopMovie_f(void);
+#ifdef HAS_ADDONS
 static void Command_SaveAddons_f(void);
+#endif
 static void Command_Freeslots_f(void);
 static void Command_Map_f(void);
 static void Command_ResetCamera_f(void);
 
+#ifdef HAS_ADDONS
 static void Command_Addfile(void);
 static void Command_Addfilelocal(void);
 static void Command_Addfolder(void);
 static void Command_Addfolderlocal(void);
 static void Command_ListWADS_f(void);
+#endif
+#ifdef HAS_ADDONS
 static void Command_RunSOC(void);
+#endif
 static void Command_Pause(void);
 static void Command_Suicide(void);
 
@@ -478,13 +488,17 @@ void D_RegisterServerCommands(void)
 	RegisterNetXCmd(XD_WEAPONPREF, Got_WeaponPref);
 	RegisterNetXCmd(XD_MAP, Got_Mapcmd);
 	RegisterNetXCmd(XD_EXITLEVEL, Got_ExitLevelcmd);
+#ifdef HAS_ADDONS
 	RegisterNetXCmd(XD_ADDFILE, Got_Addfilecmd);
 	RegisterNetXCmd(XD_ADDFOLDER, Got_Addfoldercmd);
 	RegisterNetXCmd(XD_REQADDFILE, Got_RequestAddfilecmd);
 	RegisterNetXCmd(XD_REQADDFOLDER, Got_RequestAddfoldercmd);
+#endif
 	RegisterNetXCmd(XD_PAUSE, Got_Pause);
 	RegisterNetXCmd(XD_SUICIDE, Got_Suicide);
+#ifdef HAS_ADDONS
 	RegisterNetXCmd(XD_RUNSOC, Got_RunSOCcmd);
+#endif
 	RegisterNetXCmd(XD_LUACMD, Got_Luacmd);
 	RegisterNetXCmd(XD_LUAFILE, Got_LuaFile);
 
@@ -517,13 +531,17 @@ void D_RegisterServerCommands(void)
 	COM_AddCommand("showmap", Command_Showmap_f, COM_LUA);
 	COM_AddCommand("mapmd5", Command_Mapmd5_f, COM_LUA);
 
+#ifdef HAS_ADDONS
 	COM_AddCommand("addfolder", Command_Addfolder, COM_LUA);
 	COM_AddCommand("addfile", Command_Addfile, COM_LUA);
 	COM_AddCommand("addfilelocal", Command_Addfilelocal, COM_LUA|COM_CLIENT);
 	COM_AddCommand("addfolderlocal", Command_Addfolderlocal, COM_LUA|COM_CLIENT);
 	COM_AddCommand("listwad", Command_ListWADS_f, COM_LUA);
+#endif
 
+#ifdef HAS_ADDONS
 	COM_AddCommand("runsoc", Command_RunSOC, COM_LUA);
+#endif
 	COM_AddCommand("pause", Command_Pause, COM_LUA);
 	COM_AddCommand("suicide", Command_Suicide, COM_LUA);
 
@@ -653,9 +671,11 @@ void D_RegisterServerCommands(void)
 
 	CV_RegisterVar(&cv_allowseenames);
 
+#ifdef HAS_ADDONS
 	// Other filesrch.c consvars are defined in D_RegisterClientCommands
 	CV_RegisterVar(&cv_addons_option);
 	CV_RegisterVar(&cv_addons_folder);
+#endif
 
 	CV_RegisterVar(&cv_dummyconsvar);
 
@@ -722,7 +742,9 @@ void D_RegisterClientCommands(void)
 	COM_AddCommand("stopmovie", Command_StopMovie_f, COM_LUA);
 
 	// romoney5
+#ifdef HAS_ADDONS
 	COM_AddCommand("saveaddons", Command_SaveAddons_f, COM_CLIENT);
+#endif
 	COM_AddCommand("freeslots", Command_Freeslots_f, COM_CLIENT);
 
 	CV_RegisterVar(&cv_screenshot_option);
@@ -872,10 +894,12 @@ void D_RegisterClientCommands(void)
 	// filesrch.c
 	//CV_RegisterVar(&cv_addons_option); // These two are now defined
 	//CV_RegisterVar(&cv_addons_folder); // in D_RegisterServerCommands
+#ifdef HAS_ADDONS
 	CV_RegisterVar(&cv_addons_md5);
 	CV_RegisterVar(&cv_addons_showall);
 	CV_RegisterVar(&cv_addons_search_type);
 	CV_RegisterVar(&cv_addons_search_case);
+#endif
 
 	// WARNING: the order is important when initialising mouse2
 	// we need the mouse2port
@@ -1641,11 +1665,15 @@ static void Command_Playdemo_f(void)
 	CONS_Printf(M_GetText("Playing back demo '%s'.\n"), name);
 
 	demofileoverride = DFILE_OVERRIDE_NONE;
+#ifdef HAS_ADDONS // PS2-103: "-addfiles" needs add-ons
 	if (strcmp(COM_Argv(2), "-addfiles") == 0)
 	{
 		demofileoverride = DFILE_OVERRIDE_LOAD;
 	}
 	else if (strcmp(COM_Argv(2), "-force") == 0)
+#else
+	if (strcmp(COM_Argv(2), "-force") == 0)
+#endif
 	{
 		demofileoverride = DFILE_OVERRIDE_SKIP;
 	}
@@ -1717,6 +1745,7 @@ static void Command_StopMovie_f(void)
 	M_StopMovie();
 }
 
+#ifdef HAS_ADDONS // PS2-20: no add-ons
 // romoney5: save the currently loaded addon list,
 // excluding the base files and local addons
 static void Command_SaveAddons_f(void)
@@ -1777,6 +1806,7 @@ static void Command_SaveAddons_f(void)
 	CONS_Printf("Saved addon list (%d addons) to %s\n", savedaddons, filename);
 }
 
+#endif
 // romoney5: print the amount of freeslots from lua and soc
 // inspired by the freeslots lua command i made
 static void Command_Freeslots_f(void)
@@ -3393,6 +3423,7 @@ static void Got_MotD_f(UINT8 **cp, INT32 playernum)
 	Z_Free(mymotd);
 }
 
+#ifdef HAS_ADDONS // PS2-20: SOC commands and add-ons are restored with the add-on system
 static void Command_RunSOC(void)
 {
 	const char *fn;
@@ -3469,6 +3500,7 @@ static void Got_RunSOCcmd(UINT8 **cp, INT32 playernum)
 	G_SetGameModified(true);
 }
 
+// PS2-20: addfile/addfolder/listwad and their net commands
 // C++ would make this SO much simpler!
 typedef struct addedfile_s
 {
@@ -4077,6 +4109,7 @@ static void Command_ListWADS_f(void)
 
 /** Prints program version.
   */
+#endif
 static void Command_Version_f(void)
 {
 #ifdef DEVELOP
@@ -4152,8 +4185,10 @@ static void Command_Playintro_f(void)
 	if (netgame)
 		return;
 
+#ifdef HAS_ADDONS
 	if (dirmenu)
 		closefilemenu(true);
+#endif
 
 	F_StartIntro();
 }
@@ -4872,8 +4907,10 @@ void Command_ExitGame_f(void)
 	automapactive = false;
 	memset(&luabanks, 0, sizeof(luabanks));
 
+#ifdef HAS_ADDONS
 	if (dirmenu)
 		closefilemenu(true);
+#endif
 
 	if (!modeattacking)
 		D_StartTitle();

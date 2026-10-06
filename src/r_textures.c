@@ -81,6 +81,21 @@ static INT32 tidcachelen = 0;
 //
 static void R_DrawColumnInCache(column_t *column, UINT8 *cache, texpatch_t *originPatch, INT32 cacheheight, INT32 patchheight, UINT8 *opaque_pixels)
 {
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_texmask)
+#define R_OPAQUE_PACKED
+#define R_MASK_BYTES(h) (((size_t)(h) + 7) >> 3)
+#define R_MASK_TEST(mask, p) (((mask)[(size_t)(p) >> 3] >> ((p) & 7)) & 1)
+#define R_MASK_SET(mask, p) ((mask)[(size_t)(p) >> 3] |= (UINT8)(1u << ((p) & 7)))
+#define R_MASK_RANGE(mask, p, n) do { \
+	size_t firstbyte = (size_t)(p) >> 3, lastbyte = (size_t)((p) + (n) - 1) >> 3; \
+	UINT8 firstmask = (UINT8)(0xffu << ((p) & 7)); \
+	UINT8 lastmask = (UINT8)(0xffu >> (7 - (((p) + (n) - 1) & 7))); \
+	if (firstbyte == lastbyte) (mask)[firstbyte] |= (UINT8)(firstmask & lastmask); \
+	else { (mask)[firstbyte] |= firstmask; \
+		memset((mask) + firstbyte + 1, 0xff, lastbyte - firstbyte - 1); \
+		(mask)[lastbyte] |= lastmask; } \
+} while (0)
+#endif
 	INT32 count, position;
 	UINT8 *source;
 	INT32 originy = originPatch->originy;
@@ -107,7 +122,11 @@ static void R_DrawColumnInCache(column_t *column, UINT8 *cache, texpatch_t *orig
 		if (count > 0)
 		{
 			M_Memcpy(cache + position, source, count);
+#ifdef R_OPAQUE_PACKED
+			R_MASK_RANGE(opaque_pixels, position, count);
+#else
 			memset(opaque_pixels + position, true, count);
+#endif
 		}
 	}
 }
@@ -122,7 +141,9 @@ static void R_DrawFlippedColumnInCache(column_t *column, UINT8 *cache, texpatch_
 	UINT8 *source, *dest;
 	INT32 originy = originPatch->originy;
 	INT32 topdelta;
+#ifndef R_OPAQUE_PACKED
 	UINT8 *is_opaque;
+#endif
 
 	for (unsigned i = 0; i < column->num_posts; i++)
 	{
@@ -143,14 +164,23 @@ static void R_DrawFlippedColumnInCache(column_t *column, UINT8 *cache, texpatch_
 			count = cacheheight - position;
 
 		dest = cache + position;
+#ifndef R_OPAQUE_PACKED
 		is_opaque = opaque_pixels + position;
+#endif
 
 		if (count > 0)
 		{
+#ifdef R_OPAQUE_PACKED
+			R_MASK_RANGE(opaque_pixels, position, count);
+			for (; dest < cache + position + count; --source, dest++)
+#else
 			for (; dest < cache + position + count; --source, dest++, is_opaque++)
+#endif
 			{
 				*dest = *source;
+#ifndef R_OPAQUE_PACKED
 				*is_opaque = true;
+#endif
 			}
 		}
 	}
@@ -165,7 +195,11 @@ static void R_DrawBlendColumnInCache(column_t *column, UINT8 *cache, texpatch_t 
 	INT32 count, position;
 	UINT8 *source, *dest;
 	INT32 originy = originPatch->originy;
+#ifdef R_OPAQUE_PACKED
+	INT32 is_opaque;
+#else
 	UINT8 *is_opaque;
+#endif
 
 	(void)patchheight; // This parameter is unused
 
@@ -187,16 +221,28 @@ static void R_DrawBlendColumnInCache(column_t *column, UINT8 *cache, texpatch_t 
 			count = cacheheight - position;
 
 		dest = cache + position;
+#ifdef R_OPAQUE_PACKED
+		is_opaque = position;
+#else
 		is_opaque = opaque_pixels + position;
+#endif
 
 		if (count > 0)
 		{
 			for (; dest < cache + position + count; source++, dest++, is_opaque++)
 			{
+#ifdef R_OPAQUE_PACKED
+				if (originPatch->alpha <= ASTTextureBlendingThreshold[1] && !R_MASK_TEST(opaque_pixels, is_opaque))
+#else
 				if (originPatch->alpha <= ASTTextureBlendingThreshold[1] && !(*is_opaque))
+#endif
 					continue;
 				*dest = ASTBlendPaletteIndexes(*dest, *source, originPatch->style, originPatch->alpha);
+#ifdef R_OPAQUE_PACKED
+				R_MASK_SET(opaque_pixels, is_opaque);
+#else
 				*is_opaque = true;
+#endif
 			}
 		}
 	}
@@ -212,7 +258,11 @@ static void R_DrawBlendFlippedColumnInCache(column_t *column, UINT8 *cache, texp
 	UINT8 *source, *dest;
 	INT32 originy = originPatch->originy;
 	INT32 topdelta;
+#ifdef R_OPAQUE_PACKED
+	INT32 is_opaque;
+#else
 	UINT8 *is_opaque;
+#endif
 
 	for (unsigned i = 0; i < column->num_posts; i++)
 	{
@@ -233,22 +283,65 @@ static void R_DrawBlendFlippedColumnInCache(column_t *column, UINT8 *cache, texp
 			count = cacheheight - position;
 
 		dest = cache + position;
+#ifdef R_OPAQUE_PACKED
+		is_opaque = position;
+#else
 		is_opaque = opaque_pixels + position;
+#endif
 
 		if (count > 0)
 		{
 			for (; dest < cache + position + count; --source, dest++, is_opaque++)
 			{
+#ifdef R_OPAQUE_PACKED
+				if (originPatch->alpha <= ASTTextureBlendingThreshold[1] && !R_MASK_TEST(opaque_pixels, is_opaque))
+#else
 				if (originPatch->alpha <= ASTTextureBlendingThreshold[1] && !(*is_opaque))
+#endif
 					continue;
 				*dest = ASTBlendPaletteIndexes(*dest, *source, originPatch->style, originPatch->alpha);
+#ifdef R_OPAQUE_PACKED
+				R_MASK_SET(opaque_pixels, is_opaque);
+#else
 				*is_opaque = true;
+#endif
 			}
 		}
 	}
 }
 
 #ifdef PS2_PROFILE
+// Consume the original post stream directly; only one column/post descriptor lives on the stack.
+static void R_DrawRawPatchColumn(softwarepatch_t *raw, size_t bytes, INT32 colx, UINT8 *dest,
+	texpatch_t *origin, INT32 cacheheight, UINT8 *mask,
+	void (*drawer)(column_t *, UINT8 *, texpatch_t *, INT32, INT32, UINT8 *))
+{
+	size_t off = (UINT32)LONG(raw->columnofs[colx]), prevdelta = 0;
+	column_t column = {0};
+	post_t post = {0};
+	column.num_posts = 1;
+	column.posts = &post;
+	for (;;)
+	{
+		UINT8 *source;
+		if (off >= bytes)
+			I_Error("R_GenerateTexture: truncated patch column");
+		source = (UINT8 *)raw + off;
+		if (source[0] == 0xff)
+			break;
+		if (bytes - off < 4 || source[1] > bytes - off - 4)
+			I_Error("R_GenerateTexture: truncated patch post");
+		post.topdelta = source[0];
+		if (post.topdelta <= prevdelta)
+			post.topdelta += prevdelta;
+		prevdelta = post.topdelta;
+		post.length = source[1];
+		column.pixels = source + 3;
+		drawer(&column, dest, origin, cacheheight, SHORT(raw->height), mask);
+		off += post.length + 4;
+	}
+}
+
 // Pixel streams can have any byte length. Align the internal arrays independently without adding padding
 // to total_pixels: patch column offsets and the pixel copy still describe only actual pixel bytes.
 static size_t R_TextureCacheLayout(size_t pixels, size_t width, size_t posts, size_t *columnofs, size_t *postofs)
@@ -257,6 +350,42 @@ static size_t R_TextureCacheLayout(size_t pixels, size_t width, size_t posts, si
 	*columnofs = (pixels + columnalign - 1) & ~(columnalign - 1);
 	*postofs = (*columnofs + sizeof(column_t) * width + postalign - 1) & ~(postalign - 1);
 	return *postofs + sizeof(post_t) * posts;
+}
+#endif
+
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXPLACE)
+#define R_TEXTURE_WORK_TAG PU_RENDERWORK
+#else
+#define R_TEXTURE_WORK_TAG PU_STATIC
+#endif
+
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXPOSTS) && !defined(TEXTURE_255_IS_TRANSPARENT)
+#define R_COUNTED_POSTS
+// The mask survives until every descriptor has been written, even if the pixel root moves.
+static void R_WriteTexturePosts(post_t *posts, const UINT8 *mask, INT32 width, INT32 height)
+{
+	for (INT32 x = 0; x < width; x++)
+	{
+		post_t *post = NULL;
+		for (INT32 y = 0; y < height; y++)
+		{
+#ifdef R_OPAQUE_PACKED
+			boolean opaque = R_MASK_TEST(mask + x * R_MASK_BYTES(height), y);
+#else
+			boolean opaque = mask[x * height + y];
+#endif
+			if (!opaque)
+				post = NULL;
+			else if (!post)
+			{
+				post = posts++;
+				post->topdelta = post->data_offset = (size_t)y;
+				post->length = 1;
+			}
+			else
+				post->length++;
+		}
+	}
 }
 #endif
 
@@ -289,6 +418,9 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	post_t *posts, *temp_posts = NULL;
 	size_t total_posts = 0;
 	size_t total_pixels = 0;
+#ifdef R_COUNTED_POSTS
+	boolean final_posts = false;
+#endif
 
 	I_Assert(texnum <= (size_t)numtextures);
 	texture = textures[texnum];
@@ -323,7 +455,7 @@ UINT8 *R_GenerateTexture(size_t texnum)
 
 #ifdef PS2_PROFILE
 		// PU_STATIC while in use (a PU_CACHE block could be purged by the allocations below), freed on every path
-		pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_STATIC);
+		pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
 #else
 		pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
 #endif
@@ -371,7 +503,7 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #endif
 			texturememory += blocksize;
 
-			block = Z_Calloc(blocksize, PU_STATIC, &texturecache[texnum]);
+			block = Z_Calloc(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
 			blocktex = block;
 
 #ifdef PS2_PROFILE
@@ -407,9 +539,20 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	// To make things easier, I just allocate WxH always
 	total_pixels = texture->width * texture->height;
 
-	opaque_pixels = Z_Calloc(total_pixels * sizeof(UINT8), PU_STATIC, NULL);
-	temp_columns = Z_Calloc(sizeof(column_t) * texture->width, PU_STATIC, NULL);
-	temp_block = Z_Calloc(total_pixels, PU_STATIC, NULL);
+#ifdef PS2_PROFILE
+	// PS2-76: the biggest block first. The mask and the column array below are small, but they took the middle of the one hole
+	// that would have held WxH (MAP11, 1024x512: 498 KB hole split by a 64 KB mask, "Out of memory allocating 524288 bytes")
+	temp_block = Z_Calloc(total_pixels, R_TEXTURE_WORK_TAG, NULL);
+#endif
+#ifdef R_OPAQUE_PACKED
+	opaque_pixels = Z_Calloc((size_t)texture->width * R_MASK_BYTES(texture->height), R_TEXTURE_WORK_TAG, NULL);
+#else
+	opaque_pixels = Z_Calloc(total_pixels * sizeof(UINT8), R_TEXTURE_WORK_TAG, NULL);
+#endif
+	temp_columns = Z_Calloc(sizeof(column_t) * texture->width, R_TEXTURE_WORK_TAG, NULL);
+#ifndef PS2_PROFILE
+	temp_block = Z_Calloc(total_pixels, R_TEXTURE_WORK_TAG, NULL);
+#endif
 
 #ifdef TEXTURE_255_IS_TRANSPARENT
 	texture->transparency = false;
@@ -443,6 +586,8 @@ UINT8 *R_GenerateTexture(size_t texnum)
 		// The raw lump is only needed by the PNG/flat converters: PU_STATIC while in use, released below
 		UINT8 *pdata = NULL;
 		boolean rawlump = (texture->type == TEXTURETYPE_FLAT);
+		softwarepatch_t *rawpatch = NULL;
+		size_t rawbytes = 0;
 #else
 		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
 #endif
@@ -459,9 +604,47 @@ UINT8 *R_GenerateTexture(size_t texnum)
 		}
 #endif
 		if (rawlump)
-			pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_STATIC);
+			pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
 #endif
 
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_texstream)
+		if (texture->type != TEXTURETYPE_FLAT)
+		{
+			realpatch = W_GetCachedPatchNumPwad(wadnum, lumpnum);
+			free_patch = false;
+			if (realpatch == NULL)
+			{
+				pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
+				rawbytes = W_LumpLengthPwad(wadnum, lumpnum);
+				rawpatch = (softwarepatch_t *)pdata;
+#ifdef PS2_ZIPPNG
+				if (Picture_IsLumpPNG(pdata, rawbytes) && !Picture_IsLumpCooked(pdata, rawbytes))
+				{
+					// PS2-100: a real PNG (add-on): the generic converter (patch cache) builds the patch
+					rawpatch = NULL;
+					Z_Free(pdata);
+					pdata = NULL;
+					realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
+				}
+				else
+#endif
+				{
+#ifndef NO_PNG_LUMPS
+				if (Picture_IsLumpPNG(pdata, rawbytes))
+				{
+					rawpatch = (softwarepatch_t *)(pdata + PNG_HEADER_SIZE);
+					rawbytes -= PNG_HEADER_SIZE;
+				}
+#endif
+				if (rawbytes < 8 || SHORT(rawpatch->width) <= 0
+					|| (size_t)SHORT(rawpatch->width) > (rawbytes - 8) / sizeof(UINT32))
+					I_Error("R_GenerateTexture: invalid patch column directory");
+				}
+			}
+		}
+		else
+		{
+#endif
 #ifndef NO_PNG_LUMPS
 		size_t lumplength = W_LumpLengthPwad(wadnum, lumpnum);
 #ifdef PS2_PROFILE
@@ -484,20 +667,32 @@ UINT8 *R_GenerateTexture(size_t texnum)
 			if (realpatch == NULL)
 				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
 		}
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_texstream)
+		}
+#endif
 
 #ifdef PS2_PROFILE
-		Z_Free(pdata); // the converted patch is a copy
+		if (!rawpatch)
+			Z_Free(pdata); // the converted patch is a copy
 #endif
 
 		x1 = patch->originx;
+#ifdef PS2_PROFILE
+		width = rawpatch ? SHORT(rawpatch->width) : realpatch->width;
+		height = rawpatch ? SHORT(rawpatch->height) : realpatch->height;
+#else
 		width = realpatch->width;
 		height = realpatch->height;
+#endif
 		x2 = x1 + width;
 
 		if (x1 > texture->width || x2 < 0)
 		{
 			if (free_patch)
 				Patch_Free(realpatch);
+#ifdef PS2_PROFILE
+			if (rawpatch) Z_Free(pdata);
+#endif
 			continue; // patch not located within texture's x bounds, ignore
 		}
 
@@ -505,6 +700,9 @@ UINT8 *R_GenerateTexture(size_t texnum)
 		{
 			if (free_patch)
 				Patch_Free(realpatch);
+#ifdef PS2_PROFILE
+			if (rawpatch) Z_Free(pdata);
+#endif
 			continue; // patch not located within texture's y bounds, ignore
 		}
 
@@ -530,18 +728,38 @@ UINT8 *R_GenerateTexture(size_t texnum)
 			else
 				colx = x-x1;
 
+#ifdef PS2_PROFILE
+			if (rawpatch)
+			{
+#ifdef R_OPAQUE_PACKED
+				UINT8 *mask = opaque_pixels + x * R_MASK_BYTES(texture->height);
+#else
+				UINT8 *mask = opaque_pixels + x * texture->height;
+#endif
+				R_DrawRawPatchColumn(rawpatch, rawbytes, colx, temp_columns[x].pixels,
+					patch, texture->height, mask, columnDrawer);
+				continue;
+			}
+#endif
 			column_t *patchcol = &realpatch->columns[colx];
 
 			if (patchcol->num_posts > 0)
+#ifdef R_OPAQUE_PACKED
+				columnDrawer(patchcol, temp_columns[x].pixels, patch, texture->height, height, &opaque_pixels[x * R_MASK_BYTES(texture->height)]);
+#else
 				columnDrawer(patchcol, temp_columns[x].pixels, patch, texture->height, height, &opaque_pixels[x * texture->height]);
+#endif
 		}
 
 		if (free_patch)
 			Patch_Free(realpatch);
+#ifdef PS2_PROFILE
+		if (rawpatch) Z_Free(pdata);
+#endif
 	}
 
 	// Now write the columns
-	column_posts = Z_Calloc(sizeof(unsigned) * texture->width, PU_STATIC, NULL);
+	column_posts = Z_Calloc(sizeof(unsigned) * texture->width, R_TEXTURE_WORK_TAG, NULL);
 
 #ifdef TEXTURE_255_IS_TRANSPARENT
 	total_posts = texture->width;
@@ -550,7 +768,9 @@ UINT8 *R_GenerateTexture(size_t texnum)
 
 	for (x = 0; x < texture->width; x++)
 	{
+#ifndef R_COUNTED_POSTS
 		post_t *post = NULL;
+#endif
 
 		column_t *column = &temp_columns[x];
 
@@ -569,7 +789,11 @@ UINT8 *R_GenerateTexture(size_t texnum)
 		for (INT32 y = 0; y < texture->height; y++)
 		{
 			// End span if we have a transparent pixel
+#ifdef R_OPAQUE_PACKED
+			if (!R_MASK_TEST(opaque_pixels + x * R_MASK_BYTES(texture->height), y))
+#else
 			if (!opaque_pixels[(x * texture->height) + y])
+#endif
 			{
 				was_opaque = false;
 				continue;
@@ -579,11 +803,13 @@ UINT8 *R_GenerateTexture(size_t texnum)
 			{
 				total_posts++;
 
+#ifndef R_COUNTED_POSTS
 				temp_posts = Z_Realloc(temp_posts, sizeof(post_t) * total_posts, PU_CACHE, NULL);
 				post = &temp_posts[total_posts - 1];
 				post->topdelta = (size_t)y;
 				post->length = 0;
 				post->data_offset = (size_t)y;
+#endif
 				if (column_posts[x] == (unsigned)-1)
 					column_posts[x] = total_posts - 1;
 				column->num_posts++;
@@ -591,7 +817,9 @@ UINT8 *R_GenerateTexture(size_t texnum)
 
 			was_opaque = true;
 
+#ifndef R_COUNTED_POSTS
 			post->length++;
+#endif
 		}
 #endif
 	}
@@ -599,7 +827,22 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #ifdef PS2_PROFILE
 	// The scratch buffers below were never released (and temp_posts is PU_CACHE without an owner, so never
 	// purged either): that leaked width*height bytes per composite texture.
+#ifdef R_COUNTED_POSTS
+	// Keep the mask only when it costs no more than the eliminated descriptor scratch.
+#ifdef R_OPAQUE_PACKED
+	final_posts = (size_t)texture->width * R_MASK_BYTES(texture->height) <= total_posts * sizeof(post_t);
+#else
+	final_posts = total_pixels <= total_posts * sizeof(post_t);
+#endif
+	if (!final_posts)
+	{
+		temp_posts = Z_Malloc(total_posts * sizeof(*temp_posts), PU_CACHE, NULL);
+		R_WriteTexturePosts(temp_posts, opaque_pixels, texture->width, texture->height);
+		Z_Free(opaque_pixels);
+	}
+#else
 	Z_Free(opaque_pixels);
+#endif
 #endif
 
 #ifdef PS2_PROFILE
@@ -609,12 +852,22 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #endif
 	texturememory += blocksize;
 
-	block = Z_Calloc(blocksize, PU_STATIC, &texturecache[texnum]);
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_texreuse)
+	// Release the adjacent scratch before extending pixels into their final self-contained cache.
+	Z_Free(temp_columns);
+	temp_columns = NULL;
+	block = Z_Realloc(temp_block, blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
+	temp_block = NULL;
+#else
+	block = Z_Calloc(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
+#endif
 	blocktex = block;
 
+#if !defined(PS2_PROFILE) || defined(PS2_NOOPT_texreuse)
 	memcpy(blocktex, temp_block, total_pixels);
 
 	Z_Free(temp_block);
+#endif
 
 #ifdef PS2_PROFILE
 	columns = (column_t *)(block + columnofs);
@@ -624,11 +877,38 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	posts = (post_t *)(block + (sizeof(UINT8) * total_pixels) + (sizeof(column_t) * texture->width));
 #endif
 
+#if !defined(PS2_PROFILE) || defined(PS2_NOOPT_texreuse)
 	memcpy(columns, temp_columns, sizeof(column_t) * texture->width);
-	memcpy(posts, temp_posts, sizeof(post_t) * total_posts);
+#endif
+#ifdef R_COUNTED_POSTS
+	if (final_posts)
+	{
+		R_WriteTexturePosts(posts, opaque_pixels, texture->width, texture->height);
+		Z_Free(opaque_pixels);
+	}
+	else
+#endif
+		memcpy(posts, temp_posts, sizeof(post_t) * total_posts);
 
 	texturecolumns[texnum] = columns;
 
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_texreuse)
+	// Prefix indices determine every column's post count, including empty columns.
+	{
+		unsigned nextpost = total_posts;
+		for (x = texture->width - 1; x >= 0; x--)
+		{
+			column_t *column = &columns[x];
+			if (column_posts[x] != (unsigned)-1)
+			{
+				column->num_posts = nextpost - column_posts[x];
+				column->posts = &posts[column_posts[x]];
+				nextpost = column_posts[x];
+			}
+			column->pixels = blocktex + (texture->height * x);
+		}
+	}
+#else
 	for (x = 0; x < texture->width; x++)
 	{
 		column_t *column = &columns[x];
@@ -636,6 +916,7 @@ UINT8 *R_GenerateTexture(size_t texnum)
 			column->posts = &posts[column_posts[x]];
 		column->pixels = blocktex + (texture->height * x);
 	}
+#endif
 
 #ifdef PS2_PROFILE
 	Z_Free(temp_columns);
@@ -656,7 +937,12 @@ UINT8 *R_GetFlatForTexture(size_t texnum)
 
 	texture_t *texture = textures[texnum];
 	if (texture->flat != NULL)
+	{
+#ifdef PS2_PROFILE
+		Z_Touch(texture->flat); // PS2-OPT-03: used in this frame (the zone evicts the least recently used cache first)
+#endif
 		return texture->flat;
+	}
 
 	// Special case: Textures that are flats don't need to be converted FROM a texture INTO a flat.
 	if (texture->type == TEXTURETYPE_FLAT)
@@ -666,7 +952,7 @@ UINT8 *R_GetFlatForTexture(size_t texnum)
 		lumpnum_t lumpnum = patch->lump;
 #ifdef PS2_PROFILE
 		// PU_STATIC while in use: the Z_Malloc below may purge PU_CACHE blocks (freed again at the end)
-		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_STATIC);
+		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
 #else
 		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
 #endif
@@ -679,22 +965,44 @@ UINT8 *R_GetFlatForTexture(size_t texnum)
 #endif
 		{
 #ifdef PS2_PROFILE
-			// purgable: Z_PurgeCache drops it when the zone runs out, this function rebuilds it
+#ifdef PS2_NOOPT_flattransfer
 			texture->flat = Z_Malloc(lumplength, PU_CACHE, &texture->flat);
+			memcpy(texture->flat, pdata, lumplength);
+#else
+			texture->flat = W_TakeLumpNumPwad(wadnum, lumpnum, PU_CACHE, (void **)&texture->flat);
+#endif
 #else
 			texture->flat = Z_Malloc(lumplength, PU_STATIC, NULL);
-#endif
 			memcpy(texture->flat, pdata, lumplength);
+#endif
 		}
 
 #ifndef PS2_PROFILE
 		Z_SetUser(texture->flat, &texture->flat);
 #endif
 
+#ifdef PS2_PROFILE
+		if (texture->flat != pdata)
+		{
+			Z_SetUser(texture->flat, (void **)&texture->flat);
+			Z_ChangeTag(texture->flat, PU_CACHE);
+			Z_Free(pdata);
+		}
+#else
 		Z_Free(pdata);
+#endif
 	}
 	else
+	{
 		texture->flat = (UINT8 *)Picture_TextureToFlat(texnum);
+#ifdef PS2_PROFILE
+		// PS2-OPT-03: a texture used as a flat was converted into a PU_STATIC block that nothing ever released
+		// (MAP11: 50 blocks, 1.4 MB); like the plain flats it is a cache block now and is built again when it was evicted
+		Z_SetUser(texture->flat, (void **)&texture->flat);
+		Z_ChangeTag(texture->flat, PU_CACHE);
+		R_ReleaseTextureCache((INT32)texnum); // conversion copied every column; only the independent flat is still held
+#endif
+	}
 
 	flatmemory += texture->width * texture->height;
 
@@ -725,7 +1033,25 @@ void R_CheckTextureCache(INT32 tex)
 {
 	if (!texturecache[tex])
 		R_GenerateTexture(tex);
+#ifdef PS2_PROFILE
+	else
+		Z_Touch(texturecache[tex]); // PS2-OPT-03: cache hit: used in this frame
+#endif
 }
+
+#ifdef PS2_PROFILE
+void R_ReleaseTextureCache(INT32 tex)
+{
+	if (tex > 0 && tex < numtextures)
+		Z_ReleaseCache(texturecache[tex]);
+}
+
+void R_ReleaseFlatCache(INT32 tex)
+{
+	if (tex >= 0 && tex < numtextures)
+		Z_ReleaseCache(textures[tex]->flat);
+}
+#endif
 
 column_t *R_GetColumn(fixed_t tex, INT32 col)
 {
@@ -733,6 +1059,8 @@ column_t *R_GetColumn(fixed_t tex, INT32 col)
 #ifdef PS2_PROFILE
 	if (!texturecache[tex]) // the zone may have evicted it (PU_CACHE): rebuild
 		R_GenerateTexture(tex);
+	else
+		Z_Touch(texturecache[tex]); // PS2-OPT-03: cache hit: used in this frame
 #endif
 	if (width & (width - 1))
 		col = (UINT32)col % width;

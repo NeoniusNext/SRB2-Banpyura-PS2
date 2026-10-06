@@ -13,6 +13,8 @@
 ///        utility functions (BSP, geometry, trigonometry).
 ///        See tables.c, too.
 
+#include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
+#include <stddef.h>
 #include "doomdef.h"
 #include "g_game.h"
 #include "g_input.h"
@@ -22,6 +24,7 @@
 #include "hu_stuff.h"
 #include "st_stuff.h"
 #include "p_local.h"
+#include "m_bbox.h"
 #include "keys.h"
 #include "i_video.h"
 #include "m_menu.h"
@@ -268,7 +271,16 @@ static void FlipCam2_OnChange(void)
 //
 // killough 5/2/98: reformatted
 //
+#ifdef PS2_OPT_REND
+#if defined(__GNUC__)
+static inline __attribute__((always_inline))
+#else
+static ATTRINLINE
+#endif
+INT32 R_PointOnSideI(fixed_t x, fixed_t y, const node_t *restrict node)
+#else
 INT32 R_PointOnSide(fixed_t x, fixed_t y, node_t *restrict node)
+#endif
 {
 	if (!node->dx)
 		return x <= node->x ? node->dy > 0 : node->dy < 0;
@@ -285,6 +297,14 @@ INT32 R_PointOnSide(fixed_t x, fixed_t y, node_t *restrict node)
 	return (mask & ((node->dy ^ dx) < 0)) |  // (left is negative)
 		(~mask & (FixedMul(dy, node->dx>>FRACBITS) >= FixedMul(node->dy>>FRACBITS, dx)));
 }
+
+#ifdef PS2_OPT_REND
+// PS2-84: the same function, also inlined into the BSP descents below (one call per node level otherwise)
+INT32 R_PointOnSide(fixed_t x, fixed_t y, node_t *restrict node)
+{
+	return R_PointOnSideI(x, y, node);
+}
+#endif
 
 // killough 5/2/98: reformatted
 INT32 R_PointOnSegSide(fixed_t x, fixed_t y, seg_t *line)
@@ -338,6 +358,11 @@ angle_t R_PointToAngle(fixed_t x, fixed_t y)
 		0;
 }
 
+#ifdef PS2_OPT_REND
+#include "ps2/ps2_rdraw.h"
+#define SlopeDivEx PS2_SlopeDivEx
+#endif
+
 // This version uses 64-bit variables to avoid overflows with large values.
 angle_t R_PointToAngle64(INT64 x, INT64 y)
 {
@@ -354,6 +379,9 @@ angle_t R_PointToAngle64(INT64 x, INT64 y)
 		ANGLE_270-tantoangle[SlopeDivEx(x,y)] :                              // octant 5
 		0;
 }
+#ifdef PS2_OPT_REND
+#undef SlopeDivEx
+#endif
 
 angle_t R_PointToAngle2(fixed_t pviewx, fixed_t pviewy, fixed_t x, fixed_t y)
 {
@@ -1053,13 +1081,191 @@ boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y)
 //
 // R_PointInSubsector
 //
+#ifdef PS2_OPT_BSPC
+// PS2-98: R_PointInSubsector starts the descent below the deepest node whose partition lines do not cross the grid cell of the
+// point (the cell is on one side of every node above it by at least 2 map units, far more than the rounding of R_PointOnSide, so
+// the result is the one of the full descent). The table is built on first use for the node array in `bspc` (static storage: the
+// zone layout, which some levels' drawing is sensitive to, stays as it was); the key is the array itself and its root.
+#define BSPC_MAXCELLS 16384
+typedef struct
+{
+	const node_t *nodes;
+	size_t numnodes;
+	fixed_t sig[6]; // root partition line and two bounding box sides: a cheap check that the node array is still the same level's
+	fixed_t orgx, orgy;
+	UINT32 cw, ch;
+	INT32 shift;
+	boolean ok; // table made (otherwise the full descent is used for this node array)
+} bspcache_t;
+static bspcache_t bspc;
+static UINT16 bspc_cell[BSPC_MAXCELLS]; // start node of every cell (a node index, or a subsector with NF_SUBSECTOR)
+#ifdef PS2_BSPCHECK
+UINT32 bspcheck_count; // calls verified
+#endif
+
+static ATTRINLINE void R_BSPCacheSig(fixed_t *sig)
+{
+	const node_t *root = nodes + numnodes - 1;
+	sig[0] = root->x; sig[1] = root->y; sig[2] = root->dx; sig[3] = root->dy;
+	sig[4] = root->bbox[0][BOXTOP]; sig[5] = root->bbox[1][BOXRIGHT];
+}
+
+// the box (x0..x1, y0..y1) lies completely on side 0 or 1 of the node's partition line (as R_PointOnSide would answer
+// for all of its points), or -1 when it cannot be said
+static INT32 R_BSPBoxSide(const node_t *node, fixed_t x0, fixed_t y0, fixed_t x1, fixed_t y1)
+{
+	INT64 c[4], t, a;
+	INT32 i;
+	const INT64 dxu = node->dx >> FRACBITS, dyu = node->dy >> FRACBITS;
+
+	if (!node->dx)
+	{
+		if (x1 <= node->x)
+			return node->dy > 0;
+		if (x0 > node->x)
+			return node->dy < 0;
+		return -1;
+	}
+	if (!node->dy)
+	{
+		if (y1 <= node->y)
+			return node->dx < 0;
+		if (y0 > node->y)
+			return node->dx > 0;
+		return -1;
+	}
+	// R_PointOnSide answers 1 for dxu*py - dyu*px >= 0 (p = point - partition origin): exact, with a margin of 2 units of distance
+	c[0] = dxu * ((INT64)y0 - node->y) - dyu * ((INT64)x0 - node->x);
+	c[1] = dxu * ((INT64)y0 - node->y) - dyu * ((INT64)x1 - node->x);
+	c[2] = dxu * ((INT64)y1 - node->y) - dyu * ((INT64)x0 - node->x);
+	c[3] = dxu * ((INT64)y1 - node->y) - dyu * ((INT64)x1 - node->x);
+	a = (dxu < 0 ? -dxu : dxu) + (dyu < 0 ? -dyu : dyu);
+	t = (a * 2) << FRACBITS;
+	for (i = 0; i < 4; i++)
+		if (c[i] < t)
+			break;
+	if (i == 4)
+		return 1;
+	for (i = 0; i < 4; i++)
+		if (c[i] > -t)
+			return -1;
+	return 0;
+}
+
+static ATTRINLINE boolean R_BSPCacheSigEq(void)
+{
+	const node_t *root = nodes + numnodes - 1;
+	return root->x == bspc.sig[0] && root->y == bspc.sig[1] && root->dx == bspc.sig[2] && root->dy == bspc.sig[3]
+		&& root->bbox[0][BOXTOP] == bspc.sig[4] && root->bbox[1][BOXRIGHT] == bspc.sig[5];
+}
+
+static void R_BuildBSPCache(void)
+{
+	const node_t *root;
+	fixed_t minx, miny, maxx, maxy;
+	INT32 shift = FRACBITS + 7;
+	size_t cw, ch, x, y, i;
+
+	bspc.nodes = nodes;
+	bspc.numnodes = numnodes;
+	bspc.ok = false;
+	if (numnodes == 0)
+		return;
+	R_BSPCacheSig(bspc.sig); // the key is kept also when no table can be made: the full descent is then used without retrying
+	if (numnodes >= NF_SUBSECTOR)
+		return;
+	root = nodes + numnodes - 1;
+	minx = min(root->bbox[0][BOXLEFT], root->bbox[1][BOXLEFT]);
+	maxx = max(root->bbox[0][BOXRIGHT], root->bbox[1][BOXRIGHT]);
+	miny = min(root->bbox[0][BOXBOTTOM], root->bbox[1][BOXBOTTOM]);
+	maxy = max(root->bbox[0][BOXTOP], root->bbox[1][BOXTOP]);
+	if (maxx < minx || maxy < miny)
+		return;
+	for (;;)
+	{
+		cw = (size_t)(((INT64)maxx - minx) >> shift) + 1;
+		ch = (size_t)(((INT64)maxy - miny) >> shift) + 1;
+		if (cw * ch <= BSPC_MAXCELLS || shift >= FRACBITS + 14)
+			break;
+		shift++;
+	}
+	if (cw * ch > BSPC_MAXCELLS)
+		return;
+	for (i = 0; i < numnodes; i++) // partition lines are whole map units in every format we load; anything else keeps the full descent
+		if ((nodes[i].x | nodes[i].y | nodes[i].dx | nodes[i].dy) & (FRACUNIT - 1))
+			return;
+
+	bspc.orgx = minx;
+	bspc.orgy = miny;
+	bspc.cw = (UINT32)cw;
+	bspc.ch = (UINT32)ch;
+	bspc.shift = shift;
+	for (y = 0; y < ch; y++)
+		for (x = 0; x < cw; x++)
+		{
+			const fixed_t x0 = minx + (fixed_t)(x << shift), x1 = x0 + ((fixed_t)1 << shift) - 1;
+			const fixed_t y0 = miny + (fixed_t)(y << shift), y1 = y0 + ((fixed_t)1 << shift) - 1;
+			size_t n = numnodes - 1;
+
+			while (!(n & NF_SUBSECTOR))
+			{
+				const INT32 side = R_BSPBoxSide(nodes + n, x0, y0, x1, y1);
+				if (side < 0)
+					break;
+				n = nodes[n].children[side];
+			}
+			bspc_cell[y * cw + x] = (UINT16)n;
+		}
+	bspc.ok = true;
+}
+#endif
+
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 {
 	size_t nodenum = numnodes-1;
 
+#ifdef PS2_OPT_BSPC
+	if (numnodes)
+	{
+		if (bspc.nodes != nodes || bspc.numnodes != numnodes || !R_BSPCacheSigEq())
+			R_BuildBSPCache();
+		if (bspc.ok)
+		{
+			const UINT32 cx = (UINT32)(x - bspc.orgx) >> bspc.shift, cy = (UINT32)(y - bspc.orgy) >> bspc.shift;
+			if (cx < bspc.cw && cy < bspc.ch)
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 5 // negative control: the start node of the neighbouring cell
+				nodenum = bspc_cell[cy * bspc.cw + cx + (cx + 1 < bspc.cw)];
+#elif defined(PS2_NEGCTL) && PS2_NEGCTL == 6 // bisect: the table is built and read but the full descent is used
+				(void)*(volatile UINT16 *)&bspc_cell[cy * bspc.cw + cx];
+#else
+				nodenum = bspc_cell[cy * bspc.cw + cx];
+#endif
+		}
+	}
+#endif
+
+#ifdef PS2_OPT_REND
+	while (!(nodenum & NF_SUBSECTOR))
+	{
+		const node_t *node = nodes+nodenum;
+		nodenum = node->children[R_PointOnSideI(x, y, node)];
+	}
+#else
 	while (!(nodenum & NF_SUBSECTOR))
 		nodenum = nodes[nodenum].children[R_PointOnSide(x, y, nodes+nodenum)];
+#endif
 
+#if defined(PS2_OPT_BSPC) && defined(PS2_BSPCHECK) // host self-check: the cached start must give the full descent's subsector
+	{
+		size_t full = numnodes - 1;
+		while (!(full & NF_SUBSECTOR))
+			full = nodes[full].children[R_PointOnSideI(x, y, nodes + full)];
+		if (full != nodenum)
+			I_Error("R_PointInSubsector: cache mismatch at %d,%d", (int)(x >> FRACBITS), (int)(y >> FRACBITS));
+		if (!(++bspcheck_count & 0xffff))
+			I_OutputMsg("BSPCHECK %u calls verified\n", (unsigned)bspcheck_count); // log only: a console line would show in the frames
+	}
+#endif
 	return &subsectors[nodenum & ~NF_SUBSECTOR];
 }
 
@@ -1083,7 +1289,11 @@ subsector_t *R_PointInSubsectorOrNull(fixed_t x, fixed_t y)
 	while (!(nodenum & NF_SUBSECTOR))
 	{
 		node = &nodes[nodenum];
+#ifdef PS2_OPT_REND
+		side = R_PointOnSideI(x, y, node);
+#else
 		side = R_PointOnSide(x, y, node);
+#endif
 		nodenum = node->children[side];
 	}
 
@@ -1526,11 +1736,14 @@ void R_RenderPlayerView(player_t *player)
 	Z_PurgeLock(true); // the frame holds flat/texture pointers across allocations (blend tables, colormaps, patches)
 #endif
 
+	PS2SUB_B(29);
 	R_SetupFrame(player);
+	PS2SUB_E(29);
 	framecount++;
 	validcount++;
 
 	// Clear buffers.
+	PS2SUB_B(30);
 	R_ClearPlanes();
 	if (viewmorph.use)
 	{
@@ -1550,6 +1763,7 @@ void R_RenderPlayerView(player_t *player)
 	R_ClearSegTables();
 	R_ClearSprites();
 	Portal_InitList();
+	PS2SUB_E(30);
 
 	// check for new console commands.
 	NetUpdate();
@@ -1565,7 +1779,9 @@ void R_RenderPlayerView(player_t *player)
 	Mask_Post(&masks[nummasks - 1]);
 
 	PS_START_TIMING(ps_sw_spritecliptime);
+	PS2SUB_B(31);
 	R_ClipSprites(drawsegs, NULL);
+	PS2SUB_E(31);
 	PS_STOP_TIMING(ps_sw_spritecliptime);
 
 	ps_numsprites.value.i = numvisiblesprites;

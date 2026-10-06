@@ -119,8 +119,8 @@ ENUM (STRING_HOOK);
 #define LUA_HUDHOOK(type,drawlist) LUA_HookHUD(HUD_HOOK(type),(drawlist))
 
 
-#ifdef PS2_PROFILE
-// PS2 profile: no Lua VM, so no hook is ever registered. Every stub returns what the real
+#ifndef HAS_LUA
+// PS2 profile without PS2_LUA: no Lua VM, so no hook is ever registered. Every stub returns what the real
 // function returns when the hook list is empty (defaults from lua_hooklib.c prepare_*hook calls).
 static inline void LUA_HookVoid(int hook) {}
 static inline void LUA_HookHUD(int hook, huddrawlist_h drawlist) {}
@@ -170,7 +170,7 @@ static inline int  LUA_HookPlayerCanEnterSpinGaps(player_t *player) { return 0; 
 // actions are never overridden by Lua: always run the hardcoded one
 static inline boolean LUA_CallAction(enum actionnum actionnum, mobj_t *actor) { return false; }
 
-#else // !PS2_PROFILE
+#else // HAS_LUA
 extern boolean hook_cmd_running;
 
 void LUA_HookVoid(int hook);
@@ -218,4 +218,4 @@ int  LUA_HookMusicChange(const char *oldname, struct MusicChange *);
 fixed_t LUA_HookPlayerHeight(player_t *player);
 int  LUA_HookPlayerCanEnterSpinGaps(player_t *player);
 
-#endif // !PS2_PROFILE
+#endif // HAS_LUA

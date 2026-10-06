@@ -6,6 +6,7 @@ usage: test_pack_reader.py [--lz4-src DIR]   (DIR with lz4.c/lz4.h; default buil
 """
 import argparse
 import hashlib
+import json
 import struct
 import subprocess
 import sys
@@ -143,6 +144,7 @@ def main():
         (out / 'test.log').write_text('\n'.join(messages) + '\n', encoding='utf-8')
 
     inputs = [Path(root) / name for pk3, pak in PAIRS for root, name in [(a.src, pk3), (a.pak, pak)]]
+    inputs += [Path(a.pak) / (pak + '.pics.json') for _pk3, pak in PAIRS if (Path(a.pak) / (pak + '.pics.json')).exists()]
     before = {str(p): sha256(p) for p in inputs}
     (out / 'input-sha256.txt').write_text(''.join(f'{h}  {p}\n' for p, h in before.items()), encoding='utf-8')
     exe = build(Path(a.lz4_src).resolve(), out)
@@ -171,6 +173,10 @@ def main():
             bad += 1
         with zipfile.ZipFile(Path(a.src) / pk3) as zf:
             infos = zf.infolist()
+        sidecar = Path(a.pak) / (pak + '.pics.json')   # PS2-20: PNG lumps replaced by cooked pictures
+        pics = {e['index']: e for e in json.loads(sidecar.read_text())['entries']} if sidecar.exists() else {}
+        if pics:
+            report(f'  {len(pics)} PNG lumps are cooked pictures (sidecar {sidecar.name}): size/crc32 expected from the sidecar')
         if len(rows) != len(infos):
             report(f'  entry count differs: {len(rows)} vs {len(infos)}')
             bad += 1
@@ -182,6 +188,8 @@ def main():
             idx, name, h, longname, fullname, size, comp, crc = r
             en, eh, el = derive(zi.filename.encode())
             exp = (str(i), zi.filename, en.decode(), '%08x' % eh, el.decode(), str(zi.file_size), '%08x' % zi.CRC)
+            if i in pics:
+                exp = exp[:5] + (str(pics[i]['cooked_size']), '%08x' % pics[i]['cooked_crc32'])
             got = (idx, fullname, name, h, longname, size, crc)
             if exp != got:
                 bad += 1
@@ -192,7 +200,7 @@ def main():
     total_bad += validation_tests(exe, out, report)
     changed = [str(p) for p in inputs if sha256(p) != before[str(p)]]
     total_bad += len(changed)
-    report(f'Input preservation: {len(inputs)} packs/archives hashed before and after, {len(changed)} changed')
+    report(f'Input preservation: {len(inputs)} packs/archives/sidecars hashed before and after, {len(changed)} changed')
     report(f'TOTAL differences/failures: {total_bad}')
     return 1 if total_bad else 0
 

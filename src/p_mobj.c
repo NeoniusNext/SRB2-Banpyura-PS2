@@ -178,6 +178,19 @@ static void P_CycleMobjState(mobj_t *mobj)
 	}
 }
 
+#ifdef PS2_PROFILE
+// PS2-42: was `seenstate[state]` of a NUMSTATES table. After the first early return of the original functions `recursion`
+// never went back to 0 (it is only decremented at the end), so every later call cleared a 11.6 KB table with memset
+// (50 calls per frame in a level, and the 8 KB D-cache with it). Same answer, a scan of the states of this call's chain.
+static inline boolean P_StateSeen(const statenum_t *list, size_t count, statenum_t state)
+{
+	while (count--)
+		if (list[count] == state)
+			return true;
+	return false;
+}
+#endif
+
 //
 // P_SetPlayerMobjState
 // Returns true if the mobj is still present.
@@ -189,12 +202,18 @@ static boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 	state_t *st;
 	player_t *player = mobj->player;
 
+#ifdef PS2_PROFILE
+	// PS2-42: the states of this call's chain, not a NUMSTATES table cleared by memset on every call
+	statenum_t seenlist[NUMSTATES];
+	size_t seencount = 0;
+#else
 	// remember states seen, to detect cycles:
 	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
 	statenum_t *seenstate = seenstate_tab; // pointer to table
 	static INT32 recursion; // detects recursion
 	statenum_t i; // initial state
 	statenum_t tempstate[NUMSTATES]; // for use with recursion
+#endif
 
 #ifdef PARANOIA
 	if (player == NULL)
@@ -305,10 +324,14 @@ static boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 		break;
 	}
 
+#ifndef PS2_PROFILE
 	if (recursion++) // if recursion detected,
 		memset(seenstate = tempstate, 0, sizeof tempstate); // clear state table
+#endif
 
+#ifndef PS2_PROFILE
 	i = state;
+#endif
 
 	do
 	{
@@ -485,17 +508,26 @@ static boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
 				return false;
 		}
 
+#ifdef PS2_PROFILE
+		seenlist[seencount++] = state;
+
+		state = st->nextstate;
+	} while (!mobj->tics && !P_StateSeen(seenlist, seencount, state));
+#else
 		seenstate[state] = 1 + st->nextstate;
 
 		state = st->nextstate;
 	} while (!mobj->tics && !seenstate[state]);
+#endif
 
 	if (!mobj->tics)
 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
 
+#ifndef PS2_PROFILE
 	if (!--recursion)
 		for (;(state = seenstate[i]) > S_NULL; i = state - 1)
 			seenstate[i] = S_NULL; // erase memory of states
+#endif
 
 	return true;
 }
@@ -505,18 +537,25 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 {
 	state_t *st;
 
+#ifdef PS2_PROFILE
+	statenum_t seenlist[NUMSTATES]; // PS2-42, see P_SetPlayerMobjState
+	size_t seencount = 0;
+#else
 	// remember states seen, to detect cycles:
 	static statenum_t seenstate_tab[NUMSTATES]; // fast transition table
 	statenum_t *seenstate = seenstate_tab; // pointer to table
 	static INT32 recursion; // detects recursion
 	statenum_t i = state; // initial state
 	statenum_t tempstate[NUMSTATES]; // for use with recursion
+#endif
 
 	if (mobj->player != NULL)
 		return P_SetPlayerMobjState(mobj, state);
 
+#ifndef PS2_PROFILE
 	if (recursion++) // if recursion detected,
 		memset(seenstate = tempstate, 0, sizeof tempstate); // clear state table
+#endif
 
 	do
 	{
@@ -624,17 +663,26 @@ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
 				return false;
 		}
 
+#ifdef PS2_PROFILE
+		seenlist[seencount++] = state;
+
+		state = st->nextstate;
+	} while (!mobj->tics && !P_StateSeen(seenlist, seencount, state));
+#else
 		seenstate[state] = 1 + st->nextstate;
 
 		state = st->nextstate;
 	} while (!mobj->tics && !seenstate[state]);
+#endif
 
 	if (!mobj->tics)
 		CONS_Alert(CONS_WARNING, M_GetText("State cycle detected, exiting.\n"));
 
+#ifndef PS2_PROFILE
 	if (!--recursion)
 		for (;(state = seenstate[i]) > S_NULL; i = state - 1)
 			seenstate[i] = S_NULL; // erase memory of states
+#endif
 
 	return true;
 }
@@ -10165,6 +10213,9 @@ void P_MobjThinker(mobj_t *mobj)
 	tmfloorthing = tmhitthing = NULL;
 
 	// Sector flag MSF_TRIGGERLINE_MOBJ allows ANY mobj to trigger a linedef exec
+#ifdef PS2_OPT_ANIM // PS2-99: P_CheckMobjTrigger(mobj, false) returns at once unless the sector has MSF_TRIGGERLINE_MOBJ
+	if (mobj->subsector && (mobj->subsector->sector->flags & MSF_TRIGGERLINE_MOBJ))
+#endif
 	P_CheckMobjTrigger(mobj, false);
 
 	if (mobj->scale != mobj->destscale)

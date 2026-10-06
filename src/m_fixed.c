@@ -22,8 +22,103 @@
 #include "doomdef.h"
 #include "m_fixed.h"
 
+#ifdef PS2_OPT_MATH
+// Low 32 bits of ((UINT64)hi<<32 | lo) / d for hi < d (the quotient then fits 32 bits).
+// Hacker's Delight divlu with 16-bit digits: two 32/16 divisions.
+static UINT32 PS2_Divlu(UINT32 hi, UINT32 lo, UINT32 d)
+{
+	const UINT32 s = PS2_Clz(d);
+	UINT32 vn1, vn0, un32, un10, un1, un0, q1, q0, rhat, un21;
+	d <<= s;
+	vn1 = d >> 16;
+	vn0 = d & 0xFFFFu;
+	un32 = s ? (hi << s) | (lo >> (32 - s)) : hi;
+	un10 = lo << s;
+	un1 = un10 >> 16;
+	un0 = un10 & 0xFFFFu;
+
+	q1 = un32 / vn1;
+	rhat = un32 - q1 * vn1;
+	while (q1 >= 0x10000u || q1 * vn0 > ((rhat << 16) | un1))
+	{
+		q1--;
+		rhat += vn1;
+		if (rhat >= 0x10000u)
+			break;
+	}
+
+	un21 = (un32 << 16) + un1 - q1 * d;
+
+	q0 = un21 / vn1;
+	rhat = un21 - q0 * vn1;
+	while (q0 >= 0x10000u || q0 * vn0 > ((rhat << 16) | un0))
+	{
+		q0--;
+		rhat += vn1;
+		if (rhat >= 0x10000u)
+			break;
+	}
+	return (q1 << 16) | q0;
+}
+
+// 32x32 -> 64 unsigned product (the EE has no 64-bit multiply: a plain (UINT64)a*b is a libgcc call)
+static inline UINT64 PS2_MulU32(UINT32 a, UINT32 b)
+{
+#if defined(_EE) && defined(__GNUC__)
+	UINT32 lo, hi;
+	__asm__("multu %0,%2,%3\n\tmfhi %1" : "=&r"(lo), "=r"(hi) : "r"(a), "r"(b) : "hi", "lo");
+	return ((UINT64)hi << 32) | lo;
+#else
+	return (UINT64)a * b;
+#endif
+}
+
+UINT32 PS2_FixedDivMag(UINT32 ua, UINT32 ud)
+{
+	UINT32 hi = ua >> (32 - FRACBITS);
+	const UINT32 lo = ua << FRACBITS;
+	// Quotients below 2^23 (|a| < 128|b|, the usual case: scales, slopes, distances): a single-precision estimate
+	// is within +-3 of the quotient on any IEEE or R5900 rounding; the exact remainder in 64 bits then corrects it.
+	if (((ua | ud) >> 31) == 0 && (ua >> 7) < ud)
+	{
+		UINT32 q = (UINT32)(INT32)(((float)(INT32)ua / (float)(INT32)ud) * 65536.0f);
+		INT64 r = (INT64)(((UINT64)ua << FRACBITS) - PS2_MulU32(q, ud));
+		while (r < 0)
+		{
+			q--;
+			r += ud;
+		}
+		while (r >= (INT64)ud)
+		{
+			q++;
+			r -= ud;
+		}
+		return q;
+	}
+	if (hi >= ud)
+		hi %= ud; // only the discarded high quotient bits depend on it
+	if (hi == 0)
+		return lo / ud;
+	if (ud <= 0xFFFFu)
+	{
+		UINT32 t = (hi << 16) | (lo >> 16);
+		const UINT32 q1 = t / ud;
+		t = ((t - q1 * ud) << 16) | (lo & 0xFFFFu);
+		return (q1 << 16) | (t / ud);
+	}
+	return PS2_Divlu(hi, lo, ud);
+}
+#endif
+
 fixed_t FixedSqrt(fixed_t x)
 {
+#if defined(PS2_OPT_MATH) && !defined(HAVE_SQRT)
+	// sqrt(x*FRACUNIT) = 256*sqrt(x): hardware sqrt estimate (within a few units of the
+	// exact root even with the R5900's truncating FPU), then an exact integer fix-up.
+	// Negative x is treated as unsigned like the original loop; that path keeps the loop.
+	if (x >= 0)
+		return (fixed_t)PS2_FixedSqrtFix((UINT32)x, (UINT32)(PS2_SqrtF((float)x) * 256.0f));
+#endif
 #ifdef HAVE_SQRT
 	const float fx = FIXED_TO_FLOAT(x);
 	float fr;

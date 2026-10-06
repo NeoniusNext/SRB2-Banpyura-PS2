@@ -41,6 +41,9 @@ extern CV_PossibleValue_t Color_cons_t[];
 // I/O, setting up the stuff.
 void R_InitData(void);
 void R_PrecacheLevel(void);
+#ifdef PS2_PROFILE
+boolean R_PrecacheHasRoom(void); // PS2-51: false once the level precache has used up its share of the free zone
+#endif
 
 extern size_t flatmemory, spritememory, texturememory;
 

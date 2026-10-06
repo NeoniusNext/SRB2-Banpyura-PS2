@@ -58,12 +58,17 @@
 fixed_t get_number(const char *word)
 {
 #ifdef PS2_PROFILE
-	// no Lua: exact expression text -> value (tools/ps2/gen_soc_numbers.py)
+	// the expressions of the base game: exact expression text -> value (tools/ps2/gen_soc_numbers.py), no Lua state needed;
+	// anything else (an add-on's SOC) goes to the real LUA_EvalMath (PS2-101)
 	fixed_t value;
 	if (!PS2_SOCNumber(word, &value))
 	{
+#ifdef HAS_LUA
+		value = LUA_EvalMath(word);
+#else
 		CONS_Alert(CONS_WARNING, "get_number: unknown expression \"%s\", using 0\n", word);
 		value = 0;
+#endif
 	}
 #else
 	fixed_t value = LUA_EvalMath(word);

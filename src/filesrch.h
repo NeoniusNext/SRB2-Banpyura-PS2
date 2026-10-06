@@ -9,7 +9,9 @@
 #include "m_menu.h" // MAXSTRINGLENGTH
 #include "w_wad.h"
 
+#ifdef HAS_ADDONS // PS2-20: no add-ons menu/cvars
 extern consvar_t cv_addons_option, cv_addons_folder, cv_addons_md5, cv_addons_showall, cv_addons_search_case, cv_addons_search_type;
+#endif
 
 /**	\brief	The filesearch function
 
@@ -37,6 +39,7 @@ INT32 concatpaths(const char *path, const char *startpath);
 extern int direrror;
 #endif
 
+#ifdef HAS_ADDONS // PS2-20: no folder add-ons, no add-ons menu
 lumpinfo_t *getdirectoryfiles(const char *path, UINT16 *nlmp, UINT16 *nfolders);
 
 #define menudepth 20
@@ -50,9 +53,11 @@ extern char menusearch[MAXSTRINGLENGTH+1];
 extern char **dirmenu;
 extern size_t sizedirmenu;
 extern size_t dir_on[menudepth];
+#endif
 extern UINT8 refreshdirmenu;
 extern char *refreshdirname;
 
+#ifdef HAS_ADDONS
 typedef enum
 {
 	EXT_FOLDER = 0,
@@ -88,6 +93,7 @@ typedef enum
 	DIR_LEN,
 	DIR_STRING
 } dirname_enum;
+#endif
 
 typedef enum
 {
@@ -99,7 +105,9 @@ typedef enum
 	REFRESHDIR_MAX = 32
 } refreshdir_enum;
 
+#ifdef HAS_ADDONS
 void closefilemenu(boolean validsize);
 void searchfilemenu(char *tempname);
 boolean preparefilemenu(boolean samedepth);
+#endif
 #endif // __FILESRCH_H__

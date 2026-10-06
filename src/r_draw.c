@@ -27,6 +27,7 @@
 #include "z_zone.h"
 #include "console.h" // Until buffering gets finished
 #include "libdivide.h" // used by NPO2 tilted span functions
+#include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
 
 #ifdef HWRENDER
 #include "hardware/hw_main.h"
@@ -94,8 +95,13 @@ UINT8 *ds_source; // points to the start of a flat
 UINT8 *ds_transmap; // one of the translucency tables
 
 // Vectors for Software's tilted slope drawers
+#ifdef PS2_OPT_SLOPE
+fvector3_t ds_su, ds_sv, ds_sz, ds_slopelight;
+float ds_lightscale;
+#else
 dvector3_t ds_su, ds_sv, ds_sz, ds_slopelight;
 double zeroheight;
+#endif
 float focallengthf;
 
 /**	\brief Variable flat sizes
@@ -167,11 +173,20 @@ static UINT8 *R_LazyTransTable(INT32 level)
 	if (!transtab_lazy[level])
 	{
 		char name[8];
+		// EE byte lookups need cache-line alignment, not a 64 KiB address boundary.
+#ifdef PS2
+		UINT8 *table = Z_MallocAlign(0x10000, PU_CACHE, &transtab_lazy[level], 6);
+#else
 		UINT8 *table = Z_MallocAlign(0x10000, PU_STATIC, NULL, 16);
+#endif
 		snprintf(name, sizeof name, "TRANS%d0", (int)level + 1);
 		W_ReadLump(W_GetNumForName(name), table);
 		transtab_lazy[level] = table;
 	}
+#ifdef PS2
+	// Consumers retain table aliases only within this displayed frame.
+	Z_Touch(transtab_lazy[level]);
+#endif
 	return transtab_lazy[level];
 }
 #else
@@ -398,7 +413,12 @@ static UINT8 *R_LazyBlendTable(INT32 tab, INT32 i)
 	if (!*slot)
 	{
 		RGBA_t *savedpal = pMasterPalette;
+		// The software EE drawers address entries by byte-pointer addition.
+#ifdef PS2
+		UINT8 *table = Z_MallocAlign(0x10000, PU_STATIC, NULL, 6);
+#else
 		UINT8 *table = Z_MallocAlign(0x10000, PU_STATIC, NULL, 16);
+#endif
 
 		pMasterPalette = blendpal; // V_GetMasterColor inside the generators reads this
 		BlendTab_NeedLUT();
@@ -893,7 +913,11 @@ static void R_CalcTiltedLighting(fixed_t start, fixed_t end)
 	}
 }
 
+#ifdef PS2_OPT_SLOPE
+#define PLANELIGHTFLOAT ds_lightscale // set once per plane by R_SetSlopePlane
+#else
 #define PLANELIGHTFLOAT (BASEVIDWIDTH * BASEVIDWIDTH / vid.width / zeroheight / 21.0f * FIXED_TO_FLOAT(fovtan))
+#endif
 
 // Lighting is simple. It's just linear interpolation from start to end
 static void R_CalcSlopeLight(void)
@@ -903,6 +927,29 @@ static void R_CalcSlopeLight(void)
 	float lightend = (iz + ds_slopelight.x * (ds_x2 - ds_x1)) * PLANELIGHTFLOAT;
 	R_CalcTiltedLighting(FloatToFixed(lightstart), FloatToFixed(lightend));
 }
+
+#ifdef PS2_OPT_SLOPE
+// (UINT32)(INT64)f for the float coordinates of the slope drawers. The coordinates wrap modulo 2^32 (texture
+// repeat) and are routinely beyond 2^31, where the FPU conversion saturates and an INT64 cast would be a libgcc
+// call, so the rare large values are taken apart in integers.
+static inline UINT32 R_SlopeToU32(float f)
+{
+	if (f > -2147483648.0f && f < 2147483648.0f)
+		return (UINT32)(INT32)f;
+	else
+	{
+		UINT32 bits, m;
+		INT32 sh;
+		memcpy(&bits, &f, sizeof bits);
+		sh = (INT32)((bits >> 23) & 0xFF) - 127 - 23; // |f| = m * 2^sh, m 24 bits
+		if (sh >= 32 || sh < 0) // multiple of 2^32 (or NaN/Inf, not produced by the R5900)
+			return 0;
+		m = (bits & 0x7FFFFFu) | 0x800000u;
+		m <<= sh;
+		return (bits & 0x80000000u) ? 0u - m : m;
+	}
+}
+#endif
 
 // ==========================================================================
 //                   INCLUDE 8bpp DRAWING CODE HERE

@@ -20,8 +20,8 @@
 #include "g_state.h"
 #include "taglist.h"
 
-#ifdef PS2_PROFILE
-// PS2 profile: the Lua VM is not linked. Everything the core calls is a zero-cost no-op
+#ifndef HAS_LUA
+// PS2 profile without PS2_LUA: the Lua VM is not linked. Everything the core calls is a zero-cost no-op
 // (hooks report "not handled"); the few real symbols are in src/ps2/lua_stub.c.
 #define LUA_IDSIZE 60 // m_perfstats.h hook-info buffers
 typedef ptrdiff_t lua_Integer; // deh_tables.h int_const_s, same type blua uses
@@ -44,7 +44,7 @@ void LUA_UnArchive(save_t *save_p);
 void Got_Luacmd(UINT8 **cp, INT32 playernum); // XD_LUACMD handler (ignored)
 void COM_Lua_f(void); // marks Lua console commands (never registered)
 
-#else // !PS2_PROFILE
+#else // HAS_LUA
 
 #include "blua/lua.h"
 #include "blua/lualib.h"
@@ -96,7 +96,7 @@ void LUA_PushTaggableObjectArray
 		lua_CFunction iterator,
 		lua_CFunction indexer,
 		lua_CFunction counter,
-		taggroup_t *garray[],
+		TAGGROUPS_PARAM,
 		size_t * max_elements,
 		void * element_array,
 		size_t sizeof_element,
@@ -140,7 +140,7 @@ void LUA_RegisterGlobalUserdata(
 
 void LUA_InsertTaggroupIterator
 (		lua_State *L,
-		taggroup_t *garray[],
+		TAGGROUPS_PARAM,
 		size_t * max_elements,
 		void * element_array,
 		size_t sizeof_element,
@@ -201,6 +201,6 @@ return luaL_error(L, "This can only be used in a level!");
 
 int LUA_HTTPLib(lua_State *L);
 
-#endif // !PS2_PROFILE
+#endif // HAS_LUA
 
 #endif/*LUA_SCRIPT_H*/

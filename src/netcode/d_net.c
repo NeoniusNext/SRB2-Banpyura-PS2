@@ -131,7 +131,11 @@ boolean Net_GetNetStat(void)
 // Some structs and functions for acknowledgement of packets
 // -----------------------------------------------------------------
 #ifdef PS2_PROFILE
-#define MAXACKPACKETS 16 // PS2-11: no network: node 0 (the only one) is served by the rebound buffer, never by ackpak (1.5 KB each)
+// PS2-11/PS2-123: the loopback-only game (node 0 is served by the rebound buffer, never by ackpak, 1.5 KB each) keeps 16 slots in
+// bss; Net_GrowAckTable() switches to the full 96-slot table (zone) when the sockets are opened.
+#define MAXACKPACKETSFULL 96
+static INT32 numackpak = 16;
+#define MAXACKPACKETS numackpak
 #else
 #define MAXACKPACKETS 96 // Minimum number of nodes (wat)
 #endif
@@ -160,7 +164,12 @@ typedef enum
 } node_flags_t;
 
 // Table of packets that were not acknowleged can be resent (the sender window)
+#ifdef PS2_PROFILE
+static ackpak_t ackpak_loopback[16];
+static ackpak_t *ackpak = ackpak_loopback;
+#else
 static ackpak_t ackpak[MAXACKPACKETS];
+#endif
 
 typedef struct
 {
@@ -408,6 +417,21 @@ static void InitAck(void)
 	for (INT32 i = 0; i < MAXNETNODES; i++)
 		InitNode(&nodes[i]);
 }
+
+#ifdef PS2_PROFILE
+// PS2-123: called when the UDP socket is opened (host or join). Reliable packets in flight are kept.
+void Net_GrowAckTable(void)
+{
+	ackpak_t *full;
+
+	if (numackpak >= MAXACKPACKETSFULL)
+		return;
+	full = Z_Calloc(sizeof (ackpak_t) * MAXACKPACKETSFULL, PU_STATIC, NULL);
+	M_Memcpy(full, ackpak, sizeof (ackpak_t) * numackpak);
+	ackpak = full;
+	numackpak = MAXACKPACKETSFULL;
+}
+#endif
 
 /** Removes all acks of a given packet type
   *

@@ -29,6 +29,7 @@ typedef struct
 	INT32 hash;
 } PolygonArrayEntry;
 
+extern boolean currently_batching; // between HWR_StartBatching and HWR_RenderBatches: polygons are collected, not drawn
 void HWR_StartBatching(void);
 void HWR_SetCurrentTexture(GLMipmap_t *texture);
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader, boolean horizonSpecial);

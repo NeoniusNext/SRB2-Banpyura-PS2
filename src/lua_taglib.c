@@ -46,7 +46,7 @@ enum {
 
 static INT32 next_element(lua_State *L, const mtag_t tag, const size_t p)
 {
-	taggroup_t ** garray = lua_touserdata(L, up_garray);
+	TAGGROUPS_TYPE garray = lua_touserdata(L, up_garray);
 	const size_t * max_elements = lua_touserdata(L, up_max_elements);
 	return Taggroup_Iterate(garray, *max_elements, tag, p);
 }
@@ -150,8 +150,8 @@ static int lib_numTaggroupElements(lua_State *L)
 		lua_pushnumber(L, *(size_t *)lua_touserdata(L, up_max_elements));
 	else
 	{
-		const taggroup_t ** garray = lua_touserdata(L, up_garray);
-		lua_pushnumber(L, Taggroup_Count(garray[tag]));
+		const TAGGROUPS_TYPE garray = lua_touserdata(L, up_garray);
+		lua_pushnumber(L, Taggroup_Count(Taggroup_Lookup(garray, tag)));
 	}
 	return 1;
 }
@@ -351,7 +351,7 @@ static int taglist_remove(lua_State *L)
 
 void LUA_InsertTaggroupIterator
 (		lua_State *L,
-		taggroup_t *garray[],
+		TAGGROUPS_PARAM,
 		size_t * max_elements,
 		void * element_array,
 		size_t sizeof_element,

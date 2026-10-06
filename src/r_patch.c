@@ -31,6 +31,63 @@ patch_t *Patch_Create(INT16 width, INT16 height)
 	return patch;
 }
 
+#ifdef PS2_PROFILE
+// PS2-OPT-03: a patch made from a Doom patch is ONE zone block (structure, columns, posts, pixels). The zone can then
+// evict a sprite patch with a single owner pointer (the data arrays used to be separate blocks without an owner), and
+// the three extra block headers and their 16-byte rounding per patch are saved (1339 patches on MAP11: ~100 KB).
+#define PATCH_ALIGN(x) (((x) + 15u) & ~(size_t)15u)
+
+patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
+{
+	size_t total_pixels = 0, total_posts = 0, coloff, postoff, pixoff;
+	patch_t *patch;
+	UINT8 *base;
+	INT16 width;
+
+	if (!source)
+		return Patch_Create(0, 0);
+
+	width = SHORT(source->width);
+	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
+
+	coloff = PATCH_ALIGN(sizeof (patch_t));
+	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
+	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
+
+	patch = Z_Calloc(pixoff + total_pixels, PU_PATCH, NULL);
+	base = (UINT8 *)patch;
+	patch->width      = width;
+	patch->height     = SHORT(source->height);
+	patch->leftoffset = SHORT(source->leftoffset);
+	patch->topoffset  = SHORT(source->topoffset);
+	patch->columns = (column_t *)(base + coloff);
+	patch->posts = (post_t *)(base + postoff);
+	patch->pixels = base + pixoff;
+	patch->embedded = 1;
+
+	Patch_MakeColumns(source, patch->width, patch->width, patch->pixels, patch->columns, patch->posts, false);
+
+	return patch;
+}
+
+// The zone may drop an embedded patch that nothing hangs off: no flats, no rotated copies, no hardware texture.
+boolean Patch_IsEvictable(const void *p)
+{
+	const patch_t *patch = p;
+	int i;
+
+	if (!patch->embedded || patch->hardware)
+		return false;
+	for (i = 0; i < 4; i++)
+		if (patch->flats[i])
+			return false;
+#ifdef ROTSPRITE
+	if (patch->rotated)
+		return false;
+#endif
+	return true;
+}
+#else
 patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
 {
 	patch_t *patch = Patch_Create(0, 0);
@@ -55,6 +112,7 @@ patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
 
 	return patch;
 }
+#endif
 
 void Patch_CalcDataSizes(softwarepatch_t *source, size_t *total_pixels, size_t *total_posts)
 {
@@ -151,6 +209,11 @@ static void Patch_FreeData(patch_t *patch)
 		Z_Free(rotsprite->patches);
 		Z_Free(rotsprite);
 	}
+#endif
+
+#ifdef PS2_PROFILE
+	if (patch->embedded)
+		return; // the data is part of the patch block
 #endif
 
 	if (patch->pixels)

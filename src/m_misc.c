@@ -70,7 +70,7 @@ typedef off_t off64_t;
 #define PRIdS "zu"
 #endif
 
-#ifdef HAVE_PNG
+#if defined(HAVE_PNG) && !defined(PS2_PROFILE) // PS2-20: screenshots are PCX, no libpng
 
 #ifndef _MSC_VER
 #ifndef _LARGEFILE64_SOURCE
@@ -185,6 +185,20 @@ void M_InitJoinedIPArray(void)
 }
 
 // This adds an entry to the above array
+#ifdef PS2_PROFILE // PS2-20: compatibility APIs, no remote server history
+void M_AddToJoinedIPs(char *address, char *date, char *servname)
+{
+	(void)address;
+	(void)date;
+	(void)servname;
+}
+
+boolean M_RemoveJoinedIP(UINT8 index)
+{
+	(void)index;
+	return false;
+}
+#else
 void M_AddToJoinedIPs(char *address, char *date, char *servname)
 {
 	UINT8 index = 0;
@@ -226,6 +240,7 @@ boolean M_RemoveJoinedIP(UINT8 index)
 	M_SaveJoinedIPs();
 	return true;
 }
+#endif
 
 /** Returns the map number for a map identified by the last two characters in
   * its name.
@@ -495,6 +510,15 @@ boolean FIL_CheckExtension(const char *in)
 	return false;
 }
 
+#if defined (PS2_PROFILE) && !defined (PS2) // PS2-137: only the SDL host profile keeps the stubs
+void M_SaveJoinedIPs(void)
+{
+}
+
+void M_LoadJoinedIPs(void)
+{
+}
+#else
 void M_SaveJoinedIPs(void)
 {
 	FILE *file = NULL;
@@ -564,6 +588,7 @@ void M_LoadJoinedIPs(void)
 
 // ==========================================================================
 //                        CONFIGURATION FILE
+#endif
 // ==========================================================================
 
 //
@@ -862,7 +887,7 @@ static const char *Newsnapshotfile(const char *pathname, const char *ext)
 }
 #endif
 
-#ifdef HAVE_PNG
+#if defined(HAVE_PNG) && !defined(PS2_PROFILE)
 FUNCNORETURN static void PNG_error(png_structp PNG, png_const_charp pngtext)
 {
 	//CONS_Debug(DBG_RENDER, "libpng error at %p: %s", PNG, pngtext);

@@ -3,7 +3,7 @@
 
 #include "lua_script.h"
 
-#ifdef PS2_PROFILE
+#ifndef HAS_LUA
 static inline void LUA_HTTPProcessCallbacks(void) {}
 #else
 int LUA_HTTPLib(lua_State *L);

@@ -735,6 +735,67 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 // --------------------------------------------------------------------------
 // Make sure texture is downloaded and set it as the source
 // --------------------------------------------------------------------------
+#ifdef PS2_PROFILE
+// PS2-HW-16: the GS pool (3 MiB) cannot hold the textures of a whole frame (GFZ1 asks for about 2.5 MiB of wall textures alone), so a
+// texture is made resident when it is DRAWN, not when it is selected. While polygons are batched only the selection is recorded
+// (HWR_SetCurrentTexture); HWR_RenderBatches calls SetTexture when a batch is drawn, and the driver asks for the data again
+// (HWR_PS2_RegenerateMipmap) when the zone has dropped it. Without batching the texture is uploaded right away, as before.
+GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
+{
+	GLMapTexture_t *grtex;
+	GLMipmap_t *grMipmap, *originalMipmap;
+
+	if (tex < 0 || tex >= (signed)gl_numtextures)
+		tex = 0;
+
+	grtex = &gl_textures[tex];
+	grMipmap = originalMipmap = &grtex->mipmap;
+
+	if (!originalMipmap->downloaded)
+	{
+		originalMipmap->flags = TF_WRAPXY;
+		originalMipmap->width = (UINT16)textures[tex]->width;
+		originalMipmap->height = (UINT16)textures[tex]->height;
+		originalMipmap->format = textureformat;
+	}
+	grtex->scaleX = 1.0f/(textures[tex]->width*FRACUNIT);
+	grtex->scaleY = 1.0f/(textures[tex]->height*FRACUNIT);
+	originalMipmap->regen_kind = 1;
+	originalMipmap->regen_id = tex;
+
+	// If chroma-keyed, create or use a different mipmap for the variant
+	if (chromakeyed && !textures[tex]->transparency)
+	{
+		if (!originalMipmap->nextcolormap)
+		{
+			GLMipmap_t *newMipmap = calloc(1, sizeof (*grMipmap));
+			if (newMipmap == NULL)
+				I_Error("%s: Out of memory", "HWR_GetTexture");
+
+			newMipmap->flags = originalMipmap->flags | TF_CHROMAKEYED;
+			newMipmap->width = originalMipmap->width;
+			newMipmap->height = originalMipmap->height;
+			newMipmap->format = originalMipmap->format;
+			newMipmap->regen_kind = 1;
+			newMipmap->regen_id = tex;
+			originalMipmap->nextcolormap = newMipmap;
+		}
+		grMipmap = originalMipmap->nextcolormap;
+	}
+
+	if (!grMipmap->downloaded && !currently_batching)
+	{
+		if (!grMipmap->data)
+			HWR_GenerateTexture(tex, grtex, grMipmap);
+		HWD.pfnSetTexture(grMipmap);
+	}
+	HWR_SetCurrentTexture(grMipmap);
+
+	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+
+	return grtex;
+}
+#else
 GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 {
 	if (tex < 0 || tex >= (signed)gl_numtextures)
@@ -781,7 +842,13 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 	}
 
 	if (!grMipmap->data)
+	{
 		HWR_GenerateTexture(tex, grtex, grMipmap);
+#ifdef PS2_PROFILE // diagnostics of the GS pool budget (docs/GATES/g1/opt3-H.md)
+		if (grMipmap->width * grMipmap->height >= 128 * 1024)
+			CONS_Printf("HWC big texture %d %.8s %dx%d\n", (int)tex, textures[tex]->name, (int)grMipmap->width, (int)grMipmap->height);
+#endif
+	}
 
 	if (!grMipmap->downloaded)
 		HWD.pfnSetTexture(grMipmap);
@@ -791,6 +858,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 
 	return grtex;
 }
+#endif
 
 static void HWR_CacheRawFlat(GLMipmap_t *grMipmap, lumpnum_t flatlumpnum)
 {
@@ -840,6 +908,93 @@ static void MakeLevelFlatMipmap(GLMipmap_t *grMipmap, INT32 texturenum, UINT16 f
 	grMipmap->height = (UINT16)textures[texturenum]->height;
 }
 
+#ifdef PS2_PROFILE
+// PS2-HW-16: as HWR_GetTexture. The chroma keyed variant owns its copy of the pixels (the original only shared the pointer of the
+// first, which the zone may drop under it).
+void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
+{
+	INT32 texturenum;
+	GLMapTexture_t *grtex;
+	GLMipmap_t *grMipmap, *originalMipmap;
+
+	if (levelflat->type == LEVELFLAT_NONE || levelflat->texture_id < 0)
+	{
+		HWR_SetCurrentTexture(NULL);
+		return;
+	}
+
+	texturenum = texturetranslation[levelflat->texture_id];
+	grtex = &gl_flats[texturenum];
+	grMipmap = originalMipmap = &grtex->mipmap;
+
+	if (!originalMipmap->downloaded)
+		MakeLevelFlatMipmap(originalMipmap, texturenum, TF_WRAPXY);
+	originalMipmap->regen_kind = 2;
+	originalMipmap->regen_id = texturenum;
+
+	if (chromakeyed)
+	{
+		if (!originalMipmap->nextcolormap)
+		{
+			GLMipmap_t *newMipmap = calloc(1, sizeof (*grMipmap));
+			if (newMipmap == NULL)
+				I_Error("%s: Out of memory", "HWR_GetLevelFlat");
+			MakeLevelFlatMipmap(newMipmap, texturenum, TF_WRAPXY | TF_CHROMAKEYED);
+			newMipmap->regen_kind = 2;
+			newMipmap->regen_id = texturenum;
+			originalMipmap->nextcolormap = newMipmap;
+		}
+		grMipmap = originalMipmap->nextcolormap;
+	}
+
+	if (!grMipmap->downloaded && !currently_batching)
+	{
+		if (!grMipmap->data)
+			HWR_PS2_RegenerateMipmap(grMipmap);
+		HWD.pfnSetTexture(grMipmap);
+	}
+	HWR_SetCurrentTexture(grMipmap);
+
+	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+}
+
+void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
+{
+	if (m->data)
+		return;
+	if (m->regen_kind == 1)
+	{
+		if (m->regen_id >= 0 && (size_t)m->regen_id < gl_numtextures && gl_textures)
+			HWR_GenerateTexture(m->regen_id, &gl_textures[m->regen_id], m);
+	}
+	else if (m->regen_kind == 2)
+	{
+		if (m->regen_id >= 0 && (size_t)m->regen_id < gl_numtextures)
+		{
+			size_t size = (size_t)m->width * m->height;
+			memcpy(Z_Malloc(size, PU_HWRCACHE, &m->data), R_GetFlatForTexture(m->regen_id), size);
+		}
+	}
+}
+
+void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)
+{
+	Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+}
+
+// name of the map texture / level flat behind a mipmap (driver diagnostics: -hwtrace)
+const char *HWR_PS2_TexName(const GLMipmap_t *m)
+{
+	static char name[16];
+
+	if (m->regen_kind && m->regen_id >= 0 && (size_t)m->regen_id < gl_numtextures && textures[m->regen_id])
+	{
+		snprintf(name, sizeof name, "%c:%.8s", m->regen_kind == 1 ? 'T' : 'F', textures[m->regen_id]->name);
+		return name;
+	}
+	return "patch";
+}
+#else
 void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 {
 	if (levelflat->type == LEVELFLAT_NONE || levelflat->texture_id < 0)
@@ -862,6 +1017,10 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 	{
 		size_t size = originalMipmap->width * originalMipmap->height;
 		memcpy(Z_Malloc(size, PU_HWRCACHE, &originalMipmap->data), R_GetFlatForTexture(texturenum), size);
+#ifdef PS2_PROFILE // diagnostics of the GS pool budget (docs/GATES/g1/opt3-H.md)
+		if (size >= 128 * 1024)
+			CONS_Printf("HWC big flat %d %.8s %dx%d\n", (int)texturenum, textures[texturenum]->name, (int)originalMipmap->width, (int)originalMipmap->height);
+#endif
 	}
 
 	// If chroma-keyed, create or use a different mipmap for the variant
@@ -898,6 +1057,8 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 
 	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
 }
+
+#endif
 
 // --------------------+
 // HWR_LoadPatchMipmap : Generates a patch into a mipmap, usually the mipmap inside the patch itself

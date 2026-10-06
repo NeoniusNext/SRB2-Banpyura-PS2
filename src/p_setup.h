@@ -30,6 +30,9 @@ extern boolean levelloading;
 extern UINT8 levelfadecol;
 
 extern lumpnum_t lastloadedmaplumpnum; // for comparative savegame
+#ifdef PS2_PROFILE
+extern UINT16 *ps2_blockmaplists;
+#endif
 
 /* for levelflat type */
 enum
@@ -67,9 +70,11 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate);
 void HWR_LoadLevel(void);
 #endif
 boolean P_AddWadFile(const char *wadfilename);
+#ifdef HAS_ADDONS
 boolean P_AddWadFileLocal(const char *wadfilename);
 boolean P_AddFolder(const char *folderpath);
 boolean P_AddFolderLocal(const char *folderpath);
+#endif
 boolean P_RunSOC(const char *socfilename);
 void P_LoadSoundsRange(UINT16 wadnum, UINT16 first, UINT16 num);
 void P_LoadMusicsRange(UINT16 wadnum, UINT16 first, UINT16 num);

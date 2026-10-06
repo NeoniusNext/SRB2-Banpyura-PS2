@@ -1261,6 +1261,50 @@ void GetPackets(void)
 	}
 }
 
+#if defined (PS2_PROFILE) || defined (NETSYNC_DIAG)
+// PS2-133: "-netsync" prints, once per second of game tics, a checksum of everything the players' state consists of. The same line from two
+// machines of one game (PS2 server and PC client, or the reverse) with the same gametic must match: that is the proof of a synchronous game.
+static void NetSyncLog(void)
+{
+	static INT32 on = -1;
+	UINT32 h = 2166136261u;
+	INT32 i, n = 0;
+
+	if (on < 0)
+		on = M_CheckParm("-netsync") ? 1 : 0;
+	if (!on || !netgame || gamestate != GS_LEVEL || (gametic % TICRATE))
+		return;
+	for (i = 0; i < MAXPLAYERS; i++)
+	{
+		const mobj_t *mo;
+		UINT32 v[10];
+		INT32 k;
+
+		if (!playeringame[i])
+			continue;
+		n++;
+		mo = players[i].mo;
+		v[0] = (UINT32)i;
+		v[1] = mo ? (UINT32)mo->x : 0;
+		v[2] = mo ? (UINT32)mo->y : 0;
+		v[3] = mo ? (UINT32)mo->z : 0;
+		v[4] = mo ? (UINT32)mo->momx : 0;
+		v[5] = mo ? (UINT32)mo->momy : 0;
+		v[6] = mo ? (UINT32)mo->momz : 0;
+		v[7] = mo ? (UINT32)mo->angle : 0;
+		v[8] = (UINT32)players[i].rings;
+		v[9] = (UINT32)players[i].score;
+		for (k = 0; k < 10; k++)
+		{
+			h ^= v[k];
+			h *= 16777619u;
+		}
+	}
+	CONS_Printf("NETSYNC gametic=%u leveltime=%u players=%d state=%08x cons=%u rnd=%u\n", (unsigned)gametic, (unsigned)leveltime, (int)n,
+		(unsigned)h, (unsigned)(UINT16)consistancy[gametic%BACKUPTICS], (unsigned)P_GetRandSeed());
+}
+#endif
+
 boolean TryRunTics(tic_t realtics)
 {
 	// the machine has lagged but it is not so bad
@@ -1331,6 +1375,9 @@ boolean TryRunTics(tic_t realtics)
 				ExtraDataTicker();
 				gametic++;
 				consistancy[gametic%BACKUPTICS] = Consistancy();
+#if defined (PS2_PROFILE) || defined (NETSYNC_DIAG)
+				NetSyncLog();
+#endif
 
 				if (update_stats)
 				{

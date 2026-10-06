@@ -1,0 +1,4 @@
+pcsx2 exit code 0 (2 = timeout)
+C:\Users\loban\AppData\Local\Programs\Python\Python312\python.exe D:\Ai-Project3\SRB2-PS2-Port\tools\ps2\run_pcsx2.py --elf D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-title\SRB2.ELF --log D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-title\pcsx2.log --args=-logfile boot.txt -ps2ref host:/refout -config reference.cfg -nolog -noendtxt -skipintro -ps2ref-title 105 -zreport --timeout 300.0 --until-file D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-title\refout\complete.txt --until complete
+finished: True
+compared 4 files, differences: 0

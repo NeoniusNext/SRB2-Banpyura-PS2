@@ -1201,7 +1201,7 @@ enum
 	LD_SDBOTLIGHTABS = 1<<26
 };
 
-static boolean P_AreArgsEqual(const line_t *li, const line_t *spawnli)
+static boolean P_AreArgsEqual(const line_t *li, const spawnline_t *spawnli)
 {
 	UINT8 i;
 	for (i = 0; i < NUMLINEARGS; i++)
@@ -1211,7 +1211,7 @@ static boolean P_AreArgsEqual(const line_t *li, const line_t *spawnli)
 	return true;
 }
 
-static boolean P_AreStringArgsEqual(const line_t *li, const line_t *spawnli)
+static boolean P_AreStringArgsEqual(const line_t *li, const spawnline_t *spawnli)
 {
 	UINT8 i;
 	for (i = 0; i < NUMLINESTRINGARGS; i++)
@@ -1319,7 +1319,7 @@ static void ArchiveSectors(save_t *save_p)
 {
 	size_t i, j;
 	const sector_t *ss = sectors;
-	const sector_t *spawnss = spawnsectors;
+	const spawnsector_t *spawnss = spawnsectors;
 	UINT8 diff, diff2, diff3, diff4, diff5;
 
 	for (i = 0; i < numsectors; i++, ss++, spawnss++)
@@ -1578,6 +1578,11 @@ static void UnArchiveSectors(save_t *save_p)
 			if (ncount != sectors[i].tags.count)
 			{
 				sectors[i].tags.count = ncount;
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_taginline)
+				if (sectors[i].tags.tags == &sectors[i].tags.inline_tag)
+					sectors[i].tags.tags = ncount ? Z_Calloc(ncount*sizeof(mtag_t), PU_LEVEL, NULL) : NULL;
+				else
+#endif
 				sectors[i].tags.tags = Z_Realloc(sectors[i].tags.tags, ncount*sizeof(mtag_t), PU_LEVEL, NULL);
 			}
 
@@ -1637,7 +1642,7 @@ static void UnArchiveSectors(save_t *save_p)
 	}
 }
 
-static UINT32 GetSideDiff(const side_t *si, const side_t *spawnsi)
+static UINT32 GetSideDiff(const side_t *si, const spawnside_t *spawnsi)
 {
 	UINT32 diff = 0;
 	if (si->textureoffset != spawnsi->textureoffset)
@@ -1651,6 +1656,7 @@ static UINT32 GetSideDiff(const side_t *si, const side_t *spawnsi)
 		diff |= LD_SDBOTTEX;
 	if (si->midtexture != spawnsi->midtexture)
 		diff |= LD_SDMIDTEX;
+#ifdef SIDE_UDMF
 	if (si->offsetx_top != spawnsi->offsetx_top)
 		diff |= LD_SDTOPOFFX;
 	if (si->offsetx_mid != spawnsi->offsetx_mid)
@@ -1675,8 +1681,10 @@ static UINT32 GetSideDiff(const side_t *si, const side_t *spawnsi)
 		diff |= LD_SDMIDSCALEY;
 	if (si->scaley_bottom != spawnsi->scaley_bottom)
 		diff |= LD_SDBOTSCALEY;
+#endif
 	if (si->repeatcnt != spawnsi->repeatcnt)
 		diff |= LD_SDREPEATCNT;
+#ifdef SIDE_UDMF
 	if (si->light != spawnsi->light)
 		diff |= LD_SDLIGHT;
 	if (si->light_top != spawnsi->light_top)
@@ -1693,6 +1701,7 @@ static UINT32 GetSideDiff(const side_t *si, const side_t *spawnsi)
 		diff |= LD_SDMIDLIGHTABS;
 	if (si->lightabsolute_bottom != spawnsi->lightabsolute_bottom)
 		diff |= LD_SDBOTLIGHTABS;
+#endif
 	return diff;
 }
 
@@ -1710,6 +1719,7 @@ static void ArchiveSide(save_t *save_p, const side_t *si, UINT32 diff)
 		P_WriteINT32(save_p, si->bottomtexture);
 	if (diff & LD_SDMIDTEX)
 		P_WriteINT32(save_p, si->midtexture);
+#ifdef SIDE_UDMF
 	if (diff & LD_SDTOPOFFX)
 		P_WriteFixed(save_p, si->offsetx_top);
 	if (diff & LD_SDMIDOFFX)
@@ -1734,8 +1744,10 @@ static void ArchiveSide(save_t *save_p, const side_t *si, UINT32 diff)
 		P_WriteFixed(save_p, si->scaley_mid);
 	if (diff & LD_SDBOTSCALEY)
 		P_WriteFixed(save_p, si->scaley_bottom);
+#endif
 	if (diff & LD_SDREPEATCNT)
 		P_WriteINT16(save_p, si->repeatcnt);
+#ifdef SIDE_UDMF
 	if (diff & LD_SDLIGHT)
 		P_WriteINT16(save_p, si->light);
 	if (diff & LD_SDTOPLIGHT)
@@ -1752,13 +1764,14 @@ static void ArchiveSide(save_t *save_p, const side_t *si, UINT32 diff)
 		P_WriteUINT8(save_p, si->lightabsolute_mid);
 	if (diff & LD_SDBOTLIGHTABS)
 		P_WriteUINT8(save_p, si->lightabsolute_bottom);
+#endif
 }
 
 static void ArchiveLines(save_t *save_p)
 {
 	size_t i;
 	const line_t *li = lines;
-	const line_t *spawnli = spawnlines;
+	const spawnline_t *spawnli = spawnlines;
 	UINT8 diff, diff2;
 	UINT32 side1diff;
 	UINT32 side2diff;
@@ -1866,6 +1879,7 @@ static void UnArchiveSide(save_t *save_p, side_t *si)
 		si->bottomtexture = P_ReadINT32(save_p);
 	if (diff & LD_SDMIDTEX)
 		si->midtexture = P_ReadINT32(save_p);
+#ifdef SIDE_UDMF
 	if (diff & LD_SDTOPOFFX)
 		si->offsetx_top = P_ReadFixed(save_p);
 	if (diff & LD_SDMIDOFFX)
@@ -1890,8 +1904,36 @@ static void UnArchiveSide(save_t *save_p, side_t *si)
 		si->scaley_mid = P_ReadFixed(save_p);
 	if (diff & LD_SDBOTSCALEY)
 		si->scaley_bottom = P_ReadFixed(save_p);
+#else
+	// the UDMF-only fields are not stored in the PS2 profile; a save made elsewhere may still carry them
+	if (diff & LD_SDTOPOFFX)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDMIDOFFX)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDBOTOFFX)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDTOPOFFY)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDMIDOFFY)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDBOTOFFY)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDTOPSCALEX)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDMIDSCALEX)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDBOTSCALEX)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDTOPSCALEY)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDMIDSCALEY)
+		(void)P_ReadFixed(save_p);
+	if (diff & LD_SDBOTSCALEY)
+		(void)P_ReadFixed(save_p);
+#endif
 	if (diff & LD_SDREPEATCNT)
 		si->repeatcnt = P_ReadINT16(save_p);
+#ifdef SIDE_UDMF
 	if (diff & LD_SDLIGHT)
 		si->light = P_ReadINT16(save_p);
 	if (diff & LD_SDTOPLIGHT)
@@ -1908,6 +1950,25 @@ static void UnArchiveSide(save_t *save_p, side_t *si)
 		si->lightabsolute_mid = P_ReadUINT8(save_p);
 	if (diff & LD_SDBOTLIGHTABS)
 		si->lightabsolute_bottom = P_ReadUINT8(save_p);
+#else
+	// the UDMF-only fields are not stored in the PS2 profile; a save made elsewhere may still carry them
+	if (diff & LD_SDLIGHT)
+		(void)P_ReadINT16(save_p);
+	if (diff & LD_SDTOPLIGHT)
+		(void)P_ReadINT16(save_p);
+	if (diff & LD_SDMIDLIGHT)
+		(void)P_ReadINT16(save_p);
+	if (diff & LD_SDBOTLIGHT)
+		(void)P_ReadINT16(save_p);
+	if (diff & LD_SDLIGHTABS)
+		(void)P_ReadUINT8(save_p);
+	if (diff & LD_SDTOPLIGHTABS)
+		(void)P_ReadUINT8(save_p);
+	if (diff & LD_SDMIDLIGHTABS)
+		(void)P_ReadUINT8(save_p);
+	if (diff & LD_SDBOTLIGHTABS)
+		(void)P_ReadUINT8(save_p);
+#endif
 }
 
 static void UnArchiveLines(save_t *save_p)
@@ -1984,6 +2045,10 @@ static void UnArchiveLines(save_t *save_p)
 
 static void P_NetArchiveWorld(save_t *save_p)
 {
+#ifdef PS2_PROFILE
+	if (!spawnsectors) // PS2-50: not kept in this profile (p_setup.c), the netgame archive cannot be diffed
+		I_Error("P_NetArchiveWorld: the spawn state of the level is not kept (run with -keepspawn)");
+#endif
 	// initialize colormap vars because paranoia
 	ClearNetColormaps();
 

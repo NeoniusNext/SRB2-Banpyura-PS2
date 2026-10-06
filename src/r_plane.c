@@ -31,6 +31,10 @@
 #include "w_wad.h"
 #include "z_zone.h"
 #include "p_tick.h"
+#include "r_slopeq.h" // PS2_OPT_SLOPE integer slope setup
+#ifdef PS2_OPT_REND
+#include "ps2/ps2_rdraw.h"
+#endif
 
 //
 // opening
@@ -84,14 +88,18 @@ fixed_t yslopetab[MAXVIDHEIGHT*16];
 fixed_t *yslope;
 
 static INT64 xoffs, yoffs;
+#ifndef PS2_OPT_SLOPE
 static dvector3_t slope_origin, slope_u, slope_v;
 static dvector3_t slope_lightu, slope_lightv;
+#endif
 
 static void CalcSlopePlaneVectors(visplane_t *pl, fixed_t xoff, fixed_t yoff);
+#ifndef PS2_OPT_SLOPE
 static void CalcSlopeLightVectors(pslope_t *slope, fixed_t xpos, fixed_t ypos, double height, float ang, angle_t plangle);
 
 static void DoSlopeCrossProducts(void);
 static void DoSlopeLightCrossProduct(void);
+#endif
 
 //
 // Water ripple effect
@@ -134,9 +142,19 @@ static void R_UpdatePlaneRipple(void)
 	planeripple.offset = ((leveltime-1)*140) + ((rendertimefrac*140) / FRACUNIT);
 }
 
+#ifdef PS2_OPT_REND
+// PS2-85: per-plane constants of R_MapPlane (set by R_DrawSinglePlane before its span loop)
+static angle_t mp_planecos, mp_planesin;
+static fixed_t mp_xnum, mp_ynum; // FixedMul(planesin/planecos, planeheight)
+#endif
+
 static void R_MapPlane(INT32 y, INT32 x1, INT32 x2)
 {
+#ifdef PS2_OPT_REND
+	const angle_t planecos = mp_planecos, planesin = mp_planesin;
+#else
 	angle_t angle, planecos, planesin;
+#endif
 	fixed_t distance = 0, span;
 	size_t pindex;
 
@@ -148,9 +166,11 @@ static void R_MapPlane(INT32 y, INT32 x1, INT32 x2)
 	if (x1 >= vid.width)
 		x1 = vid.width - 1;
 
+#ifndef PS2_OPT_REND
 	angle = (currentplane->viewangle + currentplane->plangle)>>ANGLETOFINESHIFT;
 	planecos = FINECOSINE(angle);
 	planesin = FINESINE(angle);
+#endif
 
 	// [RH] Notice that I dumped the caching scheme used by Doom.
 	// It did not offer any appreciable speedup.
@@ -159,8 +179,13 @@ static void R_MapPlane(INT32 y, INT32 x1, INT32 x2)
 
 	if (span) // Don't divide by zero
 	{
+#ifdef PS2_OPT_REND
+		ds_xstep = mp_xnum / span;
+		ds_ystep = mp_ynum / span;
+#else
 		ds_xstep = FixedMul(planesin, planeheight) / span;
 		ds_ystep = FixedMul(planecos, planeheight) / span;
+#endif
 		ds_xstep = FixedMul(currentplane->xscale, ds_xstep);
 		ds_ystep = FixedMul(currentplane->yscale, ds_ystep);
 	}
@@ -298,7 +323,42 @@ static void R_MapTiltedFogPlane(INT32 y, INT32 x1, INT32 x2)
 	spanfunc();
 }
 
-void R_ClearFFloorClips (void)
+#ifdef PS2_OPT_REND
+// PS2-30: the 3D floor clip arrays are only written by R_RenderSegLoop (slots below numbackffloors), so a clear
+// has to touch the slots written since the previous clear, plus everything whenever the view size changed.
+INT32 ffloor_clipdirty = MAXFFLOORS; // slots whose clip arrays may differ from the cleared state
+static INT32 ffloor_clipw = -1, ffloor_cliph = -1; // view size the cleared state was made for
+
+static void R_ClearFFloorClipArrays(void)
+{
+	INT32 p, n = ffloor_clipdirty;
+	const INT32 w = viewwidth;
+	const UINT32 fill = ((UINT32)(UINT16)viewheight << 16) | (UINT16)viewheight;
+
+	if (w != ffloor_clipw || viewheight != ffloor_cliph)
+		n = MAXFFLOORS;
+	if (n > MAXFFLOORS)
+		n = MAXFFLOORS;
+
+	for (p = 0; p < n; p++)
+	{
+		INT16 *f = ffloor[p].f_clip;
+		INT32 i = 0;
+		memset(ffloor[p].c_clip, 0xFF, sizeof (INT16) * (size_t)w); // -1
+		if (w > 0 && ((size_t)f & 2)) // 32-bit stores need a word-aligned start
+			f[i++] = (INT16)viewheight;
+		for (; i + 1 < w; i += 2)
+			memcpy(f + i, &fill, sizeof fill);
+		if (i < w)
+			f[i] = (INT16)viewheight;
+	}
+
+	ffloor_clipdirty = 0;
+	ffloor_clipw = w;
+	ffloor_cliph = viewheight;
+}
+#else
+static void R_ClearFFloorClipArrays(void)
 {
 	INT32 i, p;
 
@@ -311,7 +371,12 @@ void R_ClearFFloorClips (void)
 			ffloor[p].c_clip[i] = -1;
 		}
 	}
+}
+#endif
 
+void R_ClearFFloorClips (void)
+{
+	R_ClearFFloorClipArrays();
 	numffloors = 0;
 }
 
@@ -321,7 +386,7 @@ void R_ClearFFloorClips (void)
 //
 void R_ClearPlanes(void)
 {
-	INT32 i, p;
+	INT32 i;
 
 	// opening / clipping determination
 	for (i = 0; i < viewwidth; i++)
@@ -329,12 +394,8 @@ void R_ClearPlanes(void)
 		floorclip[i] = (INT16)viewheight;
 		ceilingclip[i] = -1;
 		frontscale[i] = INT32_MAX;
-		for (p = 0; p < MAXFFLOORS; p++)
-		{
-			ffloor[p].f_clip[i] = (INT16)viewheight;
-			ffloor[p].c_clip[i] = -1;
-		}
 	}
+	R_ClearFFloorClipArrays();
 
 	for (i = 0; i < MAXVISPLANES; i++)
 	for (*freehead = visplanes[i], visplanes[i] = NULL;
@@ -347,6 +408,31 @@ void R_ClearPlanes(void)
 static visplane_t *new_visplane(unsigned hash)
 {
 	visplane_t *check = freetail;
+#if defined(PS2) || defined(PS2_PROFILE)
+	// Only recycled planes can resize: active planes keep stable addresses.
+	if (viewwidth <= 0 || viewwidth > MAXVIDWIDTH)
+		I_Error("new_visplane: invalid view width %d", viewwidth);
+	if (check)
+	{
+		freetail = check->next;
+		if (!freetail)
+			freehead = &freetail;
+		if (check->clipwidth < viewwidth)
+		{
+			Z_Free(check);
+			check = NULL;
+		}
+	}
+	if (!check)
+	{
+		const size_t strip = (size_t)viewwidth + 2;
+		const size_t bytes = sizeof (*check) + 2 * strip * sizeof (UINT16);
+		check = Z_Malloc(bytes, PU_STATIC, NULL);
+		check->top = (UINT16 *)(check + 1) + 1;
+		check->bottom = check->top + strip;
+		check->clipwidth = viewwidth;
+	}
+#else
 	if (!check)
 	{
 		check = malloc(sizeof (*check));
@@ -358,9 +444,27 @@ static visplane_t *new_visplane(unsigned hash)
 		if (!freetail)
 			freehead = &freetail;
 	}
+#endif
 	check->next = visplanes[hash];
 	visplanes[hash] = check;
 	return check;
+}
+
+static void R_ResetPlaneClip(visplane_t *pl)
+{
+#if defined(PS2) || defined(PS2_PROFILE)
+#ifdef PS2_OPT_REND
+	PS2_Fill16(pl->top, 0xFFFF, (size_t)viewwidth);
+	PS2_Fill16(pl->bottom, 0, (size_t)viewwidth);
+#else
+	const size_t bytes = (size_t)viewwidth * sizeof (*pl->top);
+	memset(pl->top, 0xff, bytes);
+	memset(pl->bottom, 0x00, bytes);
+#endif
+#else
+	memset(pl->top, 0xff, sizeof pl->top);
+	memset(pl->bottom, 0x00, sizeof pl->bottom);
+#endif
 }
 
 //
@@ -376,11 +480,31 @@ visplane_t *R_FindPlane(sector_t *sector, fixed_t height, INT32 picnum, INT32 li
 	visplane_t *check;
 	unsigned hash;
 
+#ifdef PS2_OPT_REND
+	// PS2-82: a zero offset gives zero for any scale (0/s = +-0, converted to 0); in-range floats convert through the
+	// 32-bit truncating instruction instead of the libgcc 64-bit routine (same value: both truncate toward zero)
+	INT64 offset_x, offset_y;
+	if (xoff == 0)
+		offset_x = 0;
+	else
+	{
+		const float f = (FixedToFloat(xoff) / FixedToFloat(xscale ? xscale : 1)) * FRACUNIT;
+		offset_x = (f > -2147483648.0f && f < 2147483648.0f) ? (INT64)(INT32)f : (INT64)f;
+	}
+	if (yoff == 0)
+		offset_y = 0;
+	else
+	{
+		const float f = (FixedToFloat(yoff) / FixedToFloat(yscale ? yscale : 1)) * FRACUNIT;
+		offset_y = (f > -2147483648.0f && f < 2147483648.0f) ? (INT64)(INT32)f : (INT64)f;
+	}
+#else
 	float offset_xd = FixedToFloat(xoff) / FixedToFloat(xscale ? xscale : 1);
 	float offset_yd = FixedToFloat(yoff) / FixedToFloat(yscale ? yscale : 1);
 
 	INT64 offset_x = offset_xd * FRACUNIT;
 	INT64 offset_y = offset_yd * FRACUNIT;
+#endif
 
 	if (!slope) // Don't mess with this right now if a slope is involved
 	{
@@ -390,11 +514,18 @@ visplane_t *R_FindPlane(sector_t *sector, fixed_t height, INT32 picnum, INT32 li
 		if (plangle != 0)
 		{
 			// Add the view offset, rotated by the plane angle.
+#ifdef PS2_OPT_SLOPE // PS2-16: libm double sin/cos replaced by the integer rotation of r_slopeq.h
+			float x = RQ_RoundToFloat24(offset_x) / (float)FRACUNIT;
+			float y = RQ_RoundToFloat24(offset_y) / (float)FRACUNIT;
+			offset_x = RQ_QToFixed(RQ_Rotate(x, y, RQ_Ang2Rad(plangle), false));
+			offset_y = RQ_QToFixed(RQ_Rotate(y, -x, RQ_Ang2Rad(plangle), false));
+#else
 			float ang = ANG2RAD(plangle);
 			float x = offset_x / (float)FRACUNIT;
 			float y = offset_y / (float)FRACUNIT;
 			offset_x = (x * cos(ang) + y * sin(ang)) * FRACUNIT;
 			offset_y = (-x * sin(ang) + y * cos(ang)) * FRACUNIT;
+#endif
 		}
 	}
 
@@ -402,11 +533,19 @@ visplane_t *R_FindPlane(sector_t *sector, fixed_t height, INT32 picnum, INT32 li
 	{
 		if (polyobj->angle != 0)
 		{
+#ifdef PS2_OPT_SLOPE
+			const float ang = RQ_Ang2Rad(polyobj->angle);
+			const float x = FixedToFloat(polyobj->centerPt.x);
+			const float y = FixedToFloat(polyobj->centerPt.y);
+			offset_x = RQ_QToFixed(RQ_FixedToQ(offset_x) - RQ_Rotate(x, y, ang, false));
+			offset_y = RQ_QToFixed(RQ_FixedToQ(offset_y) - RQ_Rotate(x, -y, ang, true));
+#else
 			float ang = ANG2RAD(polyobj->angle);
 			float x = FixedToFloat(polyobj->centerPt.x);
 			float y = FixedToFloat(polyobj->centerPt.y);
 			offset_x -= (x * cos(ang) + y * sin(ang)) * FRACUNIT;
 			offset_y -= (x * sin(ang) - y * cos(ang)) * FRACUNIT;
+#endif
 		}
 		else
 		{
@@ -415,8 +554,16 @@ visplane_t *R_FindPlane(sector_t *sector, fixed_t height, INT32 picnum, INT32 li
 		}
 	}
 
+#ifdef PS2_OPT_REND
+	// x * FRACUNIT / FRACUNIT is x (|x| < 2^34 here, no overflow); the libgcc 64-bit multiply is skipped for unit scales
+	if (xscale != FRACUNIT)
+		offset_x = ((INT64)offset_x * xscale) / FRACUNIT;
+	if (yscale != FRACUNIT)
+		offset_y = ((INT64)offset_y * yscale) / FRACUNIT;
+#else
 	offset_x = ((INT64)offset_x * xscale) / FRACUNIT;
 	offset_y = ((INT64)offset_y * yscale) / FRACUNIT;
+#endif
 
 	// This appears to fix the Nimbus Ruins sky bug.
 	if (picnum == skyflatnum && pfloor)
@@ -474,8 +621,7 @@ visplane_t *R_FindPlane(sector_t *sector, fixed_t height, INT32 picnum, INT32 li
 	check->polyobj = polyobj;
 	check->slope = slope;
 
-	memset(check->top, 0xff, sizeof (check->top));
-	memset(check->bottom, 0x00, sizeof (check->bottom));
+	R_ResetPlaneClip(check);
 
 	return check;
 }
@@ -556,8 +702,7 @@ visplane_t *R_CheckPlane(visplane_t *pl, INT32 start, INT32 stop)
 		pl = new_pl;
 		pl->minx = start;
 		pl->maxx = stop;
-		memset(pl->top, 0xff, sizeof pl->top);
-		memset(pl->bottom, 0x00, sizeof pl->bottom);
+		R_ResetPlaneClip(pl);
 	}
 	return pl;
 }
@@ -664,8 +809,12 @@ static void R_DrawSkyPlane(visplane_t *pl)
 			colfunc();
 		}
 	}
+#ifdef PS2
+	R_ReleaseTextureCache(texture);
+#endif
 }
 
+#ifndef PS2_OPT_SLOPE
 // Returns the height of the sloped plane at (x, y) as a double
 static double R_GetSlopeZAt(const pslope_t *slope, INT64 x, INT64 y)
 {
@@ -840,6 +989,73 @@ static void DoSlopeLightCrossProduct(void)
 
 	ds_slopelight.z *= focallengthf;
 }
+#else // PS2_OPT_SLOPE
+
+// PS2-16: the plane vectors come from the integer setup of r_slopeq.h (the EE has no double FPU), converted to the
+// single-precision vectors of the span drawers.
+static void R_SetSlopePlaneVectors(pslope_t *slope, fixed_t xpos, fixed_t ypos, fixed_t zpos, INT64 xoff, INT64 yoff,
+	boolean scaled, fixed_t xs, fixed_t ys, angle_t angle, angle_t plangle)
+{
+	rq_slope_t q;
+	rq_planein_t in;
+	rq_planeout_t out;
+
+	if (slope->moved)
+	{
+		P_CalculateSlopeVectors(slope);
+		slope->moved = false;
+	}
+
+	memset(&out, 0, sizeof out);
+	RQ_LoadSlope(&q, &slope->dorigin, &slope->dnormdir, &slope->dzdelta);
+	in.slope = &q;
+	in.xpos = xpos;
+	in.ypos = ypos;
+	in.zpos = zpos;
+	in.xoff = xoff;
+	in.yoff = yoff;
+	in.angle = angle;
+	in.plangle = plangle;
+	in.plsin = FINESINE(plangle >> ANGLETOFINESHIFT);
+	in.plcos = FINECOSINE(plangle >> ANGLETOFINESHIFT);
+	in.scaled = scaled;
+	in.xscale = scaled ? FixedToFloat(xs) : 1.0f;
+	in.yscale = scaled ? FixedToFloat(ys) : 1.0f;
+	in.lightonly = (ds_solidcolor || ds_fog);
+	in.sfshift = 16 + (ds_powersoftwo ? nflatshiftup : 0);
+	in.focallength = focallengthf;
+	RQ_SetSlopePlane(&in, &out);
+
+	ds_lightscale = RQ_LightScale(BASEVIDWIDTH * BASEVIDWIDTH / vid.width, out.zeroheight, fovtan);
+	ds_slopelight.x = out.light[0];
+	ds_slopelight.y = out.light[1];
+	ds_slopelight.z = out.light[2];
+	if (in.lightonly)
+		return;
+	ds_su.x = out.su[0];
+	ds_su.y = out.su[1];
+	ds_su.z = out.su[2];
+	ds_sv.x = out.sv[0];
+	ds_sv.y = out.sv[1];
+	ds_sv.z = out.sv[2];
+	ds_sz.x = out.sz[0];
+	ds_sz.y = out.sz[1];
+	ds_sz.z = out.sz[2];
+}
+
+// This function calculates all of the vectors necessary for drawing a sloped plane.
+void R_SetSlopePlane(pslope_t *slope, fixed_t xpos, fixed_t ypos, fixed_t zpos, fixed_t xoff, fixed_t yoff, angle_t angle, angle_t plangle)
+{
+	R_SetSlopePlaneVectors(slope, xpos, ypos, zpos, (INT64)xoff, (INT64)yoff, false, 0, 0, angle, plangle);
+}
+
+// This function calculates all of the vectors necessary for drawing a sloped and scaled plane.
+void R_SetScaledSlopePlane(pslope_t *slope, fixed_t xpos, fixed_t ypos, fixed_t zpos, fixed_t xs, fixed_t ys, INT64 xoff, INT64 yoff, angle_t angle, angle_t plangle)
+{
+	R_SetSlopePlaneVectors(slope, xpos, ypos, zpos, xoff, yoff, true, xs, ys, angle, plangle);
+}
+
+#endif // PS2_OPT_SLOPE
 
 static void CalcSlopePlaneVectors(visplane_t *pl, fixed_t xoff, fixed_t yoff)
 {
@@ -1137,9 +1353,39 @@ void R_DrawSinglePlane(visplane_t *pl)
 
 	currentplane = pl;
 	stop = pl->maxx + 1;
+#ifdef PS2_OPT_REND
+	{
+		const angle_t a = (pl->viewangle + pl->plangle)>>ANGLETOFINESHIFT;
+		mp_planecos = FINECOSINE(a);
+		mp_planesin = FINESINE(a);
+		mp_xnum = FixedMul(mp_planesin, planeheight);
+		mp_ynum = FixedMul(mp_planecos, planeheight);
+	}
+#endif
 
+#ifdef PS2_OPT_REND
+	// PS2-85: R_MakeSpans does nothing when the column has the same top and bottom as the previous one (all four loops
+	// fail their first test), so those calls are skipped; the previous column is carried instead of reloaded
+	{
+		INT32 t1 = pl->top[pl->minx-1], b1 = pl->bottom[pl->minx-1];
+		for (x = pl->minx; x <= stop; x++)
+		{
+			const INT32 t2 = pl->top[x], b2 = pl->bottom[x];
+			if (t1 != t2 || b1 != b2)
+				R_MakeSpans(mapfunc, x, t1, b1, t2, b2);
+			t1 = t2;
+			b1 = b2;
+		}
+	}
+#else
 	for (x = pl->minx; x <= stop; x++)
 		R_MakeSpans(mapfunc, x, pl->top[x-1], pl->bottom[x-1], pl->top[x], pl->bottom[x]);
+#endif
+#ifdef PS2
+	// Every span has consumed its flat; the next plane fetches its own source.
+	if (!ds_fog)
+		R_ReleaseFlatCache(R_GetTextureNumForFlat(&levelflats[pl->picnum]));
+#endif
 }
 
 void R_PlaneBounds(visplane_t *plane)

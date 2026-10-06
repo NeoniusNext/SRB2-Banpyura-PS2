@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "../doomdef.h"
+#include "../doomstat.h"
 #include "../d_main.h"
 #include "../d_event.h"
 #include "../g_input.h"
@@ -138,9 +139,173 @@ static void ConfigurePort(INT32 p)
 	pp->configured = true;
 }
 
+// PS2-136: -padscript "10:1:+cross,25:1:-cross,40:2:lx=255,..." drives the pads without a human (tests in PCSX2, where no pad can be pressed from
+// outside): the number is the count of PS2Joy_Poll calls (one per displayed frame), the next field is the pad port (1 or 2), then +button / -button
+// (up down left right cross circle square triangle l1 r1 l2 r2 start select l3 r3) or axis=value (lx ly rx ry, 0..255, 128 = centre). The raw
+// state goes through the same conversion as a real pad (ps2_padmap.c), so the whole path to the engine events is the one that is shipped.
+// -padscript file:NAME reads the list from <HOME>/NAME. A port with a script is "plugged in" whatever libpad says.
+#define SCRIPT_MAX 2048
+typedef struct
+{
+	UINT32 frame;
+	UINT8 port;
+	UINT8 axis;   // 0 = button, 1..4 = lx ly rx ry
+	UINT8 down;
+	UINT8 val;
+	UINT16 mask;
+} padstep_t;
+static padstep_t *script; // allocated by ScriptInit: nothing in bss for the normal game
+static INT32 nscript, scriptpos;
+static UINT32 pollcount;
+static boolean vactive[NUMPORTS];
+static ps2pad_raw_t vraw[NUMPORTS];
+
+static boolean ScriptParse(const char *spec)
+{
+	static const struct { const char *name; UINT16 mask; } btn[] = {
+		{"up", PS2PAD_UP}, {"down", PS2PAD_DOWN}, {"left", PS2PAD_LEFT}, {"right", PS2PAD_RIGHT}, {"cross", PS2PAD_CROSS}, {"circle", PS2PAD_CIRCLE},
+		{"square", PS2PAD_SQUARE}, {"triangle", PS2PAD_TRIANGLE}, {"l1", PS2PAD_L1}, {"r1", PS2PAD_R1}, {"l2", PS2PAD_L2}, {"r2", PS2PAD_R2},
+		{"start", PS2PAD_START}, {"select", PS2PAD_SELECT}, {"l3", PS2PAD_L3}, {"r3", PS2PAD_R3}};
+	static const char *const axes[4] = {"lx", "ly", "rx", "ry"};
+	const char *p = spec;
+
+	while (*p && nscript < SCRIPT_MAX)
+	{
+		padstep_t s;
+		char name[16];
+		size_t len = 0;
+		INT32 i;
+
+		memset(&s, 0, sizeof s);
+		while (*p == ',' || *p == ' ' || *p == '\n' || *p == '\r')
+			p++;
+		if (!*p)
+			break;
+		while (*p >= '0' && *p <= '9')
+			s.frame = s.frame * 10 + (UINT32)(*p++ - '0');
+		if (*p++ != ':')
+			return false;
+		s.port = (UINT8)(*p++ - '0');
+		if (s.port < 1 || s.port > NUMPORTS || *p++ != ':')
+			return false;
+		s.down = 1;
+		if (*p == '+' || *p == '-')
+			s.down = (*p++ == '+');
+		while (*p && *p != ',' && *p != '=' && *p != '\n' && *p != '\r' && len < sizeof name - 1)
+			name[len++] = *p++;
+		name[len] = 0;
+		if (*p == '=')
+		{
+			INT32 v = 0;
+
+			p++;
+			while (*p >= '0' && *p <= '9')
+				v = v * 10 + (*p++ - '0');
+			for (i = 0; i < 4; i++)
+				if (!strcmp(name, axes[i]))
+					s.axis = (UINT8)(i + 1);
+			if (!s.axis)
+				return false;
+			s.val = (UINT8)(v > 255 ? 255 : v);
+		}
+		else
+		{
+			for (i = 0; i < (INT32)(sizeof btn / sizeof btn[0]); i++)
+				if (!strcmp(name, btn[i].name))
+					s.mask = btn[i].mask;
+			if (!s.mask)
+				return false;
+		}
+		s.port--;
+		script[nscript++] = s;
+		vactive[s.port] = true;
+	}
+	return true;
+}
+
+static void ScriptInit(void)
+{
+	static boolean done;
+	INT32 p;
+
+	if (done)
+		return;
+	done = true;
+	if (M_CheckParm("-padscript") && M_IsNextParm())
+	{
+		const char *arg = M_GetNextParm();
+		const size_t bufsize = 32768;
+		char *buf = malloc(bufsize);
+
+		script = calloc(SCRIPT_MAX, sizeof *script);
+		if (!buf || !script)
+			I_Error("-padscript: out of memory");
+
+		if (!strncmp(arg, "file:", 5))
+		{
+			char path[256];
+			FILE *f;
+			size_t got = 0;
+
+			snprintf(path, sizeof path, "%s/%s", I_GetEnv("HOME") ? I_GetEnv("HOME") : ".", arg + 5);
+			f = fopen(path, "rb");
+			if (!f)
+				I_Error("-padscript: cannot open %s", path);
+			got = fread(buf, 1, bufsize - 1, f);
+			fclose(f);
+			buf[got] = 0;
+			arg = buf;
+		}
+		if (!ScriptParse(arg))
+			I_Error("-padscript: cannot parse the script near step %d", (int)nscript + 1);
+		{
+			// stable insertion sort by poll number: the lists of the two pads may be written one after the other
+			INT32 i, j;
+
+			for (i = 1; i < nscript; i++)
+			{
+				const padstep_t key = script[i];
+
+				for (j = i - 1; j >= 0 && script[j].frame > key.frame; j--)
+					script[j + 1] = script[j];
+				script[j + 1] = key;
+			}
+		}
+		for (p = 0; p < NUMPORTS; p++)
+		{
+			vraw[p].lx = vraw[p].ly = vraw[p].rx = vraw[p].ry = 128;
+			vraw[p].analog = 1;
+		}
+		CONS_Printf("PS2 pad: -padscript with %d steps\n", (int)nscript);
+		free(buf);
+	}
+}
+
+static void ScriptRun(void)
+{
+	pollcount++;
+	while (scriptpos < nscript && script[scriptpos].frame <= pollcount)
+	{
+		const padstep_t *s = &script[scriptpos++];
+		ps2pad_raw_t *r = &vraw[s->port];
+
+		if (s->axis)
+			(&r->lx)[s->axis - 1] = s->val;
+		else if (s->down)
+			r->buttons |= s->mask;
+		else
+			r->buttons &= (UINT16)~s->mask;
+	}
+}
+
 // false: no usable pad on the port right now
 static boolean ReadPort(INT32 p, ps2pad_raw_t *raw)
 {
+	if (vactive[p])
+	{
+		*raw = vraw[p];
+		return true;
+	}
 	static struct padButtonStatus bs __attribute__((aligned(64)));
 	padport_t *pp = &ports[p];
 
@@ -241,6 +406,11 @@ void PS2Joy_Poll(void)
 
 	if (padlib <= 0)
 		return;
+	ScriptInit();
+	if (nscript)
+		ScriptRun();
+	if (splitscreen && !slots[1].started && !M_CheckParm("-nojoy") && (vactive[1] || PortPresent(1)))
+		CV_SetValue(&cv_usejoystick2, 2); // PS2-136: the second local player plays on the pad of port 2 (InitSlot starts it)
 	I_GetJoystickEvents();
 	I_GetJoystick2Events();
 

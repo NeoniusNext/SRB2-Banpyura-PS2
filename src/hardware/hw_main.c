@@ -45,6 +45,13 @@
 #include "../d_main.h"
 #include "../p_slopes.h"
 #include "../lua_banpyura.h"
+#ifdef PS2_PROFILE
+#include "../ps2/hw/ps2_hw_prof.h" // PS2-HW-15: COP0 phase accumulators of the hardware renderer (HWPROF lines)
+unsigned long long ps2hwp_cyc[HWP_NUM];
+#else
+#define HWP_LOCAL ((void)0)
+#define HWP_LAP(idx) ((void)0)
+#endif
 
 // ==========================================================================
 // the hardware driver object
@@ -156,14 +163,38 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 		green = (float)poly_color.s.green;
 		blue = (float)poly_color.s.blue;
 
+#ifdef PS2_PROFILE // PS2-HW-18: sqrt() of a double is a library call of hundreds of cycles per polygon; both arguments take 256 values: the original expressions, tabulated
+		static float tint_alpha_tab[256], fade_alpha_tab[256];
+		static boolean alpha_tabs;
+
+		if (!alpha_tabs)
+		{
+			INT32 i;
+
+			for (i = 0; i < 256; i++)
+			{
+				tint_alpha_tab[i] = (float)(sqrt((float)i / 10.2) * 48) / 255.0f;
+				fade_alpha_tab[i] = (float)(sqrt(255-i) * 12) / 255.0f;
+			}
+			alpha_tabs = true;
+		}
+#endif
 		// 48 is just an arbritrary value that looked relatively okay.
+#ifdef PS2_PROFILE
+		tint_alpha = tint_alpha_tab[tint_color.s.alpha];
+#else
 		tint_alpha = (float)(sqrt((float)tint_color.s.alpha / 10.2) * 48) / 255.0f;
+#endif
 
 		// 8 is roughly the brightness of the "close" color in Software, and 16 the brightness of the "far" color.
 		// 8 is too bright for dark levels, and 16 is too dark for bright levels.
 		// 12 is the compromise value. It doesn't look especially good anywhere, but it's the most balanced.
 		// (Also, as far as I can tell, fade_color's alpha is actually not used in Software, so we only use light level.)
+#ifdef PS2_PROFILE
+		fade_alpha = fade_alpha_tab[light_level];
+#else
 		fade_alpha = (float)(sqrt(255-light_level) * 12) / 255.0f;
+#endif
 
 		// Clamp the alpha values
 		tint_alpha = min(max(tint_alpha, 0.0f), 1.0f);
@@ -2889,7 +2920,11 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	shadowVerts[1].z = shadowVerts[2].z = fy - offset;
 	shadowVerts[0].z = shadowVerts[3].z = fy + offset;
 
+#ifdef PS2_PROFILE // PS2-HW: no Lua, so the shadow always follows the camera (the default of Banpyura_SpriteShadow_SnapToCamera)
+	angle_t shadowangle = 0;
+#else
 	angle_t shadowangle = Banpyura_SpriteShadow_SnapToCamera ? 0 : (Banpyura_SpriteShadow_Angle - viewangle);
+#endif
 	fixed_t shadowsin = FINESINE(shadowangle>>ANGLETOFINESHIFT);
 	fixed_t shadowcos = FINECOSINE(shadowangle>>ANGLETOFINESHIFT);
 	float gl_shadowsin = FixedToFloat(shadowsin);
@@ -5575,6 +5610,7 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 // ==========================================================================
 void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 {
+	HWP_LOCAL;
 	const float fpov = FixedToFloat(R_GetPlayerFov(player));
 
 	const boolean skybox = (skyboxmo[0] && cv_skybox.value); // True if there's a skybox object and skyboxes are on
@@ -5639,6 +5675,7 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 
 	ps_numbspcalls.value.i = 0;
 	ps_numpolyobjects.value.i = 0;
+	HWP_LAP(HWP_CLEAR);
 	PS_START_TIMING(ps_bsptime);
 
 	validcount++;
@@ -5649,9 +5686,11 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	HWR_RenderBSPNode((INT32)numnodes-1);
 
 	PS_STOP_TIMING(ps_bsptime);
+	HWP_LAP(HWP_BSP);
 
 	if (cv_glbatching.value)
 		HWR_RenderBatches();
+	HWP_LAP(HWP_BATCH);
 
 	// Check for new console commands.
 	NetUpdate();
@@ -5670,6 +5709,7 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	PS_START_TIMING(ps_hw_spritedrawtime);
 	HWR_DrawSprites();
 	PS_STOP_TIMING(ps_hw_spritedrawtime);
+	HWP_LAP(HWP_SPRITES);
 
 #ifdef NEWCORONAS
 	//Hurdler: they must be drawn before translucent planes, what about gl fog?
@@ -5683,6 +5723,7 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	{
 		HWR_CreateDrawNodes();
 	}
+	HWP_LAP(HWP_NODES);
 
 	if (HWR_IsWireframeMode())
 		HWD.pfnSetSpecialState(HWD_SET_WIREFRAME, 0);
@@ -5698,6 +5739,7 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	// added by Hurdler for correct splitscreen
 	// moved here by hurdler so it works with the new near clipping plane
 	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
+	HWP_LAP(HWP_POST);
 }
 
 // Returns whether palette rendering is "actually enabled."
@@ -5929,7 +5971,12 @@ void HWR_Startup(void)
 	{
 		CONS_Printf("HWR_Startup()...\n");
 
+#ifdef PS2_PROFILE // PS2-HW-05: the caches keep palette indices (1 / 2 bytes per texel instead of 4); the GS draws them through a CLUT
+		textureformat = GL_TEXFMT_P_8;
+		patchformat = GL_TEXFMT_AP_88;
+#else
 		textureformat = patchformat = GL_TEXFMT_RGBA;
+#endif
 
 		HWR_InitPolyPool();
 		HWR_InitMapTextures();
@@ -5978,6 +6025,10 @@ void HWR_Shutdown(void)
 	HWR_FreePolyPool();
 	HWR_FreeMapTextures();
 	HWD.pfnFlushScreenTextures();
+#ifdef PS2
+	gl_maploaded = false;
+	// Keep model/shader CPU initialization; their owners remain valid across GS reacquisition.
+#endif
 }
 
 void transform(float *cx, float *cy, float *cz)
@@ -6108,7 +6159,11 @@ void HWR_DoPostProcessor(player_t *player)
 	}
 
 	// Capture the screen for intermission and screen waving
+#ifdef PS2_PROFILE // PS2-HW-16: a capture costs 1280 GS blocks (a third of the texture pool): only when it is read (the water/heat redraw below, the last frame of a level)
+	if (gamestate != GS_INTERMISSION && (lastdraw || *type == postimg_water || *type == postimg_heat))
+#else
 	if(gamestate != GS_INTERMISSION)
+#endif
 		HWD.pfnMakeScreenTexture(HWD_SCREENTEXTURE_GENERIC1);
 
 	if (splitscreen) // Not supported in splitscreen - someone want to add support?

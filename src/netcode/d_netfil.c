@@ -54,6 +54,9 @@
 #include "../m_menu.h"
 #include "../md5.h"
 #include "../filesrch.h"
+#ifdef PS2_PROFILE
+boolean P_AddFolder(const char *folderpath); // PS2-124: p_setup.h hides it until the add-on system is restored (p_setup.c has the stub)
+#endif
 
 #include <errno.h>
 
@@ -95,7 +98,9 @@ static filetran_t transfer[MAXNETNODES];
 INT32 fileneedednum; // Number of files needed to join the server
 fileneeded_t *fileneeded; // List of needed files
 static tic_t lasttimeackpacketsent = 0;
+#ifndef PS2_PROFILE
 static I_mutex downloadmutex;
+#endif
 char downloaddir[512] = "DOWNLOAD";
 
 // For resuming failed downloads
@@ -113,6 +118,7 @@ INT32 addontypes[NUMADDONTYPES] = {0};
 
 file_download_t filedownload;
 
+#ifndef PS2_PROFILE
 static CURL *http_handle;
 static char curl_errbuf[CURL_ERROR_SIZE];
 static CURLM *multi_handle;
@@ -124,6 +130,7 @@ static UINT32 curl_origfilesize;
 static UINT32 curl_origtotalfilesize;
 static char *curl_realname = NULL;
 static fileneeded_t *curl_curfile = NULL;
+#endif
 HTTP_login *curl_logins;
 
 static addontype_t GetAddonType(const char *name);
@@ -1643,6 +1650,7 @@ void Command_Downloads_f(void)
 		}
 }
 
+#ifndef PS2_PROFILE
 static size_t curlwrite_data(void *ptr, size_t size, size_t nmemb, FILE *stream)
 {
     return fwrite(ptr, size, nmemb, stream);
@@ -1912,6 +1920,24 @@ void CURLGetFile(void)
 	filedownload.http_running = false;
 	I_unlock_mutex(downloadmutex);
 }
+
+#else
+// PS2-124: no libcurl - HTTP downloads of add-ons are not available; the transfer over the game connection (SendFile/PT_FILEFRAGMENT) is.
+boolean CURLPrepareFile(const char* url, int dfilenum)
+{
+	(void)url;
+	(void)dfilenum;
+	return false;
+}
+
+void CURLAbortFile(void)
+{
+}
+
+void CURLGetFile(void)
+{
+}
+#endif
 
 HTTP_login *
 CURLGetLogin (const char *url, HTTP_login ***return_prev_next)

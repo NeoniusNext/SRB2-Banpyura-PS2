@@ -176,14 +176,64 @@ fixed_t *finecosine = &finesine[FINEANGLES/4];
 
 #include "t_tan2a.c"
 
+#ifndef PS2_PROFILE
 #include "t_facon.c"
+#endif
 
 
+#ifdef PS2_PROFILE
+// PS2-101: the 512 KB arccos table (only Lua's acos/asin and the vector-angle helpers read it) is not part of the ELF: the first call reads
+// FINEACON.DAT (tools/ps2/gen_fineacon.py, next to the packs) into a cache block of the zone. Without the file every value is computed from
+// the formula the table was made with (truncated double acos), which is exact where the C library's acos is.
+#include <stdio.h>
+#include <math.h>
+#include "z_zone.h"
+#include "d_main.h"
+#include "doomdef.h"
+
+static angle_t *fineacon;
+
+static boolean LoadFineacon(void)
+{
+	static boolean failed;
+	FILE *f;
+	const size_t count = 65536 * 2;
+
+	if (failed)
+		return false;
+	f = fopen(va("%s" PATHSEP "FINEACON.DAT", srb2path), "rb");
+	if (f)
+	{
+		fineacon = Z_Malloc(count * sizeof (angle_t), PU_CACHE, (void **)&fineacon);
+		if (fread(fineacon, sizeof (angle_t), count, f) == count)
+		{
+			fclose(f);
+			return true;
+		}
+		fclose(f);
+		Z_Free(fineacon);
+	}
+	failed = true;
+	CONS_Alert(CONS_WARNING, "FINEACON.DAT not found: acos is computed\n");
+	return false;
+}
+
+FUNCMATH angle_t FixedAcos(fixed_t x)
+{
+	if (-FRACUNIT > x || x >= FRACUNIT) return 0;
+	if (fineacon || LoadFineacon())
+		return fineacon[((x<<(FINE_FRACBITS-FRACBITS)))+FRACUNIT];
+	if (x == -FRACUNIT)
+		return ANGLE_MAX;
+	return (angle_t)(acos((double)x / 65536.0) / 3.14159265358979323846 * 2147483648.0);
+}
+#else
 FUNCMATH angle_t FixedAcos(fixed_t x)
 {
 	if (-FRACUNIT > x || x >= FRACUNIT) return 0;
 	return fineacon[((x<<(FINE_FRACBITS-FRACBITS)))+FRACUNIT];
 }
+#endif
 
 //
 // AngleBetweenVectors

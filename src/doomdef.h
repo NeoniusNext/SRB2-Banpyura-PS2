@@ -744,7 +744,7 @@ extern int
 /// Maintain compatibility with older 2.2 demos
 #define OLD22DEMOCOMPAT
 
-#if defined (HAVE_CURL) && !(defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__))
+#if (defined (HAVE_CURL) || defined (PS2)) && !(defined(__EMSCRIPTEN__) && !defined(__EMSCRIPTEN_PTHREADS__)) // PS2-130: master server over src/ps2/ps2_curl.c
 #define MASTERSERVER
 #else
 #undef UPDATE_ALERT

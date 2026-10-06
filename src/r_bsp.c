@@ -11,6 +11,7 @@
 /// \file  r_bsp.c
 /// \brief BSP traversal, handling of LineSegs for rendering
 
+#include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
 #include "doomdef.h"
 #include "g_game.h"
 #include "r_local.h"
@@ -744,12 +745,22 @@ void R_SortPolyObjects(subsector_t *sub)
 		INT32 i = 0;
 
 		// allocate twice the number needed to minimize allocations
+#ifdef PS2
+		if (numpolys > SIZE_MAX / (2 * sizeof (*po_ptrs)))
+			I_Error("R_SortPolyObjects: pointer array is too large");
+#endif
 		if (num_po_ptrs < numpolys*2)
 		{
 			// use free instead realloc since faster (thanks Lee ^_^)
+#ifdef PS2
+			Z_Free(po_ptrs);
+			num_po_ptrs = numpolys * 2;
+			po_ptrs = Z_Malloc(num_po_ptrs * sizeof (*po_ptrs), PU_STATIC, NULL);
+#else
 			free(po_ptrs);
 			po_ptrs = malloc((num_po_ptrs = numpolys*2)
 				* sizeof(*po_ptrs));
+#endif
 		}
 
 		po = sub->polyList;
@@ -904,13 +915,18 @@ static void R_Subsector(size_t num)
 	if (num >= numsubsectors)
 		return;
 
+	PS2SUB_B(15);
+
 	sub = &subsectors[num];
 	frontsector = sub->sector;
 	count = sub->numlines;
 	line = &segs[sub->firstline];
 
 	// Deep water/fake ceiling effect.
+	PS2SUB_B(16);
 	frontsector = R_FakeFlat(frontsector, &tempsec, &floorlightlevel, &ceilinglightlevel, false);
+	PS2SUB_E(16);
+	PS2SUB_B(17);
 
 	floorcolormap = ceilingcolormap = frontsector->extra_colormap;
 
@@ -920,6 +936,8 @@ static void R_Subsector(size_t num)
 	R_CheckSectorLightLists(sub->sector, frontsector, &floorlightlevel, &ceilinglightlevel, &floorcolormap, &ceilingcolormap);
 
 	sub->sector->extra_colormap = frontsector->extra_colormap;
+	PS2SUB_E(17);
+	PS2SUB_B(18);
 
 	if (P_GetSectorFloorZAt(frontsector, viewx, viewy) < viewz
 		|| frontsector->floorpic == skyflatnum
@@ -947,6 +965,8 @@ static void R_Subsector(size_t num)
 	else
 		ceilingplane = NULL;
 
+	PS2SUB_E(18);
+	PS2SUB_B(19);
 	numffloors = 0;
 	ffloor[numffloors].slope = NULL;
 	ffloor[numffloors].plane = NULL;
@@ -1111,7 +1131,10 @@ static void R_Subsector(size_t num)
 	// Either you must pass the fake sector and handle validcount here, on the
 	// real sector, or you must account for the lighting in some other way,
 	// like passing it as an argument.
+	PS2SUB_E(19);
+	PS2SUB_B(20);
 	R_AddSprites(sub->sector, (floorlightlevel+ceilinglightlevel)/2);
+	PS2SUB_E(20);
 
 	firstseg = NULL;
 
@@ -1119,6 +1142,7 @@ static void R_Subsector(size_t num)
 	if (sub->polyList)
 		R_AddPolyObjects(sub);
 
+	PS2SUB_B(21);
 	while (count--)
 	{
 		if (!line->glseg && !line->polyseg) // ignore segs that belong to polyobjects
@@ -1126,6 +1150,8 @@ static void R_Subsector(size_t num)
 		line++;
 		curline = NULL; /* cph 2001/11/18 - must clear curline now we're done with it, so stuff doesn't try using it for other things */
 	}
+	PS2SUB_E(21);
+	PS2SUB_E(15);
 }
 
 void R_CheckSectorLightLists(sector_t *sector, sector_t *fakeflat, INT32 *floorlightlevel, INT32 *ceilinglightlevel, extracolormap_t **floorcolormap, extracolormap_t **ceilingcolormap)

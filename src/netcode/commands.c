@@ -27,6 +27,7 @@
 #include "../doomdef.h"
 #include "../r_local.h"
 #include "../m_misc.h"
+#include "../m_menu.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -441,7 +442,16 @@ void Command_connect(void)
 		}
 		else if (I_NetOpenSocket)
 		{
+#ifdef PS2
+			// PS2-125: the IP stack comes up here (src/ps2/ps2_net.c): no adapter / no DHCP answer is a normal thing to meet on a console
+			if (!I_NetOpenSocket())
+			{
+				M_StartMessage(M_GetText("The network is not available.\n\nCheck the Ethernet cable and the\nDHCP server (or pass -ip, -netmask,\n-gateway).\n\n(Press a key)\n"), NULL, MM_NOTHING);
+				return;
+			}
+#else
 			I_NetOpenSocket();
+#endif
 			netgame = true;
 			multiplayer = true;
 
@@ -471,6 +481,7 @@ void Command_connect(void)
 	botskin = 0;
 	CL_ConnectToServer();
 }
+
 
 void Command_GetPlayerNum(void)
 {

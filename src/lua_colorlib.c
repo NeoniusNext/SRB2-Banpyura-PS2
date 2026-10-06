@@ -13,6 +13,7 @@
 #include "doomdef.h"
 #include "fastcmp.h"
 #include "r_data.h"
+#include "z_zone.h"
 #include "v_video.h"
 
 #include "lua_script.h"
@@ -21,7 +22,13 @@
 #define COLORLIB_USE_LOOKUP
 
 #ifdef COLORLIB_USE_LOOKUP
+#ifdef PS2_PROFILE
+	// PS2-101: the 128 KB nearest-colour memo is a cache block of the zone, made by the first color.rgbToPalette call (rebuilt when evicted)
+	static colorlookup_t *colormix_lutp;
+	#define colormix_lut (*colormix_lutp)
+#else
 	static colorlookup_t colormix_lut;
+#endif
 	#define GetNearestColor(r, g, b) GetColorLUT(&colormix_lut, r, g, b)
 #else
 	#define GetNearestColor(r, g, b) NearestPaletteColor(r, g, b, pMasterPalette)
@@ -192,6 +199,10 @@ static int lib_colorRgbToPalette(lua_State *L)
 	GetArgsRGBA(L, 1, &r, &g, &b, NULL);
 
 #ifdef COLORLIB_USE_LOOKUP
+#ifdef PS2_PROFILE
+	if (!colormix_lutp)
+		Z_Calloc(sizeof *colormix_lutp, PU_CACHE, &colormix_lutp);
+#endif
 	InitColorLUT(&colormix_lut, pMasterPalette, false);
 #endif
 

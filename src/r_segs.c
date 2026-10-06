@@ -22,6 +22,11 @@
 #include "z_zone.h"
 #include "p_slopes.h"
 #include "taglist.h"
+#include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
+#ifdef PS2_OPT_REND
+#include "ps2/ps2_rdraw.h"
+#endif
+#include "r_slopeq.h" // experimental PS2_OPT_SEGS replacements of the double code
 
 // OPTIMIZE: closed two sided lines as single sided
 
@@ -33,6 +38,9 @@ static boolean markceiling;
 static boolean maskedtexture;
 static INT32 toptexture, bottomtexture, midtexture;
 static INT32 numthicksides, numbackffloors;
+#ifdef PS2_OPT_REND
+extern INT32 ffloor_clipdirty; // r_plane.c
+#endif
 
 angle_t rw_normalangle;
 // angle to line origin
@@ -90,6 +98,22 @@ void R_ClearSegTables(void)
 	curtexturecolumntable = texturecolumntable;
 }
 
+#ifdef PS2_PROFILE
+void R_AllocDrawSegFrontScale(drawseg_t *ds)
+{
+	// Retain each slot's old values and high-water view width between frames.
+	// No zone owner points inside drawsegs: the array itself may move on growth.
+	if (viewwidth < 1 || viewwidth > MAXVIDWIDTH)
+		I_Error("R_AllocDrawSegFrontScale: invalid view width");
+	if (ds->frontscalewidth < viewwidth)
+	{
+		ds->frontscale = Z_Realloc(ds->frontscale,
+			(size_t)viewwidth * sizeof (*ds->frontscale), PU_STATIC, NULL);
+		ds->frontscalewidth = viewwidth;
+	}
+}
+#endif
+
 transnum_t R_GetLinedefTransTable(fixed_t alpha)
 {
 	return (20*(FRACUNIT - alpha - 1) + FRACUNIT) >> (FRACBITS+1);
@@ -97,8 +121,13 @@ transnum_t R_GetLinedefTransTable(fixed_t alpha)
 
 static UINT8 R_SideLightLevel(side_t *side, INT16 base_lightlevel)
 {
+#ifdef SIDE_UDMF
 	return max(max(0, cv_secbright.value), min(255, side->light +
 		((side->lightabsolute) ? 0 : base_lightlevel)));
+#else
+	(void)side; // PS2-OPT-02: light 0, relative
+	return max(max(0, cv_secbright.value), min(255, base_lightlevel));
+#endif
 }
 
 /* TODO: implement per-texture lighting
@@ -215,6 +244,11 @@ static void R_RenderFlipped2sidedMultiPatchColumn(column_t *column, unsigned len
 
 void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2)
 {
+#ifdef PS2_OPT_REND
+#define LRFIX lightresfix
+#else
+#define LRFIX LIGHTRESOLUTIONFIX
+#endif
 	size_t pindex;
 	column_t *col;
 	INT32 lightnum, texnum, i;
@@ -283,15 +317,27 @@ void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2)
 
 	vertflip = textures[texnum]->flip & 2;
 
-	wall_scaley = sidedef->scaley_mid;
+	wall_scaley = SIDE_SCALEY_MID(sidedef);
 	if (wall_scaley < 0)
 	{
 		wall_scaley = -wall_scaley;
 		vertflip = !vertflip;
 	}
 
+#ifdef PS2_OPT_REND
+	// PS2-86: FixedDiv(x, FRACUNIT) is x unless |x| >= 2^30 (saturation)
+	if (wall_scaley == FRACUNIT && ds->scalestep > -0x40000000 && ds->scalestep < 0x40000000)
+		scalestep = ds->scalestep;
+	else
+		scalestep = FixedDiv(ds->scalestep, wall_scaley);
+	if (wall_scaley == FRACUNIT && ds->scale1 > -0x40000000 && ds->scale1 < 0x40000000)
+		scale1 = ds->scale1;
+	else
+		scale1 = FixedDiv(ds->scale1, wall_scaley);
+#else
 	scalestep = FixedDiv(ds->scalestep, wall_scaley);
 	scale1 = FixedDiv(ds->scale1, wall_scaley);
+#endif
 
 	range = max(ds->x2-ds->x1, 1);
 	rw_scalestep = scalestep;
@@ -444,11 +490,28 @@ void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2)
 
 		dc_texheight = textureheight[texnum]>>FRACBITS;
 
+#ifdef PS2_OPT_REND
+		// PS2-86: loop invariants of the column loop (nothing in it writes them): the texture height, the MIDPEG flag,
+		// the light-resolution factor (640*fovtan/vid.width is an integer division) and the (32x32 -> 64) overflow product
+		// done with one mult instead of a libgcc 64-bit multiply
+		const fixed_t texh = textureheight[texnum];
+		const boolean midpeg = (curline->linedef->flags & ML_MIDPEG) != 0;
+		const fixed_t lightresfix = LIGHTRESOLUTIONFIX;
+#endif
+
 		// draw the columns
 		for (dc_x = x1; dc_x <= x2; dc_x++)
 		{
 			dc_texturemid = ds->maskedtextureheight[dc_x];
 
+#ifdef PS2_OPT_REND
+			if (midpeg)
+				dc_texturemid += texh*times + texh;
+			else
+				dc_texturemid -= texh*times;
+
+			overflow_test = (INT64)centeryfrac - (PS2_MulS32(dc_texturemid, spryscale)>>FRACBITS);
+#else
 			if (curline->linedef->flags & ML_MIDPEG)
 				dc_texturemid += (textureheight[texnum])*times + textureheight[texnum];
 			else
@@ -456,6 +519,7 @@ void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2)
 
 			// Check for overflows first
 			overflow_test = (INT64)centeryfrac - (((INT64)dc_texturemid*spryscale)>>FRACBITS);
+#endif
 			if (overflow_test < 0) overflow_test = -overflow_test;
 			if ((UINT64)overflow_test&0xFFFFFFFF80000000ULL)
 			{
@@ -501,7 +565,7 @@ void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2)
 					else
 						xwalllights = scalelight[rlight->lightnum];
 
-					pindex = FixedMul(spryscale, LIGHTRESOLUTIONFIX)>>LIGHTSCALESHIFT;
+					pindex = FixedMul(spryscale, LRFIX)>>LIGHTSCALESHIFT;
 
 					if (pindex >= MAXLIGHTSCALE)
 						pindex = MAXLIGHTSCALE - 1;
@@ -546,7 +610,7 @@ void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2)
 			}
 
 			// calculate lighting
-			pindex = FixedMul(spryscale, LIGHTRESOLUTIONFIX)>>LIGHTSCALESHIFT;
+			pindex = FixedMul(spryscale, LRFIX)>>LIGHTSCALESHIFT;
 
 			if (pindex >= MAXLIGHTSCALE)
 				pindex = MAXLIGHTSCALE - 1;
@@ -568,6 +632,7 @@ void R_RenderMaskedSegRange(drawseg_t *ds, INT32 x1, INT32 x2)
 	}
 	colfunc = colfuncs[BASEDRAWFUNC];
 }
+#undef LRFIX
 
 // Loop through R_DrawMaskedColumn calls
 static fixed_t repeatscroll = 0;
@@ -867,8 +932,8 @@ void R_RenderThickSideRange(drawseg_t *ds, INT32 x1, INT32 x2, ffloor_t *pfloor)
 			walllights = scalelight[lightnum];
 	}
 
-	wall_scalex = FixedDiv(FRACUNIT, sidedef->scalex_mid);
-	wall_scaley = sidedef->scaley_mid;
+	wall_scalex = FixedDiv(FRACUNIT, SIDE_SCALEX_MID(sidedef));
+	wall_scaley = SIDE_SCALEY_MID(sidedef);
 	if (wall_scaley < 0)
 	{
 		wall_scaley = -wall_scaley;
@@ -879,13 +944,27 @@ void R_RenderThickSideRange(drawseg_t *ds, INT32 x1, INT32 x2, ffloor_t *pfloor)
 	// Lactozilla: Moved them back down
 	// This uses floating point math now, because the fixed-point imprecisions
 	// become more severe the bigger the texture is scaled.
+#ifdef PS2_OPT_SEGS
+	// PS2-16: with an unscaled wall (every binary map) the double values are sums of 16.16 numbers and exactly
+	// representable, so the same result comes out of integer arithmetic. Scaled walls keep the double code.
+	const boolean ysexact = (wall_scaley == FRACUNIT);
+	INT64 ysfix = (INT64)ds->scale1 + (INT64)(x1 - ds->x1) * ds->scalestep;
+	double dwall_scaley = ysexact ? 1.0 : FixedToDouble(wall_scaley);
+	double scalestep = ysexact ? 0.0 : FixedToDouble(ds->scalestep) / dwall_scaley;
+	double yscale = ysexact ? 0.0 : (FixedToDouble(ds->scale1) + (x1 - ds->x1)*scalestep) / dwall_scaley;
+#define YSCALE_NEXT() do { if (ysexact) ysfix += ds->scalestep; else yscale += scalestep; } while (0)
+#define YSCALE_FIXED() (ysexact ? (fixed_t)ysfix : DoubleToFixed(yscale))
+#else
 	double dwall_scaley = FixedToDouble(wall_scaley);
 	double scalestep = FixedToDouble(ds->scalestep) / dwall_scaley;
 	double yscale = (FixedToDouble(ds->scale1) + (x1 - ds->x1)*scalestep) / dwall_scaley;
+#define YSCALE_NEXT() (yscale += scalestep)
+#define YSCALE_FIXED() DoubleToFixed(yscale)
+#endif
 
 	thicksidecol = ffloortexturecolumn;
 
-	wall_offsetx = ds->offsetx + sidedef->offsetx_mid;
+	wall_offsetx = ds->offsetx + SIDE_OFFSETX_MID(sidedef);
 
 	if (wall_scalex == FRACUNIT)
 	{
@@ -914,7 +993,7 @@ void R_RenderThickSideRange(drawseg_t *ds, INT32 x1, INT32 x2, ffloor_t *pfloor)
 	else
 		dc_texturemid = FixedMul(*pfloor->topheight - viewz, wall_scaley);
 
-	repeatscroll = sidedef->rowoffset + sidedef->offsety_mid;
+	repeatscroll = sidedef->rowoffset + SIDE_OFFSETY_MID(sidedef);
 
 	if (dont_peg_bottom)
 	{
@@ -1013,14 +1092,14 @@ void R_RenderThickSideRange(drawseg_t *ds, INT32 x1, INT32 x2, ffloor_t *pfloor)
 						rlight->botheight += rlight->botheightstep;
 				}
 			}
-			yscale += scalestep;
+			YSCALE_NEXT();
 			continue;
 		}
 
 		// Get data for the column
 		col = R_GetColumn(texnum, ((thicksidecol[dc_x] + wall_offsetx) >> FRACBITS));
 
-		spryscale = DoubleToFixed(yscale);
+		spryscale = YSCALE_FIXED();
 
 		// Eh. I tried fixing the scaling artifacts but it still wasn't perfect.
 		// So this checks if the column has gaps in it or not, and if it does, uses a version of the column drawers
@@ -1162,7 +1241,7 @@ void R_RenderThickSideRange(drawseg_t *ds, INT32 x1, INT32 x2, ffloor_t *pfloor)
 			if (windowtop < windowbottom)
 				colfunc_2s (col, lengthcol);
 
-			yscale += scalestep;
+			YSCALE_NEXT();
 			continue;
 		}
 
@@ -1181,7 +1260,7 @@ void R_RenderThickSideRange(drawseg_t *ds, INT32 x1, INT32 x2, ffloor_t *pfloor)
 
 		// draw the texture
 		colfunc_2s (col, lengthcol);
-		yscale += scalestep;
+		YSCALE_NEXT();
 	}
 	colfunc = colfuncs[BASEDRAWFUNC];
 
@@ -1220,6 +1299,7 @@ static boolean R_FFloorCanClip(visffloor_t *pfloor)
 #define HEIGHTBITS              12
 #define HEIGHTUNIT              (1<<HEIGHTBITS)
 
+#ifndef PS2_OPT_REND // the PS2 loop dispatches the three cases itself
 static void R_DrawRegularWall(UINT8 *source, INT32 height)
 {
 	dc_source = source;
@@ -1238,7 +1318,809 @@ static void R_DrawNoWall(UINT8 *source, INT32 height)
 	(void)source;
 	(void)height;
 }
+#endif
 
+#ifdef PS2_OPT_REND
+// column of a texture (R_GetColumn without the cache bookkeeping): wrap by mask for power-of-two widths
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 4
+#define SEG_COLUMN(cols, w, c) (&(cols)[((c) + 1) & ((w) - 1)])
+#else
+#define SEG_COLUMN(cols, w, c) (((w) & ((w) - 1)) ? &(cols)[(UINT32)(c) % (w)] : &(cols)[(c) & ((w) - 1)])
+#endif
+#ifdef PS2_SUBPROF
+#define PS2SUB_RESET(bv) (ps2sb_##bv = PS2Sub_Count())
+#define PS2SUB_CATADD(base, bv) do { ps2sub_cyc[(base) + ps2_segcat] += (unsigned)(PS2Sub_Count() - ps2sb_##bv); ps2sub_calls[(base) + ps2_segcat]++; } while (0)
+#define PS2SUB_CAT() do { ps2sub_cyc[64 + ps2_segcat] += (unsigned)(PS2Sub_Count() - ps2sb_60); ps2sub_calls[64 + ps2_segcat]++; } while (0)
+extern int ps2_segcat;
+#else
+#define PS2SUB_CAT() ((void)0)
+#define PS2SUB_CATADD(base, bv) ((void)0)
+#define PS2SUB_RESET(bv) ((void)0)
+#endif
+#define SEGT_ANY 8 // tiers value: which wall tiers exist is decided at run time
+// PS2-80: R_RenderSegLoop is instantiated twice from one body. plain == true is chosen when the range has no 3D floors,
+// no back 3D floors and no light list: the dead blocks vanish, the register pressure drops (the original keeps ~40 live
+// values and spills most of them). Every skipped computation is free of side effects (see the per-item notes); all
+// stores happen in the original order.
+#if defined(__GNUC__)
+#define R_FORCEINLINE static inline __attribute__((always_inline))
+#else
+#define R_FORCEINLINE static ATTRINLINE
+#endif
+R_FORCEINLINE void R_RenderSegLoopT(const boolean plain, const INT32 tiers)
+{
+	PS2SUB_B(79);
+	angle_t angle;
+	fixed_t textureoffset = 0;
+	size_t pindex;
+	INT32 yl;
+	INT32 yh;
+
+	INT32 mid;
+	fixed_t texturecolumn = 0;
+	fixed_t toptexturecolumn = 0;
+	fixed_t bottomtexturecolumn = 0;
+	fixed_t oldtexturecolumn = -1;
+	fixed_t oldtexturecolumn_top = -1;
+	fixed_t oldtexturecolumn_bottom = -1;
+	INT32 top;
+	INT32 bottom;
+	INT32 i;
+
+	fixed_t topscaley = rw_toptexturescaley;
+	fixed_t midscaley = rw_midtexturescaley;
+	fixed_t bottomscaley = rw_bottomtexturescaley;
+
+	// 0 = R_DrawRegularWall, 1 = R_DrawFlippedWall, 2 = R_DrawNoWall
+	INT32 drawtop = 0, drawmiddle = 0, drawbottom = 0;
+
+	// loop invariants (nothing in the loop writes them; the column drawers do not touch them)
+	INT16 *const cclip = ceilingclip;
+	INT16 *const fclip = floorclip;
+	fixed_t *const fscale = frontscale;
+	const INT32 vheight = viewheight;
+	const fixed_t lightresfix = LIGHTRESOLUTIONFIX; // 640*fovtan/vid.width: one integer division per use otherwise
+	UINT16 *const ctop = ceilingplane ? ceilingplane->top : NULL;
+	UINT16 *const cbot = ceilingplane ? ceilingplane->bottom : NULL;
+	UINT16 *const ftop = floorplane ? floorplane->top : NULL;
+	UINT16 *const fbot = floorplane ? floorplane->bottom : NULL;
+	const boolean domarkceil = markceiling && ceilingplane;
+	const boolean domarkfloor = markfloor && floorplane;
+	const boolean texd = segtextured;
+	// PS2-90: tiers is a compile-time constant in every instantiation but SEGT_ANY: the code of absent wall tiers vanishes
+	const boolean hasmid = tiers == SEGT_ANY ? midtexture != 0 : (tiers & 1) != 0;
+	const boolean hastop = tiers == SEGT_ANY ? toptexture != 0 : (tiers & 2) != 0;
+	const boolean hasbot = tiers == SEGT_ANY ? bottomtexture != 0 : (tiers & 4) != 0;
+	const boolean hasextra = frontsector->extra_colormap != NULL;
+	const fixed_t midtexheight = hasmid ? textureheight[midtexture]>>FRACBITS : 0;
+	const fixed_t toptexheight = hastop ? textureheight[toptexture]>>FRACBITS : 0;
+	const fixed_t bottexheight = hasbot ? textureheight[bottomtexture]>>FRACBITS : 0;
+	const boolean masktc = maskedtexturecol != NULL;
+	const boolean masktheight = maskedtextureheight != NULL;
+	const boolean thickcol = thicksidecol != NULL;
+	const boolean midwork = hasmid || masktheight;
+	UINT32 invs = 0; // 0xffffffffu / (unsigned)rw_scale, divided at most once per column
+	boolean haveinvs;
+	lighttable_t **xwl[32]; // per light: the scalelight row of the range (it depends on the side and the light only)
+	boolean lightpre = false;
+	boolean lightsdone = true;
+
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 2 // negative control: the light colormaps of the shadowed columns are never set
+#define SEG_LIGHTS() ((void)0)
+#else
+#define SEG_LIGHTS() do { \
+		if (!lightsdone) \
+		{ \
+			lightsdone = true; \
+			pindex = FixedMul(cscale, lightresfix)>>LIGHTSCALESHIFT; \
+			if (pindex >=  MAXLIGHTSCALE) \
+				pindex = MAXLIGHTSCALE-1; \
+			for (i = 0; i < dc_numlights; i++) \
+			{ \
+				if (dc_lightlist[i].extra_colormap) \
+					dc_lightlist[i].rcolormap = dc_lightlist[i].extra_colormap->colormap + (xwl[i][pindex] - colormaps); \
+				else \
+					dc_lightlist[i].rcolormap = xwl[i][pindex]; \
+			} \
+		} \
+	} while (0)
+#endif
+	PS2SUB_ADD(56, rw_stopx - rw_x);
+	if (segtextured)
+		PS2SUB_ADD(57, rw_stopx - rw_x);
+	if (!plain)
+		PS2SUB_ADD(59, rw_stopx - rw_x);
+	if (!plain && dc_numlights)
+		PS2SUB_ADD(53, rw_stopx - rw_x);
+	if (!plain && numffloors)
+		PS2SUB_ADD(52, rw_stopx - rw_x);
+
+	if (!plain && dc_numlights)
+		colfunc = colfuncs[COLDRAWFUNC_SHADOWED];
+
+	if (hastop && topscaley < 0)
+	{
+		topscaley = -topscaley;
+		drawtop = 1;
+	}
+	if (hasmid && midscaley < 0)
+	{
+		midscaley = -midscaley;
+		drawmiddle = 1;
+	}
+	if (hasbot && bottomscaley < 0)
+	{
+		bottomscaley = -bottomscaley;
+		drawbottom = 1;
+	}
+
+	if (!r_renderwalls)
+	{
+		drawtop = 2;
+		drawmiddle = 2;
+		drawbottom = 2;
+	}
+
+	if (hasmid)
+		R_CheckTextureCache(midtexture);
+	if (hastop)
+		R_CheckTextureCache(toptexture);
+	if (hasbot)
+		R_CheckTextureCache(bottomtexture);
+	// PS2-90: R_GetColumn per column fetched the column table and width again and touched the cache block each time; the
+	// blocks were stamped for this frame by the checks above (and stay: the 3D view holds the purge lock), so the loop
+	// indexes the tables directly. A tier whose block was evicted by the next tier's generation is checked again first.
+	for (i = 0; i < 3 && ((hasmid && !texturecache[midtexture]) || (hastop && !texturecache[toptexture]) || (hasbot && !texturecache[bottomtexture])); i++)
+	{
+		if (hasmid)
+			R_CheckTextureCache(midtexture);
+		if (hastop)
+			R_CheckTextureCache(toptexture);
+		if (hasbot)
+			R_CheckTextureCache(bottomtexture);
+	}
+	column_t *const midcols = hasmid ? texturecolumns[midtexture] : NULL;
+	column_t *const topcols = hastop ? texturecolumns[toptexture] : NULL;
+	column_t *const botcols = hasbot ? texturecolumns[bottomtexture] : NULL;
+	const INT32 midw = hasmid ? texturewidth[midtexture] : 1;
+	const INT32 topw = hastop ? texturewidth[toptexture] : 1;
+	const INT32 botw = hasbot ? texturewidth[bottomtexture] : 1;
+
+	if (!plain && dc_numlights)
+		colfunc = colfuncs[COLDRAWFUNC_SHADOWED];
+
+	if (plain && rw_x < rw_stopx)
+		rw_floormarked = rw_ceilingmarked = false; // only the 3D floor block ever sets them
+
+	INT32 cx = rw_x;
+	fixed_t cscale = rw_scale, ctopfrac = topfrac, cbotfrac = bottomfrac, cpixhigh = pixhigh, cpixlow = pixlow;
+	const fixed_t sstep_ = rw_scalestep, tstep_ = topstep, bstep_ = bottomstep, phstep_ = pixhighstep, plstep_ = pixlowstep;
+	const INT32 stopx_ = rw_stopx;
+	// PS2-90: file-scope values the column loop only reads live in locals (every access is lui+lw, and the stores of the
+	// drawers/clip arrays keep the compiler from reusing them); the four texture origins that the loop itself steps are
+	// written back after it
+	const angle_t centerangle_ = rw_centerangle;
+	const fixed_t offset_ = rw_offset, distance_ = rw_distance, offsetx_ = rw_offsetx;
+	const fixed_t invmidx_ = rw_invmidtexturescalex, invtopx_ = rw_invtoptexturescalex, invbotx_ = rw_invbottomtexturescalex;
+	const fixed_t offtop_ = rw_offset_top, offbot_ = rw_offset_bottom;
+	const boolean toppeg_ = rw_toptexturescalex < 0, botpeg_ = rw_bottomtexturescalex < 0, midneg_ = rw_invmidtexturescalex < 0;
+	const fixed_t midslide_ = rw_midtextureslide, midbackslide_ = rw_midtexturebackslide;
+	const fixed_t topslide_ = rw_toptextureslide, botslide_ = rw_bottomtextureslide;
+	lighttable_t **const wlights = walllights;
+	const lighttable_t *const cmaps = colormaps;
+	lighttable_t *const extracm = hasextra ? frontsector->extra_colormap->colormap : NULL;
+	fixed_t midtexturemid_ = rw_midtexturemid, midtextureback_ = rw_midtextureback;
+	fixed_t toptexturemid_ = rw_toptexturemid, bottomtexturemid_ = rw_bottomtexturemid;
+	if (plain && !texd)
+	{
+		// PS2-80: a range without any texture (about 70% of the columns of a typical frame: openings between sectors) only
+		// marks the floor/ceiling planes, updates the clip arrays and stores the scale. Same stores, in the same order, but
+		// the stepped values live in registers instead of the file-scope variables.
+		INT32 x = rw_x;
+		const INT32 stop = rw_stopx;
+		fixed_t scale = rw_scale, tfrac = topfrac, bfrac = bottomfrac;
+		const fixed_t sstep = rw_scalestep, tstep = topstep, bstep = bottomstep;
+
+		for (; x < stop; x++, scale += sstep, tfrac += tstep, bfrac += bstep)
+		{
+			const INT32 cc = cclip[x], fc = fclip[x];
+
+			yl = (tfrac+HEIGHTUNIT-1)>>HEIGHTBITS;
+			top = cc+1;
+			if (yl < top)
+				yl = top;
+
+			if (markceiling)
+			{
+				bottom = yl > fc ? fc : yl;
+				if (top <= --bottom && domarkceil)
+				{
+					const INT16 t16 = (INT16)top, b16 = (INT16)bottom;
+					if (ctop[x] > t16) ctop[x] = t16;
+					if (cbot[x] < b16) cbot[x] = b16;
+				}
+			}
+
+			yh = bfrac>>HEIGHTBITS;
+			bottom = fc-1;
+			if (yh > bottom)
+				yh = bottom;
+
+			if (markfloor)
+			{
+				top = yh < cc ? cc : yh;
+				if (++top <= bottom && domarkfloor)
+				{
+					const INT16 t16 = (INT16)top, b16 = (INT16)bottom;
+					if (ftop[x] > t16) ftop[x] = t16;
+					if (fbot[x] < b16) fbot[x] = b16;
+				}
+			}
+
+			fscale[x] = scale;
+
+			// no textures: only the clip arrays change (the originals' topclip/bottomclip)
+			if (markceiling)
+				cclip[x] = (yl >= 0) ? ((yl > vheight) ? (INT16)vheight : (INT16)((INT16)yl - 1)) : -1;
+			if (markfloor)
+				fclip[x] = (yh < vheight) ? ((yh < -1) ? -1 : (INT16)((INT16)yh + 1)) : (INT16)vheight;
+		}
+
+		rw_x = x;
+		rw_scale = scale;
+		topfrac = tfrac;
+		bottomfrac = bfrac;
+		return;
+	}
+
+	if (!plain && dc_numlights <= 32)
+	{
+		for (i = 0; i < dc_numlights; i++)
+		{
+			INT32 lightnum = R_SideLightLevel(curline->sidedef, dc_lightlist[i].lightlevel) >> LIGHTSEGSHIFT;
+
+			if (dc_lightlist[i].extra_colormap)
+				;
+			else if (curline->v1->y == curline->v2->y)
+				lightnum--;
+			else if (curline->v1->x == curline->v2->x)
+				lightnum++;
+
+			if (lightnum < 0)
+				xwl[i] = scalelight[0];
+			else if (lightnum >= LIGHTLEVELS)
+				xwl[i] = scalelight[LIGHTLEVELS-1];
+			else
+				xwl[i] = scalelight[lightnum];
+		}
+		lightpre = true;
+	}
+
+	PS2SUB_CATADD(80, 79);
+	PS2SUB_RESET(79);
+	for (; cx < stopx_; cx++)
+	{
+		// mark floor / ceiling areas
+		yl = (ctopfrac+HEIGHTUNIT-1)>>HEIGHTBITS;
+
+		top = cclip[cx]+1;
+
+		// no space above wall?
+		if (yl < top)
+			yl = top;
+
+		if (markceiling)
+		{
+			bottom = yl > fclip[cx] ? fclip[cx] : yl;
+
+			if (top <= --bottom && domarkceil)
+			{
+				const INT16 t16 = (INT16)top, b16 = (INT16)bottom;
+				if (ctop[cx] > t16) ctop[cx] = t16;
+				if (cbot[cx] < b16) cbot[cx] = b16;
+			}
+		}
+
+		yh = cbotfrac>>HEIGHTBITS;
+
+		bottom = fclip[cx]-1;
+
+		if (yh > bottom)
+			yh = bottom;
+
+		if (markfloor)
+		{
+			top = yh < cclip[cx] ? cclip[cx] : yh;
+
+			if (++top <= bottom && domarkfloor)
+			{
+				const INT16 t16 = (INT16)top, b16 = (INT16)bottom;
+				if (ftop[cx] > t16) ftop[cx] = t16;
+				if (fbot[cx] < b16) fbot[cx] = b16;
+			}
+		}
+
+		haveinvs = false;
+		lightsdone = true;
+
+		if (!plain)
+		{
+			rw_floormarked = false;
+			rw_ceilingmarked = false;
+
+			if (numffloors)
+			{
+				INT16 fftop, ffbottom;
+
+				firstseg->frontscale[cx] = fscale[cx];
+				top = cclip[cx]+1; // PRBoom
+				bottom = fclip[cx]-1; // PRBoom
+
+				for (i = 0; i < numffloors; i++)
+				{
+					if (ffloor[i].polyobj && (!curline->polyseg || ffloor[i].polyobj != curline->polyseg))
+						continue;
+
+					if (ffloor[i].height < viewz)
+					{
+						INT32 top_w = (ffloor[i].f_frac >> HEIGHTBITS) + 1;
+						INT32 bottom_w = ffloor[i].f_clip[cx];
+
+						if (top_w < top)
+							top_w = top;
+
+						if (bottom_w > bottom)
+							bottom_w = bottom;
+
+						// Polyobject-specific hack to fix plane leaking -Red
+						if (ffloor[i].polyobj && top_w >= bottom_w)
+						{
+							ffloor[i].plane->top[cx] = 0xFFFF;
+							ffloor[i].plane->bottom[cx] = 0x0000; // fix for sky plane drawing crashes - Monster Iestyn 25/05/18
+						}
+						else
+						{
+							if (top_w <= bottom_w)
+							{
+								fftop = (INT16)top_w;
+								ffbottom = (INT16)bottom_w;
+
+								ffloor[i].plane->top[cx] = fftop;
+								ffloor[i].plane->bottom[cx] = ffbottom;
+
+								// Lactozilla: Cull part of the column by the 3D floor if it can't be seen
+								// "bottom" is the top pixel of the floor column
+								if (ffbottom >= bottom-1 && R_FFloorCanClip(&ffloor[i]) && !curline->polyseg)
+								{
+									rw_floormarked = true;
+									fclip[cx] = fftop;
+									if (yh > fftop)
+										yh = fftop;
+
+									if (markfloor && floorplane)
+										floorplane->top[cx] = bottom;
+
+									if (rw_silhouette)
+									{
+										(*rw_silhouette) |= SIL_BOTTOM;
+										(*rw_bsilheight) = INT32_MAX;
+									}
+								}
+							}
+						}
+					}
+					else if (ffloor[i].height > viewz)
+					{
+						INT32 top_w = ffloor[i].c_clip[cx] + 1;
+						INT32 bottom_w = (ffloor[i].f_frac >> HEIGHTBITS);
+
+						if (top_w < top)
+							top_w = top;
+
+						if (bottom_w > bottom)
+							bottom_w = bottom;
+
+						// Polyobject-specific hack to fix plane leaking -Red
+						if (ffloor[i].polyobj && top_w >= bottom_w)
+						{
+							ffloor[i].plane->top[cx] = 0xFFFF;
+							ffloor[i].plane->bottom[cx] = 0x0000; // fix for sky plane drawing crashes - Monster Iestyn 25/05/18
+						}
+						else
+						{
+							if (top_w <= bottom_w)
+							{
+								fftop = (INT16)top_w;
+								ffbottom = (INT16)bottom_w;
+
+								ffloor[i].plane->top[cx] = fftop;
+								ffloor[i].plane->bottom[cx] = ffbottom;
+
+								// Lactozilla: Cull part of the column by the 3D floor if it can't be seen
+								// "top" is the height of the ceiling column
+								if (fftop <= top+1 && R_FFloorCanClip(&ffloor[i]) && !curline->polyseg)
+								{
+									rw_ceilingmarked = true;
+									cclip[cx] = ffbottom;
+									if (yl < ffbottom)
+										yl = ffbottom;
+
+									if (markceiling && ceilingplane)
+										ceilingplane->bottom[cx] = top;
+
+									if (rw_silhouette)
+									{
+										(*rw_silhouette) |= SIL_TOP;
+										(*rw_tsilheight) = INT32_MIN;
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		//SoM: Calculate offsets for Thick fake floors.
+		// calculate texture offset; texturecolumn and lighting are independent of wall tiers. A range without any
+		// texture (plane marking only) never reads them, and the divisions have no side effects.
+		if (texd)
+		{
+			angle = (centerangle_ + xtoviewangle[cx])>>ANGLETOFINESHIFT;
+			textureoffset = offset_ - FixedMul(FINETANGENT(angle), distance_);
+			// FixedDiv(x, FRACUNIT) is x unless |x| >= 2^30 (saturation)
+			if (hasmid || masktc)
+			{
+				if (invmidx_ == FRACUNIT && textureoffset > -0x40000000 && textureoffset < 0x40000000)
+					texturecolumn = textureoffset;
+				else
+					texturecolumn = FixedDiv(textureoffset, invmidx_);
+			}
+
+			// calculate lighting
+			pindex = FixedMul(cscale, lightresfix)>>LIGHTSCALESHIFT;
+
+			if (pindex >=  MAXLIGHTSCALE)
+				pindex = MAXLIGHTSCALE-1;
+
+			dc_colormap = wlights[pindex];
+			dc_x = cx;
+
+			if (hasextra)
+				dc_colormap = extracm + (dc_colormap - cmaps);
+		}
+
+		if (!plain && dc_numlights && lightpre)
+		{
+			lightsdone = false; // PS2-90: rcolormap is read only by the column drawer: it is set when this column is drawn
+		}
+		else if (!plain && dc_numlights)
+		{
+			lighttable_t **xwalllights;
+			for (i = 0; i < dc_numlights; i++)
+			{
+				INT32 lightnum;
+				lightnum = R_SideLightLevel(curline->sidedef, dc_lightlist[i].lightlevel) >> LIGHTSEGSHIFT;
+
+				if (dc_lightlist[i].extra_colormap)
+					;
+				else if (curline->v1->y == curline->v2->y)
+					lightnum--;
+				else if (curline->v1->x == curline->v2->x)
+					lightnum++;
+
+				if (lightnum < 0)
+					xwalllights = scalelight[0];
+				else if (lightnum >= LIGHTLEVELS)
+					xwalllights = scalelight[LIGHTLEVELS-1];
+				else
+					xwalllights = scalelight[lightnum];
+
+				pindex = FixedMul(cscale, lightresfix)>>LIGHTSCALESHIFT;
+
+				if (pindex >=  MAXLIGHTSCALE)
+					pindex = MAXLIGHTSCALE-1;
+
+				if (dc_lightlist[i].extra_colormap)
+					dc_lightlist[i].rcolormap = dc_lightlist[i].extra_colormap->colormap + (xwalllights[pindex] - colormaps);
+				else
+					dc_lightlist[i].rcolormap = xwalllights[pindex];
+			}
+		}
+
+		fscale[cx] = cscale;
+
+		// draw the wall tiers
+		if (hasmid)
+		{
+			// single sided line
+			if (yl <= yh && yh >= 0 && yl < vheight)
+			{
+				fixed_t offset = texturecolumn + offsetx_;
+				UINT8 *pixels;
+
+				dc_yl = yl;
+				dc_yh = yh;
+				dc_texturemid = midtexturemid_;
+				dc_texheight = midtexheight;
+				if (!haveinvs) { invs = 0xffffffffu / (unsigned)cscale; haveinvs = true; }
+				dc_iscale = FixedMul((fixed_t)invs, midscaley);
+				SEG_LIGHTS();
+				pixels = SEG_COLUMN(midcols, midw, offset >> FRACBITS)->pixels;
+				if (drawmiddle == 0)
+				{
+					dc_source = pixels;
+					{ PS2SUB_B(60); PS2SUB_ADD(58, dc_yh - dc_yl + 1); colfunc(); PS2SUB_E(60); PS2SUB_CAT(); }
+				}
+				else if (drawmiddle == 1)
+					R_DrawFlippedPost(pixels, (unsigned)midtexheight, colfunc);
+
+				// dont draw anything more for this column, since
+				// a midtexture blocks the view
+				if (!rw_ceilingmarked)
+					cclip[cx] = (INT16)vheight;
+				if (!rw_floormarked)
+					fclip[cx] = -1;
+			}
+			else
+			{
+				// note: don't use min/max macros, since casting from INT32 to INT16 is involved here
+				if (markceiling && (!rw_ceilingmarked))
+					cclip[cx] = (yl >= 0) ? ((yl > vheight) ? (INT16)vheight : (INT16)((INT16)yl - 1)) : -1;
+				if (markfloor && (!rw_floormarked))
+					fclip[cx] = (yh < vheight) ? ((yh < -1) ? -1 : (INT16)((INT16)yh + 1)) : (INT16)vheight;
+			}
+		}
+		else
+		{
+			INT16 topclip = (yl >= 0) ? ((yl > vheight) ? (INT16)vheight : (INT16)((INT16)yl - 1)) : -1;
+			INT16 bottomclip = (yh < vheight) ? ((yh < -1) ? -1 : (INT16)((INT16)yh + 1)) : (INT16)vheight;
+
+			// two sided line
+			if (hastop)
+			{
+				// top wall
+				mid = cpixhigh>>HEIGHTBITS;
+				cpixhigh += phstep_;
+
+				if (mid >= fclip[cx])
+					mid = fclip[cx]-1;
+
+				if (invtopx_ == FRACUNIT && textureoffset > -0x40000000 && textureoffset < 0x40000000)
+					toptexturecolumn = textureoffset;
+				else
+					toptexturecolumn = FixedDiv(textureoffset, invtopx_);
+
+				if (mid >= yl) // back ceiling lower than front ceiling ?
+				{
+					if (yl >= vheight) // entirely off bottom of screen
+					{
+						if (!rw_ceilingmarked)
+							cclip[cx] = (INT16)vheight;
+					}
+					else if (mid >= 0) // safe to draw top texture
+					{
+						fixed_t offset = offtop_;
+						UINT8 *pixels;
+						if (toppeg_)
+							offset = -offset;
+						offset = toptexturecolumn + offset;
+
+						dc_yl = yl;
+						dc_yh = mid;
+						dc_texturemid = toptexturemid_;
+						dc_texheight = toptexheight;
+						if (!haveinvs) { invs = 0xffffffffu / (unsigned)cscale; haveinvs = true; }
+						dc_iscale = FixedMul((fixed_t)invs, topscaley);
+						SEG_LIGHTS();
+						pixels = SEG_COLUMN(topcols, topw, offset >> FRACBITS)->pixels;
+						if (drawtop == 0)
+						{
+							dc_source = pixels;
+							{ PS2SUB_B(60); PS2SUB_ADD(58, dc_yh - dc_yl + 1); colfunc(); PS2SUB_E(60); PS2SUB_CAT(); }
+						}
+						else if (drawtop == 1)
+							R_DrawFlippedPost(pixels, (unsigned)toptexheight, colfunc);
+						cclip[cx] = (INT16)mid;
+					}
+					else if (!rw_ceilingmarked) // entirely off top of screen
+						cclip[cx] = -1;
+				}
+				else if (!rw_ceilingmarked)
+					cclip[cx] = topclip;
+
+				if (oldtexturecolumn_top != -1)
+					toptexturemid_ += FixedMul(topslide_, oldtexturecolumn_top-textureoffset);
+				oldtexturecolumn_top = textureoffset;
+			}
+			else if (markceiling && (!rw_ceilingmarked)) // no top wall
+				cclip[cx] = topclip;
+
+			if (hasbot)
+			{
+				// bottom wall
+				mid = (cpixlow+HEIGHTUNIT-1)>>HEIGHTBITS;
+				cpixlow += plstep_;
+
+				// no space above wall?
+				if (mid <= cclip[cx])
+					mid = cclip[cx]+1;
+
+				if (invbotx_ == FRACUNIT && textureoffset > -0x40000000 && textureoffset < 0x40000000)
+					bottomtexturecolumn = textureoffset;
+				else
+					bottomtexturecolumn = FixedDiv(textureoffset, invbotx_);
+
+				if (mid <= yh) // back floor higher than front floor ?
+				{
+					if (yh < 0) // entirely off top of screen
+					{
+						if (!rw_floormarked)
+							fclip[cx] = -1;
+					}
+					else if (mid < vheight) // safe to draw bottom texture
+					{
+						fixed_t offset = offbot_;
+						UINT8 *pixels;
+						if (botpeg_)
+							offset = -offset;
+						offset = bottomtexturecolumn + offset;
+
+						dc_yl = mid;
+						dc_yh = yh;
+						dc_texturemid = bottomtexturemid_;
+						dc_texheight = bottexheight;
+						if (!haveinvs) { invs = 0xffffffffu / (unsigned)cscale; haveinvs = true; }
+						dc_iscale = FixedMul((fixed_t)invs, bottomscaley);
+						SEG_LIGHTS();
+						pixels = SEG_COLUMN(botcols, botw, offset >> FRACBITS)->pixels;
+						if (drawbottom == 0)
+						{
+							dc_source = pixels;
+							{ PS2SUB_B(60); PS2SUB_ADD(58, dc_yh - dc_yl + 1); colfunc(); PS2SUB_E(60); PS2SUB_CAT(); }
+						}
+						else if (drawbottom == 1)
+							R_DrawFlippedPost(pixels, (unsigned)bottexheight, colfunc);
+						fclip[cx] = (INT16)mid;
+					}
+					else if (!rw_floormarked)  // entirely off bottom of screen
+						fclip[cx] = (INT16)vheight;
+				}
+				else if (!rw_floormarked)
+					fclip[cx] = bottomclip;
+
+				if (oldtexturecolumn_bottom != -1)
+					bottomtexturemid_ += FixedMul(botslide_, oldtexturecolumn_bottom-textureoffset);
+				oldtexturecolumn_bottom = textureoffset;
+			}
+			else if (markfloor && (!rw_floormarked)) // no bottom wall
+				fclip[cx] = bottomclip;
+		}
+
+		if (masktc)
+			maskedtexturecol[cx] = texturecolumn + offsetx_;
+
+		if (thickcol)
+			thicksidecol[cx] = textureoffset;
+
+		if (masktheight)
+		{
+			if (curline->linedef->flags & ML_MIDPEG)
+				maskedtextureheight[cx] = max(midtexturemid_, midtextureback_);
+			else
+				maskedtextureheight[cx] = min(midtexturemid_, midtextureback_);
+		}
+
+		if (midwork)
+		{
+			if (oldtexturecolumn != -1)
+			{
+				INT32 diff = oldtexturecolumn-textureoffset;
+				if (midneg_)
+					diff = -diff;
+				midtexturemid_ += FixedMul(midslide_, diff);
+				midtextureback_ += FixedMul(midbackslide_, diff);
+			}
+
+			oldtexturecolumn = textureoffset;
+		}
+
+		if (invscale)
+		{
+			if (!haveinvs) { invs = 0xffffffffu / (unsigned)cscale; haveinvs = true; }
+			invscale[cx] = invs;
+		}
+
+		if (!plain)
+		{
+			if (dc_numlights)
+			{
+				for (i = 0; i < dc_numlights; i++)
+				{
+					dc_lightlist[i].height += dc_lightlist[i].heightstep;
+					if (dc_lightlist[i].flags & FOF_CUTSOLIDS)
+						dc_lightlist[i].botheight += dc_lightlist[i].botheightstep;
+				}
+			}
+
+			for (i = 0; i < numffloors; i++)
+			{
+				if (curline->polyseg && (ffloor[i].polyobj != curline->polyseg))
+					continue;
+
+				ffloor[i].f_frac += ffloor[i].f_step;
+			}
+
+			for (i = 0; i < numbackffloors; i++)
+			{
+				if (curline->polyseg && (ffloor[i].polyobj != curline->polyseg))
+					continue;
+
+				ffloor[i].f_clip[cx] = ffloor[i].c_clip[cx] = (INT16)((ffloor[i].b_frac >> HEIGHTBITS) & 0xFFFF);
+				ffloor[i].b_frac += ffloor[i].b_step;
+			}
+		}
+
+		cscale += sstep_;
+		ctopfrac += tstep_;
+		cbotfrac += bstep_;
+	}
+	PS2SUB_CATADD(84, 79);
+	rw_x = cx;
+	rw_scale = cscale;
+	topfrac = ctopfrac;
+	bottomfrac = cbotfrac;
+	pixhigh = cpixhigh;
+	pixlow = cpixlow;
+	rw_midtexturemid = midtexturemid_;
+	rw_midtextureback = midtextureback_;
+	rw_toptexturemid = toptexturemid_;
+	rw_bottomtexturemid = bottomtexturemid_;
+}
+#ifdef PS2_SUBPROF
+int ps2_segcat;
+#endif
+static void R_RenderSegLoopX(void);
+static void R_RenderSegLoop(void)
+{
+#ifdef PS2_SUBPROF
+	// per-category cost: 70 plain/untextured, 72 plain/textured, 74 lights only, 76 ffloors (cycles/calls), 71/73/75/77 columns,
+	// 64+n: cycles in colfunc of the category
+	const int cat = (!numffloors && !numbackffloors && !dc_numlights) ? (segtextured ? 1 : 0) : (numffloors || numbackffloors ? 3 : 2);
+	const INT32 ncols = rw_stopx - rw_x;
+	PS2SUB_B(78);
+	ps2_segcat = cat;
+	R_RenderSegLoopX();
+	ps2sub_cyc[70 + 2 * cat] += (unsigned)(PS2Sub_Count() - ps2sb_78);
+	ps2sub_calls[70 + 2 * cat]++;
+	ps2sub_calls[71 + 2 * cat] += (unsigned)ncols;
+#else
+	R_RenderSegLoopX();
+#endif
+}
+static void R_RenderSegLoopX(void)
+{
+	if (!numffloors && !numbackffloors && !dc_numlights)
+	{
+		if (!segtextured)
+		{
+			R_RenderSegLoopT(true, 0);
+			return;
+		}
+		switch ((midtexture ? 1 : 0) | (toptexture ? 2 : 0) | (bottomtexture ? 4 : 0))
+		{
+			case 0: R_RenderSegLoopT(true, 0); break;
+			case 1: R_RenderSegLoopT(true, 1); break;
+			case 2: R_RenderSegLoopT(true, 2); break;
+			case 4: R_RenderSegLoopT(true, 4); break;
+			case 6: R_RenderSegLoopT(true, 6); break;
+			default: R_RenderSegLoopT(true, SEGT_ANY); break;
+		}
+	}
+	else
+		R_RenderSegLoopT(false, SEGT_ANY);
+}
+#else
 static void R_RenderSegLoop (void)
 {
 	angle_t angle;
@@ -1713,6 +2595,7 @@ static void R_RenderSegLoop (void)
 		bottomfrac += bottomstep;
 	}
 }
+#endif
 
 // Uses precalculated seg->length
 static INT64 R_CalcSegDist(seg_t* seg, INT64 x2, INT64 y2)
@@ -1839,6 +2722,8 @@ static fixed_t R_ScaleFromGlobalAngle(angle_t visangle)
 //
 void R_StoreWallRange(INT32 start, INT32 stop)
 {
+	PS2SUB_B(0);
+	PS2SUB_B(1);
 	fixed_t       hyp;
 	fixed_t       sineval;
 	angle_t       distangle, offsetangle;
@@ -1867,15 +2752,33 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 	{
 		size_t curpos = curdrawsegs - drawsegs;
 		size_t pos = ds_p - drawsegs;
+#if defined(PS2) || defined(PS2_PROFILE)
+		size_t newmax;
+		if (maxdrawsegs > SIZE_MAX - maxdrawsegs / 2)
+			I_Error("R_StoreWallRange: drawseg capacity overflow");
+		newmax = maxdrawsegs ? maxdrawsegs + maxdrawsegs / 2 : 128;
+		if (newmax > SIZE_MAX / sizeof (*drawsegs))
+			I_Error("R_StoreWallRange: drawseg allocation overflow");
+		size_t firstpos = firstseg ? (size_t)(firstseg - drawsegs) : 0;
+		boolean hadfirstseg = firstseg != NULL;
+#else
 		size_t newmax = maxdrawsegs ? maxdrawsegs*2 : 128;
+#endif
+#if !defined(PS2) && !defined(PS2_PROFILE)
 		if (firstseg)
 			firstseg = (drawseg_t *)(firstseg - drawsegs);
+#endif
 		drawsegs = Z_Realloc(drawsegs, newmax*sizeof (*drawsegs), PU_STATIC, NULL);
 		ds_p = drawsegs + pos;
 		maxdrawsegs = newmax;
 		curdrawsegs = drawsegs + curpos;
+#if defined(PS2) || defined(PS2_PROFILE)
+		if (hadfirstseg)
+			firstseg = drawsegs + firstpos;
+#else
 		if (firstseg)
 			firstseg = drawsegs + (size_t)firstseg;
+#endif
 	}
 
 	sidedef = curline->sidedef;
@@ -1899,6 +2802,8 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 	if (longboi)
 		rw_distance = (fixed_t)R_CalcSegDist(curline,viewx,viewy);
 
+	PS2SUB_E(1);
+	PS2SUB_B(2);
 	ds_p->x1 = rw_x = start;
 	ds_p->x2 = stop;
 	ds_p->curline = curline;
@@ -1936,9 +2841,11 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 
 	ds_p->scalestep = rw_scalestep = (ds_p->scale2 - rw_scale) / (range);
 
+	PS2SUB_E(2);
 	// calculate texture boundaries
 	//  and decide if floor / ceiling marks are needed
 	// Figure out map coordinates of where start and end are mapping to on seg, so we can clip right for slope bullshit
+	PS2SUB_B(3);
 	if (frontsector->hasslope || (backsector && backsector->hasslope)) // Commenting this out for FOFslop. -Red
 	{
 		angle_t temp;
@@ -1947,6 +2854,12 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		temp = xtoviewangle[start]+viewangle;
 
 		{
+#ifdef PS2_OPT_SEGS // PS2-16 candidate: rational intersection (double rounding can differ)
+			RQ_RayHitsSeg(curline->v1->x, curline->v1->y, curline->v2->x, curline->v2->y, viewx, viewy,
+				FINESINE(temp>>ANGLETOFINESHIFT), FINECOSINE(temp>>ANGLETOFINESHIFT), &segleft.x, &segleft.y);
+			ds_p->leftpos.x = segleft.x;
+			ds_p->leftpos.y = segleft.y;
+#else
 			// Both lines can be written in slope-intercept form, so figure out line intersection
 			double a1, b1, c1, a2, b2, c2, det; // 1 is the seg, 2 is the view angle vector...
 			///TODO: convert to fixed point
@@ -1963,12 +2876,19 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 
 			ds_p->leftpos.x = segleft.x = DoubleToFixed((b2*c1 - b1*c2)/det);
 			ds_p->leftpos.y = segleft.y = DoubleToFixed((a1*c2 - a2*c1)/det);
+#endif
 		}
 
 		// right
 		temp = xtoviewangle[stop]+viewangle;
 
 		{
+#ifdef PS2_OPT_SEGS
+			RQ_RayHitsSeg(curline->v1->x, curline->v1->y, curline->v2->x, curline->v2->y, viewx, viewy,
+				FINESINE(temp>>ANGLETOFINESHIFT), FINECOSINE(temp>>ANGLETOFINESHIFT), &segright.x, &segright.y);
+			ds_p->rightpos.x = segright.x;
+			ds_p->rightpos.y = segright.y;
+#else
 			// Both lines can be written in slope-intercept form, so figure out line intersection
 			double a1, b1, c1, a2, b2, c2, det; // 1 is the seg, 2 is the view angle vector...
 			///TODO: convert to fixed point
@@ -1985,13 +2905,17 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 
 			ds_p->rightpos.x = segright.x = DoubleToFixed((b2*c1 - b1*c2)/det);
 			ds_p->rightpos.y = segright.y = DoubleToFixed((a1*c2 - a2*c1)/det);
+#endif
 		}
 	}
+
+	PS2SUB_E(3);
 
 #define SLOPEPARAMS(slope, end1, end2, normalheight) \
 	end1 = P_GetZAt(slope,  segleft.x,  segleft.y, normalheight); \
 	end2 = P_GetZAt(slope, segright.x, segright.y, normalheight);
 
+	PS2SUB_B(4);
 	SLOPEPARAMS(frontsector->c_slope, worldtop,    worldtopslope,    frontsector->ceilingheight)
 	SLOPEPARAMS(frontsector->f_slope, worldbottom, worldbottomslope, frontsector->floorheight)
 	// subtract viewz from these to turn them into
@@ -2013,8 +2937,12 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 
 	numbackffloors = 0;
 
+#ifndef PS2_OPT_REND // PS2-90: thicksides[] is read only below numthicksides, which the code below writes entry by entry
 	for (i = 0; i < MAXFFLOORS; i++)
 		ds_p->thicksides[i] = NULL;
+#else
+	i = 0; // (every user of i below assigns it first; this only keeps the compiler's flow analysis happy)
+#endif
 
 	if (numffloors)
 	{
@@ -2028,10 +2956,16 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		}
 	}
 
+	PS2SUB_E(4);
+	PS2SUB_B(5);
 	// Set up texture Y offset slides for sloped walls
 	rw_toptextureslide = rw_midtextureslide = rw_bottomtextureslide = 0;
 	ceilingfrontslide = floorfrontslide = ceilingbackslide = floorbackslide = 0;
 
+#ifdef PS2_OPT_REND
+	// PS2-80: the line angle is only read by the slope branches below (R_PointToAngle2 has no side effects)
+	if (frontsector->f_slope || frontsector->c_slope || (backsector && (backsector->f_slope || backsector->c_slope)))
+#endif
 	{
 		angle_t lineangle = R_PointToAngle2(curline->v1->x, curline->v1->y, curline->v2->x, curline->v2->y);
 
@@ -2051,9 +2985,15 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		}
 	}
 
-	rw_midtexturescalex = sidedef->scalex_mid;
-	rw_midtexturescaley = sidedef->scaley_mid;
+	PS2SUB_E(5);
+	PS2SUB_B(6);
+	rw_midtexturescalex = SIDE_SCALEX_MID(sidedef);
+	rw_midtexturescaley = SIDE_SCALEY_MID(sidedef);
+#ifdef PS2_OPT_REND
+	rw_invmidtexturescalex = (rw_midtexturescalex == FRACUNIT) ? FRACUNIT : FixedDiv(FRACUNIT, rw_midtexturescalex); // PS2-80: FixedDiv(FRACUNIT, FRACUNIT) == FRACUNIT
+#else
 	rw_invmidtexturescalex = FixedDiv(FRACUNIT, rw_midtexturescalex);
+#endif
 
 	if (!backsector)
 	{
@@ -2062,7 +3002,7 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		// a single sided line is terminal, so it must mark ends
 		markfloor = markceiling = true;
 
-		fixed_t rowoffset = sidedef->rowoffset + sidedef->offsety_mid;
+		fixed_t rowoffset = sidedef->rowoffset + SIDE_OFFSETY_MID(sidedef);
 		fixed_t texheight = textureheight[midtexture];
 		fixed_t scaley = abs(rw_midtexturescaley);
 
@@ -2286,8 +3226,8 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 			}
 		}
 
-		fixed_t toprowoffset = sidedef->rowoffset + sidedef->offsety_top;
-		fixed_t botrowoffset = sidedef->rowoffset + sidedef->offsety_bottom;
+		fixed_t toprowoffset = sidedef->rowoffset + SIDE_OFFSETY_TOP(sidedef);
+		fixed_t botrowoffset = sidedef->rowoffset + SIDE_OFFSETY_BOTTOM(sidedef);
 
 		// check TOP TEXTURE
 		if (!bothceilingssky // never draw the top texture if on
@@ -2295,10 +3235,14 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		{
 			toptexture = R_GetTextureNum(sidedef->toptexture);
 
-			rw_toptexturescalex = sidedef->scalex_top;
-			rw_toptexturescaley = sidedef->scaley_top;
+			rw_toptexturescalex = SIDE_SCALEX_TOP(sidedef);
+			rw_toptexturescaley = SIDE_SCALEY_TOP(sidedef);
 
+#ifdef PS2_OPT_REND
+			rw_invtoptexturescalex = (rw_toptexturescalex == FRACUNIT) ? FRACUNIT : FixedDiv(FRACUNIT, rw_toptexturescalex);
+#else
 			rw_invtoptexturescalex = FixedDiv(FRACUNIT, rw_toptexturescalex);
+#endif
 
 			if (rw_toptexturescaley < 0)
 				toprowoffset = -toprowoffset;
@@ -2336,10 +3280,14 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 			// bottom texture
 			bottomtexture = R_GetTextureNum(sidedef->bottomtexture);
 
-			rw_bottomtexturescalex = sidedef->scalex_bottom;
-			rw_bottomtexturescaley = sidedef->scaley_bottom;
+			rw_bottomtexturescalex = SIDE_SCALEX_BOTTOM(sidedef);
+			rw_bottomtexturescaley = SIDE_SCALEY_BOTTOM(sidedef);
 
+#ifdef PS2_OPT_REND
+			rw_invbottomtexturescalex = (rw_bottomtexturescalex == FRACUNIT) ? FRACUNIT : FixedDiv(FRACUNIT, rw_bottomtexturescalex);
+#else
 			rw_invbottomtexturescalex = FixedDiv(FRACUNIT, rw_bottomtexturescalex);
+#endif
 
 			if (rw_bottomtexturescaley < 0)
 				botrowoffset = -botrowoffset;
@@ -2622,11 +3570,13 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 			rw_midtextureslide = FixedMul(rw_midtextureslide, abs(rw_midtexturescaley));
 			rw_midtexturebackslide = FixedMul(rw_midtexturebackslide, abs(rw_midtexturescaley));
 
-			rw_midtexturemid += sidedef->rowoffset + sidedef->offsety_mid;
-			rw_midtextureback += sidedef->rowoffset + sidedef->offsety_mid;
+			rw_midtexturemid += sidedef->rowoffset + SIDE_OFFSETY_MID(sidedef);
+			rw_midtextureback += sidedef->rowoffset + SIDE_OFFSETY_MID(sidedef);
 		}
 	}
 
+	PS2SUB_E(6);
+	PS2SUB_B(9);
 	// calculate rw_offset (only needed for textured lines)
 	segtextured = midtexture || toptexture || bottomtexture || maskedtexture || (numthicksides > 0);
 
@@ -2661,9 +3611,9 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		rw_offset += curline->offset;
 		rw_centerangle = ANGLE_90 + viewangle - rw_normalangle;
 
-		rw_offset_top = sideoffset + sidedef->offsetx_top;
-		rw_offset_mid = sideoffset + sidedef->offsetx_mid;
-		rw_offset_bottom = sideoffset + sidedef->offsetx_bottom;
+		rw_offset_top = sideoffset + SIDE_OFFSETX_TOP(sidedef);
+		rw_offset_mid = sideoffset + SIDE_OFFSETX_MID(sidedef);
+		rw_offset_bottom = sideoffset + SIDE_OFFSETX_BOTTOM(sidedef);
 
 		rw_offsetx = rw_offset_mid;
 		if (rw_midtexturescalex < 0)
@@ -2697,6 +3647,8 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		curtexturecolumntable += rw_stopx - rw_x;
 	}
 
+	PS2SUB_E(9);
+	PS2SUB_B(10);
 	// if a floor / ceiling plane is on the wrong side
 	//  of the view plane, it is definitely invisible
 	//  and doesn't need to be marked.
@@ -2836,6 +3788,8 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		}
 	}
 
+	PS2SUB_E(10);
+	PS2SUB_B(11);
 	if (backsector)
 	{
 		worldhigh >>= 4;
@@ -3024,9 +3978,15 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 			}
 
 			numbackffloors = i;
+#ifdef PS2_OPT_REND
+			if (i > ffloor_clipdirty)
+				ffloor_clipdirty = i; // R_RenderSegLoop writes ffloor[0..i-1].f_clip/c_clip
+#endif
 		}
 	}
 
+	PS2SUB_E(11);
+	PS2SUB_B(12);
 	// get a new or use the same visplane
 	if (markceiling)
 	{
@@ -3060,6 +4020,9 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 	{
 		if (!firstseg)
 		{
+#ifdef PS2_PROFILE
+			R_AllocDrawSegFrontScale(ds_p);
+#endif
 			ds_p->numffloorplanes = numffloors;
 
 			for (i = 0; i < numffloors; i++)
@@ -3091,11 +4054,24 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		}
 	}
 
+	PS2SUB_E(12);
 	rw_silhouette = &(ds_p->silhouette);
 	rw_tsilheight = &(ds_p->tsilheight);
 	rw_bsilheight = &(ds_p->bsilheight);
 
+	PS2SUB_B(13);
 	R_RenderSegLoop();
+	PS2SUB_E(13);
+	PS2SUB_B(14);
+#ifdef PS2
+	// Opaque wall sources are consumed; later masked passes fetch their own columns.
+	if (midtexture > 0)
+		R_ReleaseTextureCache(midtexture);
+	if (toptexture > 0)
+		R_ReleaseTextureCache(toptexture);
+	if (bottomtexture > 0)
+		R_ReleaseTextureCache(bottomtexture);
+#endif
 	colfunc = colfuncs[BASEDRAWFUNC];
 
 	if (portalline) // if curline is a portal, set portalrender for drawseg
@@ -3133,5 +4109,7 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 		ds_p->silhouette |= SIL_BOTTOM;
 		ds_p->bsilheight = (sidedef->midtexture > 0 && sidedef->midtexture < numtextures) ? INT32_MAX : INT32_MIN;
 	}
+	PS2SUB_E(14);
+	PS2SUB_E(0);
 	ds_p++;
 }

@@ -23,7 +23,10 @@
 
 // embedded modules (libps2_drivers)
 extern unsigned char sio2man_irx[], padman_irx[], iomanX_irx[], fileXio_irx[], poweroff_irx[], cdfs_irx[];
-extern unsigned int size_sio2man_irx, size_padman_irx, size_iomanX_irx, size_fileXio_irx, size_poweroff_irx, size_cdfs_irx;
+#define IRX_SIZE __attribute__((section(".data"))) /* PS2-92: -G8 would address a 4-byte extern through $gp; the blob objects keep it in .data */
+extern unsigned int IRX_SIZE size_sio2man_irx, size_padman_irx, size_iomanX_irx, size_fileXio_irx, size_poweroff_irx, size_cdfs_irx;
+extern unsigned char audsrv_irx[];
+extern unsigned int IRX_SIZE size_audsrv_irx;
 
 ps2boot_info_t ps2boot;
 
@@ -137,6 +140,23 @@ static INT32 LoadModule(const char *name, void *irx, unsigned int size)
 	if (id < 0 || ret == 1) // 1 = module did not stay resident
 		return -1;
 	return id;
+}
+
+boolean PS2Boot_LoadAudio(void)
+{
+	static boolean ready, attempted;
+	int id;
+	if (attempted) return ready;
+	attempted = true;
+	// Older ROM LOADFILE servers do not implement SEARCH_MOD_BY_NAME. They
+	// can return an unrelated positive value, which is not a resident module
+	// ID. This process owns audio loading; load once rather than guessing from
+	// that unsupported RPC (audsrv_init otherwise binds forever to no server).
+	id = SifLoadModule("rom0:LIBSD", 0, NULL);
+	printf("PS2BOOT module rom0:LIBSD id=%d\n", id);
+	if (id <= 0) return false;
+	ready = LoadModule("audsrv", audsrv_irx, size_audsrv_irx) > 0;
+	return ready;
 }
 
 static void LoadModules(boolean cdrom)
@@ -272,4 +292,90 @@ void PS2Boot_Exit(INT32 code)
 		SleepThread();
 	}
 	exit(code);
+}
+
+// PS2-73: PC sampler for the level load (-zsample, ps2_mem.c): EE timer 1 compare interrupt, the third argument of the INTC handler is the
+// interrupted PC (PCSX2 raises it at the end of the running basic block: read the table as a ranking of functions). It lives in this unit because
+// an interrupt handler must not reach its data through $gp, and this unit is built with -G0 (tools/ps2/opt_units.txt).
+#include <timer.h>
+#define SAMP_SLOTS 16384
+static unsigned *samp_pc, *samp_cnt; // allocated by -zsample only: 128 KB of C heap, not of bss
+static volatile unsigned samp_total, samp_dropped;
+static int samp_id = -1, samp_running;
+
+static int Samp_Handler(int cause, void *arg, void *addr)
+{
+	unsigned pc = (unsigned)(uintptr_t)addr, h;
+	int n;
+
+	(void)cause;
+	(void)arg;
+	*T1_MODE |= (1 << 10); // clear the compare flag
+	samp_total++;
+	h = (pc >> 2) & (SAMP_SLOTS - 1);
+	for (n = 0; n < 64; n++, h = (h + 1) & (SAMP_SLOTS - 1))
+	{
+		if (samp_pc[h] == pc)
+		{
+			samp_cnt[h]++;
+			return 0;
+		}
+		if (!samp_pc[h])
+		{
+			samp_pc[h] = pc;
+			samp_cnt[h] = 1;
+			return 0;
+		}
+	}
+	samp_dropped++;
+	return 0;
+}
+
+void PS2Boot_SampleStart(unsigned period)
+{
+	if (samp_running)
+		return;
+	if (!samp_pc)
+	{
+		samp_pc = calloc(SAMP_SLOTS, sizeof *samp_pc);
+		samp_cnt = calloc(SAMP_SLOTS, sizeof *samp_cnt);
+		if (!samp_pc || !samp_cnt)
+		{
+			free(samp_pc);
+			free(samp_cnt);
+			samp_pc = samp_cnt = NULL;
+			return;
+		}
+	}
+	samp_id = AddIntcHandler2(INTC_TIM1, Samp_Handler, -1, NULL);
+	*T1_COUNT = 0;
+	*T1_COMP = period;
+	*T1_MODE = (1 << 7) | (1 << 8) | (1 << 6); // bus clock, count up, compare interrupt, reset on compare
+	EnableIntc(INTC_TIM1);
+	samp_running = 1;
+}
+
+void PS2Boot_SampleStop(unsigned *total, unsigned *dropped)
+{
+	if (samp_running)
+	{
+		DisableIntc(INTC_TIM1);
+		*T1_MODE = 0;
+		RemoveIntcHandler(INTC_TIM1, samp_id);
+		samp_running = 0;
+	}
+	*total = samp_total;
+	*dropped = samp_dropped;
+}
+
+int PS2Boot_SampleGet(unsigned i, unsigned *pc, unsigned *count)
+{
+	for (; samp_pc && i < SAMP_SLOTS; i++)
+		if (samp_pc[i])
+		{
+			*pc = samp_pc[i];
+			*count = samp_cnt[i];
+			return (int)i + 1;
+		}
+	return 0;
 }

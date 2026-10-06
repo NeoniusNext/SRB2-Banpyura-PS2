@@ -58,7 +58,12 @@ static CV_PossibleValue_t masterserver_update_rate_cons_t[] = {
 	{0,NULL}
 };
 
+#ifdef PS2
+// PS2-130: the PS2 HTTP client (src/ps2/ps2_curl.c) has no TLS; the official master server also answers on plain http (checked: 200 on GET /MS/0/rooms)
+consvar_t cv_masterserver = CVAR_INIT ("masterserver", "http://ds.ms.srb2.org/MS/0", CV_SAVE|CV_CALL, NULL, MasterServer_OnChange);
+#else
 consvar_t cv_masterserver = CVAR_INIT ("masterserver", "https://ds.ms.srb2.org/MS/0", CV_SAVE|CV_CALL, NULL, MasterServer_OnChange);
+#endif
 consvar_t cv_servername = CVAR_INIT_WITH_CALLBACKS ("servername", "SRB2 server", CV_SAVE|CV_NETVAR|CV_CALL|CV_NOINIT|CV_ALLOWLUA, NULL, Update_parameters, ServerName_CanChange);
 
 consvar_t cv_masterserver_update_rate = CVAR_INIT ("masterserver_update_rate", "15", CV_SAVE|CV_CALL|CV_NOINIT, masterserver_update_rate_cons_t, Update_parameters);

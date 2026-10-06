@@ -66,6 +66,9 @@
 #include "fastcmp.h"
 
 #include "i_joy.h" // for joystick menu controls
+#ifdef PS2
+#include "ps2/ps2_osk.h" // PS2-135: on-screen keyboard
+#endif
 
 #include "p_saveg.h" // Only for NEWSKINSAVES
 
@@ -186,10 +189,12 @@ static tic_t keydown = 0;
 // Lua
 static huddrawlist_h luahuddrawlist_playersetup;
 
+#ifdef HAS_ADDONS // PS2-20: no add-ons menu
 //Addons Menu: Local mode
 #define LOCALMODE_KEY KEY_RALT
 static void M_LocalAddons(INT32 choice);
 static boolean addons_localmode = false;
+#endif
 
 //
 // PROTOTYPES
@@ -356,12 +361,14 @@ static void M_EraseData(INT32 choice);
 menu_t OP_BanpyuraOptionsDef, OP_P1BanpyuraOptionsDef, OP_P2BanpyuraOptionsDef;
 static void M_BanpyuraReportIssue(void);
 
+#ifdef HAS_ADDONS
 static void M_Addons(INT32 choice);
 static void M_AddonsOptions(INT32 choice);
 static patch_t *addonsp[NUM_EXT+5];
 
 #define addonmenusize 9 // number of items actually displayed in the addons menu view, formerly (2*numaddonsshown + 1)
 #define numaddonsshown 4 // number of items to each side of the currently selected item, unless at top/bottom ends of directory
+#endif
 
 static void M_DrawLevelPlatterHeader(INT32 y, const char *header, boolean headerhighlight, boolean allowlowercase);
 
@@ -369,7 +376,9 @@ static void M_DrawLevelPlatterHeader(INT32 y, const char *header, boolean header
 static void M_DrawGenericMenu(void);
 static void M_DrawGenericScrollMenu(void);
 static void M_DrawCenteredMenu(void);
+#ifdef HAS_ADDONS
 static void M_DrawAddons(void);
+#endif
 static void M_DrawChecklist(void);
 static void M_DrawSoundTest(void);
 static void M_DrawEmblemHints(void);
@@ -403,7 +412,9 @@ static void M_DrawColorRamp(INT32 x, INT32 y, INT32 w, INT32 h, skincolor_t colo
 // Handling functions
 static boolean M_ExitPandorasBox(void);
 static boolean M_QuitMultiPlayerMenu(void);
+#ifdef HAS_ADDONS
 static void M_HandleAddons(INT32 choice);
+#endif
 static void M_HandleLevelPlatter(INT32 choice);
 static void M_HandleSoundTest(INT32 choice);
 static void M_HandleImageDef(INT32 choice);
@@ -507,6 +518,19 @@ consvar_t cv_dummyloadless = CVAR_INIT ("dummyloadless", "In-game", CV_HIDEN, lo
 // ---------
 // Main Menu
 // ---------
+#ifndef HAS_ADDONS
+// PS2-20/PS2-122: the Addons row is disabled until the add-on menu is wired (it keeps its main_e slot); the
+// rest are packed against Quit Game (1 Player and Multiplayer are moved in M_StartControlPanel).
+static menuitem_t MainMenu[] =
+{
+	{IT_STRING|IT_CALL,    NULL, "1  Player",   M_SinglePlayerMenu,      84},
+	{IT_STRING|IT_SUBMENU, NULL, "Multiplayer", &MP_MainDef,             92},
+	{IT_STRING|IT_CALL,    NULL, "Extras",      M_SecretsMenu,          100},
+	{IT_DISABLED,          NULL, "",            NULL,                     0},
+	{IT_STRING|IT_CALL,    NULL, "Options",     M_Options,              108},
+	{IT_STRING|IT_CALL,    NULL, "Quit  Game",  M_QuitSRB2,             116},
+};
+#else
 static menuitem_t MainMenu[] =
 {
 	{IT_STRING|IT_CALL,    NULL, "1  Player",   M_SinglePlayerMenu,      76},
@@ -516,6 +540,7 @@ static menuitem_t MainMenu[] =
 	{IT_STRING|IT_CALL,    NULL, "Options",     M_Options,              108},
 	{IT_STRING|IT_CALL,    NULL, "Quit  Game",  M_QuitSRB2,             116},
 };
+#endif
 
 typedef enum
 {
@@ -527,10 +552,12 @@ typedef enum
 	quitdoom
 } main_e;
 
+#ifdef HAS_ADDONS
 static menuitem_t MISC_AddonsMenu[] =
 {
 	{IT_KEYHANDLER | IT_NOTHING, NULL, "", M_HandleAddons, 0},     // dummy menuitem for the control func
 };
+#endif
 
 // ---------------------------------
 // Pause Menu Mode Attacking Edition
@@ -557,8 +584,13 @@ typedef enum
 // ---------------------
 static menuitem_t MPauseMenu[] =
 {
+#ifndef HAS_ADDONS
+	{IT_DISABLED,            NULL, "",                          NULL,                   8},
+	{IT_DISABLED,            NULL, "",                          NULL,                   8},
+#else
 	{IT_STRING | IT_CALL,    NULL, "Add-ons...",                M_Addons,               8},
 	{IT_STRING | IT_CALL,    NULL, "Local Add-ons...",          M_LocalAddons,          8},
+#endif
 	{IT_STRING | IT_SUBMENU, NULL, "Scramble Teams...",         &MISC_ScrambleTeamDef, 16},
 	{IT_STRING | IT_CALL,    NULL, "Emblem Hints...",           M_EmblemHints,         24},
 	{IT_STRING | IT_CALL,    NULL, "Switch Gametype/Level...",  M_MapChange,           32},
@@ -682,7 +714,11 @@ static menuitem_t MISC_HelpMenu[] =
 // Pause Menu Pandora's Box Options
 static menuitem_t SR_PandorasBox[] =
 {
+#ifndef HAS_ADDONS
+	{IT_DISABLED,         NULL, "",                    NULL,                 0},
+#else
 	{IT_STRING | IT_CALL, NULL, "Mid-game add-ons...", M_Addons,             0},
+#endif
 
 	{IT_STRING | IT_CVAR, NULL, "Rings",               &cv_dummyrings,      20},
 	{IT_STRING | IT_CVAR, NULL, "Lives",               &cv_dummylives,      30},
@@ -1324,69 +1360,84 @@ static menuitem_t OP_Camera2ExtendedOptionsMenu[] =
 enum
 {
 	op_video_resolution = 1,
-#if defined (__unix__) || defined (UNIXCOMMON) || defined (HAVE_SDL)
+#ifdef PS2
+	op_video_output, // PS2: the GS output format (NTSC/PAL/480p/720p/...), the picture placement and smoothing replace Fullscreen
+	op_video_fit,
+	op_video_filter,
+#elif defined (__unix__) || defined (UNIXCOMMON) || defined (HAVE_SDL)
 	op_video_fullscreen,
 #endif
 	op_video_vsync,
 	op_video_renderer,
 };
 
+#ifdef PS2
+// the three rows above push everything below down: 2 * 5 more than Fullscreen alone (Fullscreen is replaced, not added to)
+#define VOFS(n) ((n) + 10)
+#else
+#define VOFS(n) (n)
+#endif
+
 static menuitem_t OP_VideoOptionsMenu[] =
 {
 	{IT_HEADER, NULL, "Screen", NULL, 0},
 	{IT_STRING | IT_CALL,  NULL, "Set Resolution...",       M_VideoModeMenu,          6},
 
-#if defined (__unix__) || defined (UNIXCOMMON) || defined (HAVE_SDL)
+#ifdef PS2
+	{IT_STRING | IT_CVAR, NULL, "Output Format",                &cv_vidoutput,       11},
+	{IT_STRING | IT_CVAR, NULL, "Screen Fit",                   &cv_vidfit,          16},
+	{IT_STRING | IT_CVAR, NULL, "Smoothing",                    &cv_vidfilter,       21},
+#elif defined (__unix__) || defined (UNIXCOMMON) || defined (HAVE_SDL)
 	{IT_STRING|IT_CVAR,      NULL, "Fullscreen (F11)",          &cv_fullscreen,      11},
 #endif
-	{IT_STRING | IT_CVAR, NULL, "Vertical Sync",                &cv_vidwait,         16},
+	{IT_STRING | IT_CVAR, NULL, "Vertical Sync",                &cv_vidwait,         VOFS(16)},
 #ifdef HWRENDER
-	{IT_STRING | IT_CVAR, NULL, "Renderer (F10)",               &cv_renderer,        21},
+	{IT_STRING | IT_CVAR, NULL, "Renderer (F10)",               &cv_renderer,        VOFS(21)},
 #else
-	{IT_TRANSTEXT | IT_PAIR, "Renderer", "Software",            &cv_renderer,        21},
+	{IT_TRANSTEXT | IT_PAIR, "Renderer", "Software",            &cv_renderer,        VOFS(21)},
 #endif
 
-	{IT_HEADER, NULL, "Color Profile", NULL, 30},
-	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Brightness", &cv_globalgamma,36},
-	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Saturation", &cv_globalsaturation, 41},
-	{IT_SUBMENU|IT_STRING, NULL, "Advanced Settings...",     &OP_ColorOptionsDef,  46},
+	{IT_HEADER, NULL, "Color Profile", NULL, VOFS(30)},
+	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Brightness", &cv_globalgamma,VOFS(36)},
+	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Saturation", &cv_globalsaturation, VOFS(41)},
+	{IT_SUBMENU|IT_STRING, NULL, "Advanced Settings...",     &OP_ColorOptionsDef,  VOFS(46)},
 
-	{IT_HEADER, NULL, "Heads-Up Display", NULL, 55},
-	{IT_STRING | IT_CVAR, NULL, "Show HUD",                  &cv_showhud,          61},
+	{IT_HEADER, NULL, "Heads-Up Display", NULL, VOFS(55)},
+	{IT_STRING | IT_CVAR, NULL, "Show HUD",                  &cv_showhud,          VOFS(61)},
 	{IT_STRING | IT_CVAR | IT_CV_SLIDER,
-	                      NULL, "HUD Transparency",          &cv_translucenthud,   66},
-	{IT_STRING | IT_CVAR, NULL, "Score/Time/Rings",          &cv_timetic,          71},
-	{IT_STRING | IT_CVAR, NULL, "Show Powerups",             &cv_powerupdisplay,   76},
-	{IT_STRING | IT_CVAR, NULL, "Local ping display",		&cv_showping,			81}, // shows ping next to framerate if we want to.
-	{IT_STRING | IT_CVAR, NULL, "Show player names",         &cv_seenames,         86},
+	                      NULL, "HUD Transparency",          &cv_translucenthud,   VOFS(66)},
+	{IT_STRING | IT_CVAR, NULL, "Score/Time/Rings",          &cv_timetic,          VOFS(71)},
+	{IT_STRING | IT_CVAR, NULL, "Show Powerups",             &cv_powerupdisplay,   VOFS(76)},
+	{IT_STRING | IT_CVAR, NULL, "Local ping display",		&cv_showping,			VOFS(81)}, // shows ping next to framerate if we want to.
+	{IT_STRING | IT_CVAR, NULL, "Show player names",         &cv_seenames,         VOFS(86)},
 
-	{IT_HEADER, NULL, "Console", NULL, 95},
-	{IT_STRING | IT_CVAR, NULL, "Background color",          &cons_backcolor,      101},
-	{IT_STRING | IT_CVAR, NULL, "Text Size",                 &cv_constextsize,    106},
+	{IT_HEADER, NULL, "Console", NULL, VOFS(95)},
+	{IT_STRING | IT_CVAR, NULL, "Background color",          &cons_backcolor,      VOFS(101)},
+	{IT_STRING | IT_CVAR, NULL, "Text Size",                 &cv_constextsize,    VOFS(106)},
 
-	{IT_HEADER, NULL, "Chat", NULL, 115},
-	{IT_STRING | IT_CVAR, NULL, "Chat Mode",            		 	 &cv_consolechat,  121},
-	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Chat Box Width",    &cv_chatwidth,     126},
-	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Chat Box Height",   &cv_chatheight,    131},
-	{IT_STRING | IT_CVAR, NULL, "Message Fadeout Time",              &cv_chattime,    136},
-	{IT_STRING | IT_CVAR, NULL, "Chat Notifications",           	 &cv_chatnotifications,  141},
-	{IT_STRING | IT_CVAR, NULL, "Spam Protection",           		 &cv_chatspamprotection,  146},
-	{IT_STRING | IT_CVAR, NULL, "Chat background tint",           	 &cv_chatbacktint,  151},
+	{IT_HEADER, NULL, "Chat", NULL, VOFS(115)},
+	{IT_STRING | IT_CVAR, NULL, "Chat Mode",            		 	 &cv_consolechat,  VOFS(121)},
+	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Chat Box Width",    &cv_chatwidth,     VOFS(126)},
+	{IT_STRING | IT_CVAR | IT_CV_SLIDER, NULL, "Chat Box Height",   &cv_chatheight,    VOFS(131)},
+	{IT_STRING | IT_CVAR, NULL, "Message Fadeout Time",              &cv_chattime,    VOFS(136)},
+	{IT_STRING | IT_CVAR, NULL, "Chat Notifications",           	 &cv_chatnotifications,  VOFS(141)},
+	{IT_STRING | IT_CVAR, NULL, "Spam Protection",           		 &cv_chatspamprotection,  VOFS(146)},
+	{IT_STRING | IT_CVAR, NULL, "Chat background tint",           	 &cv_chatbacktint,  VOFS(151)},
 
-	{IT_HEADER, NULL, "Level", NULL, 160},
-	{IT_STRING | IT_CVAR, NULL, "Draw Distance",             &cv_drawdist,        166},
-	{IT_STRING | IT_CVAR, NULL, "Weather Draw Dist.",        &cv_drawdist_precip, 171},
-	{IT_STRING | IT_CVAR, NULL, "NiGHTS Hoop Draw Dist.",    &cv_drawdist_nights, 176},
+	{IT_HEADER, NULL, "Level", NULL, VOFS(160)},
+	{IT_STRING | IT_CVAR, NULL, "Draw Distance",             &cv_drawdist,        VOFS(166)},
+	{IT_STRING | IT_CVAR, NULL, "Weather Draw Dist.",        &cv_drawdist_precip, VOFS(171)},
+	{IT_STRING | IT_CVAR, NULL, "NiGHTS Hoop Draw Dist.",    &cv_drawdist_nights, VOFS(176)},
 
-	{IT_HEADER, NULL, "Diagnostic", NULL, 184},
-	{IT_STRING | IT_CVAR, NULL, "Show FPS",                  &cv_ticrate,         190},
-	{IT_STRING | IT_CVAR, NULL, "Clear Before Redraw",       &cv_homremoval,      195},
-	{IT_STRING | IT_CVAR, NULL, "Show \"FOCUS LOST\"",       &cv_showfocuslost,   200},
+	{IT_HEADER, NULL, "Diagnostic", NULL, VOFS(184)},
+	{IT_STRING | IT_CVAR, NULL, "Show FPS",                  &cv_ticrate,         VOFS(190)},
+	{IT_STRING | IT_CVAR, NULL, "Clear Before Redraw",       &cv_homremoval,      VOFS(195)},
+	{IT_STRING | IT_CVAR, NULL, "Show \"FOCUS LOST\"",       &cv_showfocuslost,   VOFS(200)},
 
 #ifdef HWRENDER
-	{IT_HEADER, NULL, "Renderer", NULL, 208},
-	{IT_CALL | IT_STRING, NULL, "OpenGL Options...",         M_OpenGLOptionsMenu, 214},
-	{IT_STRING | IT_CVAR, NULL, "FPS Cap",                   &cv_fpscap,          219},
+	{IT_HEADER, NULL, "Renderer", NULL, VOFS(208)},
+	{IT_CALL | IT_STRING, NULL, HWR_RENDERER_NAME " Options...",         M_OpenGLOptionsMenu, VOFS(214)},
+	{IT_STRING | IT_CVAR, NULL, "FPS Cap",                   &cv_fpscap,          VOFS(219)},
 #endif
 };
 
@@ -1533,7 +1584,11 @@ static menuitem_t OP_SoundAdvancedMenu[] =
 
 static menuitem_t OP_DataOptionsMenu[] =
 {
+#ifndef HAS_ADDONS
+	{IT_DISABLED,            NULL, "",                      NULL,                10},
+#else
 	{IT_STRING | IT_CALL,    NULL, "Add-on Options...",     M_AddonsOptions,     10},
+#endif
 	{IT_STRING | IT_CALL,    NULL, "Screenshot Options...", M_ScreenshotOptions, 20},
 
 	{IT_STRING | IT_SUBMENU, NULL, "\x85" "Erase Data...",  &OP_EraseDataDef,    40},
@@ -1566,7 +1621,7 @@ static menuitem_t OP_BanpyuraOptionsMenu[] =
 	{IT_STRING | IT_CVAR, 		NULL, "Show Addon Info",	       &cv_showaddoninfo,		   103},
 
 #ifdef HWRENDER
-	{IT_HEADER, 				NULL, "Rendering (OpenGL)", 			        NULL,		   113},
+	{IT_HEADER, 				NULL, "Rendering (" HWR_RENDERER_NAME ")", 			        NULL,		   113},
 	{IT_STRING|IT_CVAR,         NULL, "Light Dithering",     	   &cv_gllightdither,          119},
 #endif
 };
@@ -1651,6 +1706,7 @@ static menuitem_t OP_EraseDataMenu[] =
 	{IT_STRING | IT_CALL, NULL, "\x85" "Erase ALL Data", M_EraseData, 40},
 };
 
+#ifdef HAS_ADDONS
 static menuitem_t OP_AddonsOptionsMenu[] =
 {
 	{IT_HEADER,                      NULL, "Menu",                        NULL,                     0},
@@ -1668,6 +1724,7 @@ enum
 {
 	op_addons_folder = 2,
 };
+#endif
 
 static menuitem_t OP_ServerOptionsMenu[] =
 {
@@ -1750,6 +1807,7 @@ static menuitem_t OP_MonitorToggleMenu[] =
 // Main Menu and related
 menu_t MainDef = CENTERMENUSTYLE(MN_MAIN, NULL, MainMenu, NULL, 72);
 
+#ifdef HAS_ADDONS
 menu_t MISC_AddonsDef =
 {
 	MN_AD_MAIN,
@@ -1762,6 +1820,7 @@ menu_t MISC_AddonsDef =
 	0,
 	NULL
 };
+#endif
 
 menu_t MAPauseDef = PAUSEMENUSTYLE(MAPauseMenu, 40, 72);
 menu_t SPauseDef = PAUSEMENUSTYLE(SPauseMenu, 40, 72);
@@ -1787,7 +1846,9 @@ menu_t MISC_ChangeLevelDef =
 
 menu_t MISC_HelpDef = IMAGEDEF(MISC_HelpMenu);
 
+#ifdef HAS_ADDONS // used by the add-ons menu only
 static INT32 highlightflags, recommendedflags, warningflags;
+#endif
 
 
 // Sky Room
@@ -2302,7 +2363,7 @@ static void M_OpenGLOptionsMenu(void)
 	if (rendermode == render_opengl)
 		M_SetupNextMenu(&OP_OpenGLOptionsDef);
 	else
-		M_StartMessage(M_GetText("You must be in OpenGL mode\nto access this menu.\n\n(Press a key)\n"), NULL, MM_NOTHING);
+		M_StartMessage(M_GetText("You must be in " HWR_RENDERER_NAME " mode\nto access this menu.\n\n(Press a key)\n"), NULL, MM_NOTHING);
 }
 
 menu_t OP_OpenGLOptionsDef = DEFAULTMENUSTYLE(
@@ -2345,9 +2406,11 @@ menu_t OP_ScreenshotOptionsDef =
 	NULL
 };
 
+#ifdef HAS_ADDONS
 menu_t OP_AddonsOptionsDef = DEFAULTMENUSTYLE(
 	MTREE3(MN_OP_MAIN, MN_OP_DATA, MN_OP_ADDONS),
 	"M_ADDONS", OP_AddonsOptionsMenu, &OP_DataOptionsDef, 30, 30);
+#endif
 
 menu_t OP_EraseDataDef = DEFAULTMENUSTYLE(
 	MTREE3(MN_OP_MAIN, MN_OP_DATA, MN_OP_ERASEDATA),
@@ -2577,11 +2640,13 @@ void Moviemode_mode_Onchange(void)
 		OP_ScreenshotOptionsMenu[i].status = IT_STRING|IT_CVAR;
 }
 
+#ifdef HAS_ADDONS
 void Addons_option_Onchange(void)
 {
 	OP_AddonsOptionsMenu[op_addons_folder].status =
 		(cv_addons_option.value == 3 ? IT_CVAR|IT_STRING|IT_CV_STRING : IT_DISABLED);
 }
+#endif
 
 void Moviemode_option_Onchange(void)
 {
@@ -3312,6 +3377,11 @@ boolean M_Responder(event_t *ev)
 	if (CON_Ready() && gamestate != GS_WAITINGPLAYERS)
 		return false;
 
+#ifdef PS2
+	if (PS2OSK_Responder(ev)) // PS2-135
+		return true;
+#endif
+
 	if (noFurtherInput)
 	{
 		// Ignore input after enter/escape/other buttons
@@ -3355,6 +3425,7 @@ boolean M_Responder(event_t *ev)
 					case KEY_HAT1 + 3:
 						ch = KEY_RIGHTARROW;
 						break;
+#ifdef HAS_ADDONS
 					//Local Addon Mode
 					case LOCALMODE_KEY:
 						if (!(server || IsPlayerAdmin(consoleplayer)))
@@ -3370,6 +3441,7 @@ boolean M_Responder(event_t *ev)
 						}
 
 						break;
+#endif
 				}
 			}
 		}
@@ -3781,6 +3853,10 @@ void M_Drawer(void)
 		else
 			V_DrawCenteredString(BASEVIDWIDTH/2, (BASEVIDHEIGHT/2) - (4), MENUCOLOR, "Focus Lost");
 	}
+
+#ifdef PS2
+	PS2OSK_Draw(); // PS2-135 (also over the chat line: nothing is drawn while it is closed)
+#endif
 }
 
 //
@@ -3807,8 +3883,13 @@ void M_StartControlPanel(void)
 	if (!Playing())
 	{
 		// Secret menu!
+#ifndef HAS_ADDONS // PS2-122: Addons row disabled, rows packed against Quit Game
+		MainMenu[singleplr].alphaKey = (M_AnySecretUnlocked(clientGamedata)) ? 84 : 92;
+		MainMenu[multiplr].alphaKey = (M_AnySecretUnlocked(clientGamedata)) ? 92 : 100;
+#else
 		MainMenu[singleplr].alphaKey = (M_AnySecretUnlocked(clientGamedata)) ? 76 : 84;
 		MainMenu[multiplr].alphaKey = (M_AnySecretUnlocked(clientGamedata)) ? 84 : 92;
+#endif
 		MainMenu[secrets].status = (M_AnySecretUnlocked(clientGamedata)) ? (IT_STRING | IT_CALL) : (IT_DISABLED);
 
 		currentMenu = &MainDef;
@@ -3874,7 +3955,9 @@ void M_StartControlPanel(void)
 	else // multiplayer
 	{
 		MPauseMenu[mpause_switchmap].status = IT_DISABLED;
+#ifdef HAS_ADDONS
 		MPauseMenu[mpause_addons].status = IT_DISABLED;
+#endif
 		MPauseMenu[mpause_scramble].status = IT_DISABLED;
 		MPauseMenu[mpause_psetupsplit].status = IT_DISABLED;
 		MPauseMenu[mpause_psetupsplit2].status = IT_DISABLED;
@@ -3882,13 +3965,17 @@ void M_StartControlPanel(void)
 		MPauseMenu[mpause_entergame].status = IT_DISABLED;
 		MPauseMenu[mpause_switchteam].status = IT_DISABLED;
 		MPauseMenu[mpause_psetup].status = IT_DISABLED;
+#ifdef HAS_ADDONS
 		MPauseMenu[mpause_localaddons].status = IT_STRING | IT_CALL;
+#endif
 
 		if ((server || IsPlayerAdmin(consoleplayer)))
 		{
 			MPauseMenu[mpause_switchmap].status = IT_STRING | IT_CALL;
+#ifdef HAS_ADDONS
 			MPauseMenu[mpause_addons].status = IT_STRING | IT_CALL;
 			MPauseMenu[mpause_localaddons].status = IT_DISABLED;
+#endif
 			if (G_GametypeHasTeams())
 				MPauseMenu[mpause_scramble].status = IT_STRING | IT_SUBMENU;
 		}
@@ -3954,7 +4041,7 @@ void M_SetupNextMenu(menu_t *menudef)
 {
 	INT16 i;
 
-#if defined (MASTERSERVER)
+#if defined(MASTERSERVER) && !defined(PS2_PROFILE)
 	if (I_can_thread())
 	{
 		if (currentMenu == &MP_RoomDef || currentMenu == &MP_ConnectDef)
@@ -6386,6 +6473,7 @@ static void M_HandleImageDef(INT32 choice)
 // MISC MAIN MENU OPTIONS
 // ======================
 
+#ifdef HAS_ADDONS // PS2-20: add-ons menu and options
 static void M_AddonsOptions(INT32 choice)
 {
 	(void)choice;
@@ -6956,6 +7044,7 @@ static void M_HandleAddons(INT32 choice)
 	}
 }
 
+#endif
 static void M_PandorasBox(INT32 choice)
 {
 	(void)choice;
@@ -11923,6 +12012,7 @@ static void M_DrawServerMenu(void)
 	}
 }
 
+
 static void M_MapChange(INT32 choice)
 {
 	(void)choice;
@@ -14078,6 +14168,14 @@ static void M_VideoModeMenu(INT32 choice)
 static void M_DrawMainVideoMenu(void)
 {
 	M_DrawGenericScrollMenu();
+#ifdef PS2
+	if (itemOn == op_video_output || itemOn == op_video_fit || itemOn == op_video_filter)
+	{
+		const char *note = PS2Video_OutputNote(); // e.g. "Active: NTSC 480i. 576p needs BIOS 2.20."
+		if (note)
+			V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT - 12, V_YELLOWMAP|V_ALLOWLOWERCASE, note);
+	}
+#endif
 	if (itemOn < 8) // where it starts to go offscreen; change this number if you change the layout of the video menu
 	{
 		INT32 y = currentMenu->y+currentMenu->menuitems[1].alphaKey*2;
@@ -14098,7 +14196,11 @@ static void M_DrawVideoMode(void)
 	M_DrawMenuTitle();
 
 	V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y, MENUCOLOR|MENUCAPS, "Choose mode, reselect to change default");
+#ifdef PS2
+	V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y+8, MENUCOLOR|MENUCAPS, "Output format: Video Options");
+#else
 	V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y+8, MENUCOLOR|MENUCAPS, "Press F11 to toggle fullscreen");
+#endif
 
 	row = 41;
 	col = OP_VideoModeDef.y + 24;
@@ -14142,6 +14244,12 @@ static void M_DrawVideoMode(void)
 			va("Current mode is %c%dx%d",
 				(SCR_IsAspectCorrect(vid.width, vid.height)) ? 0x83 : 0x80,
 				vid.width, vid.height));
+#ifdef PS2
+		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 116, MENUCAPS,
+			va("Saved mode is %c%dx%d",
+				(SCR_IsAspectCorrect(cv_scr_width.value, cv_scr_height.value)) ? 0x83 : (!(VID_GetModeForSize(cv_scr_width.value, cv_scr_height.value)+1) ? 0x85 : 0x80),
+				cv_scr_width.value, cv_scr_height.value));
+#else
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 116, (cv_fullscreen.value ? 0 : V_TRANSLUCENT)|MENUCAPS,
 			va("Default mode is %c%dx%d",
 				(SCR_IsAspectCorrect(cv_scr_width.value, cv_scr_height.value)) ? 0x83 : (!(VID_GetModeForSize(cv_scr_width.value, cv_scr_height.value)+1) ? 0x85 : 0x80),
@@ -14150,6 +14258,7 @@ static void M_DrawVideoMode(void)
 			va("Windowed mode is %c%dx%d",
 				(SCR_IsAspectCorrect(cv_scr_width_w.value, cv_scr_height_w.value)) ? 0x83 : (!(VID_GetModeForSize(cv_scr_width_w.value, cv_scr_height_w.value)+1) ? 0x85 : 0x80),
 				cv_scr_width_w.value, cv_scr_height_w.value));
+#endif
 
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 138,
 			V_GREENMAP|MENUCAPS, "Green modes are recommended.");
@@ -14540,3 +14649,27 @@ static void M_QuitSRB2(INT32 choice)
 	(void)choice;
 	M_StartMessage(quitmsg[M_RandomKey(NUM_QUITMESSAGES)], M_QuitResponse, MM_YESNO);
 }
+
+#ifdef PS2
+// PS2-135: the highlighted item takes typed text: the on-screen keyboard (src/ps2/ps2_osk.c) can be opened on it
+boolean M_PS2TextFieldActive(void)
+{
+	const menuitem_t *it;
+
+	if (chat_on)
+		return true; // the chat line of a netgame
+	if (!menuactive || !currentMenu || itemOn >= currentMenu->numitems)
+		return false;
+	it = &currentMenu->menuitems[itemOn];
+	if ((it->status & IT_TYPE) == IT_CVAR && (it->status & IT_CVARTYPE) == IT_CV_STRING)
+		return true;
+	if ((it->status & IT_TYPE) == IT_KEYHANDLER)
+	{
+		if ((void *)it->itemaction == (void *)M_HandleConnectIP)
+			return true;
+		if ((void *)it->itemaction == (void *)M_HandleSetupMultiPlayer && itemOn == 0)
+			return true;
+	}
+	return false;
+}
+#endif

@@ -64,6 +64,39 @@ void R_DrawSpan_NPO2_8 (void)
 	else if (yposition >= fixedheight)
 		yposition %= fixedheight;
 
+#ifdef PS2_OPT_DRAW
+	// With bounded steps, unsigned range tests need one correction per axis.
+	// Keep the original loop for overflow-sized flats/steps and noncanonical starts.
+	if (count >= 32 && fixedwidth > 0 && fixedwidth <= 0x40000000
+		&& fixedheight > 0 && fixedheight <= 0x40000000
+		&& (UINT32)xposition < (UINT32)fixedwidth
+		&& (UINT32)yposition < (UINT32)fixedheight
+		&& xstep > -fixedwidth && xstep < fixedwidth
+		&& ystep > -fixedheight && ystep < fixedheight)
+	{
+		const INT32 flatwidth = ds_flatwidth;
+		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
+		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
+		// Preserve the original inclusive destination bound once per span.
+		if (count > (size_t)(deststop - dest) + 1)
+			count = (size_t)(deststop - dest) + 1;
+		while (count--)
+		{
+			if ((UINT32)xposition >= (UINT32)fixedwidth)
+				xposition += xwrap;
+			if ((UINT32)yposition >= (UINT32)fixedheight)
+				yposition += ywrap;
+			x = (xposition >> FRACBITS);
+			y = (yposition >> FRACBITS);
+
+			*dest++ = colormap[source[((y * flatwidth) + x)]];
+			xposition += xstep;
+			yposition += ystep;
+		}
+		return;
+	}
+#endif
+
 	while (count-- && dest <= deststop)
 	{
 		// The loops here keep the texture coordinates within the texture.
@@ -98,7 +131,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -106,9 +139,9 @@ void R_DrawTiltedSpan_NPO2_8(void)
 	UINT8 *colormap;
 	UINT8 *dest;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
@@ -129,7 +162,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -177,10 +210,10 @@ void R_DrawTiltedSpan_NPO2_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -214,8 +247,8 @@ void R_DrawTiltedSpan_NPO2_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			// Lactozilla: Non-powers-of-two
 			{
@@ -237,7 +270,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -246,10 +279,10 @@ void R_DrawTiltedSpan_NPO2_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -287,7 +320,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -295,9 +328,9 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 	UINT8 *colormap;
 	UINT8 *dest;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
@@ -318,7 +351,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -365,10 +398,10 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -402,8 +435,8 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			// Lactozilla: Non-powers-of-two
 			{
@@ -425,7 +458,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -434,10 +467,10 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -472,7 +505,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -482,9 +515,9 @@ void R_DrawTiltedSplat_NPO2_8(void)
 
 	UINT8 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
@@ -505,7 +538,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -557,10 +590,10 @@ void R_DrawTiltedSplat_NPO2_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -596,8 +629,8 @@ void R_DrawTiltedSplat_NPO2_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			// Lactozilla: Non-powers-of-two
 			{
@@ -621,7 +654,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -630,10 +663,10 @@ void R_DrawTiltedSplat_NPO2_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -670,7 +703,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -680,9 +713,9 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 
 	UINT8 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
@@ -703,7 +736,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -755,10 +788,10 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -794,8 +827,8 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			// Lactozilla: Non-powers-of-two
 			{
@@ -819,7 +852,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -828,10 +861,10 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -903,6 +936,41 @@ void R_DrawSplat_NPO2_8 (void)
 	else if (yposition >= fixedheight)
 		yposition %= fixedheight;
 
+#ifdef PS2_OPT_DRAW
+	// With bounded steps, unsigned range tests need one correction per axis.
+	// Keep the original loop for overflow-sized flats/steps and noncanonical starts.
+	if (count >= 32 && fixedwidth > 0 && fixedwidth <= 0x40000000
+		&& fixedheight > 0 && fixedheight <= 0x40000000
+		&& (UINT32)xposition < (UINT32)fixedwidth
+		&& (UINT32)yposition < (UINT32)fixedheight
+		&& xstep > -fixedwidth && xstep < fixedwidth
+		&& ystep > -fixedheight && ystep < fixedheight)
+	{
+		const INT32 flatwidth = ds_flatwidth;
+		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
+		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
+		// Preserve the original inclusive destination bound once per span.
+		if (count > (size_t)(deststop - dest) + 1)
+			count = (size_t)(deststop - dest) + 1;
+		while (count--)
+		{
+			if ((UINT32)xposition >= (UINT32)fixedwidth)
+				xposition += xwrap;
+			if ((UINT32)yposition >= (UINT32)fixedheight)
+				yposition += ywrap;
+			x = (xposition >> FRACBITS);
+			y = (yposition >> FRACBITS);
+			val = source[((y * flatwidth) + x)];
+			if (val != TRANSPARENTPIXEL)
+				*dest = colormap[val];
+			dest++;
+			xposition += xstep;
+			yposition += ystep;
+		}
+		return;
+	}
+#endif
+
 	while (count-- && dest <= deststop)
 	{
 		// The loops here keep the texture coordinates within the texture.
@@ -970,6 +1038,41 @@ void R_DrawTranslucentSplat_NPO2_8 (void)
 		yposition = fixedheight - ((UINT32)(fixedheight - yposition) % fixedheight);
 	else if (yposition >= fixedheight)
 		yposition %= fixedheight;
+
+#ifdef PS2_OPT_DRAW
+	// With bounded steps, unsigned range tests need one correction per axis.
+	// Keep the original loop for overflow-sized flats/steps and noncanonical starts.
+	if (count >= 32 && fixedwidth > 0 && fixedwidth <= 0x40000000
+		&& fixedheight > 0 && fixedheight <= 0x40000000
+		&& (UINT32)xposition < (UINT32)fixedwidth
+		&& (UINT32)yposition < (UINT32)fixedheight
+		&& xstep > -fixedwidth && xstep < fixedwidth
+		&& ystep > -fixedheight && ystep < fixedheight)
+	{
+		const INT32 flatwidth = ds_flatwidth;
+		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
+		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
+		// Preserve the original inclusive destination bound once per span.
+		if (count > (size_t)(deststop - dest) + 1)
+			count = (size_t)(deststop - dest) + 1;
+		while (count--)
+		{
+			if ((UINT32)xposition >= (UINT32)fixedwidth)
+				xposition += xwrap;
+			if ((UINT32)yposition >= (UINT32)fixedheight)
+				yposition += ywrap;
+			x = (xposition >> FRACBITS);
+			y = (yposition >> FRACBITS);
+			val = source[((y * flatwidth) + x)];
+			if (val != TRANSPARENTPIXEL)
+				*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
+			dest++;
+			xposition += xstep;
+			yposition += ystep;
+		}
+		return;
+	}
+#endif
 
 	while (count-- && dest <= deststop)
 	{
@@ -1041,6 +1144,41 @@ void R_DrawFloorSprite_NPO2_8 (void)
 	else if (yposition >= fixedheight)
 		yposition %= fixedheight;
 
+#ifdef PS2_OPT_DRAW
+	// With bounded steps, unsigned range tests need one correction per axis.
+	// Keep the original loop for overflow-sized flats/steps and noncanonical starts.
+	if (count >= 32 && fixedwidth > 0 && fixedwidth <= 0x40000000
+		&& fixedheight > 0 && fixedheight <= 0x40000000
+		&& (UINT32)xposition < (UINT32)fixedwidth
+		&& (UINT32)yposition < (UINT32)fixedheight
+		&& xstep > -fixedwidth && xstep < fixedwidth
+		&& ystep > -fixedheight && ystep < fixedheight)
+	{
+		const INT32 flatwidth = ds_flatwidth;
+		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
+		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
+		// Preserve the original inclusive destination bound once per span.
+		if (count > (size_t)(deststop - dest) + 1)
+			count = (size_t)(deststop - dest) + 1;
+		while (count--)
+		{
+			if ((UINT32)xposition >= (UINT32)fixedwidth)
+				xposition += xwrap;
+			if ((UINT32)yposition >= (UINT32)fixedheight)
+				yposition += ywrap;
+			x = (xposition >> FRACBITS);
+			y = (yposition >> FRACBITS);
+			val = source[((y * flatwidth) + x)];
+			if (val & 0xFF00)
+				*dest = colormap[translation[val & 0xFF]];
+			dest++;
+			xposition += xstep;
+			yposition += ystep;
+		}
+		return;
+	}
+#endif
+
 	while (count-- && dest <= deststop)
 	{
 		// The loops here keep the texture coordinates within the texture.
@@ -1111,6 +1249,41 @@ void R_DrawTranslucentFloorSprite_NPO2_8 (void)
 	else if (yposition >= fixedheight)
 		yposition %= fixedheight;
 
+#ifdef PS2_OPT_DRAW
+	// With bounded steps, unsigned range tests need one correction per axis.
+	// Keep the original loop for overflow-sized flats/steps and noncanonical starts.
+	if (count >= 32 && fixedwidth > 0 && fixedwidth <= 0x40000000
+		&& fixedheight > 0 && fixedheight <= 0x40000000
+		&& (UINT32)xposition < (UINT32)fixedwidth
+		&& (UINT32)yposition < (UINT32)fixedheight
+		&& xstep > -fixedwidth && xstep < fixedwidth
+		&& ystep > -fixedheight && ystep < fixedheight)
+	{
+		const INT32 flatwidth = ds_flatwidth;
+		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
+		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
+		// Preserve the original inclusive destination bound once per span.
+		if (count > (size_t)(deststop - dest) + 1)
+			count = (size_t)(deststop - dest) + 1;
+		while (count--)
+		{
+			if ((UINT32)xposition >= (UINT32)fixedwidth)
+				xposition += xwrap;
+			if ((UINT32)yposition >= (UINT32)fixedheight)
+				yposition += ywrap;
+			x = (xposition >> FRACBITS);
+			y = (yposition >> FRACBITS);
+			val = source[((y * flatwidth) + x)];
+			if (val & 0xFF00)
+				*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
+			dest++;
+			xposition += xstep;
+			yposition += ystep;
+		}
+		return;
+	}
+#endif
+
 	while (count-- && dest <= deststop)
 	{
 		// The loops here keep the texture coordinates within the texture.
@@ -1147,7 +1320,7 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1157,9 +1330,9 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 	UINT8 *dest;
 	UINT16 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
@@ -1193,10 +1366,10 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1230,8 +1403,8 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -1254,7 +1427,7 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1263,10 +1436,10 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -1303,7 +1476,7 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1313,9 +1486,9 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 	UINT8 *dest;
 	UINT16 val;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
@@ -1349,10 +1522,10 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1386,8 +1559,8 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -1410,7 +1583,7 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1419,10 +1592,10 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{
@@ -1491,6 +1664,40 @@ void R_DrawTranslucentSpan_NPO2_8 (void)
 	else if (yposition >= fixedheight)
 		yposition %= fixedheight;
 
+#ifdef PS2_OPT_DRAW
+	// With bounded steps, unsigned range tests need one correction per axis.
+	// Keep the original loop for overflow-sized flats/steps and noncanonical starts.
+	if (count >= 32 && fixedwidth > 0 && fixedwidth <= 0x40000000
+		&& fixedheight > 0 && fixedheight <= 0x40000000
+		&& (UINT32)xposition < (UINT32)fixedwidth
+		&& (UINT32)yposition < (UINT32)fixedheight
+		&& xstep > -fixedwidth && xstep < fixedwidth
+		&& ystep > -fixedheight && ystep < fixedheight)
+	{
+		const INT32 flatwidth = ds_flatwidth;
+		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
+		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
+		// Preserve the original inclusive destination bound once per span.
+		if (count > (size_t)(deststop - dest) + 1)
+			count = (size_t)(deststop - dest) + 1;
+		while (count--)
+		{
+			if ((UINT32)xposition >= (UINT32)fixedwidth)
+				xposition += xwrap;
+			if ((UINT32)yposition >= (UINT32)fixedheight)
+				yposition += ywrap;
+			x = (xposition >> FRACBITS);
+			y = (yposition >> FRACBITS);
+			val = ((y * flatwidth) + x);
+			*dest = *(ds_transmap + (colormap[source[val]] << 8) + *dest);
+			dest++;
+			xposition += xstep;
+			yposition += ystep;
+		}
+		return;
+	}
+#endif
+
 	while (count-- && dest <= deststop)
 	{
 		// The loops here keep the texture coordinates within the texture.
@@ -1556,6 +1763,38 @@ void R_DrawWaterSpan_NPO2_8(void)
 	else if (yposition >= fixedheight)
 		yposition %= fixedheight;
 
+#ifdef PS2_OPT_DRAW
+	// With bounded steps, unsigned range tests need one correction per axis.
+	// Keep the original loop for overflow-sized flats/steps and noncanonical starts.
+	if (count >= 32 && fixedwidth > 0 && fixedwidth <= 0x40000000
+		&& fixedheight > 0 && fixedheight <= 0x40000000
+		&& (UINT32)xposition < (UINT32)fixedwidth
+		&& (UINT32)yposition < (UINT32)fixedheight
+		&& xstep > -fixedwidth && xstep < fixedwidth
+		&& ystep > -fixedheight && ystep < fixedheight)
+	{
+		const INT32 flatwidth = ds_flatwidth;
+		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
+		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
+		// Preserve the original inclusive destination bound once per span.
+		if (count > (size_t)(deststop - dest) + 1)
+			count = (size_t)(deststop - dest) + 1;
+		while (count--)
+		{
+			if ((UINT32)xposition >= (UINT32)fixedwidth)
+				xposition += xwrap;
+			if ((UINT32)yposition >= (UINT32)fixedheight)
+				yposition += ywrap;
+			x = (xposition >> FRACBITS);
+			y = (yposition >> FRACBITS);
+			*dest++ = colormap[*(ds_transmap + (source[((y * flatwidth) + x)] << 8) + *dsrc++)];
+			xposition += xstep;
+			yposition += ystep;
+		}
+		return;
+	}
+#endif
+
 	while (count-- && dest <= deststop)
 	{
 		// The loops here keep the texture coordinates within the texture.
@@ -1589,7 +1828,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
 	int width = ds_x2 - ds_x1;
-	double iz, uz, vz;
+	slopereal_t iz, uz, vz;
 	UINT32 u, v;
 	int i;
 
@@ -1598,9 +1837,9 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 	UINT8 *dest;
 	UINT8 *dsrc;
 
-	double startz, startu, startv;
-	double izstep, uzstep, vzstep;
-	double endz, endu, endv;
+	slopereal_t startz, startu, startv;
+	slopereal_t izstep, uzstep, vzstep;
+	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
@@ -1622,7 +1861,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 	i = 0;
 	do
 	{
-		double z = 1.f/iz;
+		slopereal_t z = 1.f/iz;
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
@@ -1669,10 +1908,10 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 		endz = 1.f/iz;
 		endu = uz*endz;
 		endv = vz*endz;
-		stepu = (INT64)((endu - startu) * INVSPAN);
-		stepv = (INT64)((endv - startv) * INVSPAN);
-		u = (INT64)(startu);
-		v = (INT64)(startv);
+		stepu = SLOPE_U32((endu - startu) * INVSPAN);
+		stepv = SLOPE_U32((endv - startv) * INVSPAN);
+		u = SLOPE_U32(startu);
+		v = SLOPE_U32(startv);
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
@@ -1706,8 +1945,8 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 	{
 		if (width == 1)
 		{
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 			// Lactozilla: Non-powers-of-two
 			{
@@ -1729,7 +1968,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 		}
 		else
 		{
-			double left = width;
+			slopereal_t left = width;
 			iz += ds_sz.x * left;
 			uz += ds_su.x * left;
 			vz += ds_sv.x * left;
@@ -1738,10 +1977,10 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 			endu = uz*endz;
 			endv = vz*endz;
 			left = 1.f/left;
-			stepu = (INT64)((endu - startu) * left);
-			stepv = (INT64)((endv - startv) * left);
-			u = (INT64)(startu);
-			v = (INT64)(startv);
+			stepu = SLOPE_U32((endu - startu) * left);
+			stepv = SLOPE_U32((endv - startv) * left);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
 
 			for (; width != 0; width--)
 			{

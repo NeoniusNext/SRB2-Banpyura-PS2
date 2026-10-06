@@ -76,7 +76,7 @@ static http_header_t *default_headers = NULL;
 static size_t default_header_count = 0;
 static callback_queue_t callback_queue = {NULL, NULL, NULL};
 
-static void enqueue_callback(lua_State *L, int callback_ref, http_response_t *response, char *error_msg)
+static ATTRUNUSED void enqueue_callback(lua_State *L, int callback_ref, http_response_t *response, char *error_msg)
 {
 	pending_callback_t *cb = malloc(sizeof(pending_callback_t));
 
@@ -105,7 +105,7 @@ static void enqueue_callback(lua_State *L, int callback_ref, http_response_t *re
 	I_unlock_mutex(callback_queue.mutex);
 }
 
-static pending_callback_t* dequeue_callback(void)
+static ATTRUNUSED pending_callback_t* dequeue_callback(void)
 {
 	I_lock_mutex(&callback_queue.mutex);
 	
@@ -993,6 +993,7 @@ static int lib_http_set_default_headers(lua_State *L)
 
 void LUA_HTTPProcessCallbacks(void)
 {
+#ifdef HAVE_CURL // PS2-101: without curl nothing is ever queued (and the response helpers above do not exist)
 	pending_callback_t *cb;
 	
 	while ((cb = dequeue_callback()) != NULL) {
@@ -1019,6 +1020,7 @@ void LUA_HTTPProcessCallbacks(void)
 		
 		free(cb);
 	}
+#endif
 }
 
 static luaL_Reg lib_http[] = {

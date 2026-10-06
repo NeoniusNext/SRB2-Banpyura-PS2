@@ -33,6 +33,11 @@ static taggroup_t *TG_Get(const taggroups_t *ga, const UINT16 tag)
 	return (ga->group && tag < ga->size) ? ga->group[tag] : NULL;
 }
 
+taggroup_t *Taggroup_Lookup(const taggroups_t *ga, const mtag_t tag)
+{
+	return TG_Get(ga, (UINT16)tag);
+}
+
 /// Makes sure tag has a slot and returns it.
 static taggroup_t **TG_Slot(taggroups_t *ga, const UINT16 tag)
 {
@@ -62,6 +67,21 @@ void Tag_Add (taglist_t* list, const mtag_t tag)
 {
 	if (Tag_Find(list, tag))
 		return;
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_taginline)
+	if (!list->count)
+	{
+		list->inline_tag = tag;
+		list->tags = &list->inline_tag;
+		list->count = 1;
+		return;
+	}
+	if (list->tags == &list->inline_tag)
+	{
+		list->tags = Z_Calloc((list->count + 1) * sizeof(mtag_t), PU_LEVEL, NULL);
+		list->tags[0] = list->inline_tag;
+	}
+	else
+#endif
 	list->tags = Z_Realloc(list->tags, (list->count + 1) * sizeof(mtag_t), PU_LEVEL, NULL);
 	list->tags[list->count++] = tag;
 }
@@ -80,6 +100,11 @@ void Tag_Remove(taglist_t* list, const mtag_t tag)
 		for (; i+1 < list->count; i++)
 			list->tags[i] = list->tags[i+1];
 
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_taginline)
+		if (list->tags == &list->inline_tag)
+			list->tags = NULL; // Match the legacy zero-size realloc, including its unchanged count.
+		else
+#endif
 		list->tags = Z_Realloc(list->tags, (list->count - 1) * sizeof(mtag_t), PU_LEVEL, NULL);
 		return;
 	}

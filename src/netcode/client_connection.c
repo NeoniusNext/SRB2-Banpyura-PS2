@@ -11,6 +11,7 @@
 /// \brief Client connection handling
 
 #include "client_connection.h"
+#include "../m_argv.h"
 #include "gamestate.h"
 #include "d_clisrv.h"
 #include "d_netfil.h"
@@ -572,6 +573,28 @@ static void DrawOverallProgress(int y)
 //
 // Keep the local client informed of our status.
 //
+#ifdef PS2
+// PS2-134: the connection screens (server info, file list) read the keyboard; on the console the pad's buttons stand for the same keys:
+// Cross = Enter, Circle = Escape, Square = Space, D-pad up/down = the arrows
+static boolean CL_GameKey(INT32 key)
+{
+	if (gamekeydown[key])
+		return true;
+	switch (key)
+	{
+		case KEY_ENTER: return gamekeydown[KEY_JOY1];
+		case KEY_ESCAPE: return gamekeydown[KEY_JOY1 + 1];
+		case KEY_SPACE: return gamekeydown[KEY_JOY1 + 2];
+		case KEY_UPARROW: return gamekeydown[KEY_HAT1];
+		case KEY_DOWNARROW: return gamekeydown[KEY_HAT1 + 1];
+		default: return false;
+	}
+}
+#define GAMEKEY(k) CL_GameKey(k)
+#else
+#define GAMEKEY(k) gamekeydown[k]
+#endif
+
 static void CL_DrawConnectionStatus(void)
 {
 	INT32 ccstime = I_GetTime();
@@ -1601,6 +1624,22 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 {
 	boolean waitmore;
 
+#ifdef PS2_PROFILE
+	{
+		// PS2-121: -netdebug traces the connection state once per second (the loop has no frame to look at)
+		static tic_t lasttrace;
+		static INT32 lastmode = -1;
+
+		if (M_CheckParm("-netdebug") && (lastmode != (INT32)cl_mode || I_GetTime() >= lasttrace + TICRATE))
+		{
+			CONS_Printf("netdebug: cl_mode=%d serverlistcount=%d servernode=%d server=%d client=%d time=%u\n", (int)cl_mode,
+				(int)serverlistcount, (int)servernode, (int)server, (int)client, (unsigned)I_GetTime());
+			lastmode = (INT32)cl_mode;
+			lasttrace = I_GetTime();
+		}
+	}
+#endif
+
 	switch (cl_mode)
 	{
 		case CL_SEARCHING:
@@ -1754,7 +1793,7 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 				if (fileneeded[i].status == FS_NOTFOUND || fileneeded[i].status == FS_MD5SUMBAD)
 					totalfiles++;
 
-			if (gamekeydown[KEY_ENTER])
+			if (GAMEKEY(KEY_ENTER))
 			{
 				if (totalfiles > 0)
 				{
@@ -1766,14 +1805,14 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 				}
 				S_StartSound(NULL, sfx_menu1);
 			}
-			else if (gamekeydown[KEY_ESCAPE])
+			else if (GAMEKEY(KEY_ESCAPE))
 			{
 				cl_mode = CL_ABORTED;
 			}
 			
 			if (totalfiles > ADDONSCROLLLIMIT)
 			{
-				if (gamekeydown[KEY_DOWNARROW])
+				if (GAMEKEY(KEY_DOWNARROW))
 				{
 					if (viewfiles != (totalfiles - ADDONSCROLLLIMIT))
 					{
@@ -1785,7 +1824,7 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 						viewfiles = totalfiles - ADDONSCROLLLIMIT;
 				}
 
-				if (gamekeydown[KEY_UPARROW])
+				if (GAMEKEY(KEY_UPARROW))
 				{
 					if (viewfiles)
 					{
@@ -1802,16 +1841,16 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 		// key handler for server info
 		if (cl_mode == CL_VIEWSERVER)
 		{
-			if (gamekeydown[KEY_ENTER])
+			if (GAMEKEY(KEY_ENTER))
 			{
 				cl_mode = CL_CHECKFILES;
 				S_StartSound(NULL, sfx_menu1);
 			}
 
-			if (gamekeydown[KEY_ESCAPE])
+			if (GAMEKEY(KEY_ESCAPE))
 				cl_mode = CL_ABORTED;
 
-			if (gamekeydown[KEY_SPACE])
+			if (GAMEKEY(KEY_SPACE))
 			{
 				if (fileneedednum > 0)
 				{
@@ -1830,7 +1869,7 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 
 			if (viewserver_addons && (fileneedednum > MAXLISTADDONS))
 			{
-				if (gamekeydown[KEY_DOWNARROW])
+				if (GAMEKEY(KEY_DOWNARROW))
 				{
 					if (viewserver_scroll != (fileneedednum - ADDONSCROLLLIMIT))
 					{
@@ -1841,7 +1880,7 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 					if (viewserver_scroll > (fileneedednum - ADDONSCROLLLIMIT))
 						viewserver_scroll = (fileneedednum - ADDONSCROLLLIMIT);
 				}
-				else if (gamekeydown[KEY_UPARROW])
+				else if (GAMEKEY(KEY_UPARROW))
 				{
 					if (viewserver_scroll)
 					{
@@ -1859,7 +1898,7 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 			}
 		}
 
-		if (gamekeydown[KEY_ESCAPE] || gamekeydown[KEY_JOY1+1] || cl_mode == CL_ABORTED)
+		if (GAMEKEY(KEY_ESCAPE) || gamekeydown[KEY_JOY1+1] || cl_mode == CL_ABORTED)
 		{
 			CONS_Printf(M_GetText("Network game synchronization aborted.\n"));
 			// M_StartMessage(M_GetText("Network game synchronization aborted.\n\nPress ESC\n"), NULL, MM_NOTHING);

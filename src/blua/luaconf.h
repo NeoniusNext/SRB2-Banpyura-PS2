@@ -13,7 +13,15 @@
 
 #ifndef _MSC_VER
 #include <stdint.h>
+#ifdef PS2
+// PS2 (doomtype.h): newlib's int32_t is long on the EE, the engine's INT32 is int; Lua's integers must be the engine's type
+#define LUA_INT32 int
+#else
 #define INT32 int32_t
+#define LUA_INT32 int32_t
+#endif
+#else
+#define LUA_INT32 int32_t
 #endif
 
 
@@ -145,7 +153,7 @@
 ** CHANGE that if ptrdiff_t is not adequate on your machine. (On most
 ** machines, ptrdiff_t gives a good choice between int or long.)
 */
-#define LUA_INTEGER	int32_t
+#define LUA_INTEGER	LUA_INT32
 
 
 /*
@@ -507,13 +515,13 @@
 */
 
 //#define LUA_NUMBER_DOUBLE
-#define LUA_NUMBER	int32_t
+#define LUA_NUMBER	LUA_INT32
 
 /*
 @@ LUAI_UACNUMBER is the result of an 'usual argument conversion'
 @* over a number.
 */
-#define LUAI_UACNUMBER	int32_t
+#define LUAI_UACNUMBER	LUA_INT32
 
 
 /*

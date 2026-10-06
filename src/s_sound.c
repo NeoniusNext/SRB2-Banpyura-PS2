@@ -2129,6 +2129,10 @@ static lumpnum_t S_GetMusicLumpNum(const char *mname)
 		return LUMPERROR;
 }
 
+#ifdef PS2
+extern lumpnum_t ps2_music_lump; // src/ps2/i_sound.c
+#endif
+
 static boolean S_LoadMusic(const char *mname)
 {
 	lumpnum_t mlumpnum;
@@ -2149,6 +2153,7 @@ static boolean S_LoadMusic(const char *mname)
 #ifdef PS2
 	// The music lump (up to 4 MB) is not cached: the PS2 player streams it from the pack.
 	mdata = NULL;
+	ps2_music_lump = mlumpnum; // PS2-70: I_LoadSong() needs the lump; the old --wrap=W_LumpLength capture does not exist inside the LTO-merged engine
 #else
 	mdata = W_CacheLumpNum(mlumpnum, PU_MUSIC);
 #endif

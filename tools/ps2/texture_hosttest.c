@@ -39,6 +39,23 @@ void *W_CacheLumpNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
 	memcpy(p, input, inputsize);
 	return p;
 }
+size_t W_LumpLengthPwad(UINT16 wad, UINT16 lump) { (void)wad; (void)lump; return inputsize; }
+size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
+{
+	(void)wad; (void)lump;
+	host_check(offset <= inputsize && size <= inputsize - offset, "bounded patch header read");
+	memcpy(dest, input + offset, size);
+	return size;
+}
+#ifdef PS2_PROFILE
+boolean Picture_IsLumpCooked(const UINT8 *data, size_t size) { (void)data; (void)size; return false; }
+void *Picture_CookedConvert(const UINT8 *data, pictureformat_t fmt, INT32 *w, INT32 *h,
+	INT16 *top, INT16 *left, size_t insize, size_t *outsize, pictureflags_t flags)
+{
+	(void)data; (void)fmt; (void)w; (void)h; (void)top; (void)left; (void)insize; (void)outsize; (void)flags;
+	host_check(0, "Doom fixture cannot require cooked conversion"); return NULL;
+}
+#endif
 void *W_GetCachedPatchNumPwad(UINT16 wad, UINT16 lump)
 {
 	(void)wad; (void)lump;
@@ -53,9 +70,8 @@ void *W_CachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
 }
 UINT8 ASTBlendPaletteIndexes(UINT8 bg, UINT8 fg, int style, UINT8 alpha)
 {
-	(void)bg; (void)fg; (void)style; (void)alpha;
-	host_check(0, "copy-style texture fixtures must not reach blend drawers");
-	return 0;
+	// Deterministic nonlinear oracle: exercise whether each blend occurs and which source/dest it receives.
+	return (UINT8)(bg * 7u + fg * 13u + (UINT8)style * 3u + alpha);
 }
 void *Picture_Convert(pictureformat_t informat, void *picture, pictureformat_t outformat,
 	size_t insize, size_t *outsize, INT32 width, INT32 height, INT32 left, INT32 top, pictureflags_t flags)
@@ -132,6 +148,14 @@ static void run_texture(const char *name, INT16 width, INT16 height, INT16 patch
 		if (mode == 2) { t->patches[i].originx = i; t->patches[i].originy = i; }
 		if (mode == 3) { t->patches[i].originx = i-1; t->patches[i].originy = i-1; }
 		if (mode == 4) t->patches[i].originx = width+1;
+		if (mode >= 5)
+		{
+			t->patches[i].originx = i - 1;
+			t->patches[i].originy = i - 2;
+			t->patches[i].flip = (UINT8)(mode & 3);
+			t->patches[i].style = i ? AST_TRANSLUCENT : AST_COPY;
+			t->patches[i].alpha = mode == 5 ? 0 : (mode == 6 ? 24 : (mode == 7 ? 25 : (mode == 8 ? 128 : 255)));
+		}
 	}
 	Patch_CalcDataSizes((softwarepatch_t *)input, &rawpixels, &rawposts);
 	pixels = packed && patches == 1 ? rawpixels : (size_t)width * height;
@@ -140,7 +164,7 @@ static void run_texture(const char *name, INT16 width, INT16 height, INT16 patch
 	patch_t *oldpatch = cachedpatch;
 	R_GenerateTexture(0);
 #ifndef TEXTURE_REFERENCE
-	host_check(host_live_blocks == before + 1 + (!oldpatch && cachedpatch ? 4 : 0),
+	host_check(host_live_blocks == before + 1 + (!oldpatch && cachedpatch ? 1 : 0),
 		"all raw/scratch buffers freed; only texture and persistent patch remain");
 #else
 	(void)before; (void)oldpatch;
@@ -178,6 +202,11 @@ int main(int argc, char **argv)
 	run_texture("composite", raw->width+1, raw->height+1, 2, 2, 0);
 	run_texture("clipped", raw->width > 1 ? raw->width-1 : 1, raw->height-1, 2, 3, 0);
 	run_texture("offscreen", raw->width+1, raw->height+1, 2, 4, 0);
+	for (int mode = 5; mode <= 9; mode++)
+	{
+		char name[32]; snprintf(name, sizeof name, "blend-%d", mode);
+		run_texture(name, raw->width+2, raw->height+3, 3, mode, 0);
+	}
 	host_free_all();
 	free(input);
 	host_check(fclose(snapshot_output) == 0, "normalized snapshot output close");

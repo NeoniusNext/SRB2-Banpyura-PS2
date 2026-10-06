@@ -109,13 +109,26 @@ set(SRB2_ENGINE_SOURCES
 )
 
 if(SRB2_CONFIG_PS2PROFILE)
-	list(FILTER SRB2_ENGINE_SOURCES EXCLUDE REGEX "^(lua_.*|deh_lua)\\.c$")
-	list(APPEND SRB2_ENGINE_SOURCES ps2/lua_stub.c ps2/soc_numbers.c ps2/net_stub.c w_pack.c)
+	# OPT6-F: content systems of the profile (src/doomtype.h); SRB2_PS2_NO=lua;udmf;addons;limits;zippng switches some of them off
+	set(SRB2_PS2_NO "" CACHE STRING "PS2 profile features to switch off (lua;udmf;addons;limits;zippng)")
+	set(SRB2_PS2_ZIPPNG ON)
+	if("zippng" IN_LIST SRB2_PS2_NO)
+		set(SRB2_PS2_ZIPPNG OFF)
+	endif()
+	if("lua" IN_LIST SRB2_PS2_NO)
+		list(FILTER SRB2_ENGINE_SOURCES EXCLUDE REGEX "^(lua_.*|deh_lua)\\.c$")
+		list(APPEND SRB2_ENGINE_SOURCES ps2/lua_stub.c)
+	endif()
+	list(APPEND SRB2_ENGINE_SOURCES ps2/soc_numbers.c ps2/net_stub.c w_pack.c ps2/ps2_ftest.c)
 endif()
 add_executable(SRB2SDL2 MACOSX_BUNDLE WIN32 ${SRB2_ENGINE_SOURCES})
 
 if(SRB2_CONFIG_PS2PROFILE)
 	target_compile_definitions(SRB2SDL2 PRIVATE PS2_PROFILE NOHW NOMD5 NOMUMBLE NO_IPV6 NOUPNP)
+	foreach(ps2_no IN LISTS SRB2_PS2_NO)
+		string(TOUPPER "${ps2_no}" ps2_no_up)
+		target_compile_definitions(SRB2SDL2 PRIVATE PS2_NO_${ps2_no_up})
+	endforeach()
 	# Prefer the existing host dependency; alternatively compile an external LZ4
 	# source into an isolated host library (never link the SDK's EE library).
 	set(SRB2_HOST_PROFILE_LZ4_SOURCE "" CACHE FILEPATH "External lz4.c to compile for the host profile")
@@ -203,6 +216,9 @@ if(SRB2_CONFIG_PS2PROFILE)
 		netcode/d_clisrv.c netcode/server_connection.c netcode/client_connection.c
 		netcode/tic_command.c netcode/net_command.c netcode/gamestate.c
 		netcode/commands.c netcode/d_net.c netcode/d_netcmd.c)
+	if(NOT "lua" IN_LIST SRB2_PS2_NO)
+		add_subdirectory(blua)
+	endif()
 else()
 	add_subdirectory(blua)
 	add_subdirectory(netcode)
@@ -470,18 +486,20 @@ if(SRB2_CONFIG_PS2PROFILE)
 	# SDL's stock locator searches for pk3 even though this profile loads packs.
 	# Rename that entry point locally and supply the native pack locator adapter.
 	set_property(SOURCE sdl/i_system.c APPEND PROPERTY COMPILE_DEFINITIONS I_LocateWad=I_LocateWadPK3)
+	# Native SDL shutdown still calls D_SaveBan; bind it to a profile-only no-op.
+	set_property(SOURCE sdl/i_system.c netcode/commands.c APPEND PROPERTY COMPILE_DEFINITIONS D_SaveBan=PS2_HostNoSaveBan)
 	target_sources(SRB2SDL2 PRIVATE ../tools/ps2/build_host_profile_wad.c)
 	target_include_directories(SRB2SDL2 PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
-if(TARGET ZLIB::ZLIB)
+if(TARGET ZLIB::ZLIB AND NOT (SRB2_CONFIG_PS2PROFILE AND NOT SRB2_PS2_ZIPPNG))
 	target_compile_definitions(SRB2SDL2 PRIVATE -DHAVE_ZLIB)
 	message(STATUS "Zlib Found")
 else()
 	message(STATUS "No Zlib Found")
 endif()
 
-if(TARGET PNG::PNG)
+if(TARGET PNG::PNG AND NOT (SRB2_CONFIG_PS2PROFILE AND NOT SRB2_PS2_ZIPPNG))
 	target_compile_definitions(SRB2SDL2 PRIVATE -DHAVE_PNG)
 	target_sources(SRB2SDL2 PRIVATE apng.c ${libapng_HEADER})
 	target_include_directories(SRB2SDL2 PRIVATE ${libapng_INCLUDE_DIRS} ${libpng_BINARY_DIR})
@@ -493,12 +511,12 @@ else()
 	message(STATUS "No libpng Found")
 endif()
 
-if(TARGET PNG::PNG AND TARGET ZLIB::ZLIB)
+if(TARGET PNG::PNG AND TARGET ZLIB::ZLIB AND NOT (SRB2_CONFIG_PS2PROFILE AND NOT SRB2_PS2_ZIPPNG))
 #libpng links zlib too?
 target_link_libraries(SRB2SDL2 PRIVATE PNG::PNG)
 endif()
 
-if(NOT TARGET PNG::PNG AND TARGET ZLIB::ZLIB)
+if(NOT TARGET PNG::PNG AND TARGET ZLIB::ZLIB AND NOT (SRB2_CONFIG_PS2PROFILE AND NOT SRB2_PS2_ZIPPNG))
 #got no libpng? we need zlib
 target_link_libraries(SRB2SDL2 PRIVATE ZLIB::ZLIB)
 endif()

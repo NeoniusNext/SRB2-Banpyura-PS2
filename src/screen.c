@@ -66,16 +66,24 @@ UINT8 setrenderneeded = 0;
 static CV_PossibleValue_t scr_depth_cons_t[] = {{8, "8 bits"}, {16, "16 bits"}, {24, "24 bits"}, {32, "32 bits"}, {0, NULL}};
 
 //added : 03-02-98: default screen mode, as loaded/saved in config
+#ifdef PS2
+// PS2: the saved internal resolution is a mode of src/ps2/ps2_vmodes.h (320x200 by default); there is no window
+consvar_t cv_scr_width = CVAR_INIT ("scr_width", "320", CV_SAVE, CV_Unsigned, NULL);
+consvar_t cv_scr_height = CVAR_INIT ("scr_height", "200", CV_SAVE, CV_Unsigned, NULL);
+consvar_t cv_scr_width_w = CVAR_INIT ("scr_width_w", "320", CV_SAVE, CV_Unsigned, NULL);
+consvar_t cv_scr_height_w = CVAR_INIT ("scr_height_w", "200", CV_SAVE, CV_Unsigned, NULL);
+#else
 consvar_t cv_scr_width = CVAR_INIT ("scr_width", "1280", CV_SAVE, CV_Unsigned, NULL);
 consvar_t cv_scr_height = CVAR_INIT ("scr_height", "800", CV_SAVE, CV_Unsigned, NULL);
 consvar_t cv_scr_width_w = CVAR_INIT ("scr_width_w", "640", CV_SAVE, CV_Unsigned, NULL);
 consvar_t cv_scr_height_w = CVAR_INIT ("scr_height_w", "400", CV_SAVE, CV_Unsigned, NULL);
+#endif
 consvar_t cv_scr_depth = CVAR_INIT ("scr_depth", "16 bits", CV_SAVE, scr_depth_cons_t, NULL);
 
 CV_PossibleValue_t cv_renderer_t[] = {
 	{1, "Software"},
 #ifdef HWRENDER
-	{2, "OpenGL"},
+	{2, HWR_RENDERER_NAME},
 #endif
 	{0, NULL}
 };
@@ -242,6 +250,10 @@ void SCR_Recalc(void)
 	// set the screen[x] ptrs on the new vidbuffers
 	V_Init();
 
+#ifdef PS2
+	usebuffer = false; // screens[1] (the intermission backdrop) does not hold the old picture any more
+#endif
+
 	// scr_viewsize doesn't change, neither detailLevel, but the pixels
 	// per screenblock is different now, since we've changed resolution.
 	R_SetViewSize(); //just set setsizeneeded true now ..
@@ -278,21 +290,43 @@ void SCR_CheckDefaultMode(void)
 	if (M_CheckParm("-height") && M_IsNextParm())
 		scr_forcey = atoi(M_GetNextParm());
 
+#ifdef PS2
+	if (M_CheckParm("-vidmode") && M_IsNextParm()) // a mode number of src/ps2/ps2_vmodes.h
+	{
+		INT32 modenum = atoi(M_GetNextParm());
+		if (modenum >= 0 && modenum < VID_NumModes())
+		{
+			CONS_Printf(M_GetText("Using resolution: %s\n"), VID_GetModeName(modenum));
+			setmodeneeded = modenum + 1;
+		}
+		else
+			CONS_Alert(CONS_WARNING, "Video mode %d does not exist, defaulting to base resolution\n", (int)modenum);
+	}
+	else
+#endif
 	if (scr_forcex && scr_forcey)
 	{
 		CONS_Printf(M_GetText("Using resolution: %d x %d\n"), scr_forcex, scr_forcey);
 		// returns -1 if not found, thus will be 0 (no mode change) if not found
 		setmodeneeded = VID_GetModeForSize(scr_forcex, scr_forcey) + 1;
+#ifdef PS2
+		if (setmodeneeded <= 0)
+			CONS_Alert(CONS_WARNING, "Invalid resolution given, defaulting to base resolution\n");
+#endif
 	}
 	else
 	{
 		CONS_Printf(M_GetText("Default resolution: %d x %d\n"), cv_scr_width.value, cv_scr_height.value);
 		CONS_Printf(M_GetText("Windowed resolution: %d x %d\n"), cv_scr_width_w.value, cv_scr_height_w.value);
 		CONS_Printf(M_GetText("Default bit depth: %d bits\n"), cv_scr_depth.value);
+#ifdef PS2
+		setmodeneeded = VID_GetModeForSize(cv_scr_width.value, cv_scr_height.value) + 1; // the PS2 has no windowed mode
+#else
 		if (cv_fullscreen.value)
 			setmodeneeded = VID_GetModeForSize(cv_scr_width.value, cv_scr_height.value) + 1; // see note above
 		else
 			setmodeneeded = VID_GetModeForSize(cv_scr_width_w.value, cv_scr_height_w.value) + 1; // see note above
+#endif
 
 		if (setmodeneeded <= 0)
 			CONS_Alert(CONS_WARNING, "Invalid resolution given, defaulting to base resolution\n");
@@ -313,8 +347,16 @@ void SCR_CheckDefaultMode(void)
 // sets the modenum as the new default video mode to be saved in the config file
 void SCR_SetDefaultMode(void)
 {
+#ifdef PS2
+	// the PS2 has no windowed mode: both pairs hold the one saved resolution
+	CV_SetValue(&cv_scr_width, vid.width);
+	CV_SetValue(&cv_scr_height, vid.height);
+	CV_SetValue(&cv_scr_width_w, vid.width);
+	CV_SetValue(&cv_scr_height_w, vid.height);
+#else
 	CV_SetValue(cv_fullscreen.value ? &cv_scr_width : &cv_scr_width_w, vid.width);
 	CV_SetValue(cv_fullscreen.value ? &cv_scr_height : &cv_scr_height_w, vid.height);
+#endif
 }
 
 // Change fullscreen on/off according to cv_fullscreen

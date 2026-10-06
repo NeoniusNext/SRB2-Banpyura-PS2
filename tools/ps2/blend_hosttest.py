@@ -61,31 +61,37 @@ def blend_sections():
     return renderer, support
 
 
-def run_case(out, arch, renderer, support, fixture, negative=False):
-    work = out / (("negative-old-lazy-" if negative else "blend-") + arch)
+def run_case(out, arch, renderer, support, fixture, negative=False, ps2=False, cache_control=''):
+    work = out / (("negative-" + cache_control + "-" if cache_control else "negative-old-lazy-" if negative else "blend-ee-" if ps2 else "blend-") + arch)
     work.mkdir(exist_ok=True)
     (work / "blend_renderer.inc").write_text(renderer, encoding="utf-8")
     (work / "blend_support.inc").write_text(support, encoding="utf-8")
     source = ROOT / "tools/ps2/blend_hosttest.c"
-    exe = build(work, "blend_hosttest", arch, [(source, "candidate.obj", []),
+    exe = build(work, "blend_hosttest", arch, [(source, "candidate.obj", ["/DPS2"] if ps2 else []),
                 (source, "reference.obj", ["/DBLEND_REFERENCE"]), (source, "support.obj", ["/DBLEND_SUPPORT"])])
     tested = subprocess.run([str(exe)], input=fixture, capture_output=True)
     log = (tested.stdout + tested.stderr).decode("ascii", errors="replace")
     (work / "test.log").write_text(log, encoding="utf-8")
     print(f"{work.name}: exit={tested.returncode}\n{log}", end="")
-    if negative:
+    if cache_control:
+        expected = {'trans-touch': 'TRANS current-frame pointer survives pressure',
+                    'trans-owner': 'TRANS cache has stable owner'}[cache_control]
+        if tested.returncode != 2 or 'FAIL: ' + expected not in log:
+            raise RuntimeError(f"TRANS cache negative control did not detect {cache_control}")
+    elif negative:
         mismatch = re.search(r"reverse/cold: 31 tables, (\d+) defined-byte differences in (\d+) tables", log)
         if tested.returncode != 1 or not mismatch or int(mismatch[1]) == 0 or int(mismatch[2]) == 0:
             raise RuntimeError("Old lazy negative control did not demonstrate an equivalence mismatch")
     elif tested.returncode:
         raise RuntimeError(f"Blend equivalence failed: {work}")
-    return {"case": work.name, "exit": tested.returncode, "negative_control": negative}
+    return {"case": work.name, "exit": tested.returncode, "negative_control": bool(negative or cache_control)}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", type=Path, default=ROOT / "build/agent-equivalence-g1")
     ap.add_argument("--negative-controls", action="store_true")
+    ap.add_argument("--ps2-alignment", action="store_true", help="also exercise the EE cache-line-aligned table path")
     args = ap.parse_args()
     out = args.out.resolve()
     if not out.parent.is_dir():
@@ -104,6 +110,8 @@ def main():
             raise RuntimeError("Unexpected vanilla TRANS table size")
         fixture = palette + b"".join(tables)
     results = [run_case(out, arch, renderer, support, fixture) for arch in ["x86", "x64"]]
+    if args.ps2_alignment:
+        results.append(run_case(out, "x86", renderer, support, fixture, ps2=True))
     if args.negative_controls:
         start = renderer.index("static void BlendTab_NeedLUT(void)\n{")
         end = renderer.index("\n#endif", start)
@@ -113,6 +121,15 @@ def main():
         mutant = renderer[:start] + old + renderer[end:]
         # Reference branch is untouched; this recreates the old profile lazy bug.
         results.append(run_case(out, "x64", mutant, support, fixture, True))
+        if args.ps2_alignment:
+            touch = '\tZ_Touch(transtab_lazy[level]);'
+            owner = 'PU_CACHE, &transtab_lazy[level], 6'
+            if renderer.count(touch) != 1 or renderer.count(owner) != 1:
+                raise RuntimeError('TRANS cache negative-control anchors changed')
+            results.append(run_case(out, "x86", renderer.replace(touch, '\t/* missing touch */', 1),
+                                    support, fixture, ps2=True, cache_control='trans-touch'))
+            results.append(run_case(out, "x86", renderer.replace(owner, 'PU_CACHE, NULL, 6', 1),
+                                    support, fixture, ps2=True, cache_control='trans-owner'))
     (out / "blend-results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     print("Requested blend host checks passed; old-lazy negative control failed as expected." if args.negative_controls
           else "Requested blend host checks passed.")

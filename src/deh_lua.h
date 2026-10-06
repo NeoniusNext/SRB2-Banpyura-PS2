@@ -28,7 +28,7 @@
 #include "dehacked.h"
 #include "deh_tables.h"
 
-#ifdef PS2_PROFILE
+#ifndef HAS_LUA
 // no Lua: no global to refresh, no Lua action to bind
 static inline void LUA_UpdateSprName(const char *name, INT32 value) {}
 static inline boolean LUA_SetLuaAction(void *state, const char *actiontocompare) { return false; }

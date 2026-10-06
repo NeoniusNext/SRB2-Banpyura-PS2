@@ -90,6 +90,9 @@
 #include "taglist.h"
 
 #include "netcode/net_command.h"
+#ifdef PS2_PROFILE
+#include "ps2/ps2_ftest.h"
+#endif
 
 //
 // Map MD5, calculated on level load.
@@ -111,10 +114,32 @@ subsector_t *subsectors;
 node_t *nodes;
 line_t *lines;
 side_t *sides;
+#if !defined(SIDE_UDMF) && (defined(HAS_UDMF) || defined(HAS_LUA))
+// PS2-102: the UDMF fields of the sides of this level, only when a UDMF map or a Lua script has set one (r_defs.h SIDER/SIDEW)
+sideudmf_t *sideudmf;
+const sideudmf_t sideudmf_default = {
+	0, 0, 0, 0, 0, 0,
+	FRACUNIT, FRACUNIT, FRACUNIT, FRACUNIT, FRACUNIT, FRACUNIT,
+	0, 0, 0, 0, false, false, false, false
+};
+
+sideudmf_t *R_SideUDMFW(const side_t *side)
+{
+	if (!sideudmf)
+	{
+		size_t i;
+
+		sideudmf = Z_Malloc(sizeof (*sideudmf) * numsides, PU_LEVEL, (void **)&sideudmf);
+		for (i = 0; i < numsides; i++)
+			sideudmf[i] = sideudmf_default;
+	}
+	return &sideudmf[side - sides];
+}
+#endif
 mapthing_t *mapthings;
-sector_t *spawnsectors;
-line_t *spawnlines;
-side_t *spawnsides;
+spawnsector_t *spawnsectors;
+spawnline_t *spawnlines;
+spawnside_t *spawnsides;
 INT32 numstarposts;
 UINT16 bossdisabled;
 boolean stoppedclock;
@@ -134,6 +159,10 @@ INT32 bmapwidth, bmapheight; // size in mapblocks
 INT32 *blockmap; // INT32 for large maps
 // offsets in blockmap are from here
 INT32 *blockmaplump; // Big blockmap
+#ifdef PS2_PROFILE
+UINT16 *ps2_blockmaplists;
+static size_t ps2_blockmapwords;
+#endif
 
 // origin of block map
 fixed_t bmaporgx, bmaporgy;
@@ -584,6 +613,10 @@ size_t P_PrecacheLevelFlats(void)
 	flatmemory = 0;
 	for (i = 0; i < numlevelflats; i++)
 	{
+#ifdef PS2_PROFILE
+		if (!R_PrecacheHasRoom())
+			break;
+#endif
 		if (levelflats[i].type != LEVELFLAT_NONE)
 			R_GetFlat(&levelflats[i]);
 	}
@@ -920,7 +953,9 @@ static void P_SpawnMapThings(boolean spawnemblems)
 		P_SpawnEmeraldHunt();
 }
 
+#ifndef PS2_PROFILE
 static void P_WriteTextmap_Things(FILE *f, const mapthing_t *wmapthings); // proto
+#endif
 
 // Experimental groovy write function!
 void P_WriteThings(const char *filepath)
@@ -930,6 +965,7 @@ void P_WriteThings(const char *filepath)
 	UINT8 *savebuffer, *savebuf_p;
 	INT16 temp;
 
+#ifndef PS2_PROFILE
 	if (udmf)
 	{
 		FILE *f = fopen(va("%s.txt", filepath), "w");
@@ -945,6 +981,7 @@ void P_WriteThings(const char *filepath)
 		CONS_Printf(M_GetText("%s.txt saved.\n"), filepath);
 		return;
 	}
+#endif
 
 	savebuf_p = savebuffer = (UINT8 *)malloc(nummapthings * sizeof (mapthing_t));
 
@@ -1377,6 +1414,7 @@ static void P_LoadSidedefs(UINT8 *data)
 		}
 		sd->rowoffset = SHORT(msd->rowoffset)<<FRACBITS;
 
+#ifdef SIDE_UDMF
 		sd->offsetx_top = sd->offsetx_mid = sd->offsetx_bottom = 0;
 		sd->offsety_top = sd->offsety_mid = sd->offsety_bottom = 0;
 
@@ -1385,6 +1423,7 @@ static void P_LoadSidedefs(UINT8 *data)
 
 		sd->light = sd->light_top = sd->light_mid = sd->light_bottom = 0;
 		sd->lightabsolute = sd->lightabsolute_top = sd->lightabsolute_mid = sd->lightabsolute_bottom = false;
+#endif
 
 		P_SetSidedefSector(i, (UINT16)SHORT(msd->sector));
 
@@ -1572,6 +1611,7 @@ static void P_LoadThings(UINT8 *data)
 	}
 }
 
+#ifdef HAS_UDMF // PS2-102: the TEXTMAP parser comes with PS2_UDMF; the -writetextmap writer stays out of the profile
 // Stores positions for relevant map data spread through a TEXTMAP.
 typedef struct textmap_block_s
 {
@@ -1963,29 +2003,29 @@ static void ParseTextmapSidedefParameter(UINT32 i, const char *param, const char
 	else if (fastcmp(param, "offsety"))
 		sides[i].rowoffset = atol(val)<<FRACBITS;
 	else if (fastcmp(param, "offsetx_top"))
-		sides[i].offsetx_top = atol(val) << FRACBITS;
+		SIDEW(&sides[i])->offsetx_top = atol(val) << FRACBITS;
 	else if (fastcmp(param, "offsetx_mid"))
-		sides[i].offsetx_mid = atol(val) << FRACBITS;
+		SIDEW(&sides[i])->offsetx_mid = atol(val) << FRACBITS;
 	else if (fastcmp(param, "offsetx_bottom"))
-		sides[i].offsetx_bottom = atol(val) << FRACBITS;
+		SIDEW(&sides[i])->offsetx_bottom = atol(val) << FRACBITS;
 	else if (fastcmp(param, "offsety_top"))
-		sides[i].offsety_top = atol(val) << FRACBITS;
+		SIDEW(&sides[i])->offsety_top = atol(val) << FRACBITS;
 	else if (fastcmp(param, "offsety_mid"))
-		sides[i].offsety_mid = atol(val) << FRACBITS;
+		SIDEW(&sides[i])->offsety_mid = atol(val) << FRACBITS;
 	else if (fastcmp(param, "offsety_bottom"))
-		sides[i].offsety_bottom = atol(val) << FRACBITS;
+		SIDEW(&sides[i])->offsety_bottom = atol(val) << FRACBITS;
 	else if (fastcmp(param, "scalex_top"))
-		sides[i].scalex_top = FLOAT_TO_FIXED(atof(val));
+		SIDEW(&sides[i])->scalex_top = FLOAT_TO_FIXED(atof(val));
 	else if (fastcmp(param, "scalex_mid"))
-		sides[i].scalex_mid = FLOAT_TO_FIXED(atof(val));
+		SIDEW(&sides[i])->scalex_mid = FLOAT_TO_FIXED(atof(val));
 	else if (fastcmp(param, "scalex_bottom"))
-		sides[i].scalex_bottom = FLOAT_TO_FIXED(atof(val));
+		SIDEW(&sides[i])->scalex_bottom = FLOAT_TO_FIXED(atof(val));
 	else if (fastcmp(param, "scaley_top"))
-		sides[i].scaley_top = FLOAT_TO_FIXED(atof(val));
+		SIDEW(&sides[i])->scaley_top = FLOAT_TO_FIXED(atof(val));
 	else if (fastcmp(param, "scaley_mid"))
-		sides[i].scaley_mid = FLOAT_TO_FIXED(atof(val));
+		SIDEW(&sides[i])->scaley_mid = FLOAT_TO_FIXED(atof(val));
 	else if (fastcmp(param, "scaley_bottom"))
-		sides[i].scaley_bottom = FLOAT_TO_FIXED(atof(val));
+		SIDEW(&sides[i])->scaley_bottom = FLOAT_TO_FIXED(atof(val));
 	else if (fastcmp(param, "texturetop"))
 		sides[i].toptexture = R_TextureNumForName(val);
 	else if (fastcmp(param, "texturebottom"))
@@ -1997,21 +2037,21 @@ static void ParseTextmapSidedefParameter(UINT32 i, const char *param, const char
 	else if (fastcmp(param, "repeatcnt"))
 		sides[i].repeatcnt = atol(val);
 	else if (fastcmp(param, "light"))
-		sides[i].light = atol(val);
+		SIDEW(&sides[i])->light = atol(val);
 	else if (fastcmp(param, "light_top"))
-		sides[i].light_top = atol(val);
+		SIDEW(&sides[i])->light_top = atol(val);
 	else if (fastcmp(param, "light_mid"))
-		sides[i].light_mid = atol(val);
+		SIDEW(&sides[i])->light_mid = atol(val);
 	else if (fastcmp(param, "light_bottom"))
-		sides[i].light_bottom = atol(val);
+		SIDEW(&sides[i])->light_bottom = atol(val);
 	else if (fastcmp(param, "lightabsolute") && fastcmp("true", val))
-		sides[i].lightabsolute = true;
+		SIDEW(&sides[i])->lightabsolute = true;
 	else if (fastcmp(param, "lightabsolute_top") && fastcmp("true", val))
-		sides[i].lightabsolute_top = true;
+		SIDEW(&sides[i])->lightabsolute_top = true;
 	else if (fastcmp(param, "lightabsolute_mid") && fastcmp("true", val))
-		sides[i].lightabsolute_mid = true;
+		SIDEW(&sides[i])->lightabsolute_mid = true;
 	else if (fastcmp(param, "lightabsolute_bottom") && fastcmp("true", val))
-		sides[i].lightabsolute_bottom = true;
+		SIDEW(&sides[i])->lightabsolute_bottom = true;
 }
 
 static void ParseTextmapLinedefParameter(UINT32 i, const char *param, const char *val)
@@ -2220,6 +2260,7 @@ static void TextmapFixFlatOffsets(sector_t *sec)
 	}
 }
 
+#ifndef PS2_PROFILE // PS2-102: the -writetextmap tool (this and everything up to P_LoadTextmap) is not in the profile
 static void TextmapUnfixFlatOffsets(sector_t *sec)
 {
 	if (sec->floorangle)
@@ -2243,6 +2284,8 @@ static void TextmapUnfixFlatOffsets(sector_t *sec)
 	}
 }
 
+#endif // !PS2_PROFILE (TextmapUnfixFlatOffsets)
+
 static INT32 P_ColorToRGBA(INT32 color, UINT8 alpha)
 {
 	UINT8 r = (color >> 16) & 0xFF;
@@ -2251,6 +2294,7 @@ static INT32 P_ColorToRGBA(INT32 color, UINT8 alpha)
 	return R_PutRgbaRGBA(r, g, b, alpha);
 }
 
+#ifndef PS2_PROFILE
 static INT32 P_RGBAToColor(INT32 rgba)
 {
 	UINT8 r = R_GetRgbaR(rgba);
@@ -2999,6 +3043,8 @@ static void P_WriteTextmap(void)
 	}
 }
 
+#endif // !PS2_PROFILE (the writer)
+
 /** Loads the textmap data, after obtaining the elements count and allocating their respective space.
   */
 static void P_LoadTextmap(void)
@@ -3148,17 +3194,21 @@ static void P_LoadTextmap(void)
 		// Defaults.
 		sd->textureoffset = 0;
 		sd->rowoffset = 0;
+#ifdef SIDE_UDMF // (the compact side has no such fields: the defaults are those of sideudmf_default)
 		sd->offsetx_top = sd->offsetx_mid = sd->offsetx_bottom = 0;
 		sd->offsety_top = sd->offsety_mid = sd->offsety_bottom = 0;
 		sd->scalex_top = sd->scalex_mid = sd->scalex_bottom = FRACUNIT;
 		sd->scaley_top = sd->scaley_mid = sd->scaley_bottom = FRACUNIT;
+#endif
 		sd->toptexture = R_TextureNumForName("-");
 		sd->midtexture = R_TextureNumForName("-");
 		sd->bottomtexture = R_TextureNumForName("-");
 		sd->sector = NULL;
 		sd->repeatcnt = 0;
+#ifdef SIDE_UDMF
 		sd->light = sd->light_top = sd->light_mid = sd->light_bottom = 0;
 		sd->lightabsolute = sd->lightabsolute_top = sd->lightabsolute_mid = sd->lightabsolute_bottom = false;
+#endif
 
 		TextmapParse(sidedefBlocks.pos[i], i, ParseTextmapSidedefParameter);
 
@@ -3188,6 +3238,7 @@ static void P_LoadTextmap(void)
 	}
 }
 
+#endif
 static void P_ProcessLinedefsAfterSidedefs(void)
 {
 	size_t i = numlines;
@@ -3260,11 +3311,28 @@ static void P_ProcessLinedefsAfterSidedefs(void)
 	}
 }
 
+#ifdef PS2
+#include "ps2_mem.h"
+#define ZCK(name) PS2Mem_Checkpoint(name) // -zck: memory by group at this stage of the level load
+#else
+#define ZCK(name) ((void)0)
+#endif
+
+// PS2-52: the map lumps of the profile are read one at a time and dropped when the level structure was built from them
+#ifdef PS2_PROFILE
+#define VRES_DATA(virt, vlump) vres_Data(virt, vlump)
+#define VRES_DROP(vlump) vres_Drop(vlump)
+#else
+#define VRES_DATA(virt, vlump) ((vlump)->data)
+#define VRES_DROP(vlump) ((void)0)
+#endif
+
 static boolean P_LoadMapData(const virtres_t *virt)
 {
 	virtlump_t *virtvertexes = NULL, *virtsectors = NULL, *virtsidedefs = NULL, *virtlinedefs = NULL, *virtthings = NULL;
 
 	// Count map data.
+#ifdef HAS_UDMF
 	if (udmf) // Count how many entries for each type we got in textmap.
 	{
 		virtlump_t *textmap = vres_Find(virt, "TEXTMAP");
@@ -3273,7 +3341,8 @@ static boolean P_LoadMapData(const virtres_t *virt)
 			CONS_Alert(CONS_ERROR, "Emtpy TEXTMAP Lump!\n");
 			return false;
 		}
-		M_TokenizerOpen((char *)textmap->data, textmap->size);
+		M_TokenizerOpen((char *)VRES_DATA(virt, textmap), textmap->size);
+		VRES_DROP(textmap); // the tokenizer has its own copy
 		if (!TextmapCount(textmap->size))
 		{
 			M_TokenizerClose();
@@ -3281,6 +3350,7 @@ static boolean P_LoadMapData(const virtres_t *virt)
 		}
 	}
 	else
+#endif
 	{
 		virtthings   = vres_Find(virt, "THINGS");
 		virtvertexes = vres_Find(virt, "VERTEXES");
@@ -3321,6 +3391,7 @@ static boolean P_LoadMapData(const virtres_t *virt)
 	sides     = Z_Calloc(numsides * sizeof (*sides), PU_LEVEL, NULL);
 	lines     = Z_Calloc(numlines * sizeof (*lines), PU_LEVEL, NULL);
 	mapthings = Z_Calloc(nummapthings * sizeof (*mapthings), PU_LEVEL, NULL);
+	ZCK("map-alloc");
 
 	// Allocate a big chunk of memory as big as our MAXLEVELFLATS limit.
 	//Fab : FIXME: allocate for whatever number of flats - 512 different flats per level should be plenty
@@ -3331,18 +3402,25 @@ static boolean P_LoadMapData(const virtres_t *virt)
 	numlevelflats = 0;
 
 	// Load map data.
+#ifdef HAS_UDMF
 	if (udmf)
 	{
 		P_LoadTextmap();
 		M_TokenizerClose();
 	}
 	else
+#endif
 	{
-		P_LoadVertices(virtvertexes->data);
-		P_LoadSectors(virtsectors->data);
-		P_LoadLinedefs(virtlinedefs->data);
-		P_LoadSidedefs(virtsidedefs->data);
-		P_LoadThings(virtthings->data);
+		P_LoadVertices(VRES_DATA(virt, virtvertexes));
+		VRES_DROP(virtvertexes);
+		P_LoadSectors(VRES_DATA(virt, virtsectors));
+		VRES_DROP(virtsectors);
+		P_LoadLinedefs(VRES_DATA(virt, virtlinedefs));
+		VRES_DROP(virtlinedefs);
+		P_LoadSidedefs(VRES_DATA(virt, virtsidedefs));
+		VRES_DROP(virtsidedefs);
+		P_LoadThings(VRES_DATA(virt, virtthings));
+		VRES_DROP(virtthings);
 	}
 
 	P_ProcessLinedefsAfterSidedefs();
@@ -3510,17 +3588,19 @@ static nodetype_t P_GetNodetype(const virtres_t *virt, UINT8 **nodedata, char si
 	*nodedata = NULL;
 	signature[0] = signature[4] = '\0';
 
+#ifdef HAS_UDMF
 	if (udmf)
 	{
 		virtlump_t *virtznodes = vres_Find(virt, "ZNODES");
 
 		if (virtznodes && virtznodes->size)
 		{
-			*nodedata = virtznodes->data;
+			*nodedata = VRES_DATA(virt, virtznodes);
 			supported[NT_XGLN] = supported[NT_XGL2] = supported[NT_XGL3] = true;
 		}
 	}
 	else
+#endif
 	{
 		virtlump_t *virtsegs = vres_Find(virt, "SEGS");
 		virtlump_t *virtssectors;
@@ -3530,7 +3610,11 @@ static nodetype_t P_GetNodetype(const virtres_t *virt, UINT8 **nodedata, char si
 			virtlump_t *virtnodes = vres_Find(virt, "NODES");
 			if (virtnodes && virtnodes->size)
 			{
+#ifdef PS2_PROFILE
+				*nodedata = (UINT8 *)virtnodes; // only a marker: P_LoadMapBSP reads these lumps one at a time
+#else
 				*nodedata = virtnodes->data;
+#endif
 				return NT_DOOM; // Traditional map format BSP tree.
 			}
 		}
@@ -3540,7 +3624,7 @@ static nodetype_t P_GetNodetype(const virtres_t *virt, UINT8 **nodedata, char si
 
 			if (virtssectors && virtssectors->size)
 			{ // Possibly GL nodes: NODES ignored, SSECTORS takes precedence as nodes lump (it is confusing, yeah), and has a signature.
-				*nodedata = virtssectors->data;
+				*nodedata = VRES_DATA(virt, virtssectors);
 				supported[NT_XGLN] = supported[NT_ZGLN] = supported[NT_XGL2] = supported[NT_XGL3] = true;
 			}
 			else
@@ -3548,7 +3632,7 @@ static nodetype_t P_GetNodetype(const virtres_t *virt, UINT8 **nodedata, char si
 				virtlump_t *virtnodes = vres_Find(virt, "NODES");
 				if (virtnodes && virtnodes->size)
 				{
-					*nodedata = virtnodes->data;
+					*nodedata = VRES_DATA(virt, virtnodes);
 					supported[NT_XNOD] = supported[NT_ZNOD] = true;
 				}
 			}
@@ -3814,9 +3898,12 @@ static void P_LoadMapBSP(const virtres_t *virt)
 		nodes      = Z_Calloc(numnodes * sizeof(*nodes), PU_LEVEL, NULL);
 		segs       = Z_Calloc(numsegs * sizeof(*segs), PU_LEVEL, NULL);
 
-		P_LoadSubsectors(virtssectors->data);
-		P_LoadNodes(virtnodes->data);
-		P_LoadSegs(virtsegs->data);
+		P_LoadSubsectors(VRES_DATA(virt, virtssectors));
+		VRES_DROP(virtssectors);
+		P_LoadNodes(VRES_DATA(virt, virtnodes));
+		VRES_DROP(virtnodes);
+		P_LoadSegs(VRES_DATA(virt, virtsegs));
+		VRES_DROP(virtsegs);
 		break;
 	}
 	case NT_XNOD:
@@ -3846,6 +3933,9 @@ static void P_ReadBlockMapLump(INT16 *wadblockmaplump, size_t count)
 {
 	size_t i;
 	blockmaplump = Z_Calloc(sizeof (*blockmaplump) * count, PU_LEVEL, NULL);
+#ifdef PS2_PROFILE
+	ps2_blockmapwords = count;
+#endif
 
 	// killough 3/1/98: Expand wad blockmap into larger internal one,
 	// by treating all offsets except -1 as unsigned and zero-extending
@@ -3957,6 +4047,99 @@ static boolean LineInBlock(fixed_t cx1, fixed_t cy1, fixed_t cx2, fixed_t cy2, f
 //
 // Please note: This section of code is not interchangable with TeamTNT's
 // code which attempts to fix the same problem.
+#ifdef PS2
+// Count first, then fill the final lists backwards: identical line order without per-block scratch lists.
+static void P_BlockMapPass(INT32 minx, INT32 miny, size_t tot, UINT32 *cursor, boolean fill)
+{
+	size_t i;
+	for (i = 0; i < numlines; i++)
+	{
+		INT32 x = (lines[i].v1->x >> FRACBITS) - minx;
+		INT32 y = (lines[i].v1->y >> FRACBITS) - miny;
+		INT32 v2x = (lines[i].v2->x >> FRACBITS) - minx;
+		INT32 v2y = (lines[i].v2->y >> FRACBITS) - miny;
+		INT32 bxstart = x >> MAPBTOFRAC, bystart = y >> MAPBTOFRAC;
+		INT32 bxend = v2x >> MAPBTOFRAC, byend = v2y >> MAPBTOFRAC;
+		INT32 bx, by;
+		boolean straight;
+		if (bxend < bxstart) { INT32 tmp = bxstart; bxstart = bxend; bxend = tmp; }
+		if (byend < bystart) { INT32 tmp = bystart; bystart = byend; byend = tmp; }
+		if (lines[i].v1->y == lines[i].v2->y)
+		{
+			straight = true; bystart--; byend++;
+		}
+		else if (lines[i].v1->x == lines[i].v2->x)
+		{
+			straight = true; bxstart--; bxend++;
+		}
+		else
+			straight = false;
+		for (bx = bxstart; bx <= bxend; bx++)
+		for (by = bystart; by <= byend; by++)
+		{
+			// Keep the legacy linear-index boundary behaviour as well as its geometry predicate.
+			size_t b = by * bmapwidth + bx;
+			if (b >= tot || (!straight && !LineInBlock(x, y, v2x, v2y,
+				(fixed_t)(bx << MAPBTOFRAC), (fixed_t)(by << MAPBTOFRAC))))
+				continue;
+			if (fill)
+				blockmaplump[--cursor[b]] = (INT32)i;
+			else
+			{
+				if (cursor[b] == INT32_MAX)
+					I_Error("P_CreateBlockMap: block list exceeds addressable storage");
+				cursor[b]++;
+			}
+		}
+	}
+}
+
+static void P_BuildBlockMapPS2(INT32 minx, INT32 miny)
+{
+	size_t tot, count, i, ndx;
+	UINT32 *cursor;
+	if (bmapwidth <= 0 || bmapheight <= 0 || (size_t)bmapwidth > SIZE_MAX / (size_t)bmapheight
+		|| numlines > INT32_MAX)
+		I_Error("P_CreateBlockMap: block grid exceeds addressable storage");
+	tot = (size_t)bmapwidth * (size_t)bmapheight;
+	if (tot > SIZE_MAX / sizeof(*cursor) || tot > INT32_MAX - 6)
+		I_Error("P_CreateBlockMap: block grid exceeds addressable storage");
+	cursor = Z_Calloc(tot * sizeof(*cursor), PU_LEVEL, NULL);
+	P_BlockMapPass(minx, miny, tot, cursor, false);
+	ZCK("blockmap-lists");
+	count = tot + 6;
+	for (i = 0; i < tot; i++)
+		if (cursor[i])
+		{
+			if ((size_t)cursor[i] + 2 > SIZE_MAX - count)
+				I_Error("P_CreateBlockMap: block lists exceed addressable storage");
+			count += (size_t)cursor[i] + 2;
+		}
+	if (count > INT32_MAX || count > SIZE_MAX / sizeof(*blockmaplump))
+		I_Error("P_CreateBlockMap: blockmap exceeds addressable storage");
+	blockmaplump = Z_Calloc(count * sizeof(*blockmaplump), PU_LEVEL, NULL);
+#ifdef PS2_PROFILE
+	ps2_blockmapwords = count;
+#endif
+	ndx = tot + 4;
+	blockmaplump[ndx++] = 0;
+	blockmaplump[ndx++] = -1;
+	for (i = 0; i < tot; i++)
+		if (cursor[i])
+		{
+			blockmaplump[i + 4] = (INT32)ndx;
+			blockmaplump[ndx++] = 0;
+			ndx += cursor[i];
+			cursor[i] = (UINT32)ndx;
+			blockmaplump[ndx++] = -1;
+		}
+		else
+			blockmaplump[i + 4] = (INT32)(tot + 4);
+	P_BlockMapPass(minx, miny, tot, cursor, true);
+	Z_Free(cursor);
+}
+#endif
+
 static void P_CreateBlockMap(void)
 {
 	register size_t i;
@@ -3998,6 +4181,9 @@ static void P_CreateBlockMap(void)
 	//     Move to an adjacent block by moving towards the ending block in
 	//     either the x or y direction, to the block which contains the linedef.
 
+#if defined(PS2) && !defined(PS2_NOOPT_blockmap)
+	P_BuildBlockMapPS2(minx, miny);
+#else
 	{
 		typedef struct
 		{
@@ -4005,9 +4191,18 @@ static void P_CreateBlockMap(void)
 			INT32 *list;
 		} bmap_t; // blocklist structure
 
-		size_t tot = bmapwidth * bmapheight; // size of blockmap
-		bmap_t *bmap = calloc(tot, sizeof (*bmap)); // array of blocklists
+		size_t tot = (size_t)bmapwidth * (size_t)bmapheight; // size of blockmap
+		bmap_t *bmap;
 		boolean straight;
+		if (bmapwidth <= 0 || bmapheight <= 0 || (size_t)bmapwidth > SIZE_MAX / (size_t)bmapheight
+			|| tot > (SIZE_MAX / sizeof(*bmap)))
+			I_Error("P_CreateBlockMap: block grid exceeds addressable storage");
+#ifdef PS2
+		// Large sparse maps can exceed the libc reserve; use the budgeted zone and its cache retries.
+		bmap = Z_Calloc(tot * sizeof(*bmap), PU_LEVEL, NULL);
+#else
+		bmap = calloc(tot, sizeof(*bmap));
+#endif
 
 		if (bmap == NULL) I_Error("%s: Out of memory making blockmap", "P_CreateBlockMap");
 
@@ -4085,7 +4280,12 @@ static void P_CreateBlockMap(void)
 						bmap[b].nalloc = 8;
 					else
 						bmap[b].nalloc *= 2;
+#ifdef PS2
+					// Builder scratch is required until compression, not a reconstructible render cache.
+					bmap[b].list = Z_Realloc(bmap[b].list, bmap[b].nalloc * sizeof (*bmap->list), PU_LEVEL, &bmap[b].list);
+#else
 					bmap[b].list = Z_Realloc(bmap[b].list, bmap[b].nalloc * sizeof (*bmap->list), PU_CACHE, &bmap[b].list);
+#endif
 					if (!bmap[b].list)
 						I_Error("Out of Memory in P_CreateBlockMap");
 				}
@@ -4095,6 +4295,7 @@ static void P_CreateBlockMap(void)
 			}
 		}
 
+		ZCK("blockmap-lists");
 		// Compute the total size of the blockmap.
 		//
 		// Compression of empty blocks is performed by reserving two offset words
@@ -4106,10 +4307,19 @@ static void P_CreateBlockMap(void)
 
 			for (i = 0; i < tot; i++)
 				if (bmap[i].n)
+				{
+					if ((size_t)bmap[i].n + 2 > SIZE_MAX - count)
+						I_Error("P_CreateBlockMap: block lists exceed addressable storage");
 					count += bmap[i].n + 2; // 1 header word + 1 trailer word + blocklist
+				}
+			if (count > INT32_MAX || count > SIZE_MAX / sizeof(*blockmaplump))
+				I_Error("P_CreateBlockMap: blockmap exceeds addressable storage");
 
 			// Allocate blockmap lump with computed count
 			blockmaplump = Z_Calloc(sizeof (*blockmaplump) * count, PU_LEVEL, NULL);
+#ifdef PS2_PROFILE
+			ps2_blockmapwords = count;
+#endif
 		}
 
 		// Now compress the blockmap.
@@ -4133,9 +4343,14 @@ static void P_CreateBlockMap(void)
 				else // Empty blocklist: point to reserved empty blocklist
 					blockmaplump[i] = (INT32)tot;
 
+#ifdef PS2
+			Z_Free(bmap);
+#else
 			free(bmap); // Free uncompressed blockmap
+#endif
 		}
 	}
+#endif
 	{
 		size_t count = sizeof (*blocklinks) * bmapwidth * bmapheight;
 		// clear out mobj chains (copied from from P_LoadBlockMap)
@@ -4148,6 +4363,7 @@ static void P_CreateBlockMap(void)
 	}
 }
 
+#ifndef PS2_PROFILE
 // PK3 version
 // -- Monster Iestyn 09/01/18
 static void P_LoadReject(UINT8 *data, size_t count)
@@ -4163,6 +4379,7 @@ static void P_LoadReject(UINT8 *data, size_t count)
 		M_Memcpy(rejectmatrix, data, count); // copy the data into it
 	}
 }
+#endif
 
 static void P_LoadMapLUT(const virtres_t *virt)
 {
@@ -4170,6 +4387,27 @@ static void P_LoadMapLUT(const virtres_t *virt)
 	virtlump_t* virtreject   = vres_Find(virt, "REJECT");
 
 	// Lookup tables
+#ifdef PS2_PROFILE
+	if (virtreject && virtreject->size)
+	{
+		// PS2-52: the lump data is the matrix: no second copy next to it (vres_Free skips what was taken)
+		rejectmatrix = vres_Data(virt, virtreject);
+		virtreject->data = NULL;
+	}
+	else
+		rejectmatrix = NULL;
+
+	// P_LoadBlockMap refuses a lump of 128 KiB and more (the blockmap is then built): do not read it for nothing
+	if (virtblockmap && virtblockmap->size && virtblockmap->size < 0x20000)
+	{
+		boolean ok = P_LoadBlockMap(vres_Data(virt, virtblockmap), virtblockmap->size);
+		vres_Drop(virtblockmap);
+		if (!ok)
+			P_CreateBlockMap();
+	}
+	else
+		P_CreateBlockMap();
+#else
 	if (virtreject)
 		P_LoadReject(virtreject->data, virtreject->size);
 	else
@@ -4177,6 +4415,7 @@ static void P_LoadMapLUT(const virtres_t *virt)
 
 	if (!(virtblockmap && P_LoadBlockMap(virtblockmap->data, virtblockmap->size)))
 		P_CreateBlockMap();
+#endif
 }
 
 //
@@ -4187,6 +4426,10 @@ static void P_LoadMapLUT(const virtres_t *virt)
 static void P_LinkMapData(void)
 {
 	size_t i, j;
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_sectorpool)
+	size_t lineentries = 0;
+	line_t **linepool;
+#endif
 	line_t *li;
 	sector_t *sector;
 	subsector_t *ss = subsectors;
@@ -4226,6 +4469,18 @@ static void P_LinkMapData(void)
 			li->backsector->linecount++;
 	}
 
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_sectorpool)
+	// These fixed lists share the level lifetime; one allocation avoids thousands of small headers/gaps.
+	for (i = 0; i < numsectors; i++)
+	{
+		if ((size_t)sectors[i].linecount > SIZE_MAX - lineentries)
+			I_Error("P_LinkMapData: sector line lists exceed addressable storage");
+		lineentries += sectors[i].linecount;
+	}
+	if (lineentries > SIZE_MAX / sizeof(*linepool))
+		I_Error("P_LinkMapData: sector line lists exceed addressable storage");
+	linepool = lineentries ? Z_Calloc(lineentries * sizeof(*linepool), PU_LEVEL, NULL) : NULL;
+#endif
 	// allocate linebuffers for each sector
 	for (i = 0, sector = sectors; i < numsectors; i++, sector++)
 	{
@@ -4236,7 +4491,12 @@ static void P_LinkMapData(void)
 		}
 		else
 		{
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_sectorpool)
+			sector->lines = linepool;
+			linepool += sector->linecount;
+#else
 			sector->lines = Z_Calloc(sector->linecount * sizeof(line_t*), PU_LEVEL, NULL);
+#endif
 
 			// zero the count, since we'll later use this to track how many we've recorded
 			sector->linecount = 0;
@@ -7092,8 +7352,10 @@ static void P_ConvertBinaryMap(void)
 	P_ConvertBinarySectorTypes();
 	P_ConvertBinaryThingTypes();
 	P_ConvertBinaryLinedefFlags();
+#ifndef PS2_PROFILE
 	if (M_CheckParm("-writetextmap"))
 		P_WriteTextmap();
+#endif
 }
 
 /** Compute MD5 message digest for bytes read from memory source
@@ -7126,12 +7388,21 @@ static void P_MakeMapMD5(virtres_t *virt, void *dest)
 {
 	unsigned char resmd5[16];
 
+#ifdef NOMD5
+	// PS2-52: every digest is zero in this profile (P_MakeBufferMD5): do not read the lumps again for it
+	(void)virt;
+	memset(dest, 0x00, 16);
+	return;
+#endif
+
+#ifdef HAS_UDMF
 	if (udmf)
 	{
 		virtlump_t *textmap = vres_Find(virt, "TEXTMAP");
-		P_MakeBufferMD5((char*)textmap->data, textmap->size, resmd5);
+		P_MakeBufferMD5((char*)VRES_DATA(virt, textmap), textmap->size, resmd5);
 	}
 	else
+#endif
 	{
 		unsigned char linemd5[16];
 		unsigned char sectormd5[16];
@@ -7158,17 +7429,168 @@ static void P_MakeMapMD5(virtres_t *virt, void *dest)
 	M_Memcpy(dest, &resmd5, 16);
 }
 
+#ifdef PS2_PROFILE
+// PS2-OPT-02: the spawn state for the save game diffs, reduced to the compared fields (see r_defs.h). The sector tag
+// arrays are copied into one block instead of one small block per sector.
+static void P_CopySpawnState(void)
+{
+	size_t i, ntags = 0;
+	mtag_t *pool;
+
+	spawnsectors = Z_Calloc(numsectors * sizeof (*spawnsectors), PU_LEVEL, NULL);
+	spawnlines = Z_Calloc(numlines * sizeof (*spawnlines), PU_LEVEL, NULL);
+	spawnsides = Z_Calloc(numsides * sizeof (*spawnsides), PU_LEVEL, NULL);
+
+	for (i = 0; i < numsectors; i++)
+		ntags += sectors[i].tags.count;
+	pool = ntags ? Z_Malloc(ntags * sizeof (mtag_t), PU_LEVEL, NULL) : NULL;
+
+	for (i = 0; i < numsectors; i++)
+	{
+		const sector_t *s = &sectors[i];
+		spawnsector_t *d = &spawnsectors[i];
+
+		d->floorheight = s->floorheight;
+		d->ceilingheight = s->ceilingheight;
+		d->floorpic = s->floorpic;
+		d->ceilingpic = s->ceilingpic;
+		d->lightlevel = s->lightlevel;
+		d->special = s->special;
+		d->tags.count = s->tags.count;
+		if (s->tags.count)
+		{
+			d->tags.tags = memcpy(pool, s->tags.tags, s->tags.count * sizeof (mtag_t));
+			pool += s->tags.count;
+		}
+		d->floorxoffset = s->floorxoffset;
+		d->flooryoffset = s->flooryoffset;
+		d->ceilingxoffset = s->ceilingxoffset;
+		d->ceilingyoffset = s->ceilingyoffset;
+		d->floorxscale = s->floorxscale;
+		d->flooryscale = s->flooryscale;
+		d->ceilingxscale = s->ceilingxscale;
+		d->ceilingyscale = s->ceilingyscale;
+		d->floorangle = s->floorangle;
+		d->ceilingangle = s->ceilingangle;
+		d->floorlightlevel = s->floorlightlevel;
+		d->ceilinglightlevel = s->ceilinglightlevel;
+		d->floorlightabsolute = s->floorlightabsolute;
+		d->ceilinglightabsolute = s->ceilinglightabsolute;
+		d->extra_colormap = s->extra_colormap;
+		d->gravity = s->gravity;
+		d->flags = s->flags;
+		d->specialflags = s->specialflags;
+		d->portal_floor = s->portal_floor;
+		d->portal_ceiling = s->portal_ceiling;
+		d->triggertag = s->triggertag;
+		d->damagetype = s->damagetype;
+		d->triggerer = s->triggerer;
+	}
+
+	for (i = 0; i < numlines; i++)
+	{
+		const line_t *s = &lines[i];
+		spawnline_t *d = &spawnlines[i];
+		size_t j;
+
+		for (j = 0; j < NUMLINEARGS; j++)
+			d->args[j] = s->args[j];
+		for (j = 0; j < NUMLINESTRINGARGS; j++)
+			d->stringargs[j] = s->stringargs[j]; // shared, like the vanilla copy of the whole structure
+		d->executordelay = s->executordelay;
+		d->secportal = s->secportal;
+		d->special = s->special;
+	}
+
+	for (i = 0; i < numsides; i++)
+	{
+		const side_t *s = &sides[i];
+		spawnside_t *d = &spawnsides[i];
+
+		d->textureoffset = s->textureoffset;
+		d->rowoffset = s->rowoffset;
+		d->toptexture = s->toptexture;
+		d->bottomtexture = s->bottomtexture;
+		d->midtexture = s->midtexture;
+		d->repeatcnt = s->repeatcnt;
+#ifdef SIDE_UDMF
+		d->offsetx_top = s->offsetx_top; d->offsetx_mid = s->offsetx_mid; d->offsetx_bottom = s->offsetx_bottom;
+		d->offsety_top = s->offsety_top; d->offsety_mid = s->offsety_mid; d->offsety_bottom = s->offsety_bottom;
+		d->scalex_top = s->scalex_top; d->scalex_mid = s->scalex_mid; d->scalex_bottom = s->scalex_bottom;
+		d->scaley_top = s->scaley_top; d->scaley_mid = s->scaley_mid; d->scaley_bottom = s->scaley_bottom;
+		d->light = s->light; d->light_top = s->light_top; d->light_mid = s->light_mid; d->light_bottom = s->light_bottom;
+		d->lightabsolute = s->lightabsolute; d->lightabsolute_top = s->lightabsolute_top;
+		d->lightabsolute_mid = s->lightabsolute_mid; d->lightabsolute_bottom = s->lightabsolute_bottom;
+#endif
+	}
+}
+#endif
+
+#ifdef PS2_PROFILE
+// Keep full-width cell offsets; only line indices (and -1) need sixteen bits on these maps.
+static void P_CompactBlockmap(void)
+{
+#ifndef PS2_NOOPT_BLOCKMAP16
+	size_t cells = (size_t)bmapwidth * bmapheight, prefix = cells + 4, i;
+	UINT16 *dest;
+	ps2_blockmaplists = NULL;
+	if (numlines > UINT16_MAX || prefix >= ps2_blockmapwords)
+		return;
+	// Unusual legacy offsets or invalid indices retain the original representation.
+	for (i = 0; i < cells; i++)
+		if (blockmap[i] < (INT32)prefix || (size_t)blockmap[i] >= ps2_blockmapwords)
+			return;
+	for (i = prefix; i < ps2_blockmapwords; i++)
+		if (blockmaplump[i] != -1 && (blockmaplump[i] < 0 || (size_t)blockmaplump[i] >= numlines))
+			return;
+	dest = (UINT16 *)(blockmaplump + prefix);
+	for (i = prefix; i < ps2_blockmapwords; i++)
+	{
+		UINT16 value = (UINT16)blockmaplump[i];
+		memcpy(&dest[i - prefix], &value, sizeof(value));
+	}
+	for (i = 0; i < cells; i++)
+		blockmap[i] -= (INT32)prefix;
+	blockmaplump = Z_Realloc(blockmaplump, prefix * sizeof(INT32)
+		+ (ps2_blockmapwords - prefix) * sizeof(UINT16), PU_LEVEL, NULL);
+	blockmap = blockmaplump + 4;
+	ps2_blockmaplists = (UINT16 *)(blockmaplump + prefix);
+#else
+	ps2_blockmaplists = NULL;
+#endif
+}
+#endif
+
 static boolean P_LoadMapFromFile(void)
 {
 	virtres_t *virt = vres_GetMap(lastloadedmaplumpnum);
 	virtlump_t *textmap = vres_Find(virt, "TEXTMAP");
+#ifndef PS2_PROFILE
 	size_t i;
+#endif
+#ifndef HAS_UDMF
+	if (textmap != NULL) // TEXTMAP data stays in the pack, but this build (SRB2_PS2_NO=udmf) cannot load it
+	{
+		udmf = false;
+		vres_Free(virt);
+		I_Error("UDMF unsupported: map %s has a TEXTMAP lump (this build loads binary maps only)", G_BuildMapName(gamemap));
+	}
+	udmf = false;
+#else
 	udmf = textmap != NULL;
+#endif
 
+	ZCK("map-begin");
 	if (!P_LoadMapData(virt))
 		return false;
+	ZCK("map-data");
 	P_LoadMapBSP(virt);
+	ZCK("map-bsp");
 	P_LoadMapLUT(virt);
+#ifdef PS2_PROFILE
+	P_CompactBlockmap();
+#endif
+	ZCK("map-blockmap");
 
 	P_LinkMapData();
 
@@ -7181,6 +7603,14 @@ static boolean P_LoadMapFromFile(void)
 		P_ConvertBinaryMap();
 
 	// Copy relevant map data for NetArchive purposes.
+#ifdef PS2_PROFILE
+	// PS2-50: the spawn state only serves P_NetArchiveWorld (netgame gamestate transfer, p_saveg.c), which the single-player
+	// profile never reaches: 3 MB on MAP11. -keepspawn keeps the (reduced) copy for experiments; the archive refuses to run without it.
+	if (M_CheckParm("-keepspawn"))
+		P_CopySpawnState();
+	else
+		spawnsectors = NULL, spawnlines = NULL, spawnsides = NULL;
+#else
 	spawnsectors = Z_Calloc(numsectors * sizeof(*sectors), PU_LEVEL, NULL);
 	spawnlines = Z_Calloc(numlines * sizeof(*lines), PU_LEVEL, NULL);
 	spawnsides = Z_Calloc(numsides * sizeof(*sides), PU_LEVEL, NULL);
@@ -7192,10 +7622,13 @@ static boolean P_LoadMapFromFile(void)
 	for (i = 0; i < numsectors; i++)
 		if (sectors[i].tags.count)
 			spawnsectors[i].tags.tags = memcpy(Z_Malloc(sectors[i].tags.count*sizeof(mtag_t), PU_LEVEL, NULL), sectors[i].tags.tags, sectors[i].tags.count*sizeof(mtag_t));
+#endif
 
+	ZCK("map-spawnstate");
 	P_MakeMapMD5(virt, &mapmd5);
 
 	vres_Free(virt);
+	ZCK("map-loaded");
 	return true;
 }
 
@@ -7865,6 +8298,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	INT32 i, ranspecialwipe = 0;
 	sector_t *ss;
 	levelloading = true;
+#ifdef PS2_PROFILE
+	Z_LevelPhase(false); // PS2-63: the bulk of the level is carved from the bottom of the arena
+#endif
 
 	// This is needed. Don't touch.
 	maptol = mapheaderinfo[gamemap-1]->typeoflevel;
@@ -8028,10 +8464,15 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	HWR_ClearLightTables();
 #endif
 
+	ZCK("level-free-before");
 	Patch_FreeTag(PU_PATCH_LOWPRIORITY);
 	Patch_FreeTag(PU_PATCH_ROTATED);
 	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
+#ifdef PS2
+	Z_FlushCache(); // PS2-72: the level starts from an arena without the last level's caches between its blocks
+#endif
 	mobjcache = NULL;
+	ZCK("level-free-after");
 
 	R_InitializeLevelInterpolators();
 
@@ -8062,6 +8503,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	if (!P_LoadMapFromFile())
 		return false;
+#ifdef PS2_PROFILE
+	PS2FTest_Level(); // PS2-110: -ftest-level (the level as the map data made it, before anything spawned)
+#endif
 
 	if (!demoplayback)
 	{
@@ -8086,7 +8530,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	P_SpawnSlopes(fromnetsave);
 
+	ZCK("slopes");
 	P_SpawnMapThings(!fromnetsave);
+	ZCK("things");
 	skyboxmo[0] = skyboxviewpnts[0];
 	skyboxmo[1] = skyboxcenterpnts[0];
 
@@ -8096,6 +8542,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	// set up world state
 	P_SpawnSpecials(fromnetsave);
+	ZCK("specials");
 
 	if (!fromnetsave) //  ugly hack for P_NetUnArchiveMisc (and P_LoadNetGame)
 		P_SpawnPrecipitation();
@@ -8133,13 +8580,21 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	if (rendermode != render_none && !(titlemapinaction || reloadinggamestate))
 		F_WipeColorFill(levelfadecol);
 
+	ZCK("before-precache");
+#ifdef PS2_PROFILE
+	Z_LevelPhase(true); // PS2-63/72: the level is built; the caches (and so the precache) grow from the bottom next to it, not between the long-lived blocks
+#endif
 	if (precache || dedicated)
 		R_PrecacheLevel();
+	ZCK("precache");
 
 	nextmapoverride = 0;
 	skipstats = 0;
 
 	levelloading = false;
+#ifdef PS2_PROFILE
+	Z_LevelPhase(true); // PS2-63: what the level allocates from here on (mobjs, nodes) comes from the long-lived end
+#endif
 
 	P_RunCachedActions();
 
@@ -8208,7 +8663,11 @@ boolean P_RunSOC(const char *socfilename)
 	lumpnum_t lump;
 
 	if (strstr(socfilename, ".soc") != NULL)
+#ifdef PS2_PROFILE
+		return false; // PS2-20: map SOC lumps remain supported, external SOC files do not
+#else
 		return P_AddWadFile(socfilename);
+#endif
 
 	lump = W_CheckNumForName(socfilename);
 	if (lump == LUMPERROR)
@@ -8266,6 +8725,7 @@ void P_LoadMusicsRange(UINT16 wadnum, UINT16 first, UINT16 num)
 }
 
 // Auxiliary function - input a folder name and gives us the resource markers positions.
+#ifdef HAS_ADDONS // PS2-103: runtime add-ons (addfile, the Add-ons menu) come with PS2_ADDONS
 static lumpinfo_t* FindFolder(const char *folName, UINT16 *start, UINT16 *end, lumpinfo_t *lumpinfo, UINT16 *pnumlumps, size_t *pi)
 {
 	UINT16 numlumps = *pnumlumps;
@@ -8514,3 +8974,11 @@ boolean P_AddFolderLocal(const char *folderpath)
 	return D_CheckPathAllowed(folderpath, "tried to add folder") &&
 		P_LoadAddon(W_InitFolder(folderpath, false, false, true));
 }
+#else
+// g_demo.c still references this API; replay must never load an add-on in a build without PS2_ADDONS.
+boolean P_AddWadFile(const char *wadfilename)
+{
+	(void)wadfilename;
+	return false;
+}
+#endif

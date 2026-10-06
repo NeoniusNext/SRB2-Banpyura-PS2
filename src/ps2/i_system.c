@@ -31,9 +31,12 @@
 #include "../z_zone.h"
 #include "../r_fps.h"
 #include "../netcode/d_clisrv.h"
+#include "../netcode/commands.h"
+#include "../netcode/d_netfil.h"
 
 #include "ps2_boot.h"
 #include "ps2_sys.h"
+#include "ps2_mem.h"
 
 #define WADKEYWORD1 "SRB2.PAK"
 #define PS2_PRECISION ((UINT64)kBUSCLK) // GetTimerSystemTime ticks per second (147 456 000)
@@ -382,6 +385,8 @@ void I_Quit(void)
 	quiting = true;
 
 	M_SaveConfig(NULL); //save game config, cvars..
+	M_SaveJoinedIPs(); // PS2-137: the network is real again: the rejoin list and the ban list are kept
+	D_SaveBan();
 	G_SaveGameData(clientGamedata); // Tails 12-08-2002
 	//added:16-02-98: when recording a demo, should exit using 'q' key,
 	//        but sometimes we forget and use 'F10'.. so save here too.
@@ -394,6 +399,7 @@ void I_Quit(void)
 		M_StopMovie();
 
 	D_QuitNetGame();
+	CL_AbortDownloadResume();
 	M_FreePlayerSetupColors();
 	I_ShutdownMusic();
 	I_ShutdownSound();
@@ -511,15 +517,11 @@ extern char _stack_size[]; // linker symbol: value of -Wl,--defsym,_stack_size
 // total = EE RAM; free = unused heap + free blocks inside it (the heap ends below the stack)
 size_t I_GetFreeMem(size_t *total)
 {
-	const size_t ram = (size_t)GetMemorySize();
-	const size_t stack = (size_t)_stack_size < ram ? (size_t)_stack_size : 0; // -1 = "not set" in crt0
-	const size_t limit = ram - stack;
-	const size_t brk = (size_t)sbrk(0);
-	struct mallinfo mi = mallinfo();
+	const size_t ram = PS2Mem_RamBytes();
 
 	if (total)
 		*total = ram;
-	return (limit > brk ? limit - brk : 0) + (size_t)mi.fordblks;
+	return PS2Mem_LibcFree() + ZA_FreeBytes(); // the arena is already allocated from libc
 }
 
 // no /dev/urandom: mix the clocks and the calendar through splitmix64
@@ -699,23 +701,11 @@ void PS2_ReportOOM(void)
 #endif
 }
 
-// Largest block malloc can still give plus what is already allocated = the heap capacity the zone may use.
-// Probed once (binary search over malloc/free), before the zone fills the heap.
+// Contiguous new heap growth below the actual main-thread stack. Do not add fragmented free chunks here:
+// malloc may be unable to use them for this single large arena and grow the break by the entire request.
+// The zone arena (ps2_mem.c) is carved from this, minus its reserve. malloc cannot be probed for this:
+// on the EE it reports success for sizes far above the free RAM (measured: 32 MiB with 80 KiB left).
 size_t PS2_HeapCapacity(void)
 {
-	size_t lo = 0, hi = 32u << 20, used = (size_t)mallinfo().uordblks;
-
-	while (hi - lo > 4096)
-	{
-		size_t mid = lo + (hi - lo) / 2;
-		void *p = malloc(mid);
-		if (p)
-		{
-			free(p);
-			lo = mid;
-		}
-		else
-			hi = mid;
-	}
-	return used + lo;
+	return PS2Mem_HeapAvailable(PS2Mem_RamBytes(), PS2Mem_HeapLimit(), (size_t)sbrk(0), 0);
 }

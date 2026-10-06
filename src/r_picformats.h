@@ -107,6 +107,22 @@ typedef struct
 // PNG support
 #define PNG_HEADER_SIZE 8
 
+#ifdef PS2_PROFILE
+// PS2-20: the PNG lumps of the packs are converted by the cooker into "cooked pictures" (8 byte marker
+// + a Doom patch with the pixels, transparency and offsets the original Picture_PNGConvert produced).
+// Without PS2_ZIPPNG (no libpng) these three names stand for the cooked-picture functions so the PNG-aware
+// texture/patch code needs no change; with it (PS2-100) they are the real libpng functions, which also accept
+// a cooked picture (Picture_IsLumpCooked tells the two apart for the code that streams the patch directly).
+#undef NO_PNG_LUMPS
+#ifndef PS2_ZIPPNG
+#undef PICTURE_PNG_USELOOKUP
+#define Picture_IsLumpPNG Picture_IsLumpCooked
+#define Picture_PNGConvert Picture_CookedConvert
+#define Picture_PNGDimensions Picture_CookedDimensions
+#endif
+boolean Picture_IsLumpCooked(const UINT8 *d, size_t s);
+#endif
+
 boolean Picture_IsLumpPNG(const UINT8 *d, size_t s);
 
 #ifndef NO_PNG_LUMPS
@@ -118,7 +134,18 @@ void *Picture_PNGConvert(
 	pictureflags_t flags);
 boolean Picture_PNGDimensions(UINT8 *png, INT32 *width, INT32 *height, INT16 *topoffset, INT16 *leftoffset, size_t size);
 
+#if !defined(PS2_PROFILE) || defined(PS2_ZIPPNG)
 #define PICTURE_PNG_USELOOKUP
+#endif
+#ifdef PS2_PROFILE
+void *Picture_CookedConvert(
+	const UINT8 *cooked, pictureformat_t outformat,
+	INT32 *w, INT32 *h,
+	INT16 *topoffset, INT16 *leftoffset,
+	size_t insize, size_t *outsize,
+	pictureflags_t flags);
+boolean Picture_CookedDimensions(UINT8 *cooked, INT32 *width, INT32 *height, INT16 *topoffset, INT16 *leftoffset, size_t size);
+#endif
 #endif
 
 // SpriteInfo

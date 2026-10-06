@@ -17,7 +17,11 @@ tokenizer_t *Tokenizer_Open(const char *inputString, size_t len, unsigned numTok
 	tokenizer_t *tokenizer = Z_Malloc(sizeof(tokenizer_t), PU_STATIC, NULL);
 	const size_t lenpan = 2;
 
+#ifdef PS2_PROFILE
+	tokenizer->zdup = Z_Malloc(len+lenpan, PU_STATIC, NULL); // PS2-102: the copy of a big TEXTMAP must not come out of the small C heap reserve
+#else
 	tokenizer->zdup = malloc(len+lenpan);
+#endif
 	for (size_t i = 0; i < lenpan; i++)
 	{
 		tokenizer->zdup[len+i] = 0x00;
@@ -58,7 +62,11 @@ void Tokenizer_Close(tokenizer_t *tokenizer)
 		Z_Free(tokenizer->token[i]);
 	Z_Free(tokenizer->capacity);
 	Z_Free(tokenizer->token);
+#ifdef PS2_PROFILE
+	Z_Free(tokenizer->zdup);
+#else
 	free(tokenizer->zdup);
+#endif
 	Z_Free(tokenizer);
 }
 

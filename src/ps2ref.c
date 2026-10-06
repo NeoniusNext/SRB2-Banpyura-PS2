@@ -20,9 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-static FILE *tics, *frames, *numbers, *sfxlog;
+static FILE *tics, *frames, *numbers, *sfxlog, *allhash;
 static char directory[1024];
-static UINT32 seq, lastframe;
+static UINT32 seq, lastframe, lastall;
 static UINT32 hash_bytes(UINT32 h, const void *p, size_t n)
 {
     const UINT8 *b=p;
@@ -114,6 +114,21 @@ void PS2Ref_Tic(void)
         h=hash_u32(h,m->state ? (UINT32)(m->state-states) : UINT32_MAX);
         h=hash_u32(h,m->flags); h=hash_u32(h,m->flags2); h=hash_u32(h,m->eflags);
     }
+    { /* -ps2ref-mobjs FROM TO: per-mobj dump of those level tics (mobjs-<tic>.csv), to locate state_hash differences */
+        INT32 q=M_CheckParm("-ps2ref-mobjs");
+        if(q && q+2<myargc && (INT32)leveltime>=atoi(myargv[q+1]) && (INT32)leveltime<=atoi(myargv[q+2])) {
+            char name[64]; FILE *f; UINT32 k=0;
+            snprintf(name,sizeof(name),"mobjs-%u.csv",(unsigned)leveltime);
+            f=output(name,"wb");
+            fprintf(f,"idx,type,x,y,z,momx,momy,momz,angle,health,tics,state,flags,flags2,eflags\n");
+            for(th=thlist[THINK_MOBJ].next;th!=&thlist[THINK_MOBJ];th=th->next) {
+                mobj_t *m=(mobj_t*)th;
+                fprintf(f,"%u,%d,%d,%d,%d,%d,%d,%d,%u,%d,%d,%d,%u,%u,%u\n",k++,(INT32)m->type,m->x,m->y,m->z,m->momx,m->momy,m->momz,
+                    (unsigned)m->angle,m->health,(INT32)m->tics,m->state?(INT32)(m->state-states):-1,(unsigned)m->flags,(unsigned)m->flags2,(unsigned)m->eflags);
+            }
+            fclose(f);
+        }
+    }
     seq++;
     fprintf(tics,"%u,%u,%d,%u,%d,%d,%d,%d,%d,%d,%d,%d,%d,%u,%08x\n",
         seq,leveltime,gamemap,P_GetRandSeed(),mo->x,mo->y,mo->z,mo->momx,mo->momy,mo->momz,
@@ -197,7 +212,16 @@ void PS2Ref_Frame(void)
     UINT32 h; char name[64]; FILE *f; size_t size;
     if(frames && M_CheckParm("-ps2ref-idle")) { idle_frame(); return; }
     if(frames && M_CheckParm("-ps2ref-title") && M_IsNextParm()) { title_frame(); return; }
-    if(!frames || !seq || seq==lastframe || seq%35 || !demoplayback || gamestate!=GS_LEVEL) return;
+    if(frames && seq && seq!=lastall && demoplayback && gamestate==GS_LEVEL && M_CheckParm("-ps2ref-hashall"))
+    { /* -ps2ref-hashall: FNV-1a of every rendered level frame in allhash.csv (frame-exact comparison of two builds) */
+        if(!allhash) { allhash=output("allhash.csv","wb"); fprintf(allhash,"seq,fnv1a32\n"); }
+        fprintf(allhash,"%u,%08x\n",seq,hash_bytes(2166136261u,screens[0],(size_t)vid.width*vid.height));
+        lastall=seq;
+    }
+    { /* -ps2ref-every N: dump every N-th frame instead of every 35th (equivalence statistics over many frames) */
+        INT32 q=M_CheckParm("-ps2ref-every"); UINT32 every=(q && q+1<myargc && atoi(myargv[q+1])>0) ? (UINT32)atoi(myargv[q+1]) : 35;
+        if(!frames || !seq || seq==lastframe || seq%every || !demoplayback || gamestate!=GS_LEVEL) return;
+    }
     if(vid.width!=320 || vid.height!=200 || vid.bpp!=1) I_Error("PS2Ref: expected 320x200x8");
     size=(size_t)vid.width*vid.height; h=hash_bytes(2166136261u,screens[0],size);
     fprintf(frames,"%u,%u,%d,%d,%08x\n",seq,leveltime,vid.width,vid.height,h);
@@ -219,7 +243,7 @@ void PS2Ref_End(void)
     FILE *done;
     if(!tics) return;
     memory("memory-end.csv");
-    fclose(tics); fclose(frames); fclose(numbers); fclose(sfxlog);
+    fclose(tics); fclose(frames); fclose(numbers); fclose(sfxlog); if(allhash) fclose(allhash);
     tics=frames=numbers=sfxlog=NULL;
     done=output("complete.txt","wb"); fprintf(done,"complete tics=%u\n",seq); fclose(done);
     I_Quit();

@@ -26,8 +26,15 @@ extern ps2boot_info_t ps2boot;
 // Flags read from the command line before anything else: -iopreset, -noiopreset, -nopoweroff.
 void PS2Boot_Init(int *argc, char ***argv);
 
+// Lazy audio module loading, after the boot IOP reset. False on a load failure.
+boolean PS2Boot_LoadAudio(void);
+
 // true once the console's power button was pressed (the poweroff callback runs in another thread)
 boolean PS2Boot_PowerRequested(void);
+// level-load PC sampler (ps2_mem.c, -zsample); SampleGet(i) returns the index of the next entry at or after i plus one, 0 at the end
+void PS2Boot_SampleStart(unsigned period);
+void PS2Boot_SampleStop(unsigned *total, unsigned *dropped);
+int PS2Boot_SampleGet(unsigned i, unsigned *pc, unsigned *count);
 
 // Final exit: flush stdio, then power off (host: boots, or -poweroff) or return to the loader.
 void PS2Boot_Exit(INT32 code) FUNCNORETURN;

@@ -532,6 +532,10 @@ static int setglobals(lua_State *L)
 		{
 			int i;
 
+#ifdef PS2_PROFILE
+			LUA_AllocActionsOverridden();
+#endif
+
 			for (i = MAX_ACTION_RECURSION-1; i > 0; i--)
 			{
 				// Move other references deeper.
@@ -1890,7 +1894,7 @@ void LUA_PushTaggableObjectArray
 		lua_CFunction iterator,
 		lua_CFunction indexer,
 		lua_CFunction counter,
-		taggroup_t *garray[],
+		TAGGROUPS_PARAM,
 		size_t * max_elements,
 		void * element_array,
 		size_t sizeof_element,

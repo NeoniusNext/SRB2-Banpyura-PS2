@@ -1,12 +1,21 @@
 """Cook the SRB2 pk3 archives into SRP2 packs (format: docs/PACK_FORMAT.md).
 
-usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...]
-  --src   directory with srb2.pk3 zones.pk3 characters.pk3 music.pk3 (default srb2-assets)
-  --out   output directory (default build/pak): SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK
+usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...] [--tool-dir DIR] [--keep-png]
+  --src       directory with srb2.pk3 zones.pk3 characters.pk3 music.pk3 (default srb2-assets)
+  --out       output directory (default build/pak): SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK (+ <PACK>.pics.json)
+  --tool-dir  where the host picture tool is built (default build/strip-pic-tool)
+  --keep-png  old behaviour: PNG lumps stay PNG (the profile engine has no decoder for them: only for comparison)
 
 One pack per pk3, same entry order as the zip central directory (this is the order the engine's
 ResGetLumpsZip walks, so wadnum / lumpnum / folder logic stay as they were). Lump data is stored raw or as
 LZ4HC (64 KiB blocks for lumps > 64 KiB). Needs `pip install lz4`.
+
+PNG lumps (15 in srb2.pk3, PS2-20): the PS2 engine has no libpng/zlib, so every PNG is converted here by the ORIGINAL
+engine decoder (src/r_picformats.c with libpng, built with MSVC by tools/ps2/strip_pics.py, needs the vcpkg libpng) into a
+"cooked picture" lump (marker + Doom patch with the exact pixels/transparency/offsets of Picture_PNGConvert; see
+strip_pics.py). Conversion order = pk3 order (the engine's nearest-colour memo is order dependent; measured: not for
+these 15). The converted entries are listed with the hashes of both forms in <PACK>.pics.json, which verify_pack.py,
+test_pack_reader.py and strip_pics_test.py use. ZIP/zlib are used here on the host only.
 Verify with tools/ps2/verify_pack.py.
 """
 import argparse
@@ -19,9 +28,14 @@ import zipfile
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
+import json
+import zlib
+
 import lz4.block
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import strip_pics  # noqa: E402  (PNG -> cooked picture, PS2-20)
 
 PACKS = [('srb2.pk3', 'SRB2.PAK'), ('zones.pk3', 'ZONES.PAK'), ('characters.pk3', 'CHARS.PAK'), ('music.pk3', 'MUSIC.PAK')]
 
@@ -145,17 +159,20 @@ def lz4_lump(data):
 
 
 def encode(args):
-    """Worker: read entry `i` of the pk3 (zipfile checks the CRC), choose a codec. Returns (i, codec, payload, size, sha256)."""
-    path, i = args
+    """Worker: read entry `i` of the pk3 (zipfile checks the CRC), choose a codec. Returns (i, codec, payload, size, sha256).
+    cooked: the cooked picture that replaces a PNG lump (sha256/size describe the stored lump), else None."""
+    path, i, cooked = args
     global _zf
     if _zf is None or _zf[0] != path:
         z = zipfile.ZipFile(path)
         _zf = (path, z, z.infolist())
     zi = _zf[2][i]
     data = b'' if zi.is_dir() else _zf[1].read(zi)
+    if cooked is not None:
+        data = cooked
     sha = hashlib.sha256(data).digest()
     if len(data) < MIN_PACK_SIZE or data[:4] == b'OggS' or data[:4] == b'\x89PNG':
-        return i, CM_RAW, data, len(data), sha        # tiny, Ogg (music is kept byte for byte) or PNG (already deflated)
+        return i, CM_RAW, data, len(data), sha        # tiny, Ogg (music is kept byte for byte) or a PNG left in place (--keep-png)
     packed = lz4_lump(data)
     if len(packed) <= len(data) * MAX_RATIO:
         return i, CM_LZ4, packed, len(data), sha
@@ -167,7 +184,48 @@ _zf = None
 
 # ---- pack writer ----------------------------------------------------------------------------------------------
 
-def cook(src, dst, jobs):
+def convert_pngs(srcdir, tooldir, only, log):
+    """Converts every PNG lump of the pk3 in `only` (list of names, pk3 order) with the original engine decoder.
+    Returns {(pk3 name, entry index): meta dict incl. 'cooked' bytes}."""
+    found = []
+    with zipfile.ZipFile(Path(srcdir) / 'srb2.pk3') as palette_archive:
+        playpal = palette_archive.read('PLAYPAL')
+    for pk3, _pak in PACKS:
+        if only and pk3 not in only:
+            continue
+        with zipfile.ZipFile(Path(srcdir) / pk3) as z:
+            for i, zi in enumerate(z.infolist()):
+                if zi.file_size >= 8 and not zi.is_dir():
+                    d = z.read(zi)
+                    if d[:8] == strip_pics.PNG_SIG:
+                        found.append((pk3, i, zi.filename, d))
+    if not found:
+        return {}
+    tooldir = Path(tooldir)
+    pngdir = tooldir / 'png'
+    pngdir.mkdir(parents=True, exist_ok=True)
+    files = []
+    for k, (_pk3, _i, _name, d) in enumerate(found):
+        p = pngdir / f'{k:03d}.png'
+        p.write_bytes(d)
+        files.append(p)
+    (tooldir / 'PLAYPAL').write_bytes(playpal)
+    exe = strip_pics.build_oracle(tooldir / 'oracle')
+    log(f'converting {len(found)} PNG lumps with the original engine decoder ({exe.name})')
+    strip_pics.run_tool(exe, tooldir / 'PLAYPAL', tooldir / 'oracle-out', files)
+    out = {}
+    for k, (pk3, i, name, d) in enumerate(found):
+        w, h, left, top, pix = strip_pics.read_matrix(tooldir / 'oracle-out' / f'{k:03d}.matrix')
+        cooked = strip_pics.cooked_from_matrix(w, h, left, top, pix)
+        out[(pk3, i)] = dict(index=i, name=name, png_size=len(d), png_sha256=hashlib.sha256(d).hexdigest(),
+                             png_crc32=zlib.crc32(d), cooked=cooked, cooked_size=len(cooked),
+                             cooked_sha256=hashlib.sha256(cooked).hexdigest(), cooked_crc32=zlib.crc32(cooked),
+                             width=w, height=h, leftoffset=left, topoffset=top)
+    return out
+
+
+def cook(src, dst, jobs, pics=None):
+    pics = pics or {}
     zf = zipfile.ZipFile(src)
     infos = zf.infolist()
     walk = engine_walk(src)
@@ -189,7 +247,7 @@ def cook(src, dst, jobs):
 
     t0 = time.time()
     with ProcessPoolExecutor(jobs) as ex:
-        results = list(ex.map(encode, [(str(src), i) for i in range(n)], chunksize=8))
+        results = list(ex.map(encode, [(str(src), i, pics[i]['cooked'] if i in pics else None) for i in range(n)], chunksize=8))
     t_enc = time.time() - t0
 
     # string pool: fullname\0 [longname\0]; a longname equal to the tail of its fullname shares it
@@ -244,6 +302,15 @@ def cook(src, dst, jobs):
                 f.write(payload)
         f.truncate(file_size)
 
+    sidecar = Path(str(dst) + '.pics.json')
+    if pics:
+        meta = [{k: v for k, v in m.items() if k != 'cooked'} for _i, m in sorted(pics.items())]
+        sidecar.write_text(json.dumps(dict(
+            note='PNG lumps replaced by cooked pictures (strip_pics.py); entry data in the pack = cooked picture',
+            entries=meta), indent=1), encoding='utf-8')
+    elif sidecar.exists():
+        sidecar.unlink()  # --keep-png / new content must not retain an obsolete conversion record
+
     # statistics
     st = {}
     for (i, codec, payload, size, sha) in results:
@@ -252,7 +319,7 @@ def cook(src, dst, jobs):
         s[1] += size
         s[2] += len(payload)
     return dict(n=n, stats=st, file_size=file_size, pool=pool_size, flags=flags, t=t_enc, srcsize=Path(src).stat().st_size,
-                png=sum(1 for r in results if r[2][:4] == b'\x89PNG'),
+                png=sum(1 for r in results if r[2][:4] == b'\x89PNG'), cooked=len(pics),
                 folders=sum(1 for nm in names if nm.endswith(b'/')))
 
 
@@ -261,23 +328,38 @@ def main():
     ap.add_argument('--src', default=str(ROOT / 'srb2-assets'))
     ap.add_argument('--out', default=str(ROOT / 'build/pak'))
     ap.add_argument('--jobs', type=int, default=os.cpu_count() or 4)
-    ap.add_argument('--only', nargs='*', default=[], help='pk3 names to cook (default all four)')
+    ap.add_argument('--only', nargs='*', default=[], choices=[p for p, _ in PACKS], help='pk3 names to cook (default all four)')
+    ap.add_argument('--tool-dir', default=str(ROOT / 'build/strip-pic-tool'))
+    ap.add_argument('--keep-png', action='store_true')
+    ap.add_argument('--log', type=Path, help='save cooker output')
     a = ap.parse_args()
+    if a.jobs < 1:
+        ap.error('--jobs must be positive')
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    messages = []
+
+    def log(message):
+        print(message, flush=True)
+        messages.append(message)
+        if a.log:
+            a.log.parent.mkdir(parents=True, exist_ok=True)
+            a.log.write_text('\n'.join(messages) + '\n', encoding='utf-8')
     tot = [0, 0, 0]
     codec_name = {CM_RAW: 'raw', CM_LZ4: 'lz4'}
+    allpics = {} if a.keep_png else convert_pngs(a.src, a.tool_dir, a.only, log)
     for pk3, pak in PACKS:
         if a.only and pk3 not in a.only:
             continue
-        r = cook(Path(a.src) / pk3, out / pak, a.jobs)
-        print(f'{pk3} -> {pak}: {r["n"]} entries ({r["folders"]} folders), pk3 {r["srcsize"]:,} B, pack {r["file_size"]:,} B, '
-              f'pool {r["pool"]:,} B, nonmusic={r["flags"] & 1}, encode {r["t"]:.1f}s')
+        pics = {i: m for (p, i), m in allpics.items() if p == pk3}
+        r = cook(Path(a.src) / pk3, out / pak, a.jobs, pics)
+        log(f'{pk3} -> {pak}: {r["n"]} entries ({r["folders"]} folders), pk3 {r["srcsize"]:,} B, pack {r["file_size"]:,} B, '
+              f'pool {r["pool"]:,} B, nonmusic={r["flags"] & 1}, encode {r["t"]:.1f}s, PNG lumps left {r["png"]}, cooked pictures {r["cooked"]}')
         for c, (cnt, raw, disk) in sorted(r['stats'].items()):
-            print(f'    {codec_name[c]:4} {cnt:6} lumps  {raw:>13,} B -> {disk:>13,} B' + (f'  ({disk / raw * 100:.1f}%)' if raw else ''))
+            log(f'    {codec_name[c]:4} {cnt:6} lumps  {raw:>13,} B -> {disk:>13,} B' + (f'  ({disk / raw * 100:.1f}%)' if raw else ''))
         tot[0] += r['srcsize']
         tot[1] += r['file_size']
-    print(f'total: pk3 {tot[0]:,} B -> packs {tot[1]:,} B')
+    log(f'total: pk3 {tot[0]:,} B -> packs {tot[1]:,} B')
 
 
 if __name__ == '__main__':

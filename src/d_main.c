@@ -19,6 +19,8 @@
 #include <emscripten.h>
 #endif
 
+#include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
+
 #if defined (__unix__) || defined (__APPLE__) || defined (UNIXCOMMON)
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -37,6 +39,9 @@
 
 #include "doomdef.h"
 #include "ps2ref.h"
+#ifdef PS2_PROFILE
+#include "ps2/ps2_ftest.h"
+#endif
 #include "am_map.h"
 #include "console.h"
 #include "netcode/d_net.h"
@@ -108,7 +113,9 @@ int SUBVERSION;
 UINT8 window_notinfocus = false;
 
 static addfilelist_t startupwadfiles;
+#ifdef HAS_ADDONS // PS2-20: command line add-ons exist only with PS2_ADDONS
 static addfilelist_t startuppwads;
+#endif
 
 boolean devparm = false; // started game with -devparm
 
@@ -145,7 +152,9 @@ char srb2home[256] = ".";
 char srb2path[256] = ".";
 boolean usehome = true;
 const char *pandf = "%s" PATHSEP "%s";
+#ifdef HAS_ADDONS
 static char addonsdir[MAX_WADPATH];
+#endif
 
 //
 // EVENT HANDLING
@@ -860,7 +869,9 @@ static void D_RunFrame(void)
 				realtics = 1;
 
 			// process tics (but maybe not if realtic == 0)
+			PS2SUB_B(33);
 			TryRunTics(realtics);
+			PS2SUB_E(33);
 
 			if (lastdraw || singletics || gametic > rendergametic)
 			{
@@ -922,7 +933,19 @@ static void D_RunFrame(void)
 
 		if (interp || doDisplay)
 		{
+#ifdef PS2_PROF_DIRECT
+			{
+				extern UINT32 ps2prof_interp;
+				if (rendertimefrac != FRACUNIT && rendertimefrac != 0)
+					ps2prof_interp++;
+			}
+#endif
+			PS2SUB_B(34);
 			D_Display();
+			PS2SUB_E(34);
+#ifdef PS2_PROFILE
+			Z_NextFrame(); // PS2-21: displayed-frame boundary for the zone's LRU eviction (z_zone.c)
+#endif
 		}
 
 		// Only take screenshots after drawing.
@@ -1093,6 +1116,7 @@ static void D_AddFile(addfilelist_t *list, const char *file)
 	list->files[index] = newfile;
 }
 
+#ifdef HAS_ADDONS
 static void D_AddFolder(addfilelist_t *list, const char *file)
 {
 	char *newfile;
@@ -1109,6 +1133,7 @@ static void D_AddFolder(addfilelist_t *list, const char *file)
 
 	list->files[index] = newfile;
 }
+#endif
 
 #undef REALLOC_FILE_LIST
 
@@ -1129,6 +1154,7 @@ static inline void D_CleanFile(addfilelist_t *list)
 }
 
 ///\brief Checks if a netgame URL is being handled, and changes working directory to the EXE's if so.
+#ifndef PS2_PROFILE
 ///       Done because browsers (at least, Firefox on Windows) launch the game from the browser's directory, which causes problems.
 static void ChangeDirForUrlHandler(void)
 {
@@ -1164,6 +1190,7 @@ static void ChangeDirForUrlHandler(void)
 
 // ==========================================================================
 // Identify the SRB2 version, and IWAD file to use.
+#endif
 // ==========================================================================
 
 #ifdef PS2_PROFILE
@@ -1336,7 +1363,9 @@ void D_SRB2Main(void)
 	DEH_TableCheck();
 
 	// Netgame URL special case: change working dir to EXE folder.
+#ifndef PS2_PROFILE
 	ChangeDirForUrlHandler();
+#endif
 
 	// identify the main IWAD file to use
 	IdentifyVersion();
@@ -1352,7 +1381,9 @@ void D_SRB2Main(void)
 #endif
 
 	// for dedicated server
-#if !defined (_WINDOWS) && !defined (DEDICATED) //already check in win_main.c
+#ifdef PS2_PROFILE
+	dedicated = false;
+#elif !defined (_WINDOWS) && !defined (DEDICATED) //already check in win_main.c
 	dedicated = M_CheckParm("-dedicated") != 0;
 #endif
 
@@ -1364,7 +1395,9 @@ void D_SRB2Main(void)
 	strcpy(liveeventbackup, "live"SAVEGAMENAME".bkp"); // intentionally not ending with .ssg
 
 	// Init the joined IP table for quick rejoining of past games.
+#if !defined (PS2_PROFILE) || defined (PS2) // PS2-137: the rejoin list works on the PS2 (savedips.txt in the home directory)
 	M_InitJoinedIPArray();
+#endif
 
 	{
 		const char *userhome = D_Home(); //Alam: path to home
@@ -1415,11 +1448,14 @@ void D_SRB2Main(void)
 		configfile[sizeof configfile - 1] = '\0';
 	}
 
+#if !defined (PS2_PROFILE) || defined (PS2)
 	M_LoadJoinedIPs();	// load joined ips
-	
+#endif
+#ifdef HAS_ADDONS
 	// Create addons dir
 	snprintf(addonsdir, sizeof addonsdir, "%s%s%s", srb2home, PATHSEP, "addons");
 	I_mkdir(addonsdir, 0755);
+#endif
 
 	// seed M_Random because it is necessary; seed P_Random for scripts that
 	// might want to use random numbers immediately at start
@@ -1435,8 +1471,10 @@ void D_SRB2Main(void)
 	CONS_Printf("Z_Init(): Init zone memory allocation daemon. \n");
 	Z_Init();
 
+#ifndef PS2_PROFILE
 	if (M_CheckParm("-password") && M_IsNextParm())
 		D_SetPassword(M_GetNextParm());
+#endif
 
 	clientGamedata = M_NewGameDataStruct();
 	serverGamedata = M_NewGameDataStruct();
@@ -1446,9 +1484,14 @@ void D_SRB2Main(void)
 
 	COM_AddCommand("assert", Command_assert, COM_LUA);
 
+#ifdef HAS_ADDONS // PS2-20: "-file"/"-folder" add-ons exist only with PS2_ADDONS
 	// Add any files specified on the command line with
 	// "-file <file>" or "-folder <folder>" to the add-on list
+#ifdef PS2_PROFILE
+	if (true)
+#else
 	if (!((M_GetUrlProtocolArg() || M_CheckParm("-connect")) && !M_CheckParm("-server")))
+#endif
 	{
 		INT32 addontype = 0;
 		INT32 i;
@@ -1467,11 +1510,14 @@ void D_SRB2Main(void)
 				D_AddFolder(&startuppwads, myargv[i]);
 		}
 	}
+#endif
 
 	// get map from parms
 
+#ifndef PS2_PROFILE
 	if (M_CheckParm("-server") || dedicated)
 		netgame = server = true;
+#endif
 
 	// adapt tables to SRB2's needs, including extra slots for dehacked file support
 	P_PatchInfoTables();
@@ -1480,8 +1526,10 @@ void D_SRB2Main(void)
 	M_InitMenuPresTables();
 
 	// init title screen display params
+#ifndef PS2_PROFILE
 	if (M_GetUrlProtocolArg() || M_CheckParm("-connect"))
 		F_InitMenuPresValues();
+#endif
 
 	//---------------------------------------------------- READY TIME
 	// we need to check for dedicated before initialization of some subsystems
@@ -1502,7 +1550,7 @@ void D_SRB2Main(void)
 	W_InitMultipleFiles(&startupwadfiles);
 	D_CleanFile(&startupwadfiles);
 
-#ifndef DEVELOP // md5s last updated 22/02/20 (ddmmyy)
+#if !defined(DEVELOP) && !defined(PS2_PROFILE) // md5s last updated 22/02/20 (ddmmyy)
 
 	// Check MD5s of autoloaded files
 	W_VerifyFileMD5(0, ASSET_HASH_SRB2_PK3); // srb2.pk3
@@ -1549,12 +1597,14 @@ void D_SRB2Main(void)
 
 	CON_StopRefresh(); // Temporarily stop refreshing the screen for wad loading
 
+#ifdef HAS_ADDONS
 	if (startuppwads.numfiles)
 	{
 		CONS_Printf("W_InitMultipleFiles(): Adding extra PWADs.\n");
 		W_InitMultipleFiles(&startuppwads);
 		D_CleanFile(&startuppwads);
 	}
+#endif
 
 	CON_StartRefresh(); // Restart the refresh!
 
@@ -1596,14 +1646,18 @@ void D_SRB2Main(void)
 			I_Error("Cannot find a map remotely named '%s'\n", word);
 		else
 		{
+#ifndef PS2_PROFILE
 			if (!(M_CheckParm("-server") || dedicated))
+#endif
 				G_SetUsedCheats(true);
 			autostart = true;
 		}
 	}
 
+#ifndef PS2_PROFILE
 	if (M_CheckParm("-noupload"))
 		COM_BufAddText("downloading 0\n");
+#endif
 
 	CONS_Printf("M_Init(): Init miscellaneous info.\n");
 	M_Init();
@@ -1657,6 +1711,11 @@ void D_SRB2Main(void)
 	CONS_Printf("ST_Init(): Init status bar.\n");
 	ST_Init();
 
+#ifdef PS2_PROFILE
+	PS2FTest_Startup(); // PS2-110: -ftest-* diagnostics of the content systems (nothing without the parameters)
+#endif
+
+#ifndef PS2_PROFILE
 	if (M_CheckParm("-room"))
 	{
 		if (!M_IsNextParm())
@@ -1667,6 +1726,7 @@ void D_SRB2Main(void)
 		GetMODVersion_Console();
 #endif
 	}
+#endif
 
 	// init all NETWORK
 	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
@@ -1740,6 +1800,7 @@ void D_SRB2Main(void)
 		ultimatemode = true;
 	}
 
+	// PS2-120: -splitscreen is kept on the PS2 (two local players, pad 1 and pad 2)
 	if (M_CheckParm("-splitscreen"))
 	{
 		autostart = true;
@@ -1917,7 +1978,9 @@ boolean D_IsPathAllowed(const char *path)
 	char *paths[] = {
 		srb2home,
 		srb2path,
+#ifdef HAS_ADDONS
 		cv_addons_folder.zstring
+#endif
 	};
 
 	const size_t n_paths = sizeof paths / sizeof *paths;

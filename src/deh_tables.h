@@ -25,12 +25,20 @@ extern char *FREE_MOBJS[NUMMOBJFREESLOTS];
 extern char *FREE_SKINCOLORS[NUMCOLORFREESLOTS];
 extern bitarray_t used_spr[BIT_ARRAY_SIZE(NUMSPRITEFREESLOTS)]; // Sprite freeslots in use
 
-#ifdef PS2_PROFILE
+#ifndef HAS_LUA
 #define initfreeslots() {\
 	memset(FREE_STATES, 0, sizeof(FREE_STATES));\
 	memset(FREE_MOBJS, 0, sizeof(FREE_MOBJS));\
 	memset(FREE_SKINCOLORS, 0, sizeof(FREE_SKINCOLORS));\
 	memset(used_spr, 0, sizeof(used_spr));\
+}
+#elif defined(PS2_PROFILE)
+#define initfreeslots() {\
+	memset(FREE_STATES, 0, sizeof(FREE_STATES));\
+	memset(FREE_MOBJS, 0, sizeof(FREE_MOBJS));\
+	memset(FREE_SKINCOLORS, 0, sizeof(FREE_SKINCOLORS));\
+	memset(used_spr, 0, sizeof(used_spr));\
+	if (actionsoverridden) memset(actionsoverridden, LUA_REFNIL, sizeof(*actionsoverridden) * NUMACTIONS);\
 }
 #else
 #define initfreeslots() {\

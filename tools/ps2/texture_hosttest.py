@@ -68,6 +68,8 @@ def main():
         vanilla = assets.read("Textures/Alpine Paradise/BBFLRWAL")
     fixtures = [("vanilla-BBFLRWAL", vanilla, 1), ("holes-3x5", doom_patch(3, 5, [1, 2, 2], 1), 1),
                 ("holes-1x3", doom_patch(1, 3, [1], 1), 1), ("opaque-3x5", doom_patch(3, 5, [5, 5, 5], 0), 0)]
+    for height in [7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65]:
+        fixtures.append((f"boundary-3x{height}", doom_patch(3, height, [height-2, 0, height-3], 1), 1))
     source = ROOT / "tools/ps2/texture_hosttest.c"
     results = []
     for arch in ["x86", "x64"]:
@@ -82,8 +84,8 @@ def main():
         for name, _, _ in fixtures:
             if outputs[True][name] != outputs[False][name]:
                 raise RuntimeError(f"Texture pixel/post equivalence differs: {arch}/{name}")
-        results.append({"arch": arch, "fixtures": len(fixtures), "cases_per_fixture": 5, "differences": 0})
-        print(f"texture-{arch}: 4 fixtures x 5 cases match unchanged host; alignment, bounds, scratch frees and reconstruction PASS")
+        results.append({"arch": arch, "fixtures": len(fixtures), "cases_per_fixture": 10, "differences": 0})
+        print(f"texture-{arch}: {len(fixtures)} fixtures x 10 copy/flip/clip/blend cases match unchanged host; alignment, bounds, scratch frees and reconstruction PASS")
     if args.negative_controls:
         old = ("\t*columnofs = (pixels + columnalign - 1) & ~(columnalign - 1);\n"
                "\t*postofs = (*columnofs + sizeof(column_t) * width + postalign - 1) & ~(postalign - 1);")

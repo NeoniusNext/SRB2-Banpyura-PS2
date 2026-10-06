@@ -12,9 +12,11 @@ static struct
 	void *p, *raw, **owner;
 	size_t size;
 	INT32 tag;
+	UINT32 frame;
 } host_allocs[4096];
 static size_t host_live_blocks, host_live_bytes, host_peak_bytes;
 static UINT8 host_poison = 0xA5;
+static UINT32 host_frame = 1;
 
 static void host_check(int condition, const char *message)
 {
@@ -112,6 +114,21 @@ void Z_ChangeTag(void *p, INT32 tag)
 {
 	host_allocs[host_allocation(p)].tag = tag;
 }
+
+#ifdef PS2
+void Z_Touch(void *p)
+{
+	host_allocs[host_allocation(p)].frame = host_frame;
+}
+
+static void host_purge_old_cache(void)
+{
+	for (size_t i = 0; i < sizeof host_allocs / sizeof host_allocs[0]; i++)
+		if (host_allocs[i].p && host_allocs[i].tag == PU_CACHE && host_allocs[i].owner
+			&& host_allocs[i].frame != host_frame)
+			Z_Free(host_allocs[i].p);
+}
+#endif
 
 static void host_purge_cache(void)
 {

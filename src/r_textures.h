@@ -83,6 +83,10 @@ UINT8 *R_GenerateTexture(size_t texnum);
 UINT8 *R_GetFlatForTexture(size_t texnum);
 INT32 R_GetTextureNum(INT32 texnum);
 void R_CheckTextureCache(INT32 tex);
+#ifdef PS2_PROFILE
+void R_ReleaseTextureCache(INT32 tex); // after a synchronous consumer has discarded all columns/pixels
+void R_ReleaseFlatCache(INT32 tex); // after every span using the flat has completed
+#endif
 void R_ClearTextureNumCache(boolean btell);
 
 // Retrieve texture data.

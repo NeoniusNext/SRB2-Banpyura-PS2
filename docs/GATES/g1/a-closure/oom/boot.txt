@@ -1,0 +1,99 @@
+Setting up SRB2...
+
+
+Sonic Robo Blast 2
+Copyright (C) 1998-2025 by Sonic Team Junior
+
+This program comes with ABSOLUTELY NO WARRANTY.
+
+This is free software, and you are welcome to redistribute it
+and/or modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2 of
+the License, or (at your option) any later version.
+See the 'LICENSE.txt' file for details.
+
+Sonic the Hedgehog and related characters are trademarks of SEGA.
+We do not claim ownership of SEGA's intellectual property used
+in this program.
+
+M_StartupLocale...
+Looking for WADs in: host: (found)
+Z_Init(): Init zone memory allocation daemon. 
+Zone arena: 6144 KiB (C heap reserve 2048 KiB, headroom 2048 KiB, two-sided, red zones on), C heap left: 21045 KiB
+System memory: 32MB - Free: 20MB
+I_InitializeTime()...
+W_InitMultipleFiles(): Adding IWAD and main PWADs.
+Added file host:/SRB2.PAK (12614 lumps)
+Loading SOC from host:/SRB2.PAK|SOC/SOC_LETR
+Loading SOC from host:/SRB2.PAK|SOC/SOC_TITL
+Added file host:/ZONES.PAK (169 lumps)
+Loading SOC from host:/ZONES.PAK|SOC/SOC_EMBM.txt
+Loading SOC from host:/ZONES.PAK|SOC/SOC_HEAD.txt
+Loading SOC from host:/ZONES.PAK|SOC/SOC_SECR.txt
+Loading SOC from host:/ZONES.PAK|SOC/Tutorial.txt
+Added file host:/CHARS.PAK (2054 lumps)
+Loading SOC from host:/CHARS.PAK|SOC/Characters.txt
+Added file host:/MUSIC.PAK (215 lumps)
+I_StartupGraphics()...
+Number of console HUD lines is now 5
+PS2 pad: ports 6/0 (state 6 = ready) after 1300 ms
+PS2 pad: joystick 1 is port 1
+PS2 pad: joystick 2 is port 2
+HU_LoadGraphics()...
+config file: reference.cfg
+Executing reference.cfg
+Default resolution: 1280 x 800
+Windowed resolution: 640 x 400
+Default bit depth: 16 bits
+M_Init(): Init miscellaneous info.
+R_Init(): Init SRB2 refresh daemon.
+R_LoadParsedTranslations()...
+R_LoadTextures()...
+P_InitPicAnims()...
+R_InitSprites()...
+SRB2.PAK added 5261 frames in 391 sprites
+R_InitColormaps()...
+S_InitSfxChannels(): Setting up sound channels.
+ST_Init(): Init status bar.
+D_CheckNetGame(): Checking network game status.
+OOM: request 1048576 B tag 49 (PU_CACHE) align 64, purge lock 0, frame 0
+OOM: failing request from D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_textures.c:683
+ps2_mem: frame 0
+ps2_mem: arena 6291456 B  used 5504304 B (peak 5504304, since start 5504304)  free 787152 B in 191 blocks, largest 770064 B, fragmentation 3%
+ps2_mem: tag   1 PU_STATIC                6340 blocks   4679856 B (payload   4346606 B)
+ps2_mem: tag  14 PU_PATCH                    1 blocks        96 B (payload        44 B)
+ps2_mem: tag  17 PU_PATCH_DATA            1779 blocks    557456 B (payload    463565 B)
+ps2_mem: tag  19 PU_HUDGFX                 592 blocks     57360 B (payload     26048 B)
+ps2_mem: tag  49 PU_CACHE                   32 blocks    115600 B (payload    114010 B)
+ps2_mem: tag  50 PU_LEVEL                  114 blocks     93408 B (payload     86676 B)
+ps2_mem: tag  51 PU_LEVSPEC                  4 blocks       528 B (payload       272 B)
+ps2_mem: allocs 242093 frees 233231 failed 2 evicted 0 blocks/0 B, free blocks scanned 242633
+ps2_mem: libc heap 7270936 B, in use 7192000 B, free chunks 78936 B, libc can still give 20735064 B
+ps2_mem: brk 0xbcd000, heap start 0x4ddde8, RAM 33554432 B, main stack 524288 B
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\w_wad.c:2452  1158490 B in 32 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_things.c:596  672000 B in 587 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\w_pack.c:201  662288 B in 4 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\w_pack.c:193  509060 B in 4 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_skins.c:823  499464 B in 6 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_patch.c:52  200309 B in 593 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_textures.c:873  186296 B in 4234 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_patch.c:51  147780 B in 593 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_textures.c:1611  143336 B in 506 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_data.c:276  131072 B in 1 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_patch.c:50  115476 B in 593 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_textures.c:1094  94800 B in 5 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\w_wad.c:1336  60208 B in 4 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\w_wad.c:1335  60208 B in 4 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\command.c:1244  32768 B in 1 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\p_setup.c:431  30600 B in 85 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\info.c:22109  29145 B in 1 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\s_sound.c:1464  28416 B in 74 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_patch.c:28  26092 B in 593 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\m_cond.c:53  20208 B in 2 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_textures.c:1121  18964 B in 1 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\r_data.c:291  16384 B in 1 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\info.c:22116  15088 B in 1 blocks
+ps2_mem: owner D:\Ai-Project3\SRB2-PS2-Port\build\agent-a-snap\src\deh_soc.c:2496  15008 B in 21 blocks
+
+I_Error(): Out of memory allocating 1048576 bytes
+I_ShutdownSystem(): end of logstream.

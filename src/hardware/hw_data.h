@@ -64,6 +64,13 @@ struct GLMipmap_s
 
 	struct GLMipmap_s    *nextcolormap;
 	struct GLColormap_s  *colormap;
+
+#ifdef PS2_PROFILE
+	// PS2-HW-16: the GS driver asks for the data of a map texture / level flat again when it is drawn and the zone dropped it
+	// (HWR_PS2_RegenerateMipmap): kind 0 = no way (patches stay as they are), 1 = map texture `regen_id`, 2 = level flat `regen_id`
+	INT32                 regen_id;
+	UINT8                 regen_kind;
+#endif
 };
 typedef struct GLMipmap_s GLMipmap_t;
 

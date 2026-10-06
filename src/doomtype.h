@@ -17,6 +17,53 @@
 #ifndef __DOOMTYPE__
 #define __DOOMTYPE__
 
+#ifdef PS2_PROFILE
+// OPT6-F (PS2-100..119): the content systems PS2-02/03/11/20 cut out of the profile come back one by one. Each is on unless the
+// build says -DPS2_NO_<NAME> (A/B measurements, bisecting); every one allocates lazily, vanilla play (cooked packs, no add-on)
+// keeps the profile's small footprint.
+//   PS2_ZIPPNG  zlib + libpng: pk3 (ZIP) files, PNG pictures                 (PS2-100)
+//   PS2_LUA     the Lua VM (blua), LUA_EvalMath behind the SOC number table   (PS2-101)
+//   PS2_UDMF    UDMF (TEXTMAP) maps                                           (PS2-102)
+//   PS2_ADDONS  addfile, the Add-ons menu, folders, SOC/Lua/wad files         (PS2-103)
+//   PS2_LIMITS  freeslots, skin_t, frames, SFX slots, gametypes at full size (PS2-104..)
+#if !defined(PS2_NO_ZIPPNG) && !defined(PS2_ZIPPNG)
+#define PS2_ZIPPNG
+#endif
+#if !defined(PS2_NO_LUA) && !defined(PS2_LUA)
+#define PS2_LUA
+#endif
+#if !defined(PS2_NO_UDMF) && !defined(PS2_UDMF)
+#define PS2_UDMF
+#endif
+#if !defined(PS2_NO_ADDONS) && !defined(PS2_ADDONS)
+#define PS2_ADDONS
+#endif
+#if !defined(PS2_NO_LIMITS) && !defined(PS2_LIMITS)
+#define PS2_LIMITS
+#endif
+// the original resource loader (wad/pk3/soc/lua/folder, w_wad.c) is compiled next to the cooked-pack path: a file that is not a pack goes there
+#if defined(PS2_ZIPPNG) || defined(PS2_ADDONS) || defined(PS2_LUA)
+#define PS2_FULLLOADER
+#endif
+#endif
+
+// "Compiled in" tests: always true outside the PS2 profile (so the original code is untouched there)
+#if !defined(PS2_PROFILE) || defined(PS2_ADDONS)
+#define HAS_ADDONS
+#endif
+#if !defined(PS2_PROFILE) || defined(PS2_LUA)
+#define HAS_LUA
+#endif
+#if !defined(PS2_PROFILE) || defined(PS2_UDMF)
+#define HAS_UDMF
+#endif
+#if !defined(PS2_PROFILE) || defined(PS2_ZIPPNG)
+#define HAS_ZIPPNG
+#endif
+#if !defined(PS2_PROFILE) || defined(PS2_LIMITS)
+#define HAS_FULLLIMITS
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif

@@ -485,8 +485,13 @@ void R_CreateInterpolator_Polyobj(thinker_t *thinker, polyobj_t *polyobj)
 	interp->polyobj.polyobj = polyobj;
 	interp->polyobj.vertices_size = polyobj->numVertices;
 
+#ifdef PS2_PROFILE // PS2-FIX-01: the zone treats alignbits as log2 bytes and rejects >= 32 (the vanilla 32 was ignored); 16 B is plenty for fixed_t
+	interp->polyobj.oldvertices = Z_CallocAlign(sizeof(fixed_t) * 2 * polyobj->numVertices, PU_LEVEL, NULL, 4);
+	interp->polyobj.bakvertices = Z_CallocAlign(sizeof(fixed_t) * 2 * polyobj->numVertices, PU_LEVEL, NULL, 4);
+#else
 	interp->polyobj.oldvertices = Z_CallocAlign(sizeof(fixed_t) * 2 * polyobj->numVertices, PU_LEVEL, NULL, 32);
 	interp->polyobj.bakvertices = Z_CallocAlign(sizeof(fixed_t) * 2 * polyobj->numVertices, PU_LEVEL, NULL, 32);
+#endif
 	for (size_t i = 0; i < polyobj->numVertices; i++)
 	{
 		interp->polyobj.oldvertices[i * 2    ] = interp->polyobj.bakvertices[i * 2    ] = polyobj->vertices[i]->x;
@@ -840,6 +845,13 @@ void R_InitMobjInterpolators(void)
 void R_UpdateMobjInterpolators(void)
 {
 	size_t i;
+#ifdef PS2_OPT_PTICK
+	// PS2-96: the old_* copies are read only by interpolated drawing (every reader checks R_UsingFrameInterpolation()); at the tic
+	// rate nothing looks at them and the copy of every interpolated mobj each tic is wasted. When interpolation is switched on, the
+	// first tic refreshes them (the first frame after the switch may show one stale step).
+	if (!R_UsingFrameInterpolation())
+		return;
+#endif
 	for (i = 0; i < interpolated_mobjs_len; i++)
 	{
 		mobj_t *mobj = interpolated_mobjs[i];

@@ -13,6 +13,12 @@
 #include "hw_glob.h"
 #include "hw_batching.h"
 #include "../i_system.h"
+#include <limits.h>
+#ifdef PS2
+#include "../z_zone.h"
+#include "../ps2/hw/ps2_hwd.h"
+#include "hw_sort.h"
+#endif
 
 // The texture for the next polygon given to HWR_ProcessPolygon.
 // Set with HWR_SetCurrentTexture.
@@ -23,7 +29,11 @@ boolean currently_batching = false;
 FOutVector* finalVertexArray = NULL;// contains subset of sorted vertices and texture coordinates to be sent to gpu
 UINT32* finalVertexIndexArray = NULL;// contains indexes for glDrawElements, taking into account fan->triangles conversion
 //     NOTE have this alloced as 3x finalVertexArray size
+#ifdef PS2_PROFILE // PS2-HW-06: 32 MiB of RAM; the arrays double when a frame needs more (see HWR_ProcessPolygon / HWR_RenderBatches)
+int finalVertexArrayAllocSize = 8192;
+#else
 int finalVertexArrayAllocSize = 65536;
+#endif
 //GLubyte* colorArray = NULL;// contains color data to be sent to gpu, if needed
 //int colorArrayAllocSize = 65536;
 // not gonna use this for now, just sort by color and change state when it changes
@@ -32,13 +42,74 @@ int finalVertexArrayAllocSize = 65536;
 PolygonArrayEntry* polygonArray = NULL;// contains the polygon data from DrawPolygon, waiting to be processed
 int polygonArraySize = 0;
 UINT32* polygonIndexArray = NULL;// contains sorting pointers for polygonArray
+#ifdef PS2_PROFILE
+int polygonArrayAllocSize = 2048;
+#else
 int polygonArrayAllocSize = 65536;
+#endif
 
 FOutVector* unsortedVertexArray = NULL;// contains unsorted vertices and texture coordinates from DrawPolygon
 int unsortedVertexArraySize = 0;
+#ifdef PS2_PROFILE
+int unsortedVertexArrayAllocSize = 8192;
+#else
 int unsortedVertexArrayAllocSize = 65536;
+#endif
+
+#ifdef PS2
+// The EE backend consumes indexed triangles synchronously. Index the collected vertices directly;
+// sorting changes only the triangle order, so no duplicate vertex storage or per-batch memcpy is needed.
+#define HWR_BATCH_VERTICES unsortedVertexArray
+#else
+#define HWR_BATCH_VERTICES finalVertexArray
+#endif
 
 // Enables batching mode. HWR_ProcessPolygon will collect polygons instead of passing them directly to the rendering backend.
+static void *HWR_BatchResize(void *old, size_t bytes)
+{
+	void *p;
+#ifdef PS2
+	// Geometry is live until sorted submission completes: non-purgable, accounted zone storage.
+	p = Z_ReallocAlign(old, bytes, PU_HWRBATCH, NULL, 4);
+#else
+	p = realloc(old, bytes);
+#endif
+	if (!p)
+		I_Error("Hardware batch allocation failed (%lu bytes)", (unsigned long)bytes);
+	return p;
+}
+#define HWR_BatchAlloc(bytes) HWR_BatchResize(NULL, (bytes))
+
+static int HWR_BatchCapacity(int old, int required, size_t element)
+{
+	size_t cap = (size_t)old;
+	const size_t limit = (size_t)INT_MAX < SIZE_MAX / element ? (size_t)INT_MAX : SIZE_MAX / element;
+	if (required < 0 || (size_t)required > limit)
+		I_Error("Hardware batch size overflow");
+	while (cap < (size_t)required)
+	{
+#ifdef PS2_PROFILE
+		size_t step = cap / 2; // 50%% spare capacity instead of 100%% on memory-limited targets
+#else
+		size_t step = cap;
+#endif
+		if (!step)
+			step = 1;
+		cap = step > limit - cap ? limit : cap + step;
+	}
+	return (int)cap;
+}
+
+// One draw call of the batch being built: triangle indices, or on the PS2 (first vertex, count) pairs of fans (see HWR_RenderBatches)
+static void HWR_DrawBatch(FSurfaceInfo *surf, int count, FBITFIELD polyFlags)
+{
+#ifdef PS2
+	PS2HWD_DrawFans(surf, HWR_BATCH_VERTICES, (unsigned int)count / 2, polyFlags, finalVertexIndexArray);
+#else
+	HWD.pfnDrawIndexedTriangles(surf, HWR_BATCH_VERTICES, count, polyFlags, finalVertexIndexArray);
+#endif
+}
+
 // Call HWR_RenderBatches to render all the collected geometry.
 void HWR_StartBatching(void)
 {
@@ -46,16 +117,21 @@ void HWR_StartBatching(void)
 		I_Error("Repeat call to HWR_StartBatching without HWR_RenderBatches");
 
 	// init arrays if that has not been done yet
-	if (!finalVertexArray)
+	if (!polygonArray)
 	{
-		finalVertexArray = malloc(finalVertexArrayAllocSize * sizeof(FOutVector));
-		finalVertexIndexArray = malloc(finalVertexArrayAllocSize * 3 * sizeof(UINT32));
-		polygonArray = malloc(polygonArrayAllocSize * sizeof(PolygonArrayEntry));
-		polygonIndexArray = malloc(polygonArrayAllocSize * sizeof(UINT32));
-		unsortedVertexArray = malloc(unsortedVertexArrayAllocSize * sizeof(FOutVector));
+#ifndef PS2
+		finalVertexArray = HWR_BatchAlloc(finalVertexArrayAllocSize * sizeof(FOutVector));
+#endif
+		finalVertexIndexArray = HWR_BatchAlloc(finalVertexArrayAllocSize * 3 * sizeof(UINT32));
+		polygonArray = HWR_BatchAlloc(polygonArrayAllocSize * sizeof(PolygonArrayEntry));
+		polygonIndexArray = HWR_BatchAlloc(polygonArrayAllocSize * sizeof(UINT32));
+		unsortedVertexArray = HWR_BatchAlloc(unsortedVertexArrayAllocSize * sizeof(FOutVector));
 	}
 
 	currently_batching = true;
+#ifdef PS2
+	PS2HWD_BatchBegin();
+#endif
 }
 
 // This replaces the direct calls to pfnSetTexture in cases where batching is available.
@@ -66,6 +142,9 @@ void HWR_SetCurrentTexture(GLMipmap_t *texture)
     if (currently_batching)
     {
         current_texture = texture;
+#ifdef PS2 // PS2-HW-16: the polygon is drawn after the BSP walk; its texture must not be evicted from the GS pool before that
+        PS2HWD_TouchTexture(texture);
+#endif
     }
     else
     {
@@ -78,33 +157,26 @@ void HWR_SetCurrentTexture(GLMipmap_t *texture)
 // render the polygon immediately.
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
 {
+    if (iNumPts < 3)
+        return; // no triangles; do not advance the fan writer past its allocation
     if (currently_batching)
 	{
 		if (!pSurf)
 			I_Error("Got a null FSurfaceInfo in batching");// nulls should not come in the stuff that batching currently applies to
+		if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
+			I_Error("Hardware batch geometry exceeds addressable storage");
 		if (polygonArraySize == polygonArrayAllocSize)
 		{
-			PolygonArrayEntry* new_array;
-			// ran out of space, make new array double the size
-			polygonArrayAllocSize *= 2;
-			new_array = malloc(polygonArrayAllocSize * sizeof(PolygonArrayEntry));
-			memcpy(new_array, polygonArray, polygonArraySize * sizeof(PolygonArrayEntry));
-			free(polygonArray);
-			polygonArray = new_array;
-			// also need to redo the index array, dont need to copy it though
-			free(polygonIndexArray);
-			polygonIndexArray = malloc(polygonArrayAllocSize * sizeof(UINT32));
+			polygonArrayAllocSize = HWR_BatchCapacity(polygonArrayAllocSize, polygonArraySize + 1, sizeof(PolygonArrayEntry));
+			polygonArray = HWR_BatchResize(polygonArray, (size_t)polygonArrayAllocSize * sizeof(PolygonArrayEntry));
+			polygonIndexArray = HWR_BatchResize(polygonIndexArray, (size_t)polygonArrayAllocSize * sizeof(UINT32));
 		}
 
-		while (unsortedVertexArraySize + (int)iNumPts > unsortedVertexArrayAllocSize)
+		if (unsortedVertexArraySize + (int)iNumPts > unsortedVertexArrayAllocSize)
 		{
-			FOutVector* new_array;
-			// need more space for vertices in unsortedVertexArray
-			unsortedVertexArrayAllocSize *= 2;
-			new_array = malloc(unsortedVertexArrayAllocSize * sizeof(FOutVector));
-			memcpy(new_array, unsortedVertexArray, unsortedVertexArraySize * sizeof(FOutVector));
-			free(unsortedVertexArray);
-			unsortedVertexArray = new_array;
+			unsortedVertexArrayAllocSize = HWR_BatchCapacity(unsortedVertexArrayAllocSize,
+				unsortedVertexArraySize + (int)iNumPts, sizeof(FOutVector));
+			unsortedVertexArray = HWR_BatchResize(unsortedVertexArray, (size_t)unsortedVertexArrayAllocSize * sizeof(FOutVector));
 		}
 
 		// add the polygon data to the arrays
@@ -124,11 +196,15 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		if (!(PolyFlags & PF_NoTexture) && !horizonSpecial)
 		{
 			// use FNV-1a to hash polygons for later sorting.
-			INT32 hash = 0x811c9dc5;
+			UINT32 hash = 0x811c9dc5u; // FNV multiplication intentionally wraps modulo 2^32
 #define DIGEST(h, x) h ^= (x); h *= 0x01000193
 			if (current_texture)
 			{
+#ifdef PS2 // PS2-HW-22: the texture's identity, not its GS handle: nothing is uploaded while polygons are collected, so every texture that is not resident has handle 0
+				DIGEST(hash, (UINT32)(uintptr_t)current_texture);
+#else
 				DIGEST(hash, current_texture->downloaded);
+#endif
 			}
 			DIGEST(hash, PolyFlags);
 			DIGEST(hash, pSurf->PolyColor.rgba);
@@ -156,14 +232,16 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 	}
 }
 
+#ifndef PS2
 static int comparePolygons(const void *p1, const void *p2)
 {
 	unsigned int index1 = *(const unsigned int*)p1;
 	unsigned int index2 = *(const unsigned int*)p2;
 	PolygonArrayEntry* poly1 = &polygonArray[index1];
 	PolygonArrayEntry* poly2 = &polygonArray[index2];
-	return poly1->hash - poly2->hash;
+	return (poly1->hash > poly2->hash) - (poly1->hash < poly2->hash);
 }
+#endif
 
 // This function organizes the geometry collected by HWR_ProcessPolygon calls into batches and uses
 // the rendering backend to draw them.
@@ -184,6 +262,7 @@ void HWR_RenderBatches(void)
 	FSurfaceInfo nextSurfaceInfo;
 
 	int i;
+	boolean sorted = true;
 
     if (!currently_batching)
 		I_Error("HWR_RenderBatches called without starting batching");
@@ -193,11 +272,17 @@ void HWR_RenderBatches(void)
 	nextSurfaceInfo.LightInfo.light_level = 0;
 
 	currently_batching = false;// no longer collecting batches
+#ifdef PS2
+	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
+#endif
 	if (!polygonArraySize)
 	{
 		ps_hw_numpolys.value.i = ps_hw_numcalls.value.i = ps_hw_numshaders.value.i
 			= ps_hw_numtextures.value.i = ps_hw_numpolyflags.value.i
 			= ps_hw_numcolors.value.i = 0;
+#ifdef PS2
+		PS2HWD_BatchEnd();
+#endif
 		return;// nothing to draw
 	}
 	// init stats vars
@@ -209,11 +294,35 @@ void HWR_RenderBatches(void)
 	for (i = 0; i < polygonArraySize; i++)
 	{
 		polygonIndexArray[i] = i;
+		// Keep qsort's existing equal-key order: only bypass it for strictly ordered keys.
+		if (i && polygonArray[i-1].hash >= polygonArray[i].hash)
+			sorted = false;
 	}
 
 	// sort polygons
 	PS_START_TIMING(ps_hw_batchsorttime);
-	qsort(polygonIndexArray, polygonArraySize, sizeof(unsigned int), comparePolygons);
+#ifdef PS2 // PS2-HW-19: stable radix sort of the polygon keys (qsort of ~2000 polygons costs about 1.3 M cycles)
+	if (!sorted)
+	{
+		static UINT32 *rkeys, *rtmpk, *rtmpi;
+		static int rcap;
+
+		if (rcap < polygonArrayAllocSize)
+		{
+			rkeys = HWR_BatchResize(rkeys, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+			rtmpk = HWR_BatchResize(rtmpk, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+			rtmpi = HWR_BatchResize(rtmpi, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+			rcap = polygonArrayAllocSize;
+		}
+		for (i = 0; i < polygonArraySize; i++)
+			rkeys[i] = (UINT32)polygonArray[i].hash ^ 0x80000000u; // the signed order of comparePolygons
+		if (!HWR_RadixSort32(rkeys, polygonIndexArray, rtmpk, rtmpi, (UINT32)polygonArraySize))
+			memcpy(polygonIndexArray, rtmpi, (size_t)polygonArraySize * sizeof(UINT32));
+	}
+#else
+	if (!sorted)
+		qsort(polygonIndexArray, polygonArraySize, sizeof(unsigned int), comparePolygons);
+#endif
 	PS_STOP_TIMING(ps_hw_batchsorttime);
 	// sort order
 	// 1. shader
@@ -247,6 +356,7 @@ void HWR_RenderBatches(void)
 	{
 		int firstIndex;
 		int lastIndex;
+		int fanIndex;
 
 		boolean stopFlag = false;
 		boolean changeState = false;
@@ -271,35 +381,55 @@ void HWR_RenderBatches(void)
 		// before writing, check if there is enough room
 		// using 'while' instead of 'if' here makes sure that there will *always* be enough room.
 		// probably never will this loop run more than once though
-		while (finalVertexWritePos + numVerts > finalVertexArrayAllocSize)
+#ifdef PS2_PROFILE
+		// Bounded output scratch: draw a full chunk before copying the next fan, with state/order intact.
+		if (numVerts > finalVertexArrayAllocSize - finalVertexWritePos && finalIndexWritePos)
 		{
-			FOutVector* new_array;
-			unsigned int* new_index_array;
-			finalVertexArrayAllocSize *= 2;
-			new_array = malloc(finalVertexArrayAllocSize * sizeof(FOutVector));
-			memcpy(new_array, finalVertexArray, finalVertexWritePos * sizeof(FOutVector));
-			free(finalVertexArray);
-			finalVertexArray = new_array;
-			// also increase size of index array, 3x of vertex array since
-			// going from fans to triangles increases vertex count to 3x
-			new_index_array = malloc(finalVertexArrayAllocSize * 3 * sizeof(UINT32));
-			memcpy(new_index_array, finalVertexIndexArray, finalIndexWritePos * sizeof(UINT32));
-			free(finalVertexIndexArray);
-			finalVertexIndexArray = new_index_array;
+			HWR_DrawBatch(&currentSurfaceInfo, finalIndexWritePos, currentPolyFlags);
+			ps_hw_numcalls.value.i++;
+			ps_hw_numverts.value.i += finalIndexWritePos;
+			finalVertexWritePos = finalIndexWritePos = 0;
+		}
+#endif
+		if (numVerts > finalVertexArrayAllocSize - finalVertexWritePos)
+		{
+			if (numVerts > INT_MAX / 3 - finalVertexWritePos)
+				I_Error("Hardware batch index count overflow");
+			finalVertexArrayAllocSize = HWR_BatchCapacity(finalVertexArrayAllocSize,
+				finalVertexWritePos + numVerts, sizeof(FOutVector) + 3 * sizeof(UINT32));
+			if (finalVertexArrayAllocSize > INT_MAX / 3)
+				finalVertexArrayAllocSize = INT_MAX / 3;
+#ifndef PS2
+			finalVertexArray = HWR_BatchResize(finalVertexArray, (size_t)finalVertexArrayAllocSize * sizeof(FOutVector));
+#endif
+			finalVertexIndexArray = HWR_BatchResize(finalVertexIndexArray, (size_t)finalVertexArrayAllocSize * 3 * sizeof(UINT32));
 		}
 		// write the vertices of the polygon
+#ifndef PS2
 		memcpy(&finalVertexArray[finalVertexWritePos], &unsortedVertexArray[polygonArray[index].vertsIndex],
 			numVerts * sizeof(FOutVector));
+#endif
 		// write the indexes, pointing to the fan vertexes but in triangles format
+#ifdef PS2
+		firstIndex = polygonArray[index].vertsIndex;
+#else
 		firstIndex = finalVertexWritePos;
-		lastIndex = finalVertexWritePos + numVerts;
-		finalVertexWritePos += 2;
-		while (finalVertexWritePos < lastIndex)
+#endif
+		lastIndex = firstIndex + numVerts;
+		fanIndex = firstIndex + 2;
+		finalVertexWritePos += numVerts;
+#ifdef PS2 // PS2-HW-19: the driver draws the polygons as GS triangle fans: (first vertex, count) pairs instead of triangle indices
+		finalVertexIndexArray[finalIndexWritePos++] = firstIndex;
+		finalVertexIndexArray[finalIndexWritePos++] = numVerts;
+		(void)lastIndex; (void)fanIndex;
+#else
+		while (fanIndex < lastIndex)
 		{
 			finalVertexIndexArray[finalIndexWritePos++] = firstIndex;
-			finalVertexIndexArray[finalIndexWritePos++] = finalVertexWritePos - 1;
-			finalVertexIndexArray[finalIndexWritePos++] = finalVertexWritePos++;
+			finalVertexIndexArray[finalIndexWritePos++] = fanIndex - 1;
+			finalVertexIndexArray[finalIndexWritePos++] = fanIndex++;
 		}
+#endif
 
 		if (polygonReadPos >= polygonArraySize)
 		{
@@ -309,7 +439,11 @@ void HWR_RenderBatches(void)
 		{
 			// check if a state change is required, set the change bools and next vars
 			int nextIndex = polygonIndexArray[polygonReadPos];
+#ifdef PS2 // PS2-HW-22: equal 31-bit keys of different textures must still change the state
+			if (polygonArray[index].hash != polygonArray[nextIndex].hash || polygonArray[index].texture != polygonArray[nextIndex].texture)
+#else
 			if (polygonArray[index].hash != polygonArray[nextIndex].hash)
+#endif
 			{
 				nextShader = polygonArray[nextIndex].shader;
 				nextTexture = polygonArray[nextIndex].texture;
@@ -359,7 +493,7 @@ void HWR_RenderBatches(void)
 		if (changeState || stopFlag)
 		{
 			// execute draw call
-            HWD.pfnDrawIndexedTriangles(&currentSurfaceInfo, finalVertexArray, finalIndexWritePos, currentPolyFlags, finalVertexIndexArray);
+            HWR_DrawBatch(&currentSurfaceInfo, finalIndexWritePos, currentPolyFlags);
 			// update stats
 			ps_hw_numcalls.value.i++;
 			ps_hw_numverts.value.i += finalIndexWritePos;
@@ -412,6 +546,9 @@ void HWR_RenderBatches(void)
 	// reset the arrays (set sizes to 0)
 	polygonArraySize = 0;
 	unsortedVertexArraySize = 0;
+#ifdef PS2
+	PS2HWD_BatchEnd();
+#endif
 
 	PS_STOP_TIMING(ps_hw_batchdrawtime);
 }
