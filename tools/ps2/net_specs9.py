@@ -1,8 +1,8 @@
-"""OPT9 network scenarios for tools/ps2/net_session.py (agent N, docs/GATES/g1/opt9-N.md).
+"""OPT9/OPT10 network scenarios for tools/ps2/net_session.py (agent N, docs/GATES/g1/opt9-N.md; ported to Linux by X: docs/GATES/g1/opt10-X.md).
 
-usage: python tools/ps2/net_specs9.py [--elf ELF] [--base build/opt9-n] [name ...]
+usage: python3 tools/ps2/net_specs9.py [--elf ELF] [--base build/opt10-x] [name ...]
 Writes <base>/specs/<name>.json for the scenarios below (all of them without names). Run: python tools/ps2/net_session.py <base>/specs/<name>.json
-(build/opt9-n/netrun.sh repeats a session whose emulator died at its start).
+(net_session.py --retries N repeats a session whose emulator died at its start).
 
 The menu scenarios drive the console with a pad script (-padscript, src/ps2/i_joy.c): the numbers are poll counts (displayed frames). Buttons act as
 the PS2 port maps them: start = open the menu / Enter on the title, cross = Enter, circle = Escape, d-pad = arrows. Screenshots: -vidshot fN.
@@ -12,20 +12,26 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import net_env  # noqa: E402  (Linux locations: emulator copies, PC engine, packs)
+
 ROOT = Path(__file__).resolve().parents[2]
 ap = argparse.ArgumentParser()
-ap.add_argument('--elf', default='build/opt9-n/full4.ELF')
-ap.add_argument('--base', default='build/opt9-n')
+ap.add_argument('--elf', default='build/out/SRB2.ELF')
+ap.add_argument('--base', default=net_env.BASE)
 ap.add_argument('names', nargs='*')
 ARGS = ap.parse_args()
 ELF, BASE = ARGS.elf, ARGS.base
 OUT = ROOT / BASE / 'specs'
 OUT.mkdir(parents=True, exist_ok=True)
 PY = Path(sys.executable).as_posix()
-PC = BASE + '/pc/srb2-s7pc.exe'  # hard links of build/opt7-s/pc (agent F runs the same exe: its latest-log.txt in that folder must not be ours)
+PC = net_env.pc_exe()  # build/pc-net: this tree with -DNETSYNC_DIAG (-netsync prints NETSYNC lines and presses ENTER on the join screens)
 PCDIR = BASE + '/pc'
-EMU1 = 'D:/PCSX2-net1/pcsx2-qt.exe'
-EMU2 = 'D:/PCSX2-net2/pcsx2-qt.exe'
+(ROOT / PCDIR).mkdir(parents=True, exist_ok=True)
+HOME1 = (ROOT / BASE / 'pc-home1').as_posix()  # -home DIR: the engine's data folder is DIR/.srb2
+HOME2 = (ROOT / BASE / 'pc-home2').as_posix()
+EMU1 = net_env.EMU1
+EMU2 = net_env.EMU2
 H = '{HOSTIP}'
 MSURL = f'http://{H}:8090/MS/0'
 SPECS = {}
@@ -59,11 +65,11 @@ def mock(name, extra=None):
                      (ROOT / BASE / f'run/{name}/mock.jsonl').as_posix()] + (extra or []), 'start': 0}
 
 
-def pcsrv(extra=None, home='../pc-home1', start=0, ms=False, warp='MAP01', **kw):
+def pcsrv(extra=None, home=HOME1, start=0, ms=False, warp='MAP01', **kw):
     a = ['-dedicated', '-server', '-nomusic', '-nosound', '-netsync', '-home', home, '-warp', warp]
     if ms:
         a += ['-room', '1', '+masterserver', MSURL, '+servername', 'PC test server']
-    d = {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR, 'logfile': 'latest-log.txt', 'args': a + (extra or []), 'start': start}
+    d = {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR, 'args': a + (extra or []), 'start': start}
     d.update(kw)
     return d
 
@@ -76,7 +82,7 @@ def ps2(nid, emu, args, files=None, cfg='', **kw):
 
 def write(name, spec):
     spec.setdefault('out', BASE + '/run')
-    spec.setdefault('pak', 'build/opt6-s/pak')
+    spec.setdefault('pak', net_env.PAK)
     spec['name'] = name
     SPECS[name] = spec
 
@@ -205,8 +211,8 @@ write('client-kill', {
     'timeout': 900,
     'nodes': [ps2('srv', EMU1, ['-server', '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'], map='MAP01',
                   files={'pad.txt': walk(1, 500, 3500), 'cmd.txt': punches(5030, 120, 3600)}),
-              dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt',
-                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'],
+              dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
+                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2],
                    start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6}, stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0})],
     'until': [{'node': 'srv', 'text': 'has left the game'}], 'grace': 3})
 
@@ -238,8 +244,8 @@ def pair(name, srv, cli, tics, pollsrv=None, pollcli=None, srv_args=None, srv_cm
                          files={'pad.txt': pad(*crosses(150, 600, 60)) + ',' + walk(1, 700, pollcli or n, seed=2)}, cfg=CFG_SYNC + cli_extra_cfg,
                          **({'start_when': {'node': 'srv', 'text': 'PS2 net: address', 'delay': 2}} if srv == 'ps2' else {'start': 8})))
     else:
-        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt',
-                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'] + (cli_args or []),
+        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
+                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2] + (cli_args or []),
                           start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6}))
     write(name, {'timeout': timeout, 'nodes': nodes,
                  'until': [{'node': 'srv', 'text': f'NETSYNC gametic={tics}'}, {'node': 'cli', 'text': f'NETSYNC gametic={tics}'}], 'grace': 3})
@@ -264,8 +270,8 @@ for cname, ckind in (('pccli', 'pc'), ('ps2cli', 'ps2')):
               files={'pad.txt': walk(1, 500, 6000), 'cmd.txt': punches(5030, 120, 3000)}, cfg=CFG_SYNC,
               copy={'NSK.pk3': (BASE + '/addons/NSK.pk3'), 'ZT.pk3': (BASE + '/addons/ZT.pk3')})
     if ckind == 'pc':
-        cli = dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt', wipe=[BASE + '/pc-home2/srb2/DOWNLOAD'],
-                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'],
+        cli = dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, wipe=[BASE + '/pc-home2/.srb2/DOWNLOAD'],
+                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2],
                    start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6})
     else:
         cli = ps2('cli', EMU2, ['-skipintro', '-connect', H, '-clientport', '5030', '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
@@ -286,8 +292,8 @@ def host_spec(shot):
     nodes = [mock('ps2host-menu' + ('-shot' if shot else '')),
              ps2('srv', EMU1, args, files={'pad.txt': pad(*HOSTPAD), 'cmd.txt': punches(5030, 1300, 4300)}, cfg=f'masterserver "{MSURL}"\n', may_exit=shot, start=2)]
     if not shot:
-        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt',
-                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'],
+        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
+                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2],
                           start_when={'node': 'srv', 'text': 'Master server registration successful', 'delay': 8}))
     return {'timeout': 900, 'nodes': nodes,
             'until': [{'node': 'srv', 'text': 'VIDSHOT COMPLETE'}] if shot else [{'node': 'srv', 'text': 'NETSYNC gametic=1400'}, {'node': 'cli', 'text': 'NETSYNC gametic=1400'}],
