@@ -77,7 +77,9 @@ struct GLMipmap_s
 	// PS2-HW-34: what the batches of this frame need of the texture (ps2_hw_plan.inc): on the original mipmap of a variant pair
 	UINT32                ps2_planfr; // driver frame + 1 the plan belongs to (0 = none)
 	UINT8                 ps2_want; // the mip level (0 = full size) the frame plan resolved for the texture (OPT10: ps2_hw_plan.inc)
-	float                 ps2_su, ps2_sv; // OPT10: the largest texel (screen pixels at full size) along u and v over what the polygons of the frame show of it
+	UINT16                ps2_pi; // OPT10: index of the texture's record in the driver's frame plan (valid while ps2_planfr is the current frame)
+	UINT8                 ps2_ihint; // OPT10: the level the budgeted plan gave the texture for its immediate draws (translucent planes, sky), valid for 2 frames after ps2_ihfr
+	UINT32                ps2_ihfr, ps2_imfr; // driver frame + 1 of the plan that set the hint / of the last immediate draw of the texture
 	UINT8                 ps2_vis; // some polygon of the frame is visible at all
 	UINT32                ps2_full_fr; // driver frame + 1 of the last draw that needed the full size without a plan (the next plans keep the full size)
 #endif

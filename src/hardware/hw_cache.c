@@ -1065,9 +1065,14 @@ const UINT8 *HWR_PS2_FlatPin(const GLMipmap_t *m)
 	return p;
 }
 
-void HWR_PS2_FlatUnpin(const UINT8 *p)
+void HWR_PS2_FlatUnpin(const UINT8 *p, size_t bytes)
 {
-	Z_ChangeTag((void *)p, PU_CACHE);
+	// a 1 MiB plane would stay in the cache (and, touched in this frame, out of the zone's reach) for nothing: the levels made from it are
+	// in the driver's data cache, it is read again when a level has to be made again
+	if (bytes >= 512 * 1024)
+		Z_Free((void *)p);
+	else
+		Z_ChangeTag((void *)p, PU_CACHE);
 }
 
 void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)

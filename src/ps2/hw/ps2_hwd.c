@@ -666,6 +666,8 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		CONS_Printf("HWT poly n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u\n", (unsigned)iNumPts, (unsigned)PolyFlags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u);
 	}
+	if (H.imm_tex && !(PolyFlags & PF_NoTexture))
+		imm_prepare(pOutVerts, (unsigned int)iNumPts); // PS2-HW-37: the texture is made resident at the level this polygon needs
 	if (begin_draw((u32)PolyFlags, pSurf))
 		emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
 }
@@ -857,7 +859,7 @@ static texrec_t *twin_rec(GLMipmap_t *m)
 
 // Select a texture. While the engine collects batched polygons nothing is uploaded: the texture is made resident when its batch is
 // drawn (the GS pool cannot hold all the textures of a frame), asking the engine for the data again when the zone dropped it.
-static void hw_SetTexture(GLMipmap_t *TexInfo)
+static void settex_now(GLMipmap_t *TexInfo)
 {
 	texrec_t *r;
 	int ri;
@@ -890,7 +892,7 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		int vis = 1;
 
 		want = tex_want(TexInfo, &vis);
-		if (batch_phase == 0 || pk->ps2_planfr != H.frame_no + 1)
+		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != H.frame_no + 1)
 			pk->ps2_full_fr = H.frame_no + 1;
 		if (!vis && !r)
 		{
@@ -907,6 +909,14 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 			tex_drop(img_of((int)(r - H.rec)), 0);
 			r = NULL;
 			TX.upgrades++;
+		}
+		else if (r && batch_phase == 2 && plan_too_fine(TexInfo, r, want))
+		{
+			// stored finer than the plan needs and the difference is worth the blocks: made again at the planned level (PS2-HW-37)
+			ov_flush_all();
+			tex_drop(img_of((int)(r - H.rec)), 0);
+			r = NULL;
+			TX.downgrades++;
 		}
 	}
 	if (r && H.cap_adapt && r->capi != H.cap_idx && !r->screen && !r->pin && batch_phase != 1 && r->sw)
@@ -966,7 +976,7 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 	ri = tex_upload(TexInfo);
 	if (tex_flatpin)
 	{
-		HWR_PS2_FlatUnpin(tex_flatpin);
+		HWR_PS2_FlatUnpin(tex_flatpin, (size_t)TexInfo->width * TexInfo->height);
 		tex_flatpin = NULL;
 	}
 	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
@@ -989,6 +999,22 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 	H.cur_missing = 0;
 	if (batch_phase == 2)
 		H.rec[ri].done = H.frame_no + 1;
+}
+
+// hwdriver SetTexture: a big map texture selected outside the batches waits for its polygon (imm_prepare, PS2-HW-37), the rest is made resident now
+static void hw_SetTexture(GLMipmap_t *TexInfo)
+{
+	if (!H.up)
+		return;
+	H.imm_tex = NULL;
+	if (TexInfo && batch_phase == 0 && plan_wants(TexInfo) && !(ps2hwd_dbg_flags & HWDBG_NOPLAN))
+	{
+		H.imm_tex = TexInfo;
+		H.cur_tex = NOREC;
+		H.cur_missing = 0;
+		return;
+	}
+	settex_now(TexInfo);
 }
 
 // The batched polygon of this texture is drawn later in the frame: the texture (or the image of its other variant) must stay in VRAM until then.
@@ -1019,7 +1045,7 @@ static void hw_UpdateTexture(GLMipmap_t *TexInfo)
 		dma_fence(); // the engine has changed the texels: no queued reference may still read the old ones
 		tex_drop((int)(r - H.rec), 0);
 	}
-	hw_SetTexture(TexInfo);
+	settex_now(TexInfo);
 }
 
 static void hw_DeleteTexture(GLMipmap_t *TexInfo)
@@ -1030,6 +1056,8 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		return;
 	if (H.up)
 		dma_fence(); // the engine frees the texels after this call: no queued DMA may read them (also when the image was evicted meanwhile)
+	if (H.imm_tex == TexInfo)
+		H.imm_tex = NULL;
 	if (H.up && (r = rec_of(TexInfo)) != NULL)
 	{
 		ov_flush_all();
@@ -1054,6 +1082,7 @@ static void hw_ClearMipMapCache(void)
 		return;
 	ov_flush_all();
 	dma_fence();
+	H.imm_tex = NULL;
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)

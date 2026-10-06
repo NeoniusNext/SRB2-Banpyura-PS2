@@ -971,7 +971,7 @@ extern void HWR_PS2_FreeData(void *data);
 extern void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser);
 extern void *HWR_PS2_AllocData(size_t bytes, void **newuser);
 extern const u8 *HWR_PS2_FlatPin(const GLMipmap_t *m);
-extern void HWR_PS2_FlatUnpin(const u8 *p);
+extern void HWR_PS2_FlatUnpin(const u8 *p, size_t bytes);
 static const u8 *tex_flatpin; // PS2-HW-38: the engine's flat pinned by the last tex_upload (the caller unpins it)
 
 #define DC_MAX 192
@@ -1901,6 +1901,7 @@ static int tex_view(GLMipmap_t *m, int owner_rec)
 // at level L, i.e. nothing is magnified compared with level 0.
 static float lodc[3][2]; // d(x, y, w) / d(u, v) of the polygon being drawn (poly_plane)
 static int lodc_ok;
+static int lodc_planar; // every vertex of the polygon lies on the plane the three vertices define (a kinked polygon, the horizon fill of the engine, does not)
 
 static void poly_plane(const cv_t *un, int n, float sw, float sh)
 {
@@ -1928,6 +1929,21 @@ static void poly_plane(const cv_t *un, int n, float sw, float sh)
 		lodc[k][1] = ((cc - c0) * u1 - (c1 - c0) * u2) / det;
 	}
 	lodc_ok = 1;
+	lodc_planar = 1;
+	for (k = 2; k < n; k++) // the other vertices must be where the plane puts them
+	{
+		float du = (un[k].a[0] - un[0].a[0]) * sw, dv = (un[k].a[1] - un[0].a[1]) * sh;
+		float px = un[0].x + lodc[0][0] * du + lodc[0][1] * dv, py = un[0].y + lodc[1][0] * du + lodc[1][1] * dv, pw = un[0].w + lodc[2][0] * du + lodc[2][1] * dv;
+		float tol = 2e-3f * (fabsf(un[k].x) + fabsf(un[k].y) + fabsf(un[k].w) + 1.0f);
+
+		if (k == third)
+			continue;
+		if (fabsf(px - un[k].x) > tol || fabsf(py - un[k].y) > tol || fabsf(pw - un[k].w) > tol)
+		{
+			lodc_planar = 0;
+			break;
+		}
+	}
 }
 
 static float lod_su, lod_sv; // the largest texel (pixels) along u and v that poly_lod found (the plan, ps2_hw_plan.inc; -hwdbg 0x8000000)
@@ -2031,13 +2047,13 @@ static void tx_report(void)
 	static int win;
 	u32 f = TX.frames ? TX.frames : 1;
 
-	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u\n",
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u\n",
 		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
 		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
 		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
 		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
 		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
-		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.invisible,
+		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.downgrades, (unsigned)TX.invisible,
 		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f));
 	memset(&TX, 0, sizeof TX);
 }

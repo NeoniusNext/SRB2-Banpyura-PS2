@@ -284,6 +284,7 @@ static struct
 	u32 plan_reserve; // OPT10 (PS2-HW-37): blocks the frame plan leaves for the textures it does not plan (sprites, patches, small textures): measured on the previous frames
 	u32 unplanned_cur; // blocks of those textures drawn so far in this frame
 	u32 plan_last, plan_exact; // the last plan's working set (budget applied / exact levels), blocks
+	GLMipmap_t *imm_tex; // PS2-HW-37: a big map texture selected outside the batches: made resident (at the level its polygon needs) when the polygon is drawn
 	int tex_filter; // HWD_SET_TEXTUREFILTER_*
 	u32 pal[256]; // GS CLUT entries, 0x00BBGGRR, no alpha, in index order
 	int pal_set;
@@ -345,6 +346,7 @@ typedef struct
 	u32 lod_blk, lod_lvl[6]; // blocks of the working set if every image were stored at the level the frame needs; per level
 	u32 lvl_up[6]; // uploads of images stored at a mip level (1..5), PS2-HW-34
 	u32 upgrades; // images made again at a finer level than they were stored at
+	u32 downgrades; // images made again at a coarser level than they were stored at (PS2-HW-37)
 	u32 invisible; // textures not uploaded: no polygon of the frame can see them
 	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
 } txstats_t;
