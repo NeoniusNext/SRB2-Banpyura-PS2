@@ -15,6 +15,9 @@
 //   -ftest-sprites A,B    at the first level load: "FT_SPR name sprnum numframes frames-with-a-patch" of the sprite definitions (sprites[]) of the sprite names
 //   -ftest-quit           I_Quit() after the hooks ran ("FT_DONE")
 
+#ifndef PS2_NO_ADDONS
+#include <libmc.h> // before the engine headers: newer ps2sdk sifrpc headers have a struct member named "client" (d_clisrv.h #defines it)
+#endif
 #include "../doomdef.h"
 #include "../m_argv.h"
 #include "../i_system.h"
@@ -37,9 +40,6 @@
 #endif
 #include <dirent.h>
 #include <stdio.h>
-#ifdef HAS_ADDONS
-#include <libmc.h>
-#endif
 
 static UINT32 crc_table[256];
 

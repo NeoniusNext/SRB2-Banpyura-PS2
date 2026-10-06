@@ -19,16 +19,21 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DEV = Path('D:/ps2dev')
+IS_WIN = os.name == 'nt'
+EXE = '.exe' if IS_WIN else ''
+DEV = Path(os.environ.get('PS2DEV') or ('D:/ps2dev' if IS_WIN else '/opt/ps2dev-x/ps2dev'))  # Linux: ps2dev release tarball (docs/TOOLCHAIN.md)
 SDK = DEV / 'ps2sdk'
 OUT = Path(os.environ.get('SRB2_PS2_OUT', ROOT / 'build/ps2'))  # per-agent builds: set SRB2_PS2_OUT
 OBJ = OUT / 'obj'
 GEN = OUT / 'gen'
-CC = DEV / 'ee/bin/mips64r5900el-ps2-elf-gcc.exe'
+CC = DEV / ('ee/bin/mips64r5900el-ps2-elf-gcc' + EXE)
 
 ENV = dict(os.environ, PS2DEV=str(DEV), PS2SDK=str(SDK))
-ENV['PATH'] = ';'.join(str(p) for p in [DEV/'ee/bin', DEV/'iop/bin', DEV/'bin',
-                                         Path('C:/Windows/System32'), Path('C:/Windows')])
+if IS_WIN:
+    ENV['PATH'] = ';'.join(str(p) for p in [DEV/'ee/bin', DEV/'iop/bin', DEV/'bin',
+                                             Path('C:/Windows/System32'), Path('C:/Windows')])
+else:
+    ENV['PATH'] = ':'.join([str(DEV/'ee/bin'), str(DEV/'iop/bin'), str(DEV/'bin'), str(DEV/'dvp/bin'), '/usr/bin', '/bin'])
 
 DEFS = ['-D_EE', '-DPS2', '-DPS2_PROFILE', '-DNOHW', '-DNOMD5',  # no HAVE_PNG / HAVE_ZLIB: PS2-20 (cooked packs only)
         '-DPS2_AUDIO_VORBIS', '-DPS2_AUDIO_MP3',
@@ -305,7 +310,7 @@ def main():
         if vsm.is_file():
             vobj = OBJ/'ps2_hw_vu1_vsm.o'
             if not vobj.exists() or vobj.stat().st_mtime < vsm.stat().st_mtime:
-                pv = subprocess.run([str(DEV/'dvp/bin/dvp-as.exe'), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
+                pv = subprocess.run([str(DEV/('dvp/bin/dvp-as' + EXE)), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
                 if pv.returncode or pv.stdout.strip() or pv.stderr.strip():
                     print('FAIL dvp-as', vsm, (pv.stdout + pv.stderr)[-3000:])
                     return 1
@@ -343,7 +348,7 @@ def main():
                 if path.is_file():
                     inputs.add(path.resolve())
     compiler = subprocess.run([str(CC), '--version'], env=ENV, capture_output=True, text=True)
-    size = subprocess.run([str(CC.with_name('mips64r5900el-ps2-elf-size.exe')), str(elf)], env=ENV, capture_output=True, text=True)
+    size = subprocess.run([str(CC.with_name('mips64r5900el-ps2-elf-size' + EXE)), str(elf)], env=ENV, capture_output=True, text=True)
     (OUT/'size.log').write_text(size.stdout + size.stderr, encoding='utf-8')
     report = {
         'command': [sys.executable, *sys.argv], 'sources': srcs, 'compiled': len(todo),

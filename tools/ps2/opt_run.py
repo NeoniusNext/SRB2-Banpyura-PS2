@@ -20,7 +20,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PCSX2 = {32: 'D:/PCSX2-test/pcsx2-qt.exe', 128: 'D:/PCSX2-test128/pcsx2-qt.exe'}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run_pcsx2  # noqa: E402  (platform-aware emulator locations)
+PCSX2 = {32: run_pcsx2.BASE, 128: ('D:/PCSX2-test128/pcsx2-qt.exe' if os.name == 'nt' else str(run_pcsx2.PCSX2_ROOT / 'slot128/AppRun'))}
 
 
 def stage(run, elf, pak, demo, cfg_extra=''):

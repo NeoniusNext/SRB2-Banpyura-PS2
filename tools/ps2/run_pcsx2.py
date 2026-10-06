@@ -13,19 +13,37 @@ A start that dies at once (e.g. "Failed to create swap chain") is retried (3 tim
 """
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
-LOCKDIR = Path('C:/Users/loban/AppData/Local/Temp')
+IS_WIN = os.name == 'nt'
+# Linux (cloud container): the emulator copies are PCSX2 AppImage trees (squashfs-root) in portable mode under $SRB2_PCSX2_ROOT
+# (default /opt/pcsx2): slot0 = the standard 32 MB profile (ExtraMemory=false, HostFs, software GS renderer, null audio), slot1..3 identical
+# copies made by tools/ps2/setup_linux_env.sh. The AppImage runs headless inside xvfb-run (a private X server per run).
+PCSX2_ROOT = Path(os.environ.get('SRB2_PCSX2_ROOT', '/opt/pcsx2'))
+LOCKDIR = Path('C:/Users/loban/AppData/Local/Temp') if IS_WIN else Path(os.environ.get('SRB2_PS2_LOCKDIR', '/tmp/srb2ps2-locks'))
+if not IS_WIN:
+    LOCKDIR.mkdir(parents=True, exist_ok=True)
 LOCK = LOCKDIR / 'pcsx2-run.lock'  # the lock of D:/PCSX2-test (slot 0); kept for older tools
 NETLOCK = LOCKDIR / 'pcsx2-net.lock'  # net_session.py: the PCSX2-net1/net2 copies and the fixed host UDP ports
-PCSX2 = os.environ.get('SRB2_PCSX2', 'D:/PCSX2-test/pcsx2-qt.exe')  # private copy of D:/PCSX2 with ExtraMemory=false (real 32 MB)
-BASE = 'D:/PCSX2-test/pcsx2-qt.exe'
+BASE = 'D:/PCSX2-test/pcsx2-qt.exe' if IS_WIN else str(PCSX2_ROOT / 'slot0/AppRun')
+PCSX2 = os.environ.get('SRB2_PCSX2', BASE)  # private copy of D:/PCSX2 with ExtraMemory=false (real 32 MB)
 _NSLOTS = int(os.environ.get('SRB2_PCSX2_SLOTS', '4'))
-SLOTS = [BASE] + [f'D:/PCSX2-s{i}/pcsx2-qt.exe' for i in range(1, _NSLOTS)]
+if IS_WIN:
+    SLOTS = [BASE] + [f'D:/PCSX2-s{i}/pcsx2-qt.exe' for i in range(1, _NSLOTS)]
+else:
+    SLOTS = [BASE] + [str(PCSX2_ROOT / f'slot{i}/AppRun') for i in range(1, _NSLOTS)]
 SLOTS = [x for x in SLOTS if Path(x).exists()] or [BASE]
+
+
+def _killgroup(p, sig):
+    try:
+        os.killpg(os.getpgid(p.pid), sig)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
 
 
 def _norm(exe):
@@ -95,6 +113,8 @@ def main():
         exe, lock = acquire_exe(PCSX2, a.lock_wait)
         cmd = [exe, '-portable', '-batch', '-nogui', '-fastboot', '-elf', str(Path(a.elf).resolve()),
                '-logfile', str(Path(a.log).resolve())]
+        if not IS_WIN:
+            cmd = ['xvfb-run', '-a', '-s', '-screen 0 800x600x24', 'env', 'QT_QPA_PLATFORM=xcb', 'LC_ALL=C.UTF-8'] + cmd
         if a.unlimited:
             cmd.append('-unlimited')
         if a.args:
@@ -109,10 +129,13 @@ def main():
         early = False
         t0 = time.time()
         try:
-            si = subprocess.STARTUPINFO()
-            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            si.wShowWindow = 0
-            p = subprocess.Popen(cmd, startupinfo=si, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if IS_WIN:
+                si = subprocess.STARTUPINFO()
+                si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                si.wShowWindow = 0
+                p = subprocess.Popen(cmd, startupinfo=si, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             end = time.time() + a.timeout
             seen = False
             while time.time() < end:
@@ -129,17 +152,28 @@ def main():
                 time.sleep(0.5)
             if p.poll() is None:
                 # polite close first so PCSX2 flushes its log file
-                subprocess.run(['taskkill', '/PID', str(p.pid)], capture_output=True)
+                if IS_WIN:
+                    subprocess.run(['taskkill', '/PID', str(p.pid)], capture_output=True)
+                else:
+                    _killgroup(p, signal.SIGINT)
                 try:
                     p.wait(8)
                 except subprocess.TimeoutExpired:
                     pass
             if p.poll() is None:
-                p.terminate()
+                if IS_WIN:
+                    p.terminate()
+                else:
+                    _killgroup(p, signal.SIGTERM)
                 try:
                     p.wait(10)
                 except subprocess.TimeoutExpired:
-                    p.kill()
+                    if IS_WIN:
+                        p.kill()
+                    else:
+                        _killgroup(p, signal.SIGKILL)
+            if not IS_WIN:
+                _killgroup(p, signal.SIGKILL)  # leftovers of the xvfb-run tree (never touches other runs: own session)
             if seen:
                 code = 0
             elif time.time() >= end:
