@@ -32,6 +32,7 @@ NETLOCK = LOCKDIR / 'pcsx2-net.lock'  # net_session.py: the PCSX2-net1/net2 copi
 BASE = 'D:/PCSX2-test/pcsx2-qt.exe' if IS_WIN else str(PCSX2_ROOT / 'slot0/AppRun')
 PCSX2 = os.environ.get('SRB2_PCSX2', BASE)  # private copy of D:/PCSX2 with ExtraMemory=false (real 32 MB)
 _NSLOTS = int(os.environ.get('SRB2_PCSX2_SLOTS', '4'))
+LOG_LIMIT = int(os.environ.get('SRB2_PCSX2_LOG_LIMIT_MB', '300')) << 20  # emulator log size that marks a run as runaway
 if IS_WIN:
     SLOTS = [BASE] + [f'D:/PCSX2-s{i}/pcsx2-qt.exe' for i in range(1, _NSLOTS)]
 else:
@@ -138,10 +139,18 @@ def main():
                 p = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             end = time.time() + a.timeout
             seen = False
+            runaway = False
             while time.time() < end:
                 if p.poll() is not None:
                     code = p.returncode
                     break
+                # a TLB-miss/exception storm writes GB of log per minute and fills the disk (OPT10: 16 GB in 25 min): stop such a run
+                try:
+                    if Path(a.log).stat().st_size > LOG_LIMIT:
+                        runaway = True
+                        break
+                except OSError:
+                    pass
                 if a.until:
                     try:
                         if a.until in Path(a.until_file or a.log).read_text(errors='replace'):
@@ -174,13 +183,19 @@ def main():
                         _killgroup(p, signal.SIGKILL)
             if not IS_WIN:
                 _killgroup(p, signal.SIGKILL)  # leftovers of the xvfb-run tree (never touches other runs: own session)
-            if seen:
+            if runaway:
+                code = 5
+                try:
+                    Path(a.log).write_text('RUNAWAY: emulator log exceeded %d MB, run stopped by run_pcsx2.py (TLB-miss/exception storm?); log truncated\n' % (LOG_LIMIT >> 20))
+                except OSError:
+                    pass
+            elif seen:
                 code = 0
             elif time.time() >= end:
                 code = 2  # a forced close is not successful completion
             elif p.poll() is not None:
                 code = p.returncode
-            if not seen and time.time() - t0 < 25:
+            if not seen and not runaway and time.time() - t0 < 25:
                 logtext = Path(a.log).read_text(errors='replace') if Path(a.log).exists() else ''
                 early = 'swap chain' in logtext.lower() or not logtext.strip()
         finally:
