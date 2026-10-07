@@ -220,6 +220,10 @@ typedef struct
 	u32 imgws; // owner: frame_no + 1 of the last frame in which a draw used the image (through any of its records)
 	u32 lodfr; // owner: frame_no + 1 of the frame lod belongs to
 	u8 lod; // owner: the finest mip level (0 = full size) a polygon of the frame needed (instrumentation, PS2-HW-34)
+	// OPT10 (PS2-HW-70): an image of more than 1024 rows (the GS limit) is stored as two images, the rows [0, 1024) and the rest, each with its own blocks
+	u8 psplit; // 0 = an ordinary image, 1 = the first piece (what the engine's texture is bound to), 2 = the second piece
+	int pnext, ppar; // first piece: the record of the second (NOREC = none); second piece: the first. One of them goes, the other goes with it
+	float pt0, pt1, ptk; // the piece holds the engine texture rows [pt0, pt1) of one repeat (fractions of the height); a polygon's t in the piece is (t - pt0) * ptk
 } texrec_t;
 
 #define NOREC (-1)
@@ -370,8 +374,8 @@ static u64 hash_frame;
 #define HWDBG_NOGATE 0x800000 // the old frame start: wait for the flip of the previous frame before drawing the next one
 #define HWDBG_COMPOSE 0x1000000 // hw_cache.c: every composed P_8 texture is checked against the original column loops
 #define HWDBG_NOPLAN 0x2000000 // no frame plan: every texture is stored at full size
-#define HWDBG_IMMDBG 0x10000000 // HWIMM lines: every upload / re-make of a big map texture (frame, name, level asked for, level stored, action)
-#define HWDBG_LODDBG 0x8000000 // HWLOD lines: the polygons of the frame plan of frame % 105 == 60 (texture, size, vertices, texel size in pixels, level)
+#define HWDBG_IMMDBG 0x40000000 // HWIMM lines: every upload / re-make of a big map texture (frame, name, level asked for, level stored, action)
+#define HWDBG_LODDBG 0x40000000 // HWLOD lines: the polygons of the frame plan of frame % 105 == 60 (texture, size, vertices, texel size in pixels, level)
 
 #define BIG_IMAGE_BLOCKS 512u // PS2-HW-39: images of at least this many blocks are placed from the top of the pool (screen captures are there too), the others from the bottom
 #define PLAN_MIN_TEXELS 65536u // PS2-HW-34: smaller textures are always stored at full size: their share of the working set is small and the estimate costs cycles
@@ -395,7 +399,7 @@ typedef struct
 	u32 upgrades; // images made again at a finer level than they were stored at
 	u32 downgrades; // images made again at a coarser level than they were stored at (PS2-HW-37)
 	u32 invisible; // textures not uploaded: no polygon of the frame can see them
-	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc, alloc_fail, alloc_frag, alloc_frag_blk, thrash_n, thrash_blk, lvl_cyc, plan_np, plan_mcyc; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
+	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc, alloc_fail, alloc_frag, alloc_frag_blk, thrash_n, thrash_blk, lvl_cyc, plan_np, plan_mcyc, split_up, split_poly, split_sub; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
 } txstats_t;
 static txstats_t TX;
 

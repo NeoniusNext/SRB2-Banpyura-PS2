@@ -276,6 +276,7 @@ static int rec_new(void)
 	H.rec[i].used = 1;
 	H.rec[i].prev = H.rec[i].next = NOREC;
 	H.rec[i].share = H.rec[i].sec = H.rec[i].sec_next = NOREC;
+	H.rec[i].pnext = H.rec[i].ppar = NOREC;
 	return i;
 }
 
@@ -283,6 +284,12 @@ static int rec_new(void)
 static inline int img_of(int i)
 {
 	return H.rec[i].share != NOREC ? H.rec[i].share : i;
+}
+
+// the blocks an image holds (both pieces of a split image)
+static inline u32 rec_blocks(const texrec_t *r)
+{
+	return r->nblk + (r->pnext != NOREC ? H.rec[r->pnext].nblk : 0u);
 }
 
 static void rec_release(int i)
@@ -322,6 +329,15 @@ static void tex_drop(int i, int count_eviction)
 			r->owner->downloaded = 0;
 		rec_release(i);
 		return;
+	}
+	if (r->pnext != NOREC || r->ppar != NOREC)
+	{
+		// PS2-HW-70: the two pieces of an image taller than the GS limit live and die together (a polygon needs both)
+		const int o = r->pnext != NOREC ? r->pnext : r->ppar;
+
+		r->pnext = r->ppar = NOREC;
+		H.rec[o].pnext = H.rec[o].ppar = NOREC;
+		tex_drop(o, count_eviction);
 	}
 	if (count_eviction && !r->screen && !r->pin && r->stamp == H.frame_no)
 	{
@@ -413,6 +429,8 @@ static inline u32 evict_weight(const texrec_t *r, int i, u32 seq_lo, u32 shift)
 {
 	if (r->share != NOREC)
 		return WEIGHT_STAY; // a view owns no blocks
+	if (r->ppar != NOREC)
+		return evict_weight(&H.rec[r->ppar], r->ppar, seq_lo, shift); // PS2-HW-70: the second piece of an image goes when the first one may
 	if (r->pin)
 		return WEIGHT_STAY;
 	if (r->screen)
@@ -1284,6 +1302,51 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
 	u32 x;
 
+	if (!c->dx && !(c->W2 & 3) && !((uintptr_t)s & 7) && !((uintptr_t)dst & 3))
+	{
+		// four texels (index, alpha pairs) in one 64-bit load: the index bytes are gathered, the alpha bytes that are zero become 0xFF (mode 0: a hole is index 255)
+		const u64 *s8 = (const u64 *)(const void *)s;
+		u32 *d4 = (u32 *)(void *)dst;
+		const int keyed = c->mode != 0;
+
+		for (x = 0; x < c->W2; x += 4)
+		{
+			const u64 v = *s8++;
+			const u32 idx = (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
+
+			if (keyed)
+			{
+				*d4++ = idx;
+			}
+			else
+			{
+				const u64 av = v >> 8;
+				const u32 a = (u32)(av & 0xFFu) | (u32)((av >> 8) & 0xFF00u) | (u32)((av >> 16) & 0xFF0000u) | (u32)((av >> 24) & 0xFF000000u);
+				const u32 nz = (((a & 0x7F7F7F7Fu) + 0x7F7F7F7Fu) | a) & 0x80808080u; // bit 7 of every byte that is not zero
+				const u32 zero = ~nz & 0x80808080u;
+
+				*d4++ = idx | ((zero >> 7) * 0xFFu);
+			}
+		}
+		if (ps2hwd_dbg_flags & HWDBG_COMPOSE) // -hwdbg 16777216: the row is made again by the byte loop and compared (PS2-HW-71)
+		{
+			static unsigned fchecked, fbad;
+
+			for (x = 0; x < c->W2; x++)
+			{
+				const u8 *t = s + (size_t)x * 2;
+
+				if (dst[x] != ((c->mode == 0 && t[1] == 0) ? 255 : t[0]))
+				{
+					fbad++;
+					break;
+				}
+			}
+			if (!(++fchecked & 1023) || (x < c->W2 && fbad < 5))
+				CONS_Printf("HWC fill check: %u rows, %u differ\n", fchecked, fbad);
+		}
+		return;
+	}
 	for (x = 0; x < c->W2; x++)
 	{
 		const u8 *t = s + (size_t)src_col(c, x) * 2;
@@ -1408,10 +1471,20 @@ static void tex_cap_control(void)
 
 // The stored size of a texture: every axis over the GS limit of 1024 texels is halved (by taking every (1 << d)-th texel), then the larger
 // axis is halved until the GS footprint is within `cap` blocks (cap 0 = no cap). Returns 0 when the size cannot be made valid.
-static int tex_plan(int psm, u32 sw, u32 sh, u32 cap, u32 *pdx, u32 *pdy)
+static int tex_nosplit; // -hwnosplit: images over 1024 rows are decimated (A/B of PS2-HW-70)
+static u32 tex_split_rows = 1024; // rows of the first piece of a split image: the GS limit; -hwsplitrows N (64..1024, a multiple of 64) makes every map texture of N+1..2N rows two images (the test of the split on ordinary content)
+
+// splittable: the texture may be stored as two images when it has more than 1024 rows (PS2-HW-70: a P_8 map texture or flat of 1025..2048 rows and at most
+// 1024 columns, no footprint cap in force) instead of with every second row
+static int tex_plan(int psm, u32 sw, u32 sh, u32 cap, int splittable, u32 *pdx, u32 *pdy)
 {
 	u32 dx = 0, dy = 0;
 
+	if (!cap && splittable && !tex_nosplit && psm == PSM_T8 && sw <= 1024 && sh > 1024 && sh <= 2048 && !(sh & 1) && tex_split_rows == 1024)
+	{
+		*pdx = *pdy = 0;
+		return 1;
+	}
 	while ((sw >> dx) > 1024 && !(sw & ((2u << dx) - 1)))
 		dx++;
 	while ((sh >> dy) > 1024 && !(sh & ((2u << dy) - 1)))
@@ -1645,6 +1718,7 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 
 	if (!ne || !HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
 		return NULL;
+	HWR_PS2_LockData(ne->p); // the zone may purge an unlocked block at any allocation (malloc below, the lump read): the caller unlocks it when it is done with it
 	band = malloc((size_t)sw * BAND);
 	if (!band)
 	{
@@ -1696,16 +1770,18 @@ static int tex_upload(GLMipmap_t *m)
 	const u8 *data = m->data;
 	u32 cw = sw, ch = sh; // the part of the block that is stored (PS2-HW-39)
 	int crop = 0;
-	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL;
+	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL, *dlock = NULL; // dlock: a level this call made, locked until the upload has read it
 	u32 ssw = sw, ssh = sh, slv = 0; // size and level of the texels `data` holds when it is a cached level (dsrc) and not the full size
 	u32 lv = 0; // mip level the texture is stored at (PS2-HW-34); the texels of a level are made by dec_level
 	int lvdec = 0; // the stored texels are those of the cache entry of that level
+	int split = 0; // PS2-HW-70: the image has more than 1024 rows and is stored as two images (rows [0, H2) and the hb rows after them)
+	u32 hb = 0, nblkA = 0;
 
 	tex_fail_why = "ok";
 	zc_last = 0;
 	if (m->format == GL_TEXFMT_P_8 && (m->regen_kind == 1 || m->regen_kind == 2) && sw * sh >= 2048)
 	{
-		if (sw * sh >= PLAN_MIN_TEXELS && !H.tex_cap_blocks && sw <= 1024 && sh <= 1024)
+		if (sw * sh >= PLAN_MIN_TEXELS && !H.tex_cap_blocks && sw <= 1024 && sh <= 2048)
 		{
 			int vis;
 
@@ -1727,6 +1803,7 @@ static int tex_upload(GLMipmap_t *m)
 		if (lv && !dce && !dsrc && !l0 && !m->data && m->format == GL_TEXFMT_P_8 && HWR_PS2_FlatStreamable(m) && (dce = flat_make_level(m, lv)) != NULL)
 		{
 			data = dce->p; // PS2-HW-38: made now from the lump; from here on it is a cached level like any other
+			dlock = dce;
 			lvdec = 1;
 		}
 	}
@@ -1898,8 +1975,9 @@ static int tex_upload(GLMipmap_t *m)
 	for (;;)
 	{
 		u32 dx = 0, dy = 0;
+		const int fit = lv && !H.tex_cap_blocks && (sw >> lv) <= 1024 && (sh >> lv) <= 1024; // the level the plan asks for is within the GS limit
 
-		if (!tex_plan(psm, sw, sh, H.tex_cap_blocks, &dx, &dy))
+		if (!fit && !tex_plan(psm, sw, sh, H.tex_cap_blocks, shareable && !crop, &dx, &dy))
 		{
 			tex_fail_why = "larger than 1024 and not divisible";
 			return NOREC;
@@ -1917,8 +1995,20 @@ static int tex_upload(GLMipmap_t *m)
 			W2 = cw;
 			H2 = ch;
 		}
+		split = !lv && !dx && !dy && !crop && shareable && psm == PSM_T8 && sw <= 1024 && sh > tex_split_rows && sh <= 2 * tex_split_rows && !tex_nosplit && !H.tex_cap_blocks; // tex_plan let it through whole (or it is a test: -hwsplitrows)
+		hb = 0;
+		if (split)
+		{
+			H2 = tex_split_rows;
+			hb = sh - tex_split_rows;
+		}
 		tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
-		nblk = tex_footprint(psm, W2, H2, tbw);
+		nblkA = tex_footprint(psm, W2, H2, tbw);
+		if (split)
+			nblkA = (nblkA + PAGE_BLOCKS - 1) & ~(u32)(PAGE_BLOCKS - 1); // the second piece starts on a page (the first one owns the few blocks in between)
+		nblk = nblkA;
+		if (split)
+			nblk += tex_footprint(psm, W2, hb, tbw); // both pieces in one range
 		if (cfg.tex_max_bytes > 0 && nblk > (u32)cfg.tex_max_bytes / 256u)
 		{
 			tex_fail_why = "footprint over budget";
@@ -1956,6 +2046,8 @@ static int tex_upload(GLMipmap_t *m)
 			ne = dc_slot(W2 * H2);
 			if (ne && HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
 			{
+				HWR_PS2_LockData(ne->p); // not purgable until the upload has read it (the check below, the record tables: any allocation may purge a free block)
+				dlock = ne;
 				dec_level(data, ssw, ssh, lv - slv, ne->p);
 				if (ps2hwd_dbg_flags & HWDBG_COMPOSE)
 				{
@@ -1969,8 +2061,14 @@ static int tex_upload(GLMipmap_t *m)
 						dchecked++;
 						if (memcmp(ref, ne->p, (size_t)W2 * H2))
 						{
+							u32 kk = 0;
+
 							dbad++;
+							while (kk < W2 * H2 && ref[kk] == ne->p[kk])
+								kk++;
 							CONS_Printf("HWC level MISMATCH %s %ux%u level %u (%u of %u differ)\n", HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)lv, dbad, dchecked);
+							CONS_Printf("HWC   first at %u of %u: made %u, reference %u; source %p %ux%u (slv %u, from %s, m->data %p) output %p %u bytes\n", (unsigned)kk, (unsigned)(W2 * H2), (unsigned)ne->p[kk], (unsigned)ref[kk],
+								(const void *)data, (unsigned)ssw, (unsigned)ssh, (unsigned)slv, dsrc ? "a cached level" : l0 ? "the cached full size" : "the engine's data", (const void *)m->data, (const void *)ne->p, (unsigned)(W2 * H2));
 						}
 						else if (!(dchecked & 7))
 						{
@@ -2017,6 +2115,13 @@ static int tex_upload(GLMipmap_t *m)
 			c->dx = c->dy = 0; // the texels are decimated already
 		}
 		TX.lvl_up[lv > 5 ? 5 : lv]++;
+	}
+	else if (split)
+	{
+		static int slogged;
+
+		if (slogged++ < 8)
+			CONS_Printf("HWD split texture %s %ux%u -> %ux%u + %ux%u (blocks %u + %u)\n", HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)W2, (unsigned)H2, (unsigned)W2, (unsigned)hb, (unsigned)nblkA, (unsigned)(nblk - nblkA));
 	}
 	else if (c->dx || c->dy)
 	{
@@ -2065,6 +2170,11 @@ static int tex_upload(GLMipmap_t *m)
 		rel_room(n);
 		upload_ref(blk, tbw, psm, W2, H2, data);
 		rel_add(dce);
+		if (split)
+		{
+			upload_ref(blk + nblkA, tbw, psm, W2, hb, data + (size_t)H2 * sw); // rows 1024 on: 1024 * sw is a multiple of 16
+			rel_add(dce);
+		}
 		zc_last = 1;
 		TX.zc_n++;
 		TX.zc_blk += nblk;
@@ -2072,6 +2182,12 @@ static int tex_upload(GLMipmap_t *m)
 	else
 	{
 		upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
+		if (split)
+		{
+			c->src = data + (size_t)H2 * sw;
+			c->H2 = hb;
+			upload_bands(blk + nblkA, tbw, psm, W2, hb, bpp, fill, c);
+		}
 	}
 
 	ri = rec_new();
@@ -2079,6 +2195,8 @@ static int tex_upload(GLMipmap_t *m)
 	{
 		tex_fail_why = "record table";
 		vram_free(blk, nblk);
+		if (dlock && dlock->p && !dlock->busy)
+			HWR_PS2_UnlockData(dlock->p);
 		return NOREC;
 	}
 	{
@@ -2086,7 +2204,7 @@ static int tex_upload(GLMipmap_t *m)
 
 		r->owner = m;
 		r->blk = blk;
-		r->nblk = nblk;
+		r->nblk = nblkA;
 		own_set(ri);
 		r->w = (u16)W2;
 		r->h = (u16)H2;
@@ -2118,11 +2236,56 @@ static int tex_upload(GLMipmap_t *m)
 		r->capi = (u8)H.cap_idx;
 		lru_push_head(ri);
 	}
+	if (split)
+	{
+		// PS2-HW-70: the second piece: its own image (record, blocks) with the texels of the rows after the first piece; the engine's texture is bound to the first
+		const int bi = rec_new();
+		texrec_t *a, *b;
+
+		if (bi == NOREC)
+		{
+			tex_fail_why = "record table";
+			vram_free(blk + nblkA, nblk - nblkA);
+			tex_drop(ri, 0);
+			if (dlock && dlock->p && !dlock->busy)
+				HWR_PS2_UnlockData(dlock->p);
+			return NOREC;
+		}
+		a = &H.rec[ri];
+		b = &H.rec[bi];
+		*b = *a;
+		b->prev = b->next = NOREC;
+		b->share = b->sec = b->sec_next = NOREC;
+		b->blk = blk + nblkA;
+		b->nblk = nblk - nblkA;
+		b->h = (u16)hb;
+		b->th = (u8)log2_u32(hb);
+		b->vh = hb;
+		b->npot_y = (hb & (hb - 1)) != 0;
+		b->region = (u8)((b->npot_x ? 1 : 0) | (b->npot_y ? 2 : 0));
+		b->sys = (float)hb / (float)(1u << b->th);
+		b->psplit = 2;
+		b->ppar = ri;
+		b->pnext = NOREC;
+		b->pt0 = (float)H2 / (float)sh;
+		b->pt1 = 1.0f;
+		b->ptk = (float)sh / (float)hb;
+		a->psplit = 1;
+		a->pnext = bi;
+		a->pt0 = 0.0f;
+		a->pt1 = (float)H2 / (float)sh;
+		a->ptk = (float)sh / (float)H2;
+		own_set(bi);
+		lru_push_head(bi);
+		TX.split_up++;
+	}
 	m->downloaded = (UINT32)(ri + 1);
 	H.st.uploads++;
-	H.st.upload_bytes += W2 * H2 * bpp;
+	H.st.upload_bytes += W2 * (H2 + hb) * bpp;
 	H.st.cyc_tex += cyc() - t0;
 	tx_note_upload(m, psm, nblk);
+	if (dlock && dlock->p && !dlock->busy)
+		HWR_PS2_UnlockData(dlock->p); // a zero-copy upload keeps the lock (busy) until its DMA has read the texels
 	return ri;
 }
 
@@ -2139,6 +2302,7 @@ static int tex_view(GLMipmap_t *m, int owner_rec)
 	r = &H.rec[ri];
 	*r = *o;
 	r->prev = r->next = NOREC;
+	r->pnext = r->ppar = NOREC; // a view of the first piece: its image (img_of) knows the second piece
 	r->used = 1;
 	r->pin = 0;
 	r->owner = m;
@@ -2308,6 +2472,8 @@ static void lod_frame_end(void)
 }
 
 // HWTEX line of the window just ended (per-frame averages of the block counts; counts of uploads are window totals)
+static unsigned spr_hid_test, spr_hid_yes; // PS2-HW-72 (ps2_hw_plan.inc)
+
 static void tx_report(void)
 {
 	static int win;
@@ -2322,6 +2488,13 @@ static void tx_report(void)
 		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.downgrades, (unsigned)TX.invisible,
 		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f, (unsigned)TX.alloc_fail, (unsigned)TX.alloc_frag, (unsigned)TX.alloc_frag_blk, (unsigned)(TX.thrash_n / f), (unsigned)(TX.thrash_blk / f), (unsigned)H.plan_pct, (unsigned)(TX.lvl_cyc / f), (unsigned)(TX.sync_cyc / f), (unsigned)(TX.plan_np / f), (unsigned)(TX.plan_mcyc / f));
 	ps2hwt_mkpatch_n = ps2hwt_mkpatch_cyc = 0;
+	if (spr_hid_test)
+	{
+		CONS_Printf("HWSPRCULL win=%d tests=%u hidden=%u (per frame %u / %u)\n", win - 1, spr_hid_test, spr_hid_yes, spr_hid_test / f, spr_hid_yes / f);
+		spr_hid_test = spr_hid_yes = 0;
+	}
+	if (TX.split_up || TX.split_poly)
+		CONS_Printf("HWSPLIT win=%d uploads=%u polygons=%u parts=%u\n", win - 1, (unsigned)TX.split_up, (unsigned)TX.split_poly, (unsigned)TX.split_sub);
 	memset(&TX, 0, sizeof TX);
 }
 
