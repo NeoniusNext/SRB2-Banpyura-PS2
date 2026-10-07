@@ -3,8 +3,8 @@
 # (bounds, alignment, null, vla-bound), all recoverable so that one run lists every distinct finding; then the four golden demos under it.
 # The emulator forgives what the console does not: out-of-bounds reads/writes, use after free, NULL-based stores, unaligned accesses.
 #
-# usage: tools/ps2/host_asan.sh build    configure + build into build/host-asan   (a few minutes with -j2)
-#        tools/ps2/host_asan.sh demos    DEMO_001..004 timedemos under it: build/runs/asan-DEMO_00n/stdout.log, findings listed per demo
+# usage: [ASAN_DIR=build/host-asan] tools/ps2/host_asan.sh build    configure + build into build/host-asan   (a few minutes with -j2)
+#        tools/ps2/host_asan.sh demos    DEMO_001..004 timedemos under it: build/runs/asan-<dir>-DEMO_00n/stdout.log, findings listed per demo
 # Needs: cmake, ninja, gcc, SDL2/openmpt/png/zlib dev packages (the CMake host profile), the PS2 packs in $PAKDIR (default build/pak), the demos in golden/phase0-v2.
 # Notes: the CMake host profile (src/CMakeLists.txt) does not compile d_netfil.c, mserv.c and http-mserv.c, which the EE build has: they are compiled here by hand with the
 # same flags and the stubs of tools/ps2/host_asan_shim.c are linked; lzf.c gets STRICT_ALIGN=1 as on MIPS (x86 would use unaligned u16 loads that UBSan flags).
@@ -12,7 +12,7 @@
 set -e
 W=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$W"
-B=build/host-asan
+B=${ASAN_DIR:-build/host-asan}
 S=$B/shim
 PAKDIR=${PAKDIR:-$W/build/pak}
 SAN="-fsanitize=address,bounds,alignment,null,vla-bound,nonnull-attribute,returns-nonnull-attribute -fsanitize-recover=all"
@@ -46,7 +46,7 @@ if [ "$1" = demos ]; then
   export UBSAN_OPTIONS=print_stacktrace=0
   EXE=$(ls $W/$B/bin/lsdlsrb2_* | grep -v '\.debug$' | head -1)
   for D in DEMO_001 DEMO_002 DEMO_003 DEMO_004; do
-    OUT=$W/build/runs/asan-$D
+    OUT=$W/build/runs/asan-$(basename $B)-$D
     rm -rf "$OUT"; mkdir -p "$OUT/home/.srb2"
     cp golden/phase0-v2/$D.lmp "$OUT/home/.srb2/$D.lmp"
     printf 'fpscap "35"\nfullscreen "Off"\nshowfps "Off"\nshowping "Off"\n' > "$OUT/home/.srb2/reference.cfg"
