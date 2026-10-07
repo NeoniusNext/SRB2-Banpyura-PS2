@@ -49,6 +49,36 @@ static inline void PS2_Fill16(UINT16 *p, UINT16 v, size_t n)
 		*p++ = v;
 		n--;
 	}
+#if defined(_EE) && defined(__GNUC__)
+	// PS2-172: one more 64-bit store aligns the pointer to 16 bytes, the bulk then goes out with 128-bit stores (32 bytes per pass: 2 sq
+	// instead of 4 sd; the visplane clip reset writes 2 x 640 bytes for every new visplane)
+	if (n >= 20)
+	{
+		if ((size_t)p & 8)
+		{
+			memcpy(p, &w, 8);
+			p += 4;
+			n -= 4;
+		}
+		{
+			size_t blocks = n >> 4;
+			UINT64 pat;
+
+			n &= 15;
+			__asm__ volatile(
+				"pcpyld %[pat],%[w],%[w]\n\t"
+				"1:\n\t"
+				"sq %[pat],0(%[p])\n\t"
+				"sq %[pat],16(%[p])\n\t"
+				"addiu %[b],%[b],-1\n\t"
+				"addiu %[p],%[p],32\n\t"
+				"bnez %[b],1b\n\t"
+				: [p] "+r"(p), [b] "+r"(blocks), [pat] "=&r"(pat)
+				: [w] "r"(w)
+				: "memory");
+		}
+	}
+#endif
 	while (n >= 16)
 	{
 		memcpy(p, &w, 8);

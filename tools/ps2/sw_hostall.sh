@@ -13,5 +13,6 @@ run cand "-DPS2_BSPCHECK -DPS2_NODECHECK" same $DEMOS            # tree as is, w
 run neg9 "-DPS2_NODECHECK -DPS2_NEGCTL=9" differ DEMO_003       # PS2-166: moved dynamic slope values are not followed -> shadow check stops the game
 run neg10 "-DPS2_NEGCTL=10" differ DEMO_003                     # PS2-167: the subsector memo compares x only
 run neg11 "-DPS2_NEGCTL=11" differ $DEMOS                       # PS2-170: the sprite clip scan stops one column early
+run neg13 "-DPS2_NEGCTL=13" differ DEMO_003                     # PS2-172: the sector point memo compares x only
 [ $rc = 0 ] && echo "SW HOST ALL: OK" || echo "SW HOST ALL: FAILED"
 exit $rc

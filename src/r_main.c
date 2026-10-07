@@ -1050,16 +1050,32 @@ static ps2_sedges_t **sedge_tab;
 static size_t sedge_tabn;
 static ps2_sedges_t sedge_nocache; // marker: this sector is walked line by line
 
+// PS2-172: the answer for (sector, x, y) is a pure function of the point while the sector's lines stand still (sectors with a polyobject line
+// are never stored here), and the callers (P_MobjFloorZSlope/P_MobjCeilingZSlope from P_CheckPosition) ask again for the same corner of every
+// object that does not move, every tic. Direct mapped memo, both coordinates and the sector compared (tag = (sector + 1) << 1 | answer, 0 = empty);
+// cleared with the edge table at the level change.
+#ifndef SISMEMO_BITS
+#define SISMEMO_BITS 12
+#endif
+typedef struct { fixed_t x, y; UINT32 tag; } ps2_sismemo_t;
+static ps2_sismemo_t sismemo[1 << SISMEMO_BITS];
+#define SISMEMO_INDEX(idx, x, y) ((((UINT32)(x) >> FRACBITS) + ((UINT32)(y) >> FRACBITS) * 73u + (UINT32)(idx) * 1031u) & ((1u << SISMEMO_BITS) - 1))
+#ifdef PS2_BSPSTAT
+unsigned long long ps2_sismemo_hits, ps2_sismemo_calls;
+#endif
+
 #ifdef PS2_OPT_BSPC
 static void R_ClearSubsectorMemo(void);
+static void R_ResetBSPCacheKey(void);
 #endif
 
 void R_ResetSectorEdgeCache(void)
 {
 	sedge_tab = NULL; // the memory was PU_LEVEL: gone with the level
 	sedge_tabn = 0;
+	memset(sismemo, 0, sizeof sismemo); // PS2-172
 #ifdef PS2_OPT_BSPC
-	R_ClearSubsectorMemo(); // PS2-167
+	R_ResetBSPCacheKey(); // PS2-167/172: the level load is the only place that replaces the node array
 #endif
 }
 
@@ -1106,6 +1122,7 @@ boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y)
 	const size_t idx = (size_t)(sector - sectors);
 	const ps2_sedges_t *se;
 	const ps2_sedge_t *e;
+	ps2_sismemo_t *memo;
 	UINT32 n, passes = 0;
 
 	if (idx >= numsectors)
@@ -1114,15 +1131,38 @@ boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y)
 	{
 		sedge_tab = Z_Calloc(sizeof (*sedge_tab) * numsectors, PU_LEVEL, NULL);
 		sedge_tabn = numsectors;
+		memset(sismemo, 0, sizeof sismemo);
 	}
 	se = sedge_tab[idx];
 	if (!se)
 		se = R_BuildSectorEdges(sector, idx);
 	if (se == &sedge_nocache)
 		return R_IsPointInSectorLines(sector, x, y);
+	memo = &sismemo[SISMEMO_INDEX(idx, x, y)];
+#ifdef PS2_BSPSTAT
+	ps2_sismemo_calls++;
+#endif
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 13 // negative control of the host A/B: the memo compares the x coordinate only
+	if ((memo->tag >> 1) == (UINT32)idx + 1 && memo->x == x)
+#else
+	if ((memo->tag >> 1) == (UINT32)idx + 1 && memo->x == x && memo->y == y)
+#endif
+	{
+#ifdef PS2_BSPSTAT
+		ps2_sismemo_hits++;
+#endif
+#ifdef PS2_BSPCHECK // host self-check: a memo answer must be the plain walk over the sector's lines
+		if ((boolean)(memo->tag & 1) != R_IsPointInSectorLines(sector, x, y))
+			I_Error("R_IsPointInSector: memo mismatch at %d,%d", (int)(x >> FRACBITS), (int)(y >> FRACBITS));
+#endif
+		return memo->tag & 1;
+	}
 	for (e = se->e, n = se->n; n; n--, e++)
 		if (e->y1 < y && y <= e->y2 && PS2_EdgeXLess(e->x1, e->y1, e->x2, e->y2, x, y))
 			passes++;
+	memo->x = x;
+	memo->y = y;
+	memo->tag = ((UINT32)idx + 1) << 1 | (passes & 1);
 	return passes & 1;
 }
 
@@ -1220,6 +1260,17 @@ unsigned long long ps2_ssmemo_hits;
 static void R_ClearSubsectorMemo(void)
 {
 	memset(ssmemo, 0, sizeof ssmemo);
+}
+
+// PS2-172: P_LoadLevel (through R_ResetSectorEdgeCache) forgets the node array the BSP cell table and the memo belong to; the per-call check in
+// R_PointInSubsector is then the two compares of the array pointer and size (the six root partition values of R_BSPCacheSigEq stay as the
+// check of builds without the hook, PS2_OPT_REND off)
+static void R_ResetBSPCacheKey(void)
+{
+	bspc.nodes = NULL;
+	bspc.numnodes = 0;
+	bspc.ok = false;
+	R_ClearSubsectorMemo();
 }
 #ifdef PS2_BSPCHECK
 UINT32 bspcheck_count; // calls verified
@@ -1352,6 +1403,7 @@ void PS2_BspStatDump(void)
 		(unsigned)bspc.cw, (unsigned)bspc.ch, (int)bspc.shift - FRACBITS);
 	fprintf(stderr, "BSPSTAT memo hits %llu (descents above: the memo misses), hit rate %.1f%%\n", ps2_ssmemo_hits,
 		100.0 * ps2_ssmemo_hits / (double)(ps2_ssmemo_hits + ps2_bspstat[0] + 1));
+	fprintf(stderr, "BSPSTAT sector memo: %llu calls, %llu hits (%.1f%%)\n", ps2_sismemo_calls, ps2_sismemo_hits, 100.0 * ps2_sismemo_hits / (double)(ps2_sismemo_calls + 1));
 }
 #endif
 
@@ -1365,7 +1417,11 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 #ifdef PS2_OPT_BSPC
 	if (numnodes)
 	{
+#ifdef PS2_OPT_REND
+		if (bspc.nodes != nodes || bspc.numnodes != numnodes)
+#else
 		if (bspc.nodes != nodes || bspc.numnodes != numnodes || !R_BSPCacheSigEq())
+#endif
 		{
 			R_BuildBSPCache();
 			R_ClearSubsectorMemo();

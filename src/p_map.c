@@ -2074,6 +2074,19 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 			if (!(rover->fofflags & FOF_EXISTS))
 				continue;
 
+#ifdef PS2_OPT_REND
+			// PS2-173: the two heights (pure functions) are only needed by the rovers that get past the tests below; a rover that the chain
+			// below would skip anyway (not goo water, not lava/water the player may stand on, not the skim exception, not solid for this
+			// kind of thing, not quicksand) is skipped before they are computed
+			if (!((rover->fofflags & (FOF_SWIMMABLE|FOF_GOOWATER)) == (FOF_SWIMMABLE|FOF_GOOWATER) && !(thing->flags & MF_NOGRAVITY))
+				&& !(thing->player && (P_CheckSolidLava(rover) || P_CanRunOnWater(thing->player, rover)))
+				&& !(thing->type == MT_SKIM && (rover->fofflags & FOF_SWIMMABLE))
+				&& !((rover->fofflags & FOF_BLOCKPLAYER && thing->player)
+				    || (rover->fofflags & FOF_BLOCKOTHERS && !thing->player)
+					|| rover->fofflags & FOF_QUICKSAND))
+				continue;
+#endif
+
 			topheight = P_GetFOFTopZ(thing, newsubsec->sector, rover, x, y, NULL);
 			bottomheight = P_GetFOFBottomZ(thing, newsubsec->sector, rover, x, y, NULL);
 

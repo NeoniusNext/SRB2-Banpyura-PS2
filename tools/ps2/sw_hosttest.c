@@ -8,6 +8,7 @@
 #include "tables.h"
 #include "ps2/ps2_rdraw.h"
 #include "ps2/ps2_nodescan.h"
+#include "r_slopeq.h"
 
 static UINT64 st = 88172645463325252ull;
 static UINT32 rnd(void) { st ^= st << 13; st ^= st >> 7; st ^= st << 17; return (UINT32)(st >> 16); }
@@ -200,6 +201,73 @@ next_query:;
 	}
 }
 
+
+/* ---- PS2-172: RQ_Div128 (src/r_slopeq.h) against the plain 64-iteration restoring division ---- */
+static UINT64 ref_Div128(UINT64 hi, UINT64 lo, UINT64 d)
+{
+	UINT64 q = 0, rem;
+	int i;
+	if (hi >= d)
+		return ~(UINT64)0;
+	if (hi == 0)
+		return lo / d;
+	rem = hi;
+	for (i = 63; i >= 0; i--)
+	{
+		const UINT64 top = rem >> 63;
+		rem = (rem << 1) | ((lo >> i) & 1);
+		if (top || rem >= d)
+		{
+			rem -= d;
+			q |= (UINT64)1 << i;
+		}
+	}
+	return q;
+}
+
+static UINT64 rnd64(void) { return ((UINT64)rnd() << 32) ^ rnd() ^ ((UINT64)rnd() << 11); }
+static UINT64 rnd_bits(void) /* random value of a random bit length 0..64, sometimes all ones / a power of two / one off */
+{
+	const UINT32 r = rnd(), n = (r >> 4) % 65;
+	UINT64 v = n ? (rnd64() >> (64 - n)) : 0;
+	switch (r & 7)
+	{
+		case 0: v = n ? ((UINT64)1 << (n - 1)) : 0; break;
+		case 1: v = n ? (((UINT64)1 << (n - 1)) - 1) : 0; break;
+		case 2: v = n ? (((UINT64)1 << (n - 1)) + 1) : 1; break;
+		default: break;
+	}
+	return v;
+}
+
+static void test_div128(unsigned long long *checks, unsigned long long *fails)
+{
+	UINT32 i;
+	for (i = 0; i < 40000000u; i++)
+	{
+		UINT64 d = rnd_bits() & 0x8000000000000000ull ? ((UINT64)1 << 63) : (rnd_bits() >> 1), hi, lo;
+		if (d == 0)
+			d = 1;
+		switch (rnd() & 3)
+		{
+			case 0: hi = rnd_bits() % d; break; /* any hi below d */
+			case 1: hi = (d - 1) - (rnd_bits() % (d < 1024 ? d : 1024)); break; /* just below d */
+			case 2: hi = rnd_bits() >> (rnd() & 63); if (hi >= d) hi %= d; break; /* small hi: the mapping case (quotient of about 33 bits) */
+			default: hi = (rnd() & 1) ? 0 : (d >> (1 + (rnd() & 31))); break;
+		}
+		lo = (rnd() & 3) ? rnd_bits() : ((rnd() & 1) ? ~(UINT64)0 : 0);
+		if ((rnd() & 15) == 0)
+			hi = d + (rnd_bits() & 3); /* does not fit: saturates */
+		(*checks)++;
+		if (RQ_Div128(hi, lo, d) != ref_Div128(hi, lo, d))
+		{
+			if (++*fails <= 5)
+				printf("SW Div128 mismatch hi=%llx lo=%llx d=%llx: %llx vs %llx\n", (unsigned long long)hi, (unsigned long long)lo, (unsigned long long)d,
+					(unsigned long long)RQ_Div128(hi, lo, d), (unsigned long long)ref_Div128(hi, lo, d));
+		}
+	}
+}
+
 int main(void)
 {
 	unsigned long long checks[8] = {0}, fails[8] = {0};
@@ -216,6 +284,10 @@ int main(void)
 	test_nodescan(&checks[2], &fails[2]);
 	printf("SW NodeScan checks=%llu failures=%llu\n", checks[2], fails[2]);
 	bad += fails[2] != 0;
+
+	test_div128(&checks[3], &fails[3]);
+	printf("SW Div128 checks=%llu failures=%llu\n", checks[3], fails[3]);
+	bad += fails[3] != 0;
 
 	printf("SW DONE failures=%d\n", bad);
 	return bad ? 1 : 0;

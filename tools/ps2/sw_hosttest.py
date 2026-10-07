@@ -36,7 +36,7 @@ def main():
     print(text.strip())
     ok &= rc == 0 and 'SW DONE failures=0' in text
     if a.negative_control:
-        for flag in ('-DSW_BROKEN', '-DPS2_NEGCTL=7', '-DPS2_NEGCTL=8'): # edge test, node scan x-test, unstable sort
+        for flag in ('-DSW_BROKEN', '-DPS2_NEGCTL=7', '-DPS2_NEGCTL=8', '-DPS2_NEGCTL=12'): # edge test, node scan x-test, unstable sort, Div128 skip
             rc, text = build_run(a.out, [flag])
             print('negative control %s:' % flag, text.strip().splitlines()[-1] if text.strip() else '(no output)', '->', 'detected' if rc else 'NOT DETECTED')
             ok &= rc != 0

@@ -2078,6 +2078,15 @@ void P_AdjustMobjFloorZ_FFloors(mobj_t *mo, sector_t *sector, UINT8 motype)
 		if (!(rover->fofflags & FOF_EXISTS))
 			continue;
 
+#ifdef PS2_OPT_REND
+		// PS2-173: the heights (pure functions) are only needed by the rovers the chain below does not skip: skip those first
+		if (!(mo->player && (P_CheckSolidLava(rover) || P_CanRunOnWater(mo->player, rover)))
+			&& ((motype != 0 && (rover->fofflags & FOF_SWIMMABLE))
+			 || (!(rover->fofflags & FOF_QUICKSAND)
+			  && !(((rover->fofflags & (FOF_BLOCKPLAYER|FOF_MARIO)) && mo->player) || ((rover->fofflags & FOF_BLOCKOTHERS) && !mo->player)))))
+			continue;
+#endif
+
 		topheight = P_GetFOFTopZ(mo, sector, rover, mo->x, mo->y, NULL);
 		bottomheight = P_GetFOFBottomZ(mo, sector, rover, mo->x, mo->y, NULL);
 
