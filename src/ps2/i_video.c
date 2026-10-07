@@ -199,6 +199,8 @@ static INT32 totalframes;
 
 static void Impl_HWFailure(const char *message)
 {
+	if (Z_GuardThrow(message)) // PS2-170: the frame (or the level's hardware part) is abandoned and the game goes on in software; no return from here
+		return;
 	I_Error("PS2 HW resource failure: %s", message);
 }
 

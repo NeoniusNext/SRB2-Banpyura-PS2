@@ -493,20 +493,52 @@ static boolean Z_EvictLRU(size_t want, boolean current)
 
 // PS2-71: see Z_SetReclaimHook (z_zone.h). Not reentrant: the hook only frees.
 static z_reclaim_fn zreclaim_hook;
+// PS2-170 (OPT11-STAB): more subsystems than the audio cache hold rebuildable memory (the hardware renderer's data cache): extra hooks, same contract
+#define Z_RECLAIM_EXTRA 3
+static z_reclaim_fn zreclaim_extra[Z_RECLAIM_EXTRA];
 static boolean zreclaiming;
 void Z_SetReclaimHook(z_reclaim_fn fn)
 {
 	zreclaim_hook = fn;
 }
 
+void Z_AddReclaimHook(z_reclaim_fn fn)
+{
+	int i;
+
+	for (i = 0; i < Z_RECLAIM_EXTRA; i++)
+		if (zreclaim_extra[i] == fn)
+			return;
+	for (i = 0; i < Z_RECLAIM_EXTRA; i++)
+		if (!zreclaim_extra[i])
+		{
+			zreclaim_extra[i] = fn;
+			return;
+		}
+}
+
+void Z_RemoveReclaimHook(z_reclaim_fn fn)
+{
+	int i;
+
+	for (i = 0; i < Z_RECLAIM_EXTRA; i++)
+		if (zreclaim_extra[i] == fn)
+			zreclaim_extra[i] = NULL;
+}
+
 static boolean Z_Reclaim(size_t want)
 {
-	size_t got;
+	size_t got = 0;
+	int i;
 
-	if (!zreclaim_hook || zreclaiming)
+	if (zreclaiming)
 		return false;
 	zreclaiming = true;
-	got = zreclaim_hook(want == SIZE_MAX ? (size_t)1 << 30 : want);
+	if (zreclaim_hook)
+		got = zreclaim_hook(want == SIZE_MAX ? (size_t)1 << 30 : want);
+	for (i = 0; i < Z_RECLAIM_EXTRA && !got; i++) // the next hook only when the one before gave nothing (the audio cache is the cheapest to rebuild)
+		if (zreclaim_extra[i])
+			got = zreclaim_extra[i](want == SIZE_MAX ? (size_t)1 << 30 : want);
 	zreclaiming = false;
 	return got != 0;
 }
@@ -766,7 +798,128 @@ void Z_ReportCosts(void)
 	}
 }
 
+// PS2-170 (OPT11-STAB): recoverable out-of-memory. A guard (Z_GUARD_TRY) arms a longjmp: a Z_Malloc that cannot be satisfied (after every eviction
+// and reclaim hook) then does not end the game, it returns to the guard, which switches the hardware renderer off, flushes the caches, or leaves
+// the level. State the unwinding would leave behind (the render lock, the pinned realloc source) is put back by Z_GuardLanded.
+static zguard_t *zguard;
+static UINT32 zoom_recovered, zoom_refused;
+// -zoomtest N[,N2...]: fault injection: the next allocation with a hardware tag (or any tag after "all") made N frames after the guard was armed fails
+static UINT32 zoomtest_frames[8], zoomtest_n, zoomtest_next, zoomtest_every, zoomtest_last;
+static boolean zoomtest_any;
+static UINT32 zoomtest_armed_frame;
+
+void Z_GuardPush(zguard_t *g)
+{
+	g->prev = zguard;
+	g->lock = zpurgelock;
+	g->size = 0;
+	g->tag = 0;
+	g->reason[0] = '\0';
+	zguard = g;
+}
+
+void Z_GuardPop(zguard_t *g)
+{
+	if (zguard == g)
+		zguard = g->prev;
+}
+
+void Z_GuardLanded(zguard_t *g)
+{
+	zguard = g->prev;
+	zpurgelock = g->lock;
+	zpinned = NULL;
+	zreclaiming = false;
+	PS2Spill_Reset();
+}
+
+boolean Z_GuardArmed(void)
+{
+	return zguard != NULL;
+}
+
+UINT32 Z_GuardRecovered(void)
+{
+	return zoom_recovered;
+}
+
+// An unrecoverable condition outside the allocator (a driver resource failure): back to the guard with the reason, or false when none is armed
+boolean Z_GuardThrow(const char *reason)
+{
+	if (!zguard || PS2Lua_InCall())
+		return false;
+	snprintf(zguard->reason, sizeof zguard->reason, "%s", reason);
+	zguard->size = 0;
+	zguard->tag = 0;
+	zoom_recovered++;
+	longjmp(zguard->jb, 1);
+	return true;
+}
+
+// Test hook: true when this allocation is to fail now (the allocator then goes down the out-of-memory path without looking at the arena)
+static boolean Z_OomInjected(INT32 tag)
+{
+	if (!zguard || (!zoomtest_every && (!zoomtest_n || zoomtest_next >= zoomtest_n)))
+		return false;
+	if (!zoomtest_any && !(tag == PU_HWRCACHE || tag == PU_HWRCACHE_UNLOCKED || tag == PU_HWRBATCH || tag == PU_HWRPLANE || tag == PU_HWRPATCHINFO
+		|| tag == PU_HWRPATCHCOLMIPMAP || tag == PU_HWRMODELTEXTURE || tag == PU_HWRMODELTEXTURE_UNLOCKED || tag == PU_HWRLIGHTTABLEDATA))
+		return false;
+	if (zoomtest_every)
+	{
+		// -zoomevery N: every N-th displayed frame one more allocation fails
+		const UINT32 f = (zframe - zoomtest_armed_frame) & Z_FRAME_MASK;
+
+		if (f < zoomtest_every || f - zoomtest_last < zoomtest_every)
+			return false;
+		zoomtest_last = f;
+		return true;
+	}
+	if (((zframe - zoomtest_armed_frame) & Z_FRAME_MASK) < zoomtest_frames[zoomtest_next])
+		return false;
+	zoomtest_next++;
+	return true;
+}
+
+static void Z_OomTestInit(void)
+{
+	if (M_CheckParm("-zoomtest") && M_IsNextParm())
+	{
+		const char *p = M_GetNextParm();
+
+		while (*p && zoomtest_n < 8)
+		{
+			zoomtest_frames[zoomtest_n++] = (UINT32)atol(p);
+			while (*p && *p != ',')
+				p++;
+			if (*p == ',')
+				p++;
+		}
+		zoomtest_armed_frame = zframe;
+	}
+	if (M_CheckParm("-zoomevery") && M_IsNextParm())
+		zoomtest_every = (UINT32)atol(M_GetNextParm());
+	zoomtest_any = M_CheckParm("-zoomany") != 0;
+}
+
 static void Z_OutOfMemory(size_t size, INT32 tag, size_t align)
+{
+	zpinned = NULL;
+	if (zguard && !PS2Lua_InCall())
+	{
+		zguard->size = size;
+		zguard->tag = tag;
+		snprintf(zguard->reason, sizeof zguard->reason, "out of memory: %lu B, tag %s", (unsigned long)size, PS2Mem_TagName(tag));
+		zoom_recovered++;
+		CONS_Printf("OOM (recoverable): request %lu B tag %d (%s) align %lu, purge lock %d, frame %lu, free %lu B, largest %lu B\n", (unsigned long)size, (int)tag,
+			PS2Mem_TagName(tag), (unsigned long)align, (int)zpurgelock, (unsigned long)zframe, (unsigned long)ZA_FreeBytes(), (unsigned long)ZA_LargestFree());
+		longjmp(zguard->jb, 1);
+	}
+	if (zguard)
+		zoom_refused++; // a Lua hook is running: its state cannot be abandoned
+	Z_OutOfMemoryFatal(size, tag, align);
+}
+
+void Z_OutOfMemoryFatal(size_t size, INT32 tag, size_t align)
 {
 	zpinned = NULL;
 	CONS_Printf("OOM: request %lu B tag %d (%s) align %lu, purge lock %d, frame %lu\n", (unsigned long)size, (int)tag,
@@ -816,6 +969,7 @@ static void Z_ArenaStart(void)
 	}
 	if (M_CheckParm("-zflush") && M_IsNextParm())
 		zflush_period = (UINT32)atoi(M_GetNextParm());
+	Z_OomTestInit();
 	zreserve = Z_KiBParm("-zreserve", zreserve);
 	cap = Z_KiBParm("-zarena", cap);
 	zheadroom = Z_KiBParm("-zheadroom", zheadroom);
@@ -861,6 +1015,16 @@ void Z_FlushCache(void)
 	Z_FreeTagRange(PU_PURGELEVEL, INT32_MAX);
 	Z_EvictLRU((size_t)-1, true);
 	Z_RegRebuild(); // PS2-76: one arena walk per level; the registry is right again even after an overflow
+}
+
+// PS2-170 (OPT11-STAB): after a frame was abandoned for lack of memory (Z_GuardLanded): nothing is held any more, so every cache block of any age goes
+// (blocks of the abandoned frame included, which the allocator had to protect), the audio and renderer hooks give back what they can rebuild, and the
+// free space joins into large blocks again (an allocation of 512 KB that failed between scattered holes then fits). Returns the free bytes.
+size_t Z_EmergencyFree(void)
+{
+	Z_FlushCache();
+	Z_Reclaim(SIZE_MAX);
+	return ZA_FreeBytes();
 }
 
 void Z_NextFrame(void)
@@ -1190,7 +1354,7 @@ static void *Z_MallocInternal(size_t size, INT32 tag, void *user, INT32 alignbit
 	if (align < minimum)
 		align = minimum;
 
-	ptr = Z_AllocBlock(size, tag, align);
+	ptr = Z_OomInjected(tag) ? NULL : Z_AllocBlock(size, tag, align); // PS2-170: -zoomtest makes this one fail
 	if (ptr == NULL)
 	{
 		if (fatal)

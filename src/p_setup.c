@@ -93,6 +93,9 @@
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
 #endif
+#ifdef PS2
+#include "ps2/ps2_hwfb.h" // PS2-170
+#endif
 
 //
 // Map MD5, calculated on level load.
@@ -8648,8 +8651,12 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	HWR_FreeExtraSubsectors();
 
 	// Create plane polygons.
+#ifdef PS2
+	PS2HWFB_BuildLevel(); // PS2-170: a level that does not fit in the hardware renderer's memory continues in software
+#else
 	if (rendermode == render_opengl)
 		HWR_LoadLevel();
+#endif
 #endif
 
 	// oh god I hope this helps
@@ -8731,6 +8738,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	R_ResetViewInterpolation(0);
 	R_ResetViewInterpolation(0);
 	R_UpdateMobjInterpolators();
+#ifdef PS2
+	PS2HWFB_LevelLoaded(); // PS2-170: the hardware renderer, given up for an earlier level, is tried again
+#endif
 
 	// Title card!
 	G_StartTitleCard();

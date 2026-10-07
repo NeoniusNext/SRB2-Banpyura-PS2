@@ -372,6 +372,46 @@ void PS2HWD_Shutdown(void)
 	memset(&H, 0, sizeof H);
 }
 
+// PS2-170 (OPT11-STAB): the engine jumped out of a frame (out of memory, a resource failure: z_zone.h Z_GUARD_TRY) and is going to shut the driver down.
+// The packet the drawing was building (possibly cut off half way) is dropped, the queued buffers are never started, the GIF forgets a packet it was
+// in the middle of, and the frame state is closed, so that the shutdown (and the texture owners' deletes before it) find an ordinary idle driver.
+void PS2HWD_Abort(void)
+{
+	u32 irq;
+
+	if (!H.up || !H.ring[0])
+		return;
+	irq = DIntr();
+	*D2_CHCR = 0; // stop channel 2 (the queued buffers are read by nobody now)
+	if (V.on)
+		*D1_CHCR = 0;
+	__asm__ volatile("sync.l");
+	*(volatile u32 *)0x10003000 = 1; // GIF_CTRL.RST: a GIF packet that was cut off (an IMAGE upload) must not swallow the next packets
+	if (V.on)
+		*VIF1_FBRST = 1;
+	H.dma_busy = 0;
+	H.q_n = 0;
+	H.q_head = 0;
+	H.pending = 0;
+	H.wr = 1;
+	H.run = 0;
+	H.done_seq = H.q_seq;
+	H.gsr.valid = 0;
+	H.clut_loaded = 0;
+	H.finish_pending = 0;
+	H.frame_open = 0;
+	H.imm_tex = NULL;
+	V.chunk_open = 0;
+	OV.n = 0;
+	if (H.pend)
+		H.pend_done = 1; // show what there is
+	*GS_CSR = 2;
+	val_reset();
+	if (irq)
+		EIntr();
+	rel_release_all();
+}
+
 // The engine's size (vid.width x vid.height): the coordinate space of GClipRect. A size that needs a different internal frame
 // (docs/VIDEO_MODES.md: the frame buffer is the size the CRTC can magnify to the screen) restarts the GS; the textures the
 // engine holds are dropped (their handles cleared) and the palette is kept.

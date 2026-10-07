@@ -119,6 +119,9 @@ static addfilelist_t startuppwads;
 #if defined (PS2) && defined (HAS_ADDONS)
 #include "ps2/ps2_addons.h"
 #endif
+#ifdef PS2
+#include "ps2/ps2_hwfb.h" // PS2-170
+#endif
 
 boolean devparm = false; // started game with -devparm
 
@@ -944,7 +947,11 @@ static void D_RunFrame(void)
 			}
 #endif
 			PS2SUB_B(34);
+#ifdef PS2
+			PS2HWFB_Display(D_Display); // PS2-170: running out of memory in the frame leaves the hardware renderer / draws the frame again, it does not end the game
+#else
 			D_Display();
+#endif
 			PS2SUB_E(34);
 #ifdef PS2_PROFILE
 			Z_NextFrame(); // PS2-21: displayed-frame boundary for the zone's LRU eviction (z_zone.c)

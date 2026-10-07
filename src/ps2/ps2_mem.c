@@ -7,6 +7,7 @@
 #include "z_zone.h"
 #include "ps2_mem.h"
 #ifdef _EE
+#include "ps2_hwfb.h"
 #include "ps2_boot.h"
 #include "ps2_net.h"
 #endif
@@ -1182,6 +1183,7 @@ void PS2Mem_Report(int owners)
 		(unsigned long)PS2Mem_HeapAvailable(PS2Mem_RamBytes(), PS2Mem_HeapLimit(), (size_t)sbrk(0), 0));
 	I_OutputMsg("ps2_mem: C heap peak above the arena %lu B; main stack used %lu B of %lu B (0 = -zstack off)\n",
 		(unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_StackUsed(), (unsigned long)za_stack_size);
+	PS2HWFB_Report();
 	{
 		size_t sn, sp, sb, st2, sf, sx;
 
@@ -1779,6 +1781,7 @@ void PS2Mem_Init(void)
 #ifdef _EE
 	if (M_CheckParm("-zstack"))
 		PS2Mem_StackFill();
+	PS2HWFB_Init(); // PS2-170
 #endif
 	COM_AddCommand("ps2_mem", Command_Ps2Mem_f, 0);
 }
