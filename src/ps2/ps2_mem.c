@@ -1688,6 +1688,20 @@ void PS2Mem_Frame(void)
 					(unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_Ms());
 			if (ZA_Check(msg, sizeof msg))
 				I_OutputMsg("ps2_mem: HEAP CHECK FAILED: %s\n", msg);
+#ifdef PS2_PROFILE
+			{
+				// PS2-143: the block that every line without arguments points at must stay zero
+				unsigned j;
+
+				for (j = 0; j < NUMLINEARGS; j++)
+					if (lineargs_zero[j])
+					{
+						I_OutputMsg("ps2_mem: LINEARGS ZERO BLOCK WRITTEN: lineargs_zero[%u] = %ld (a store through line->args of a line without arguments)\n", j,
+							(long)lineargs_zero[j]);
+						break;
+					}
+			}
+#endif
 #ifdef PS2_LEAKTRACE
 			PS2Mem_LeakReport(chain_count);
 #endif
