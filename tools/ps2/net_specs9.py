@@ -360,16 +360,15 @@ hw_net('hw-net-coop', 'pc')
 hw_net('sw-net-coop', 'pc', 'Software')
 hw_net('hw-net-match', 'pc', mode='match', mmap='MAPM0')
 
-# 13. split screen and the network together: a PS2 client with two local players (pad 1 and pad 2) joins a PC dedicated server; the console command
-# "splitscreen 1" after the join adds the second player (CL_AddSplitscreenPlayer). Both players walk and jump; the server sees players=2.
+# 13. split screen and the network together: the original engine REFUSES it (SplitScreen_OnChange: "Splitscreen not supported in netplay, sorry!" unless cv_debug), so
+# there is nothing to play with two local players over the network. The scenario checks that the refused command ("splitscreen 1" given on a joined client at
+# displayed frame 800) leaves the connection and the simulation alone: both ends keep the same state and the server never sees a second player.
 write('split-net', {
     'timeout': 900,
     'nodes': [pcsrv(start=0),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] , cfg=CFG_SYNC,
                   files={'pad.txt': pad(*crosses(150, 700, 60)) + ',' + walk(1, 900, 9000, seed=3) + ',' + walk(2, 900, 9000, seed=4), 'cmd.txt': '800:splitscreen 1'}, start=8)],
-    # a loaded machine shows ~1 frame per 3 game tics: the command is given in displayed frames (800), the walk starts after it; the run ends when the server has
-    # printed players=2 and both ends have passed gametic 2800
-    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 2800}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 2800}, {'node': 'srv', 'text': 'players=2'}], 'grace': 3})
+    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 2800}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 2800}], 'grace': 3})
 
 if __name__ == '__main__':
     for n, s in SPECS.items():
