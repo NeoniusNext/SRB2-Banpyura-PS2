@@ -20,6 +20,9 @@
 #endif
 
 #include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
+#ifdef PS2_PROF_DIRECT
+#include "ps2/ps2_prof.h" // PS2-200: tick/display/sound split of the LTO profile build
+#endif
 
 #if defined (__unix__) || defined (__APPLE__) || defined (UNIXCOMMON)
 #include <sys/stat.h>
@@ -842,6 +845,9 @@ static void D_RunFrame(void)
 		entertic = I_GetTime();
 		realtics = entertic - oldentertics;
 		oldentertics = entertic;
+#ifdef PS2_PROF_DIRECT
+		ps2prof_real += (UINT32)realtics; // what the clock asked for, before any of the clamps below and in TryRunTics
+#endif
 
 		if (demoplayback && gamestate == GS_LEVEL)
 		{
@@ -873,7 +879,15 @@ static void D_RunFrame(void)
 
 			// process tics (but maybe not if realtic == 0)
 			PS2SUB_B(33);
+#ifdef PS2_PROF_DIRECT
+			{
+				const UINT32 pc0 = PS2Prof_Cyc();
+				TryRunTics(realtics);
+				ps2prof_c_tick += PS2Prof_Cyc() - pc0;
+			}
+#else
 			TryRunTics(realtics);
+#endif
 			PS2SUB_E(33);
 
 			if (lastdraw || singletics || gametic > rendergametic)
@@ -944,7 +958,15 @@ static void D_RunFrame(void)
 			}
 #endif
 			PS2SUB_B(34);
+#ifdef PS2_PROF_DIRECT
+			{
+				const UINT32 pc0 = PS2Prof_Cyc();
+				D_Display();
+				ps2prof_c_disp += PS2Prof_Cyc() - pc0;
+			}
+#else
 			D_Display();
+#endif
 			PS2SUB_E(34);
 #ifdef PS2_PROFILE
 			Z_NextFrame(); // PS2-21: displayed-frame boundary for the zone's LRU eviction (z_zone.c)
@@ -957,6 +979,9 @@ static void D_RunFrame(void)
 		if (takescreenshot)
 			M_DoScreenShot();
 
+#ifdef PS2_PROF_DIRECT
+		const UINT32 pcs0 = PS2Prof_Cyc();
+#endif
 		// consoleplayer -> displayplayers (hear sounds from viewpoint)
 		S_UpdateSounds(); // move positional sounds
 		if (realtics > 0 || singletics)
@@ -968,6 +993,9 @@ static void D_RunFrame(void)
 
 		LUA_Step();
 		LUA_HTTPProcessCallbacks();
+#ifdef PS2_PROF_DIRECT
+		ps2prof_c_snd += PS2Prof_Cyc() - pcs0;
+#endif
 
 		// Fully completed frame made.
 		finishprecise = I_GetPreciseTime();

@@ -93,6 +93,9 @@ INT32 numPolyObjects;
 
 // Polyobject Blockmap -- initialized in P_LoadBlockMap
 polymaplink_t **polyblocklinks;
+#ifdef PS2_OPT_CORE
+INT32 ps2_polycells[4] = {1, 0, 1, 0}; // PS2-200: x1, x2, y1, y2 of the cells that hold (or held) a polyobject link; x1 > x2: none (see Polyobj_linkToBlockmap)
+#endif
 
 
 //
@@ -701,6 +704,34 @@ static void Polyobj_linkToBlockmap(polyobj_t *po)
 	blockbox[BOXTOP]    = (unsigned)(blockbox[BOXTOP]    - bmaporgy) >> MAPBLOCKSHIFT;
 	blockbox[BOXBOTTOM] = (unsigned)(blockbox[BOXBOTTOM] - bmaporgy) >> MAPBLOCKSHIFT;
 
+#ifdef PS2_OPT_CORE
+	// PS2-200 (OPT11-CORE): the box of cells that can hold a polyobject link (P_CheckPosition visits only cells inside it). Grows with every
+	// link, shrinks only with the level: a superset of the cells with links, which is all that skipping the empty cells needs.
+	{
+		INT32 cx1 = blockbox[BOXLEFT] < 0 ? 0 : blockbox[BOXLEFT], cx2 = blockbox[BOXRIGHT] >= bmapwidth ? bmapwidth - 1 : blockbox[BOXRIGHT];
+		INT32 cy1 = blockbox[BOXBOTTOM] < 0 ? 0 : blockbox[BOXBOTTOM], cy2 = blockbox[BOXTOP] >= bmapheight ? bmapheight - 1 : blockbox[BOXTOP];
+
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 18 // negative control of the host A/B (with -DPS2_POLYCHECK): the recorded box is one column short
+		cx2--;
+#endif
+		if (cx1 <= cx2 && cy1 <= cy2)
+		{
+			if (ps2_polycells[0] > ps2_polycells[1]) // still empty
+			{
+				ps2_polycells[0] = cx1; ps2_polycells[1] = cx2;
+				ps2_polycells[2] = cy1; ps2_polycells[3] = cy2;
+			}
+			else
+			{
+				if (cx1 < ps2_polycells[0]) ps2_polycells[0] = cx1;
+				if (cx2 > ps2_polycells[1]) ps2_polycells[1] = cx2;
+				if (cy1 < ps2_polycells[2]) ps2_polycells[2] = cy1;
+				if (cy2 > ps2_polycells[3]) ps2_polycells[3] = cy2;
+			}
+		}
+	}
+#endif
+
 	// link polyobject to every block its bounding box intersects
 	for (y = blockbox[BOXBOTTOM]; y <= blockbox[BOXTOP]; ++y)
 	{
@@ -721,6 +752,15 @@ static void Polyobj_linkToBlockmap(polyobj_t *po)
 			}
 		}
 	}
+
+#if defined(PS2_OPT_CORE) && defined(PS2_POLYCHECK) // shadow check (host and EE): every cell that was just linked is inside the box P_CheckPosition visits
+	for (y = blockbox[BOXBOTTOM]; y <= blockbox[BOXTOP]; ++y)
+		for (x = blockbox[BOXLEFT]; x <= blockbox[BOXRIGHT]; ++x)
+			if (!(x < 0 || y < 0 || x >= bmapwidth || y >= bmapheight)
+				&& (x < ps2_polycells[0] || x > ps2_polycells[1] || y < ps2_polycells[2] || y > ps2_polycells[3]))
+				I_Error("PS2-200: linked polyobject cell %d,%d is outside the box %d..%d, %d..%d", (int)x, (int)y, (int)ps2_polycells[0], (int)ps2_polycells[1],
+					(int)ps2_polycells[2], (int)ps2_polycells[3]);
+#endif
 
 	po->linked = true;
 }

@@ -2210,16 +2210,37 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 #ifdef PS2_OPT_REND
 		// PS2-168: the cells of the box that lie inside the blockmap, in the same order (xl and yl are never negative: they come from an unsigned
 		// shift), and nothing at all in a level without polyobjects (the array is NULL there, PS2-88). The loop body is the original's.
+		// PS2-200: and only the cells of the box that can hold a polyobject link (ps2_polycells): the others have none, so visiting them did nothing
 		if (polyblocklinks)
 		{
+#ifdef PS2_OPT_CORE
+			const INT32 pxl = xl < ps2_polycells[0] ? ps2_polycells[0] : xl;
+			const INT32 pyl = yl < ps2_polycells[2] ? ps2_polycells[2] : yl;
+			const INT32 pxh = xh > ps2_polycells[1] ? ps2_polycells[1] : xh >= bmapwidth ? bmapwidth - 1 : xh;
+			const INT32 pyh = yh > ps2_polycells[3] ? ps2_polycells[3] : yh >= bmapheight ? bmapheight - 1 : yh;
+#else
+			const INT32 pxl = xl, pyl = yl;
 			const INT32 pxh = xh >= bmapwidth ? bmapwidth - 1 : xh;
 			const INT32 pyh = yh >= bmapheight ? bmapheight - 1 : yh;
+#endif
 
-			for (by = yl; by <= pyh; by++)
+#if defined(PS2_OPT_CORE) && defined(PS2_POLYCHECK) // shadow check (host and EE): every cell of the original range that holds a polyobject link is inside the box
+			{
+				const INT32 sxh = xh >= bmapwidth ? bmapwidth - 1 : xh, syh = yh >= bmapheight ? bmapheight - 1 : yh;
+				INT32 sx, sy;
+
+				for (sy = yl; sy <= syh; sy++)
+					for (sx = xl; sx <= sxh; sx++)
+						if (polyblocklinks[(size_t)sy * bmapwidth + sx] && (sx < ps2_polycells[0] || sx > ps2_polycells[1] || sy < ps2_polycells[2] || sy > ps2_polycells[3]))
+							I_Error("PS2-200: polyobject link at cell %d,%d outside the box %d..%d, %d..%d", (int)sx, (int)sy, (int)ps2_polycells[0], (int)ps2_polycells[1],
+								(int)ps2_polycells[2], (int)ps2_polycells[3]);
+			}
+#endif
+			for (by = pyl; by <= pyh; by++)
 			{
 				polymaplink_t **const prow = polyblocklinks + (size_t)by * bmapwidth;
 
-				for (bx = xl; bx <= pxh; bx++)
+				for (bx = pxl; bx <= pxh; bx++)
 #else
 		for (by = yl; by <= yh; by++)
 			for (bx = xl; bx <= xh; bx++)
