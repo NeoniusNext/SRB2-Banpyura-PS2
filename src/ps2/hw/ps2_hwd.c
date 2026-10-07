@@ -810,6 +810,45 @@ static void split_draw(const FSurfaceInfo *surf, u32 flags, const FOutVector *v,
 	split_polygon(v, n, (H.rec[c.cur].wrapy || (flags & PF_ForceWrapY)) && !(flags & PF_RemoveYWrap), lo_t, hi_t, tk, split_buf[0], split_buf[1], split_emit, &c);
 }
 
+// A single polygon (hw_DrawPolygon: HUD, shadows, sprites that are not batched) through the VU1 program: with the plan of the previous single draw (same key) it joins
+// the open chunk (no begin_draw, no constants); else the plan is made and the constants go to the VU1 memory. What the VU1 path does not take (a plan with cuts, a
+// polygon of too many texels) is drawn by the general path.
+static void single_draw(FSurfaceInfo *surf, u32 flags, FOutVector *v, int n)
+{
+	vukey_t k;
+
+	vu_key_make(&k, flags, surf);
+	if (vu_plan_valid && VU.consts_ok && P.serial == H.serial && vu_key_eq(&k, &VK))
+	{
+		if (vu_poly(v, n, P.rs.lp.light))
+		{
+			G.s_vu++;
+			G.s_same++;
+			return;
+		}
+		vu_sync();
+		P.vu = 0;
+		emit_fan(v, NULL, n, NULL);
+		return;
+	}
+	if (!begin_draw(flags, surf))
+		return;
+	if (P.vuok)
+	{
+		VU.consts_ok = 0;
+		if (vu_poly(v, n, P.rs.lp.light))
+		{
+			VK = k;
+			vu_plan_valid = 1;
+			G.s_vu++;
+			return;
+		}
+		vu_sync();
+	}
+	P.vu = 0;
+	emit_fan(v, NULL, n, NULL);
+}
+
 static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
 {
 	if (!H.up)
@@ -838,6 +877,11 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		{
 			split_draw(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts); // PS2-HW-70: a texture of two images
 		}
+		else if (V.on && V.ready && !H.imm_tex && iNumPts >= 3 && iNumPts <= VU_MAXVERT)
+		{
+			single_draw(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts); // PS2-HW-103: the VU1 program, the open chunk when the plan is the last one's
+			G.s_emit += cyc() - gt1;
+		}
 		else if (begin_draw((u32)PolyFlags, pSurf))
 		{
 			gt2 = cyc();
@@ -852,6 +896,36 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		G.sing_cyc[gk] += cyc() - gt0;
 		drv_out();
 	}
+}
+
+// PS2-HW-106: does the polygon take the palette rows of the VU1 program, which light every polygon with its own light level (the header of the polygon carries it)?
+// hw_batching.c asks when it makes the key of a batch: such polygons need not be kept apart by the light level of their sector (248 batches of a DEMO_001 frame
+// are 93 without it), and must be: a plan that is not the palette rows (fog classes of the GLSL equations, water, a texture of 32 bit colours) keeps the level in its key.
+// What it asks is what begin_draw_inner decides at draw time (the shader state is the base shader slot of the polygon), as far as it can be known before the
+// texture is uploaded: map textures and flats (P_8) and the patches whose record is a palette image already.
+int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int shader)
+{
+	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
+	const GLMipmap_t *m = (const GLMipmap_t *)vtex;
+	const u32 blend = flags & PF_Blending;
+
+	if (!H.up || !V.on || !V.ready || !H.shaders_on || !surf || !m || !(flags & PF_ColorMapped) || shader < 0 || shader > 5)
+		return 0;
+	if ((flags & (PF_NoTexture | PF_Invisible | PF_Ripple | PF_Corona | PF_WireFrame)) || blend == PF_Fog || blend == (PF_Multiplicative & PF_Blending))
+		return 0;
+	if ((ps2hwd_dbg_flags & (2048 | 8192 | HWDBG_NOVU1 | HWDBG_NOLIGHTMERGE)) || !palette_mode())
+		return 0;
+	if (!surf->LightTableId || !lt_ok(surf->LightTableId) || surf->LightTableId >= PR_TBL)
+		return 0;
+	if (m->format == GL_TEXFMT_P_8)
+		return 1;
+	if (m->downloaded && (int)m->downloaded <= H.rec_n)
+	{
+		const texrec_t *r = &H.rec[m->downloaded - 1];
+
+		return r->used && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2) && !r->screen;
+	}
+	return 0;
 }
 
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc)
@@ -869,6 +943,27 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		CONS_Printf("HWT fans n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u psm=%d clut=%d\n", nfans, flags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u, tr ? (int)tr->psm : -1, tr ? (int)tr->clut : -1);
 	}
+	{
+		// measurement (HWPROF25): how many different plans a frame makes, and how many it would make without the light level of the sectors
+		static u32 seen_a[512], seen_c[512], seen_t[512], fr = ~0u;
+		const FSurfaceInfo *sf = (const FSurfaceInfo *)surf;
+		u32 ha, hc, ht, i2;
+
+		if (fr != H.frame_no)
+		{
+			fr = H.frame_no;
+			memset(seen_a, 0, sizeof seen_a);
+			memset(seen_c, 0, sizeof seen_c);
+			memset(seen_t, 0, sizeof seen_t);
+		}
+		ht = (u32)H.cur_tex * 2654435761u + 1u;
+		hc = (ht ^ flags) * 2246822519u + sf->PolyColor.rgba * 3266489917u + sf->LightTableId * 668265263u + 7u;
+		ha = (hc ^ (u32)sf->LightInfo.light_level) * 374761393u + sf->FadeColor.rgba * 2654435761u + sf->TintColor.rgba * 2246822519u + (u32)sf->LightInfo.fade_start * 31u + (u32)sf->LightInfo.fade_end * 17u + 1u;
+#define SEEN(arr, h, ctr) do { for (i2 = (h) & 511u;; i2 = (i2 + 1) & 511u) { if (!(arr)[i2]) { (arr)[i2] = (h) | 1u; G.ctr++; break; } if ((arr)[i2] == ((h) | 1u)) break; } } while (0)
+		SEEN(seen_a, ha, pk_all);
+		SEEN(seen_c, hc, pk_core);
+		SEEN(seen_t, ht, pk_tex);
+	}
 	G.batches++;
 	G.fans += nfans;
 	G.sk_batches += ps2hwp_skyview;
@@ -876,7 +971,7 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	if (split_active(flags))
 	{
 		for (i = 0; i < nfans; i++) // PS2-HW-70: a texture of two images: every polygon is cut along its pieces
-			split_draw((const FSurfaceInfo *)surf, flags, (const FOutVector *)base + desc[2 * i], (int)desc[2 * i + 1]);
+			split_draw((const FSurfaceInfo *)surf, flags, (const FOutVector *)base + desc[3 * i], (int)desc[3 * i + 1]);
 		drv_out();
 		return;
 	}
@@ -892,27 +987,33 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	}
 	for (i = 0; i < nfans; i++)
 	{
-		const FOutVector *fv = (const FOutVector *)base + desc[2 * i];
-		const int fn = (int)desc[2 * i + 1];
+		const FOutVector *fv = (const FOutVector *)base + desc[3 * i];
+		const int fn = (int)desc[3 * i + 1];
+		const float fl = (float)(int)desc[3 * i + 2]; // the light level of the sector of the polygon (the batch's key leaves it out when the VU1 program lights by rows)
 
 		if (P.vu) // PS2-HW-100: the VU1 program takes the polygon (or it goes the general way below, in order)
 		{
 			const u32 vt = cyc();
 
-			if (vu_poly(fv, fn))
+			if (vu_poly(fv, fn, fl))
 			{
 				G.p_vu++;
 				G.c_vu += cyc() - vt;
 				continue;
 			}
 			vu_sync();
-			if (P.vu)
-			{
-				P.vu = 0; // (emit_poly would try the VU1 path again)
-				emit_fan(fv, NULL, fn, NULL);
-				P.vu = P.vuok;
-				continue;
-			}
+		}
+		if (fl != P.rs.lp.light)
+		{
+			P.rs.lp.light = fl; // the plan took the level of the first polygon of the batch: the general path lights this one with its own
+			lit_fast_plan();
+		}
+		if (P.vu)
+		{
+			P.vu = 0; // (emit_poly would try the VU1 path again)
+			emit_fan(fv, NULL, fn, NULL);
+			P.vu = P.vuok;
+			continue;
 		}
 		emit_fan(fv, NULL, fn, NULL);
 	}

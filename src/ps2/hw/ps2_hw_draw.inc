@@ -78,6 +78,8 @@ enum
 
 enum { LM_NONE = 0, LM_BANDS, LM_RAMP };
 
+static int vu_plan_valid; // PS2-HW-103: P and the constants in the VU1 memory belong to the key of the last single draw (VK, ps2_hw_vu1.inc); begin_draw clears it
+
 // the plan of the polygon being drawn (set by begin_draw)
 static struct
 {
@@ -108,7 +110,8 @@ static struct
 	int oldpath; // -hwdbg 8192: the general path only (no lit fast path, doom_thresholds, the clip chain of clip_attr, fog_of_class): A/B of PS2-HW-43 / 62
 	int litfast; // as fast, but with the light staircase (LM_BANDS): polygons of one darkness class take lit_fast_poly (ps2_hw_fast.inc, PS2-HW-43)
 	int vuok, vu; // the plan can be drawn by the VU1 program (vuok); PS2HWD_DrawFans turns vu on for the polygons of a batch (ps2_hw_vu1.inc, PS2-HW-45)
-	int vu0; // the plan's constants are in VU0 (vu0_batch_load): emit_poly transforms on VU0
+	int vu0; // emit_poly transforms on VU0 (the plan's constants go into VU0 when the first polygon of the EE path needs them: vu0_need, PS2-HW-104)
+	int vu0_ld; // the plan's constants are in VU0
 	u32 serial; // H.serial when pass 0 was last set up for this plan
 } P;
 
@@ -548,6 +551,8 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf);
 static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 {
 	u32 blend;
+
+	vu_plan_valid = 0;
 	int textured, dbg = ps2hwd_dbg_flags, lit = 0, wall = 0, partial_tex = 0, i;
 	texrec_t *r = NULL;
 	int av = 255, cr = 255, cg = 255, cb = 255;
@@ -989,8 +994,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	P.oy = (H.vpy + H.vph * 0.5f - 0.5f + 2048.0f) * 16.0f + 0.5f;
 #ifdef HW_VU0
 	P.vu0 = !(ps2hwd_dbg_flags & 128);
-	if (P.vu0)
-		vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+	P.vu0_ld = 0; // PS2-HW-104: loaded by the first polygon of the EE path (the VU1 path does not use VU0)
 #else
 	P.vu0 = 0;
 #endif
@@ -2164,8 +2168,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		if (OV.n)
 			ov_flush(); // anything but a ramp plan sees the picture with the queued light applied
 #ifdef HW_VU0
-		if (P.vu0)
-			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		P.vu0_ld = 0;
 #endif
 		H.cur_flags = flags;
 		G.plan_hit++;
@@ -2194,6 +2197,17 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	return ok;
 }
 
+#ifdef HW_VU0
+static inline void vu0_need(void)
+{
+	if (!P.vu0_ld)
+	{
+		vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		P.vu0_ld = 1;
+	}
+}
+#endif
+
 // Transform, clip and pack one convex polygon.
 // Vertices: base[idx[i]] (or base[i] when idx is NULL); with `vcol` (4 floats per vertex index) they carry colours.
 static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float *vcol)
@@ -2211,7 +2225,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		return;
 	if (P.vu)
 	{
-		if (!idx && !vcol && vu_poly(base, n))
+		if (!idx && !vcol && vu_poly(base, n, P.rs.lp.light))
 		{
 			G.p_vu++;
 			HG_SKY(0, 0);
@@ -2221,6 +2235,8 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	}
 	i = 0;
 #ifdef HW_VU0
+	if (vu0)
+		vu0_need();
 	if (vu0 && !P.oldpath)
 	{
 		// PS2-HW-59: two vertices per VU0 sequence (the divide of one hides behind the multiplies of the other)
@@ -2433,6 +2449,8 @@ static inline xv_t *xv_get(const FOutVector *base, const float *vcol, u32 vi)
 		if (P.vu0 && !vcol)
 		{
 			pv_t unused;
+
+			vu0_need();
 
 			e->oc = vu0_xform(&base[vi], &e->v, &unused);
 		}

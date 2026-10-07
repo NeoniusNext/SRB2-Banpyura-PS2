@@ -22,14 +22,16 @@
 ;    7      (tsx, tsy, 1, 0): texture coordinate scale
 ;    8      RGBAQ of the polygons (integers R, G, B, A)
 ;    9      GIF tag of a textured fan (NLOOP patched), 10 GIF tag of a flat fan
-;    11     (rlo, 0, 0, 1e-30): x = the lowest row the plan may meet (a float), w = the epsilon of the sign tests
-;    12     (near, K80, cap, base): the light equation cm = max(base - K80 / (lightz + 1), cap), lightz = clamp((w - near) * kz16, 0, 127)
+;    11     (rlo, 155, 0, 1e-30): x = the lowest row the plan may meet (a float), y = 155 (the light equation), w = the epsilon of the sign tests
+;    12     (near, K80, cap, base): the light equation cm = max(base - K80 / (lightz + 1), cap), lightz = clamp((w - near) * kz16, 0, 127); cap and base are
+;           made for every polygon from the light level of its header: lightnum = clamp(light / 17, 0, 15), base = (15 - lightnum) * 4 * sfudge, cap = (155 - light) * 0.26
 ;    13     (kz16, 1 / kz16, 127, rhi): rhi = the highest row the plan may meet (a float)
 ;    14     (big, -big, -K80, -tiny)
 ;    15     GIF tag of the A+D packet that holds the TEX0 of a row (NLOOP 1, EOP 0)
 ;    16     integers: x = palette rows on, y = textured, z = row whose CLUT the GS holds now (kept between runs), w = 0
-;    17     spill: x = current row, y = last row of the polygon, z = base of the rest of the polygon, w = its vertex count
-;    18     x = vertex count of the lower piece, y = the output buffer to write next (kept between runs)
+;    17     (1 / 17, 15, 4 * sfudge, 0.26): the constants of the light of a polygon (the level is in its header)
+;    18     spill: x = current row, y = last row of the polygon, z = base of the rest of the polygon, w = its vertex count
+;    19     x = vertex count of the lower piece, y = the output buffer to write next (kept between runs)
 ;    32..63 TEX0 of every row: (lo, hi, 6, 0), the A+D packet data
 ;    64..319 / 320..575   input buffers (TOPS: BASE 64, OFFSET 256)
 ;    576..655 / 656..735  output buffers (80 quad words each)
@@ -38,8 +40,9 @@
 		.equ	PL_VEC,		20
 		.equ	PL_BITS,	26
 		.equ	K_INT,		16
-		.equ	K_SPILL,	17
-		.equ	K_SPILL2,	18
+		.equ	K_LIGHTB,	17
+		.equ	K_SPILL,	18
+		.equ	K_SPILL2,	19
 		.equ	ROWTAB,		32
 		.equ	OUT0,		576
 		.equ	OUT1,		656
@@ -384,6 +387,20 @@ AfterClip:
 		NOP					iaddiu		VI14,VI00,0
 		NOP					ibeq		VI13,VI00,Pack
 		NOP					NOP
+; the light of this polygon (the level is in its header): cap and base of the equation into VF24
+		NOP					lq			VF12,0(VI02)
+		NOP					lq			VF13,K_LIGHTB(VI00)
+		sub			VF21,VF00,VF00		NOP
+		IDLE	2
+		mulx.y		VF14,VF12,VF13x		NOP
+		maxx.y		VF14,VF14,VF00x		NOP
+		miniy.y		VF14,VF14,VF13y		NOP
+		suby.y		VF15,VF13,VF14y		NOP
+		mulz.y		VF15,VF15,VF13z		NOP
+		suby.y		VF16,VF10,VF12y		NOP
+		mulw.y		VF16,VF16,VF13w		NOP
+		addy.w		VF24,VF21,VF15y		NOP
+		addy.z		VF24,VF21,VF16y		NOP
 ; the depth range of the polygon -> the first and the last row it touches
 		NOP					iaddiu		VI11,VI05,0
 		NOP					iaddiu		VI09,VI04,0

@@ -18,6 +18,7 @@ static void val_init(void); // PS2-HW-74: GIF stream validator (ps2_hw_val.inc, 
 static void val_buffer(const qw_t *b, u32 wr);
 static void val_reset(void);
 static void val_shutdown(void);
+static void vu_chunk_flush(void); // ps2_hw_vu1.inc (PS2-HW-103): closes the open VU1 chunk (a chunk stays open between single draws); everything that goes into the ring calls it first
 
 // DMA tags of a source chain (the GIF channel reads one tag per element: the tag itself is not sent to the GIF)
 #define DMAT_REFE 0ull // send qwc qwords from addr, then end
@@ -176,6 +177,8 @@ static void pk_flush(void)
 	qw_t *b;
 	int slot;
 
+	if (V.chunk_open)
+		vu_chunk_flush();
 	if (H.wr <= 1)
 		return;
 	b = H.ring[H.cur];
@@ -235,6 +238,8 @@ static qw_t *pk_alloc(u32 n)
 {
 	qw_t *p;
 
+	if (V.chunk_open)
+		vu_chunk_flush();
 	if (n > BUF_QW - 2)
 	{
 		CONS_Alert(CONS_ERROR, "PS2 GS: oversized GIF packet (%u qwords)\n", n);
@@ -254,6 +259,8 @@ static void pk_ref(const void *data, u32 qwc)
 	qw_t *b, *t;
 	u32 n;
 
+	if (V.chunk_open)
+		vu_chunk_flush();
 	if (V.on && qwc > VIF_DIRECT_MAX) // PS2-HW-44: one DIRECT carries at most 65535 quadwords
 	{
 		pk_ref(data, VIF_DIRECT_MAX);
