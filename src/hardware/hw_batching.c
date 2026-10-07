@@ -130,7 +130,7 @@ static int HWR_BatchCapacity(int old, int required, size_t element)
 }
 
 #ifdef PS2_PROFILE
-// OPT10-HF (PS2-HW-80): the batch arrays grow to the busiest frame seen and are non-purgeable, so after the vertex-heavy maps (THZ2, ACZ1: 32 000
+// OPT10-HF (PS2-HW-79): the batch arrays grow to the busiest frame seen and are non-purgeable, so after the vertex-heavy maps (THZ2, ACZ1: 32 000
 // vertices a frame) they stay 1.45 MB big (0.42 MB on the light maps) for the rest of the session: the next big level (12 MB of PU_LEVEL) then did not fit.
 // Called on every level change (HWR_ClearAllTextures): the arrays are made again, at the start size, by the first frame of the next level.
 void HWR_ReleaseBatching(void)
