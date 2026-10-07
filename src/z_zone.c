@@ -81,6 +81,9 @@ static UINT32 zframe;               // frame stamp, 24 bits
 static boolean zframe_explicit;     // the platform layer calls Z_NextFrame; otherwise the 3D view lock does
 static INT32 zpurgelock;            // >0 while the 3D view renders
 static const zablock_t *zpinned;    // the block Z_ReallocAlign is copying from: neither evicted nor purged
+#ifndef ZDEBUG
+static boolean ztry_realloc;        // PS2-148: Z_TryReallocAlign is running: the new block of the copy may fail (NULL, the old block is untouched)
+#endif
 static size_t zreserve = Z_RESERVE_DEFAULT;
 static size_t zheadroom = Z_HEADROOM_DEFAULT;
 static size_t zslack = Z_EVICT_SLACK_DEFAULT;
@@ -1426,7 +1429,12 @@ void *Z_ReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignb
 	DEBFILE(va("Z_Realloc at %s:%d\n", file, line));
 	rez = Z_Malloc2(size, tag, user, alignbits, file, line);
 #else
-	rez = Z_MallocAlign(size, tag, user, alignbits);
+	rez = ztry_realloc ? Z_TryMallocAlign(size, tag, user, alignbits) : Z_MallocAlign(size, tag, user, alignbits);
+	if (!rez)
+	{
+		zpinned = NULL;
+		return NULL; // only Z_TryReallocAlign gets here; the old block stays as it was
+	}
 #endif
 
 	if (size < block->realsize)
@@ -1453,6 +1461,21 @@ void *Z_ReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignb
 		memset((char*)rez+copysize, 0x00, size-copysize);
 
 	return rez;
+}
+
+// PS2-148 (OPT10-S): Z_ReallocAlign that returns NULL, with the old block untouched, when neither the stretch in place nor a new block is possible.
+void *Z_TryReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignbits)
+{
+#ifdef ZDEBUG
+	return Z_Realloc2(ptr, size, tag, user, alignbits, "Z_TryReallocAlign", 0); // the diagnostic build keeps the original behaviour (out of memory ends the run)
+#else
+	void *rez;
+
+	ztry_realloc = true;
+	rez = Z_ReallocAlign(ptr, size, tag, user, alignbits);
+	ztry_realloc = false;
+	return rez;
+#endif
 }
 #else
 #ifdef ZDEBUG

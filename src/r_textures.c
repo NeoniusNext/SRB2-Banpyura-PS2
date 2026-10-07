@@ -596,6 +596,19 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	temp_block = Z_Calloc(total_pixels, R_TEXTURE_WORK_TAG, NULL);
 #endif
 #ifdef R_OPAQUE_PACKED
+#if defined(PS2)
+	if ((size_t)texture->width * R_MASK_BYTES(texture->height) >= R_COMPOSITE_TRY_MIN)
+	{
+		opaque_pixels = Z_TryMallocAlign((size_t)texture->width * R_MASK_BYTES(texture->height), R_TEXTURE_WORK_TAG, NULL, 2);
+		if (!opaque_pixels)
+		{
+			Z_Free(temp_block);
+			return R_FallbackTexture(texnum);
+		}
+		memset(opaque_pixels, 0, (size_t)texture->width * R_MASK_BYTES(texture->height));
+	}
+	else
+#endif
 	opaque_pixels = Z_Calloc((size_t)texture->width * R_MASK_BYTES(texture->height), R_TEXTURE_WORK_TAG, NULL);
 #else
 	opaque_pixels = Z_Calloc(total_pixels * sizeof(UINT8), R_TEXTURE_WORK_TAG, NULL);
@@ -907,7 +920,26 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	// Release the adjacent scratch before extending pixels into their final self-contained cache.
 	Z_Free(temp_columns);
 	temp_columns = NULL;
+#if defined(PS2)
+	block = Z_TryReallocAlign(temp_block, blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum], 2);
+	if (!block)
+	{
+		// no room to stretch the pixels into their final block (the old and the new block would both have to exist): drop the scratch, plain column
+		Z_Free(temp_block);
+#ifdef R_COUNTED_POSTS
+		if (final_posts)
+			Z_Free(opaque_pixels);
+		else
+			Z_Free(temp_posts);
+#else
+		Z_Free(temp_posts);
+#endif
+		Z_Free(column_posts);
+		return R_FallbackTexture(texnum);
+	}
+#else
 	block = Z_Realloc(temp_block, blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
+#endif
 	temp_block = NULL;
 #else
 	block = Z_Calloc(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);

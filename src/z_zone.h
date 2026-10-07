@@ -121,6 +121,7 @@ void Z_FreeTags(INT32 lowtag, INT32 hightag);
 // NULL on physical exhaustion after normal cache retries; invalid requests still report programming errors.
 // A failed request leaves the supplied owner unchanged. Other eligible caches may have been evicted.
 void *Z_TryMallocAlign(size_t size, INT32 tag, void *user, INT32 alignbits) FUNCALLOC(1);
+void *Z_TryReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignbits); // NULL (old block untouched) when there is no room
 void Z_PurgeLock(boolean lock); // nestable: current-frame roots protected; earlier-frame caches may be evicted
 void Z_NextFrame(void); // frame boundary (once per displayed frame): blocks used since the last call become evictable
 void Z_Touch(void *ptr); // allocation root, never an interior pointer: used this frame (Z_ChangeTag/Z_SetUser do it too)
