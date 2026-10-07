@@ -413,6 +413,7 @@ void PS2HWD_PlanEnd(void)
 	static float tot[ENT_MAX];
 	static u8 lx[ENT_MAX], cap[ENT_MAX];
 	static u32 npl[ENT_MAX];
+	static u32 blk_l[ENT_MAX][8]; // blocks of an entry at level l (filled for lx..cap + 1 when the plan is over budget)
 	u32 budget, sum = 0, exact_sum;
 	int i, n = 0, step;
 
@@ -478,6 +479,17 @@ void PS2HWD_PlanEnd(void)
 		n++;
 	}
 	exact_sum = sum;
+	if (sum > budget)
+	{
+		// the blocks of every image at the levels the loop below looks at, made once (tex_footprint per entry and step was 0.08 M cycles a frame)
+		for (i = 0; i < n; i++)
+		{
+			int l;
+
+			for (l = lx[i]; l <= cap[i] + 1 && l < 8; l++)
+				blk_l[i][l] = plan_blocks(key[i], l);
+		}
+	}
 	// over the budget: coarser by one level where a block saved costs the least blurred area
 	for (step = 0; sum > budget && step < 3 * ENT_MAX; step++)
 	{
@@ -492,7 +504,7 @@ void PS2HWD_PlanEnd(void)
 
 			if (!(tot[i] > 0.0f) || lx[i] >= cap[i])
 				continue;
-			save = plan_blocks(key[i], lx[i]) - plan_blocks(key[i], lx[i] + 1);
+			save = blk_l[i][lx[i]] - blk_l[i][lx[i] + 1];
 			if (!save)
 				continue;
 			score = (float)save / tot[i]; // blocks saved per pixel of blurred area

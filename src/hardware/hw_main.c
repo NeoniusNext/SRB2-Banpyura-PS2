@@ -4347,6 +4347,23 @@ static inline void HWR_DrawPrecipitationSprite(gl_vissprite_t *spr)
 
 	// Let dispoffset work first since this adjust each vertex
 	HWR_RotateSpritePolyToAim(spr, wallVerts, true);
+#ifdef PS2_PROFILE
+	if (spr->ps2_hid) // PS2-HW-72 check mode: this flake was to be culled (HWR_ProjectPrecipitationSprite): its quad here must hold no pixel centre either
+	{
+		static unsigned chk, bad;
+
+		chk++;
+		if (!PS2HWD_QuadHidden(wallVerts))
+		{
+			bad++;
+			CONS_Printf("HWC precipitation cull MISMATCH %u of %u\n", bad, chk);
+		}
+		else if (!(chk & 1023))
+		{
+			CONS_Printf("HWC precipitation cull check: %u flakes, %u differ\n", chk, bad);
+		}
+	}
+#endif
 
 	wallVerts[0].s = wallVerts[3].s = 0;
 	wallVerts[2].s = wallVerts[1].s = ((GLPatch_t *)gpatch->hardware)->max_s;
@@ -5782,6 +5799,9 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	size_t lumpoff;
 	unsigned rot = 0;
 	UINT8 flip;
+#ifdef PS2_PROFILE
+	UINT8 ps2_hidden = 0;
+#endif
 
 	if (!thing)
 		return;
@@ -5863,10 +5883,41 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	x1 = tr_x + x1 * rightcos;
 	x2 = tr_x - x2 * rightcos;
 
+#ifdef PS2_PROFILE
+	{
+		// PS2-HW-72: the same for the snow and the rain: a flake that holds no pixel centre (or lies outside the view) is not made
+		const float gzt_p = FIXED_TO_FLOAT(interp.z + spritecachedinfo[lumpoff].topoffset);
+		const float gz_p = gzt_p - FIXED_TO_FLOAT(spritecachedinfo[lumpoff].height);
+		const boolean aim = cv_glspritebillboarding.value && !R_ThingIsPaperSprite((mobj_t *)thing) && fabsf(gl_viewludcos) > 1.0e-6f;
+		const float basey = P_MobjFlip((mobj_t *)thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
+
+		if (!HWR_PS2_NoCull() && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz_p, gzt_p, 0, basey, aim))
+		{
+			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216: made all the same, HWR_DrawPrecipitationSprite checks its quad
+			{
+				// the thinker of the flake is run all the same (the weather moves whether it is seen or not)
+				if (!(thing->precipflags & PCF_THUNK))
+				{
+					if (thing->precipflags & PCF_RAIN)
+						P_RainThinker(thing);
+					else
+						P_SnowThinker(thing);
+					thing->precipflags |= PCF_THUNK;
+				}
+				return;
+			}
+			ps2_hidden = 1;
+		}
+	}
+#endif
+
 	//
 	// store information in a vissprite
 	//
 	vis = HWR_NewVisSprite();
+#ifdef PS2_PROFILE
+	vis->ps2_hid = ps2_hidden;
+#endif
 	vis->x1 = x1;
 	vis->x2 = x2;
 	vis->z1 = z1;
