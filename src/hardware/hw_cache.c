@@ -748,6 +748,9 @@ void HWR_ClearAllTextures(void)
 {
 	HWD.pfnClearMipMapCache(); // free references to the textures
 	HWR_FreePatchCache(true);
+#ifdef PS2_PROFILE
+	HWR_ReleaseBatching(); // PS2-HW-80
+#endif
 }
 
 void HWR_FreeColormapCache(void)
