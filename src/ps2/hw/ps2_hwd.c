@@ -658,7 +658,9 @@ static void hw_FinishUpdate(INT32 waitvbl)
 
 	if (!H.up)
 		return;
+	drv_in();
 	frame_end();
+	drv_out();
 	H.st.frames++;
 	if (waitvbl)
 		vblank_wait(1);
@@ -822,17 +824,33 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 	{
 		const u32 gt0 = cyc();
 		const int gk = ((PolyFlags & PF_NoTexture) ? 1 : 0) | ((PolyFlags & PF_NoDepthTest) ? 2 : 0) | ((PolyFlags & PF_Occlude) ? 4 : 0);
+		u32 gt1, gt2;
 
+		drv_in();
 		G.single++;
 		G.sk_single += ps2hwp_skyview;
 		G.sing_by[gk]++;
 		if (H.imm_tex && !(PolyFlags & PF_NoTexture))
 			imm_prepare(pOutVerts, (unsigned int)iNumPts); // PS2-HW-37: the texture is made resident at the level this polygon needs
+		gt1 = cyc();
+		G.s_imm += gt1 - gt0;
 		if (split_active((u32)PolyFlags))
+		{
 			split_draw(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts); // PS2-HW-70: a texture of two images
+		}
 		else if (begin_draw((u32)PolyFlags, pSurf))
+		{
+			gt2 = cyc();
+			G.s_begin += gt2 - gt1;
 			emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
+			G.s_emit += cyc() - gt2;
+		}
+		else
+		{
+			G.s_begin += cyc() - gt1;
+		}
 		G.sing_cyc[gk] += cyc() - gt0;
+		drv_out();
 	}
 }
 
@@ -842,6 +860,8 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 
 	if (!H.up)
 		return;
+	drv_in();
+	G.c_fans += nfans;
 	if (TRACING())
 	{
 		const texrec_t *tr = H.cur_tex != NOREC ? &H.rec[H.cur_tex] : NULL;
@@ -857,28 +877,58 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	{
 		for (i = 0; i < nfans; i++) // PS2-HW-70: a texture of two images: every polygon is cut along its pieces
 			split_draw((const FSurfaceInfo *)surf, flags, (const FOutVector *)base + desc[2 * i], (int)desc[2 * i + 1]);
+		drv_out();
 		return;
 	}
 	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+	{
+		drv_out();
 		return;
+	}
 	if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
 	{
 		P.vu = 1;
 		VU.consts_ok = 0;
 	}
 	for (i = 0; i < nfans; i++)
-		emit_fan((const FOutVector *)base + desc[2 * i], NULL, (int)desc[2 * i + 1], NULL);
+	{
+		const FOutVector *fv = (const FOutVector *)base + desc[2 * i];
+		const int fn = (int)desc[2 * i + 1];
+
+		if (P.vu) // PS2-HW-100: the VU1 program takes the polygon (or it goes the general way below, in order)
+		{
+			const u32 vt = cyc();
+
+			if (vu_poly(fv, fn))
+			{
+				G.p_vu++;
+				G.c_vu += cyc() - vt;
+				continue;
+			}
+			vu_sync();
+			if (P.vu)
+			{
+				P.vu = 0; // (emit_poly would try the VU1 path again)
+				emit_fan(fv, NULL, fn, NULL);
+				P.vu = P.vuok;
+				continue;
+			}
+		}
+		emit_fan(fv, NULL, fn, NULL);
+	}
 	if (P.vu)
 	{
 		vu_sync();
 		P.vu = 0;
 	}
+	drv_out();
 }
 
 static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, UINT32 *IndexArray)
 {
 	if (!H.up)
 		return;
+	drv_in();
 	if (split_active((u32)PolyFlags))
 	{
 		u32 i;
@@ -892,10 +942,12 @@ static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, 
 			tri[2] = pOutVerts[IndexArray[i + 2]];
 			split_draw(pSurf, (u32)PolyFlags, tri, 3);
 		}
+		drv_out();
 		return;
 	}
 	if (begin_draw((u32)PolyFlags, pSurf))
 		emit_tris(pOutVerts, IndexArray, (u32)iNumPts, NULL);
+	drv_out();
 }
 
 // The dome is built from vertices with colours (gl_skyvertex_t has the layout of FOutVector plus r, g, b, a).
@@ -1228,17 +1280,26 @@ static void settex_now(GLMipmap_t *TexInfo)
 // hwdriver SetTexture: a big map texture selected outside the batches waits for its polygon (imm_prepare, PS2-HW-37), the rest is made resident now
 static void hw_SetTexture(GLMipmap_t *TexInfo)
 {
+	u32 t0;
+
 	if (!H.up)
 		return;
+	t0 = cyc();
+	drv_in();
 	H.imm_tex = NULL;
 	if (TexInfo && batch_phase == 0 && plan_wants(TexInfo) && !(ps2hwd_dbg_flags & HWDBG_NOPLAN))
 	{
 		H.imm_tex = TexInfo;
 		H.cur_tex = NOREC;
 		H.cur_missing = 0;
-		return;
 	}
-	settex_now(TexInfo);
+	else
+	{
+		settex_now(TexInfo);
+	}
+	G.s_set_n++;
+	G.s_set_cyc += cyc() - t0;
+	drv_out();
 }
 
 // The batched polygon of this texture is drawn later in the frame: the texture (or the image of its other variant) must stay in VRAM until then.

@@ -805,6 +805,7 @@ static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
 	static u32 sw[256] __attribute__((aligned(64)));
 	int i;
 
+	H.clut_epoch++; // PS2-HW-101
 	clut_entries(kind, param, keyed, e);
 	for (i = 0; i < 256; i++)
 		sw[clut_slot((u32)i)] = e[i];

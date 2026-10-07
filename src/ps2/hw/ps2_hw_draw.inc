@@ -975,7 +975,9 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	if (P.lmode == LM_BANDS)
 		lit_fast_plan(); // PS2-HW-43 (PS2-HW-59: also for the plans that take cut_and_emit: the class memory, the fog and the step depths are per plan)
 	P.vu = 0;
-	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible) && !P.pal; // PS2-HW-71: the CLUT changes with the row of every polygon
+	// PS2-HW-100: the VU1 program takes the plans with one pass and no texture repeat cut: the common world polygon (fast), flat colours, and (palette lighting) the polygons lit by the colormap rows of a light table (P.pal:
+	// the program cuts them at the row steps and loads the CLUT of every piece); the lit plans of the GLSL equations (fog classes) take the general path
+	P.vuok = V.on && V.ready && (P.fast || (P.litfast && P.pal)) && !P.vcol && !(flags & PF_Invisible) && P.pass[0].tex == (u8)textured && !P.oldpath;
 	P.serial = H.serial - 1; // the first polygon sets the state up
 	xf_update();
 	P.zmax = PS2HWD_ZMAX;

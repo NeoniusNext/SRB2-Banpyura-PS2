@@ -8,6 +8,7 @@
 #define GSR_UV 0x03
 #define GSR_XYZ2 0x05
 #define GSR_TEX0_1 0x06
+#define GSR_TEX2_1 0x16
 #define GSR_CLAMP_1 0x08
 #define GSR_FOG 0x0a
 #define GSR_TEX1_1 0x14
@@ -303,6 +304,7 @@ static struct
 	u32 clut_base; // first block of the CLUT area (CLUT_SLOTS images)
 	clutent_t clut_ent[CLUT_SLOTS];
 	u32 clut_tick;
+	u32 clut_epoch; // OPT11 (PS2-HW-101): bumped whenever a CLUT image of the cache is (re)built: what the VU1 path knows about the slots of the colormap rows is valid for one epoch
 	u32 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
 	int free_n;
 	u32 used_blocks;

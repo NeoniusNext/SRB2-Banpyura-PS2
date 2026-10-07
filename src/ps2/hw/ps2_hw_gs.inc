@@ -676,7 +676,7 @@ static int gs_setup(void)
 	H.fbpsm = H.fb32 ? PSM_CT32 : PSM_CT16S;
 	H.outid = H.mode == PS2HWD_VIDEO_480P ? 2 : (H.mode == PS2HWD_VIDEO_PAL ? (field_frame ? 4 : 1) : (field_frame ? 3 : 0));
 
-	V.on = (ps2hwd_dbg_flags & HWDBG_VU1) != 0; // PS2-HW-44: -hwdbg 0x4000000: the stream goes through VIF1, the VU1 program draws the polygons
+	V.on = (ps2hwd_dbg_flags & HWDBG_NOVU1) == 0; // PS2-HW-44 / PS2-HW-100: the stream goes through VIF1, the VU1 program draws the polygons (-hwdbg 0x10000000: the EE does)
 	val_init();
 	// OPT10 (HG): dmaKit does not take the VIF1 channel (with it in the mask gsKit_init_screen hangs in PCSX2): the channel is reset by hand below
 	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
