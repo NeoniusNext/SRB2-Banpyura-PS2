@@ -1869,7 +1869,7 @@ static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
 // is a pure function of the polygon flags, the colour/light of the surface, the view/shader state of the driver and a handful of
 // properties of the texture record, so the plans of the last draws are kept (direct mapped, NPLANC entries) and a draw with a known
 // key restores its plan instead (everything that belongs to the texture itself is refreshed from the record).
-// -hwdbg 16384 (= 0x4000): no plan cache (A/B).
+// -hwdbg 16384 (= 0x4000): plan cache ON (A/B; measured as a loss: a hit costs more than making the plan, so it is off by default).
 typedef __typeof__(P) plan_t;
 typedef __typeof__(LF) lfstate_t;
 
@@ -1889,7 +1889,7 @@ typedef struct
 } planent_t;
 
 #define NPLANC 16
-#define HWDBG_NOPLANC 0x4000
+#define HWDBG_PLANC 0x4000 // opt-in: the cache cost more than it saved (see docs/GATES/g1/opt10-HG.md)
 static planent_t planc[NPLANC];
 static planent_t *planc_active; // the entry whose plan P / LF belong to (LF collects its light classes while the plan is in use)
 
@@ -1973,7 +1973,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 
 	if (planc_active) // the light classes the last plan collected stay with it
 		planc_active->lf = LF;
-	if ((ps2hwd_dbg_flags & HWDBG_NOPLANC) || (flags & PF_Corona) || (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing) || H.frame_no % 300 == 299) // (the frame of the HWFX census makes every plan)
+	if (!(ps2hwd_dbg_flags & HWDBG_PLANC) || (flags & PF_Corona) || (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing) || H.frame_no % 300 == 299) // (the frame of the HWFX census makes every plan)
 	{
 		planc_active = NULL;
 		ok = begin_draw_inner(flags, surf);

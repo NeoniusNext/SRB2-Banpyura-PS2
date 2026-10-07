@@ -406,7 +406,6 @@ static void test_water(void)
 		for (pass = 0; pass < 2; pass++)
 		{
 			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDWATER | HWDBG_WATERPOL : HWDBG_WATERPOL;
-			ps2hwd_dbg_flags |= HWDBG_NOPLANC;
 			if (pass == 1 && neg == 1)
 				H.leveltime += 7; /* negative control 1: the sweep ripples with another time */
 			cap_reset();
@@ -596,7 +595,7 @@ static void pc_run(int cache_on, u32 *hits)
 			tex[i]->flags = 0;
 		rec[i] = tex_upload(tex[i]);
 	}
-	ps2hwd_dbg_flags = cache_on ? 0 : HWDBG_NOPLANC;
+	ps2hwd_dbg_flags = cache_on ? HWDBG_PLANC : 0;
 	G.plan_hit = G.plan_miss = 0;
 	cap_reset();
 	H.gsr.valid = 0;
@@ -638,7 +637,7 @@ static void test_plancache(void)
 	ref = malloc(sizeof(qw_t) * (cap_n + 1));
 	memcpy(ref, cap, sizeof(qw_t) * cap_n);
 	pc_run(1, &hits_on);
-	EXPECT(hits_off == 0, "the cache hit with -hwdbg NOPLANC");
+	EXPECT(hits_off == 0, "the cache hit without -hwdbg PLANC");
 	EXPECT(hits_on > 50, "the cache hit only %u times in %d draws", hits_on, NCASES);
 	EXPECT(cap_n == refn, "%u quadwords with the cache, %u without", cap_n, refn);
 	for (i = 0; i < (int)(cap_n < refn ? cap_n : refn); i++)
