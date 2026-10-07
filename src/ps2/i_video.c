@@ -1078,6 +1078,13 @@ static void Impl_VidKeys(void)
 // -vidshot t35,l70,f200: write the picture of the 35th title frame, the 70th level frame and the 200th frame of any kind to
 // <HOME>/vidshot-<W>x<H>-<tag>.ppm (RGB through the palette the engine set) and quit after the last one. For looking at a
 // video mode with your own eyes and for tests; costs nothing when the parameter is absent.
+void SplitScreen_OnChange(void);
+static void Command_HFSplit_f(void) // OPT10-HF: 'hf_split 1' = local splitscreen with a second player in a single player game (splitscreen viewports under -vidshot k20=hf_split~1,k300)
+{
+	splitscreen = COM_Argc() > 1 && atoi(COM_Argv(1)) != 0;
+	SplitScreen_OnChange();
+}
+
 static void Impl_VidShot(void)
 {
 	static boolean parsed;
@@ -1093,6 +1100,7 @@ static void Impl_VidShot(void)
 		parsed = true;
 		if (M_CheckParm("-vidshot") && M_IsNextParm())
 		{
+			COM_AddCommand("hf_split", Command_HFSplit_f, 0);
 			strlcpy(spec, M_GetNextParm(), sizeof spec);
 			for (p = spec; *p;) // one shot per item 't35' / 'l70' / 'f200' (an optional '=command' follows the number)
 			{

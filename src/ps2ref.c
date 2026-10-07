@@ -244,6 +244,12 @@ static void shot_keys(INT32 framen)
         if(up) { ev.type=ev_keyup; D_PostEvent(&ev); }
     }
 }
+void SplitScreen_OnChange(void);
+static void Command_HFSplit_f(void) /* 'hf_split 1': local splitscreen with a second player in a single player game (the same command exists on the PS2) */
+{
+    splitscreen = COM_Argc()>1 && atoi(COM_Argv(1))!=0;
+    SplitScreen_OnChange();
+}
 static void shot_frame(void)
 {
     static boolean parsed, quitnext; static INT32 titlen, leveln, anyn, wipen, intern, left, done, knext; static boolean klow=true; static char spec[1536];
@@ -252,6 +258,7 @@ static void shot_frame(void)
     if(!parsed) {
         parsed=true;
         if(M_CheckParm("-ps2ref-shot") && M_IsNextParm()) {
+            COM_AddCommand("hf_split",Command_HFSplit_f,0);
             snprintf(spec,sizeof spec,"%s",M_GetNextParm());
             for(p=spec;*p;) { left+=(*p=='t'||*p=='l'||*p=='f'||*p=='k'||*p=='K'||*p=='w'||*p=='i'); while(*p && *p!=',') p++; if(*p==',') p++; }
         }
