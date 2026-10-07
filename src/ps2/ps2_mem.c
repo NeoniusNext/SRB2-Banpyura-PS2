@@ -645,6 +645,7 @@ int ZA_Check(char *msg, size_t msglen)
 	int prevfree = 0;
 	size_t used = 0, nused = 0, nfree = 0, listed = 0;
 	unsigned bin;
+	zablock_t *prevb = NULL; // the block before the one being looked at: named in the messages (who overran into the header)
 
 	if (!za_base)
 		ZA_BAD("arena not initialised");
@@ -658,8 +659,18 @@ int ZA_Check(char *msg, size_t msglen)
 		if (size < ZA_MINBLK || size > (size_t)(za_end - p))
 			ZA_BAD("block at +%lu: bad size %lu", (unsigned long)(p - za_base), (unsigned long)size);
 		if (((b->sf & ZAF_PREVFREE) != 0) != prevfree)
-			ZA_BAD("block at +%lu: prev-free flag %d but previous block is %s", (unsigned long)(p - za_base),
-				(b->sf & ZAF_PREVFREE) != 0, prevfree ? "free" : "used");
+#ifdef ZDEBUG
+			ZA_BAD("block at +%lu: prev-free flag %d but previous block is %s (previous: +%lu %lu B tag %d real %lu owner %s:%d; this: tag %d real %lu %s:%d)",
+				(unsigned long)(p - za_base), (b->sf & ZAF_PREVFREE) != 0, prevfree ? "free" : "used", prevb ? (unsigned long)((uint8_t *)prevb - za_base) : 0ul,
+				prevb ? (unsigned long)ZA_SIZE(prevb) : 0ul, prevb ? ZA_TAG(prevb) : -1, prevb ? (unsigned long)prevb->realsize : 0ul,
+				prevb && prevb->ownerfile ? prevb->ownerfile : "?", prevb ? prevb->ownerline : 0, ZA_TAG(b), (unsigned long)b->realsize,
+				b->ownerfile ? b->ownerfile : "?", b->ownerline);
+#else
+			ZA_BAD("block at +%lu: prev-free flag %d but previous block is %s (previous: +%lu %lu B tag %d real %lu; this: tag %d real %lu used %d)",
+				(unsigned long)(p - za_base), (b->sf & ZAF_PREVFREE) != 0, prevfree ? "free" : "used", prevb ? (unsigned long)((uint8_t *)prevb - za_base) : 0ul,
+				prevb ? (unsigned long)ZA_SIZE(prevb) : 0ul, prevb ? ZA_TAG(prevb) : -1, prevb ? (unsigned long)prevb->realsize : 0ul, ZA_TAG(b),
+				(unsigned long)b->realsize, (b->sf & ZAF_USED) != 0);
+#endif
 		if (b->sf & ZAF_USED)
 		{
 			if (b->realsize > size - ZA_HDR)
@@ -684,6 +695,7 @@ int ZA_Check(char *msg, size_t msglen)
 			nfree++;
 			prevfree = 1;
 		}
+		prevb = b;
 		p += size;
 	}
 	if (p != za_end)
@@ -1507,6 +1519,8 @@ void PS2Mem_Sizes(void)
 
 // -zchain A,B,C: map names (the part after "MAP") loaded one after the other on one boot, with -zquit frames in each, after the
 // level of -warp. A "ZCHAIN" line (heap check, usage, free space) follows every level; the run ends after the last one.
+// PS2-147 (OPT10-S): the entry "x" is a trip to the title screen ("exitgame", 150 frames of the title, a "ZCHAIN title" line with the heap check) before
+// the next entry is loaded: leaving a game and starting a new one (menus, server restart, intermission data) is a different path from "map -force".
 static int ChainNext(const char **list, char *out, size_t outsize)
 {
 	const char *p = *list;
@@ -1527,15 +1541,50 @@ static int ChainNext(const char **list, char *out, size_t outsize)
 	return n != 0;
 }
 
+// PS2-147 (OPT10-S): NULL-write detector (-zck / -znull). On the EE the first kilobytes of RAM are the kernel's (exception vectors, handler tables): a store through a
+// NULL-based pointer (NULL + member offset) does not fault, neither on the console nor in PCSX2, it corrupts the kernel and the console dies later and elsewhere.
+// The low words are copied at the first frame; each frame compares them and names the first change (word offset, old and new value, frame).
+#define NULLGUARD_WORDS 1024
+static uint32_t nullguard_ref[NULLGUARD_WORDS];
+static int nullguard_on;
+static unsigned nullguard_reports;
+static volatile uintptr_t nullguard_base; // 0, but not a constant: the compiler must not fold the read of address 0 away
+
+static void PS2Mem_NullGuard(int init)
+{
+	const volatile uint32_t *p = (const volatile uint32_t *)nullguard_base;
+	unsigned i;
+
+	if (init)
+	{
+		for (i = 0; i < NULLGUARD_WORDS; i++)
+			nullguard_ref[i] = p[i];
+		return;
+	}
+	for (i = 0; i < NULLGUARD_WORDS; i++)
+	{
+		const uint32_t now = p[i];
+
+		if (now == nullguard_ref[i])
+			continue;
+		if (nullguard_reports++ < 32)
+			I_OutputMsg("NULLGUARD: low memory +0x%03x changed %08lx -> %08lx at frame %lu (a write through a NULL-based pointer, or the kernel)\n", i * 4,
+				(unsigned long)nullguard_ref[i], (unsigned long)now, (unsigned long)Z_FrameCount());
+		nullguard_ref[i] = now;
+	}
+}
+
 void PS2Mem_Frame(void)
 {
 	static int init;
 	static long quitlevel = -1, quitall = -1;
 	static unsigned levelframes, allframes, startcycles;
 	static const char *chain_list;
-	static int chain_active, chain_wait;
+	static int chain_active, chain_wait, chain_title;
+	static unsigned chain_title_frames;
 	static unsigned chain_base, chain_count, chain_issued, chain_cycles;
 	static tic_t chain_prev_time;
+	static unsigned zheap_every;
 
 	if (!init)
 	{
@@ -1552,10 +1601,21 @@ void PS2Mem_Frame(void)
 		}
 		if (M_CheckParm("-zsizes"))
 			PS2Mem_Sizes();
+		if (M_CheckParm("-zck") || M_CheckParm("-znull"))
+		{
+			PS2Mem_NullGuard(1);
+			nullguard_on = 1;
+		}
+		if (M_CheckParm("-zheap"))
+			zheap_every = M_IsNextParm() ? (unsigned)atoi(M_GetNextParm()) : 1; // PS2-147: heap check (structure, red zones, every owner pointer) every N frames
 		if (M_CheckParm("-zsingle"))
 			singletics = true; // PS2-141: one game tic per displayed frame, no waiting for the clock (soak runs at the speed of the emulator, scripted pads)
 	}
 	allframes++;
+	if (nullguard_on)
+		PS2Mem_NullGuard(0);
+	if (zheap_every && !(allframes % zheap_every))
+		Z_CheckHeap(-1000 - (INT32)allframes); // I_Error with the owner (ZDEBUG) of the first block whose owner pointer does not point at it; the number is -1000 - frame
 	PS2Mem_NoteBrk();
 	PS2Net_Frame(); // PS2-132: -netcmd
 	if (gamestate == GS_LEVEL)
@@ -1570,6 +1630,42 @@ void PS2Mem_Frame(void)
 			ZA_ResetPeak();
 		}
 		chain_prev_time = leveltime;
+		if (chain_title)
+		{
+			if (gamestate == GS_TITLESCREEN && ++chain_title_frames >= 150)
+			{
+				zastats_t st;
+				char msg[160], next[16], cmd[48];
+
+				ZA_Stats(&st);
+				I_OutputMsg("ZCHAIN title check=%s used=%lu peak=%lu free=%lu largest=%lu libcfree=%lu\n", ZA_Check(msg, sizeof msg) ? "FAILED" : "ok",
+					(unsigned long)st.used, (unsigned long)st.peakused, (unsigned long)st.freebytes, (unsigned long)st.largestfree, (unsigned long)PS2Mem_LibcFree());
+				if (ZA_Check(msg, sizeof msg))
+					I_OutputMsg("ps2_mem: HEAP CHECK FAILED: %s\n", msg);
+				chain_title = 0;
+				if (ChainNext(&chain_list, next, sizeof next))
+				{
+					snprintf(cmd, sizeof cmd, "map MAP%s -force\n", next);
+					COM_BufAddText(cmd);
+					chain_wait = 1;
+					chain_issued = allframes;
+				}
+				else
+				{
+					chain_active = 0;
+					quitall = 1; // the title was the last entry: the report below ends the run
+				}
+			}
+			else if (allframes - chain_issued > 20000)
+			{
+				I_OutputMsg("ZCHAIN timeout: exitgame did not reach the title screen\n");
+				chain_title = 0;
+				chain_active = 0;
+				quitall = 1;
+			}
+			else
+				return;
+		}
 		if (chain_wait)
 		{
 			if (allframes - chain_issued > 20000)
@@ -1597,6 +1693,20 @@ void PS2Mem_Frame(void)
 					(unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_Ms());
 			if (ZA_Check(msg, sizeof msg))
 				I_OutputMsg("ps2_mem: HEAP CHECK FAILED: %s\n", msg);
+#ifdef PS2_PROFILE
+			{
+				// PS2-143: the block that every line without arguments points at must stay zero
+				unsigned j;
+
+				for (j = 0; j < NUMLINEARGS; j++)
+					if (lineargs_zero[j])
+					{
+						I_OutputMsg("ps2_mem: LINEARGS ZERO BLOCK WRITTEN: lineargs_zero[%u] = %ld (a store through line->args of a line without arguments)\n", j,
+							(long)lineargs_zero[j]);
+						break;
+					}
+			}
+#endif
 #ifdef PS2_LEAKTRACE
 			PS2Mem_LeakReport(chain_count);
 #endif
@@ -1604,9 +1714,18 @@ void PS2Mem_Frame(void)
 			{
 				char cmd[48];
 
-				snprintf(cmd, sizeof cmd, "map MAP%s -force\n", next);
-				COM_BufAddText(cmd);
-				chain_wait = 1;
+				if (!strcmp(next, "x"))
+				{
+					COM_BufAddText("exitgame\n");
+					chain_title = 1;
+					chain_title_frames = 0;
+				}
+				else
+				{
+					snprintf(cmd, sizeof cmd, "map MAP%s -force\n", next);
+					COM_BufAddText(cmd);
+					chain_wait = 1;
+				}
 				chain_issued = allframes;
 				return;
 			}

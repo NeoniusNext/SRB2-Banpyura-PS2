@@ -81,6 +81,9 @@ void R_FlushTextureCache(void);
 // Texture generation
 UINT8 *R_GenerateTexture(size_t texnum);
 UINT8 *R_GetFlatForTexture(size_t texnum);
+#ifdef PS2
+UINT8 *R_TryGetFlatForTexture(size_t texnum); // PS2-140: as R_GetFlatForTexture, NULL when a texture used as a flat does not fit
+#endif
 INT32 R_GetTextureNum(INT32 texnum);
 void R_CheckTextureCache(INT32 tex);
 #ifdef PS2_PROFILE

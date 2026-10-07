@@ -2008,8 +2008,14 @@ static void UnArchiveLines(save_t *save_p)
 		if (diff & LD_ARGS)
 		{
 			UINT8 j;
+#ifdef PS2_PROFILE
+			INT32 *largs = P_LineArgsW(li); // PS2-143: lines without arguments share one zero block
+			for (j = 0; j < NUMLINEARGS; j++)
+				largs[j] = P_ReadINT32(save_p);
+#else
 			for (j = 0; j < NUMLINEARGS; j++)
 				li->args[j] = P_ReadINT32(save_p);
+#endif
 		}
 		if (diff & LD_STRINGARGS)
 		{

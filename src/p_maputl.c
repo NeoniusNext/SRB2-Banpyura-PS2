@@ -717,8 +717,21 @@ static blocknode_t *P_CreateBlockNode(mobj_t *thing, int x, int y)
 		block = freeblocks;
 		freeblocks = block->bnext;
 	}
+#ifdef PS2_PROFILE
+	else
+	{
+		// PS2-149 (OPT10-S): 64 nodes to a block (they are never freed one by one): a 24-byte node was a 48-byte block, MAP11 has 8800 of them
+		int i;
+
+		block = Z_Malloc(sizeof(blocknode_t) * 64, PU_LEVEL, NULL);
+		for (i = 1; i < 64; i++)
+			block[i].bnext = i + 1 < 64 ? &block[i + 1] : NULL;
+		freeblocks = &block[1];
+	}
+#else
 	else
 		block = Z_Malloc(sizeof(blocknode_t), PU_LEVEL, NULL);
+#endif
 
 	block->blockindex = x + y*bmapwidth;
 	block->mobj = thing;

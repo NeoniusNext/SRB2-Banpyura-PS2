@@ -81,6 +81,9 @@ static UINT32 zframe;               // frame stamp, 24 bits
 static boolean zframe_explicit;     // the platform layer calls Z_NextFrame; otherwise the 3D view lock does
 static INT32 zpurgelock;            // >0 while the 3D view renders
 static const zablock_t *zpinned;    // the block Z_ReallocAlign is copying from: neither evicted nor purged
+#ifndef ZDEBUG
+static boolean ztry_realloc;        // PS2-148: Z_TryReallocAlign is running: the new block of the copy may fail (NULL, the old block is untouched)
+#endif
 static size_t zreserve = Z_RESERVE_DEFAULT;
 static size_t zheadroom = Z_HEADROOM_DEFAULT;
 static size_t zslack = Z_EVICT_SLACK_DEFAULT;
@@ -193,8 +196,13 @@ static int Z_SideForTag(INT32 tag)
 {
 	switch (tag)
 	{
-		case PU_LEVEL: case PU_LEVSPEC:
+		case PU_LEVEL: case PU_LEVSPEC: case PU_HWRPLANE:
 			return zlevel_play ? ZA_TOP : ZA_BOTTOM;
+		// PS2-144 (OPT10-S): the small bookkeeping blocks of the hardware renderer (GLPatch_t/GLMipmap_t records, light tables, the batching arrays) are
+		// long-lived next to the big, short-lived texture data (PU_HWRCACHE): in the cache zone, 750 of them sat between the freed texture blocks
+		// and cut the free space into 200 pieces (HW DEMO_003, frame 948: 4.5 MB free, largest block 454 KB, "Out of memory allocating 524288")
+		case PU_HWRPATCHINFO: case PU_HWRPATCHCOLMIPMAP: case PU_HWRLIGHTTABLEDATA: case PU_HWRBATCH:
+			return ZA_TOP;
 		case PU_CACHE: case PU_RENDERWORK: case PU_SPRITE:
 			// the transient blocks take the end the level does not grow from. PS2-72: sprite patches are evictable like the caches (Z_Evictable);
 			// among the long-lived blocks at the other end every one that was evicted left a hole that small long-lived blocks then pinned
@@ -1421,7 +1429,12 @@ void *Z_ReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignb
 	DEBFILE(va("Z_Realloc at %s:%d\n", file, line));
 	rez = Z_Malloc2(size, tag, user, alignbits, file, line);
 #else
-	rez = Z_MallocAlign(size, tag, user, alignbits);
+	rez = ztry_realloc ? Z_TryMallocAlign(size, tag, user, alignbits) : Z_MallocAlign(size, tag, user, alignbits);
+	if (!rez)
+	{
+		zpinned = NULL;
+		return NULL; // only Z_TryReallocAlign gets here; the old block stays as it was
+	}
 #endif
 
 	if (size < block->realsize)
@@ -1448,6 +1461,21 @@ void *Z_ReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignb
 		memset((char*)rez+copysize, 0x00, size-copysize);
 
 	return rez;
+}
+
+// PS2-148 (OPT10-S): Z_ReallocAlign that returns NULL, with the old block untouched, when neither the stretch in place nor a new block is possible.
+void *Z_TryReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 alignbits)
+{
+#ifdef ZDEBUG
+	return Z_Realloc2(ptr, size, tag, user, alignbits, "Z_TryReallocAlign", 0); // the diagnostic build keeps the original behaviour (out of memory ends the run)
+#else
+	void *rez;
+
+	ztry_realloc = true;
+	rez = Z_ReallocAlign(ptr, size, tag, user, alignbits);
+	ztry_realloc = false;
+	return rez;
+#endif
 }
 #else
 #ifdef ZDEBUG
@@ -1670,6 +1698,24 @@ void Z_CheckHeap(INT32 i)
 #endif
 		if (block->user != NULL && *(block->user) != ZA_PAYLOAD(block))
 		{
+#ifdef ZDEBUG
+			{
+				// PS2-147: where the owner pointer lives now (the block that contains it, or none: BSS / C heap), what it holds, what the block is
+				zablock_t *in;
+				char where[160] = "outside the arena";
+
+				for (in = ZA_First(); in; in = ZA_Next(in))
+					if ((uint8_t *)block->user >= (uint8_t *)in && (uint8_t *)block->user < (uint8_t *)in + ZA_SIZE(in))
+					{
+						snprintf(where, sizeof where, "inside %s block tag %d size %u (%s:%d) at +%u", ZA_ISFREE(in) ? "FREE" : "used",
+							ZA_ISFREE(in) ? -1 : ZA_TAG(in), (unsigned)ZA_SIZE(in), ZA_ISFREE(in) ? "-" : in->ownerfile,
+							ZA_ISFREE(in) ? 0 : in->ownerline, (unsigned)((uint8_t *)block->user - (uint8_t *)in));
+						break;
+					}
+				I_OutputMsg("Z_CheckHeap: block %u tag %d size %u payload %p: user %p holds %p, %s\n", blocknumon, ZA_TAG(block),
+					(unsigned)ZA_SIZE(block), ZA_PAYLOAD(block), (void *)block->user, *(block->user), where);
+			}
+#endif
 			I_Error("Z_CheckHeap %d: block %u"
 #ifdef ZDEBUG
 				"(owned by %s:%d)"
@@ -1826,6 +1872,24 @@ void Z_ChangeTag(void *ptr, INT32 tag)
 			"tried to make block purgable but it has no owner");
 
 	block->tag = tag;
+}
+#endif
+
+#ifdef PS2
+/** PS2-140 (OPT10-S): a patch that has a hardware texture is not a cache entry. Its GLPatch_t (PU_HWRPATCHINFO) is an owned block whose user
+  * pointer is the field patch->hardware: when the zone evicts the patch as PU_CACHE nothing frees the GLPatch (only Patch_Free does), the user
+  * pointer points into memory that is reused, Z_Free of the GLPatch later writes NULL into it, and Z_CheckHeap reports "doesn't have a proper
+  * user" (the hardware client of a network game: the level picture of the connection screen is a PU_CACHE patch). The patch becomes a
+  * PU_PATCH_LOWPRIORITY patch (kept until the next level, freed with its texture by Patch_FreeTag). Software patches stay evictable. */
+void Z_PinCachePatch(void *ptr)
+{
+	zablock_t *block;
+
+	if (!ptr || !ZA_Contains(ptr))
+		return;
+	block = ZA_BLOCK(ptr);
+	if ((block->sf & (ZAF_VALID | ZAF_USED)) == (ZAF_VALID | ZAF_USED) && ZA_TAG(block) == PU_CACHE)
+		Z_ChangeTag(ptr, PU_PATCH_LOWPRIORITY);
 }
 #endif
 

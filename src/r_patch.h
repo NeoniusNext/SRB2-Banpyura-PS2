@@ -24,6 +24,9 @@ void Patch_CalcDataSizes(softwarepatch_t *source, size_t *total_pixels, size_t *
 void Patch_MakeColumns(softwarepatch_t *source, size_t num_columns, INT16 width, UINT8 *pixels, column_t *columns, post_t *posts, boolean flip);
 void Patch_Free(patch_t *patch);
 #ifdef PS2_PROFILE
+#ifdef PS2
+patch_t *Patch_TryCreateFromDoomPatch(softwarepatch_t *source); // PS2-140: NULL when there is no room
+#endif
 boolean Patch_IsEvictable(const void *patch); // z_zone.c: may the zone drop this PU_SPRITE block (it is rebuilt on demand)?
 #endif
 
