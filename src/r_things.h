@@ -261,6 +261,9 @@ typedef struct drawnode_s
 
 	struct drawnode_s *next;
 	struct drawnode_s *prev;
+#if defined(PS2) || defined(PS2_PROFILE)
+	INT32 order; // PS2-161: position label of the node in its list (strictly increasing along the list), only valid inside R_CreateDrawNodes
+#endif
 } drawnode_t;
 
 void R_InitDrawNodes(void);

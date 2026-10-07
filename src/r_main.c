@@ -1068,12 +1068,17 @@ boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y)
 
 		if (v1->y < y && y <= v2->y)
 		{
+#ifdef PS2_OPT_REND // PS2-160: the same comparison without the 64-bit division (ps2_rdraw.h, tools/ps2/sw_hosttest.py)
+			if (PS2_EdgeXLess(v1->x, v1->y, v2->x, v2->y, x, y))
+				passes++;
+#else
 			// if the y axis in inside the line, find the point where we intersect on the x axis...
 			fixed_t vx = v1->x + (INT64)(v2->x - v1->x) * (y - v1->y) / (v2->y - v1->y);
 
 			// ...and if that point is to the left of the point, count it as inside.
 			if (vx < x)
 				passes++;
+#endif
 		}
 	}
 
@@ -1089,7 +1094,12 @@ boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y)
 // point (the cell is on one side of every node above it by at least 2 map units, far more than the rounding of R_PointOnSide, so
 // the result is the one of the full descent). The table is built on first use for the node array in `bspc` (static storage: the
 // zone layout, which some levels' drawing is sensitive to, stays as it was); the key is the array itself and its root.
+#ifndef BSPC_MAXCELLS // (the host stress/experiment variants set other sizes)
 #define BSPC_MAXCELLS 16384
+#endif
+#ifndef BSPC_SHIFT0
+#define BSPC_SHIFT0 7 // smallest cell: 2^7 map units
+#endif
 typedef struct
 {
 	const node_t *nodes;
@@ -1166,7 +1176,7 @@ static void R_BuildBSPCache(void)
 {
 	const node_t *root;
 	fixed_t minx, miny, maxx, maxy;
-	INT32 shift = FRACBITS + 7;
+	INT32 shift = FRACBITS + BSPC_SHIFT0;
 	size_t cw, ch, x, y, i;
 
 	bspc.nodes = nodes;
@@ -1223,6 +1233,17 @@ static void R_BuildBSPCache(void)
 }
 #endif
 
+#ifdef PS2_BSPSTAT
+#include <stdio.h>
+unsigned long long ps2_bspstat[4];
+void PS2_BspStatDump(void)
+{
+	fprintf(stderr, "BSPSTAT calls %llu steps %llu (%.2f per call) leaf-start %llu (%.1f%%) cells %ux%u shift %d\n", ps2_bspstat[0], ps2_bspstat[1],
+		ps2_bspstat[0] ? (double)ps2_bspstat[1] / ps2_bspstat[0] : 0.0, ps2_bspstat[2], ps2_bspstat[0] ? 100.0 * ps2_bspstat[2] / ps2_bspstat[0] : 0.0,
+		(unsigned)bspc.cw, (unsigned)bspc.ch, (int)bspc.shift - FRACBITS);
+}
+#endif
+
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 {
 	size_t nodenum = numnodes-1;
@@ -1248,6 +1269,18 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 #endif
 
 #ifdef PS2_OPT_REND
+#ifdef PS2_BSPSTAT // host diagnostics: descent steps below the table
+	{
+		static unsigned long long calls, steps, leafstart;
+		static int reg;
+		extern void PS2_BspStatDump(void);
+		if (!reg) { reg = 1; atexit(PS2_BspStatDump); }
+		calls++;
+		if (nodenum & NF_SUBSECTOR) leafstart++;
+		{ size_t n = nodenum; while (!(n & NF_SUBSECTOR)) { steps++; n = nodes[n].children[R_PointOnSideI(x, y, nodes+n)]; } }
+		ps2_bspstat[0] = calls; ps2_bspstat[1] = steps; ps2_bspstat[2] = leafstart;
+	}
+#endif
 	while (!(nodenum & NF_SUBSECTOR))
 	{
 		const node_t *node = nodes+nodenum;
