@@ -518,6 +518,9 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
 		patch_t *realpatch = NULL;
 		boolean free_patch = true;
+#ifdef PS2_PROFILE
+		boolean loaded_here = false;
+#endif
 
 #ifndef NO_PNG_LUMPS
 		size_t lumplength = W_LumpLengthPwad(wadnum, lumpnum);
@@ -535,13 +538,25 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 
 			// Otherwise, we load it here.
 			if (realpatch == NULL)
+			{
 				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
+#ifdef PS2_PROFILE
+				loaded_here = true;
+#endif
+			}
 		}
 
 		HWR_DrawTexturePatchInCache(mipmap, blockwidth, blockheight, texture, patch, realpatch);
 
 		if (free_patch)
 			Patch_Free(realpatch);
+#ifdef PS2_PROFILE
+		// PS2-146 (OPT10-S): a patch that was read only to be composed into this texture is not kept: as PU_PATCH ("static for the whole run") the
+		// wall patches of every texture the player has seen stayed in the arena (2.7 MB in 198 blocks at frame 323 of MAP10, hardware renderer, where
+		// the arena then ran out); a texture is composed again only after the GS pool or the texture cache dropped it
+		else if (loaded_here)
+			Patch_Free(realpatch);
+#endif
 	}
 	//Hurdler: not efficient at all but I don't remember exactly how HWR_DrawPatchInCache works :(
 	if (format2bpp(mipmap->format)==4)
