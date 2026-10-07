@@ -110,7 +110,7 @@ Facts from runs in the emulator (details, pictures and numbers: `docs/GATES/g1/o
   +-2000 pixel guard band, Z within the Z buffer format, Q > 0, texel span of one primitive <= UV_EXTENT. The output is `HWVAL <class> f=<frame>: ...` (three examples per class) and `HWVAL SUMMARY`. Not checked: the VU1 path
   (`-hwdbg 0x4000000`). Host test of the validator itself: `tools/ps2/hf_valtest.c` (4 clean streams, 27 seeded faults). The `-hwdbg` bits in use: 1..16384 (see above), 0x100000..0x2000000 HT, 0x4000000 VU1, 0x8000000 HWDBG_LODDBG,
   0x10000000 HWDBG_IMMDBG, **0x20000000 the validator**; a value that is a bit of another feature changes the run (the validator first took 0x8000000 and printed the plan of every frame).
-* Memory (S/HT find): **PS2-HW-76** the patches of the wall textures are loaded with `PU_PATCH_LOWPRIORITY` (`hw_cache.c`), freed at every level load (they were pinned for the session: 4.9 MB after 7 level changes);
+* Memory (S/HT find): **PS2-HW-76 / PS2-146 (S)** the patches of the wall textures are not kept after the composition (`hw_cache.c`; they were pinned as `PU_PATCH` for the session: 4.9 MB after 7 level changes; the merge kept S's `loaded_here` version of the same fix);
   **PS2-HW-79** the batch arrays (`PU_HWRBATCH`) go back to the zone at every level change (`HWR_ReleaseBatching`; 1.45 MB after THZ2/ACZ1 against 0.42 MB). With both, the 50 map change chain (7 light maps) passes in the HW renderer.
   `-zreserve 3072` (the C heap kept outside the zone) costs the zone 1.1 MB against 1536: the maps GFZ2, THZ2, ACZ1, ERZ1, MAP08, MAP40 do not load with 3072 and load with 1536; MAP10, 11, 14, 23 do not fit even with the
   engine default of 512.
