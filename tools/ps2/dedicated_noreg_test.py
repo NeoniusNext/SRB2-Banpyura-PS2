@@ -25,7 +25,8 @@ def main():
     a = ap.parse_args()
     home = ROOT / 'build/opt10-x/noreg-home'
     (home / '.srb2').mkdir(parents=True, exist_ok=True)
-    (home / '.srb2/config.cfg').write_text('masterserver "http://127.0.0.1:9/MS/0"\n')  # the guard of net_session.py (not an explicit room)
+    for name in ('config.cfg', 'dconfig.cfg'):  # the guard of net_session.py (not an explicit room); a dedicated server reads dconfig.cfg
+        (home / '.srb2' / name).write_text('masterserver "http://127.0.0.1:9/MS/0"\n')
     env = {k: v for k, v in os.environ.items() if k.lower() not in ('https_proxy', 'http_proxy', 'all_proxy')}
     env.update(SRB2WADDIR='/opt/srb2-assets', SDL_AUDIODRIVER='dummy')
     log = home / 'out.txt'

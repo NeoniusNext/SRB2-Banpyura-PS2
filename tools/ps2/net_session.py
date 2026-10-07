@@ -150,7 +150,9 @@ class Node:
                 if is_engine:
                     # SAFETY (OPT10-X): see the PS2 branch. config.cfg is read before "Starting Server" (a "+masterserver" argument is applied too late: the
                     # first version of the menu-browse scenario registered on the real master server that way). Spec keys: "masterserver" (URL) and "cfg" (more lines).
-                    (Path(av[av.index('-home') + 1]) / '.srb2' / 'config.cfg').write_text(f'masterserver "{s.get("masterserver", DEAD_MS)}"\n' + s.get('cfg', ''))
+                    # config.cfg is the client's file, a dedicated server reads dconfig.cfg (checked in the log: "Executing .../dconfig.cfg"): both get the lines
+                    for cfgname in ('config.cfg', 'dconfig.cfg'):
+                        (Path(av[av.index('-home') + 1]) / '.srb2' / cfgname).write_text(f'masterserver "{s.get("masterserver", DEAD_MS)}"\n' + s.get('cfg', ''))
             if is_engine:  # no route out of the container for an engine: the proxy variables are what lets an engine reach the real master server
                 for k in [k for k in env if k.lower() in ('https_proxy', 'http_proxy', 'all_proxy')]:
                     del env[k]

@@ -82,7 +82,8 @@ def main():
             netlock = True
             home = run / 'pcsrv-home'
             (home / '.srb2').mkdir(parents=True, exist_ok=True)
-            (home / '.srb2/config.cfg').write_text('masterserver "http://127.0.0.1:9/MS/0"\nnettimeout "2100"\njointimeout "2100"\n')  # SAFETY: never the real master server
+            for name in ('config.cfg', 'dconfig.cfg'):  # SAFETY: never the real master server (a dedicated server reads dconfig.cfg)
+                (home / '.srb2' / name).write_text('masterserver "http://127.0.0.1:9/MS/0"\nnettimeout "2100"\njointimeout "2100"\n')
             senv = {k: v for k, v in os.environ.items() if k.lower() not in ('https_proxy', 'http_proxy', 'all_proxy')}
             senv.update(SRB2WADDIR='/opt/srb2-assets', SDL_AUDIODRIVER='dummy')
             srv = subprocess.Popen([str(ROOT / net_env.pc_exe()), '-dedicated', '-server', '-nomusic', '-nosound', '-netsync', '-home', str(home), '-warp', 'MAP01'], cwd=str(home),

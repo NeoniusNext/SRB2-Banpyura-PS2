@@ -213,7 +213,7 @@ write('reconnect', {
     'timeout': 1200,
     'nodes': [pcsrv(start=0, longto=False),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'],
-                  files={'pad.txt': pad(*crosses(200, 1100), *crosses(1780, 2600)), 'cmd.txt': f'1500:exitgame|1760:connect {H}'}, start=8)],
+                  files={'pad.txt': pad(*crosses(200, 1100), *crosses(1780, 4400)), 'cmd.txt': f'1500:exitgame|1760:connect {H}'}, start=8)],
     'until': [{'node': 'srv', 'text': 'rejoined the game'}], 'grace': 100})
 
 write('server-kill', {
