@@ -14,6 +14,10 @@ static void ov_flush_all(void); // draws queued by the light overlay (ps2_hw_dra
 static void rel_poll(void); // OPT9: engine data referenced by DMA is unlocked when the transfer is done (ps2_hw_tex.inc)
 static void rel_release_buf(int i);
 static void rel_release_all(void);
+static void val_init(void); // PS2-HW-74: GIF stream validator (ps2_hw_val.inc, -hwdbg 536870912)
+static void val_buffer(const qw_t *b, u32 wr);
+static void val_reset(void);
+static void val_shutdown(void);
 
 // DMA tags of a source chain (the GIF channel reads one tag per element: the tag itself is not sent to the GIF)
 #define DMAT_REFE 0ull // send qwc qwords from addr, then end
@@ -131,6 +135,7 @@ static void wd_recover(const char *why)
 	H.gsr.valid = 0;
 	H.clut_loaded = 0;
 	H.finish_pending = 0;
+	val_reset();
 	if (H.pend)
 		H.pend_done = 1; // show what there is
 	*GS_CSR = 2;
@@ -194,6 +199,7 @@ static void pk_flush(void)
 		b[H.run - 1].d[0] = (b[H.run - 1].d[0] & ~(7ull << 28)) | (DMAT_REFE << 28);
 		H.wr--;
 	}
+	val_buffer(b, H.wr);
 	if (ps2hwd_hash_on)
 	{
 		const u64 *hw = (const u64 *)b;
@@ -671,6 +677,7 @@ static int gs_setup(void)
 	H.outid = H.mode == PS2HWD_VIDEO_480P ? 2 : (H.mode == PS2HWD_VIDEO_PAL ? (field_frame ? 4 : 1) : (field_frame ? 3 : 0));
 
 	V.on = (ps2hwd_dbg_flags & HWDBG_VU1) != 0; // PS2-HW-44: -hwdbg 0x4000000: the stream goes through VIF1, the VU1 program draws the polygons
+	val_init();
 	// OPT10 (HG): dmaKit does not take the VIF1 channel (with it in the mask gsKit_init_screen hangs in PCSX2): the channel is reset by hand below
 	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
 	dmaKit_chan_init(DMA_CHANNEL_GIF);

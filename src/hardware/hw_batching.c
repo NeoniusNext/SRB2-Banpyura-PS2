@@ -94,6 +94,11 @@ static UINT32 HWR_PS2_TextureOrder(const GLMipmap_t *t)
 }
 #endif
 
+#ifdef PS2
+static UINT32 *rkeys, *rtmpk, *rtmpi; // the scratch of the radix sort of HWR_RenderBatches
+static int rcap;
+#endif
+
 // Enables batching mode. HWR_ProcessPolygon will collect polygons instead of passing them directly to the rendering backend.
 static void *HWR_BatchResize(void *old, size_t bytes)
 {
@@ -129,6 +134,35 @@ static int HWR_BatchCapacity(int old, int required, size_t element)
 	}
 	return (int)cap;
 }
+
+#ifdef PS2_PROFILE
+// OPT10-HF (PS2-HW-79): the batch arrays grow to the busiest frame seen and are non-purgeable, so after the vertex-heavy maps (THZ2, ACZ1: 32 000
+// vertices a frame) they stay 1.45 MB big (0.42 MB on the light maps) for the rest of the session: the next big level (12 MB of PU_LEVEL) then did not fit.
+// Called on every level change (HWR_ClearAllTextures): the arrays are made again, at the start size, by the first frame of the next level.
+void HWR_ReleaseBatching(void)
+{
+	if (currently_batching)
+		return;
+	Z_Free(finalVertexIndexArray);
+	Z_Free(polygonArray);
+	Z_Free(polygonIndexArray);
+	Z_Free(unsortedVertexArray);
+	Z_Free(rkeys);
+	Z_Free(rtmpk);
+	Z_Free(rtmpi);
+	finalVertexIndexArray = NULL;
+	polygonArray = NULL;
+	polygonIndexArray = NULL;
+	unsortedVertexArray = NULL;
+	rkeys = rtmpk = rtmpi = NULL;
+	rcap = 0;
+	polygonArraySize = 0;
+	unsortedVertexArraySize = 0;
+	finalVertexArrayAllocSize = 8192;
+	polygonArrayAllocSize = 2048;
+	unsortedVertexArrayAllocSize = 8192;
+}
+#endif
 
 // One draw call of the batch being built: triangle indices, or on the PS2 (first vertex, count) pairs of fans (see HWR_RenderBatches)
 static void HWR_DrawBatch(FSurfaceInfo *surf, int count, FBITFIELD polyFlags)
@@ -379,9 +413,6 @@ void HWR_RenderBatches(void)
 #ifdef PS2 // PS2-HW-19: stable radix sort of the polygon keys (qsort of ~2000 polygons costs about 1.3 M cycles)
 	if (!sorted)
 	{
-		static UINT32 *rkeys, *rtmpk, *rtmpi;
-		static int rcap;
-
 		if (rcap < polygonArrayAllocSize)
 		{
 			rkeys = HWR_BatchResize(rkeys, (size_t)polygonArrayAllocSize * sizeof(UINT32));

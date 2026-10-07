@@ -129,6 +129,8 @@ int PS2HWD_ReadVram(void *dst, unsigned int block256, unsigned int tbw, int psm,
 int PS2HWD_ReadFrame(unsigned int *dst);
 // Z buffer of the last completely drawn frame, normalised to 0..0xFFFFFF.
 int PS2HWD_ReadDepth(unsigned int *dst);
+// PS2-HW-69 (-hwtextest): every map texture and level flat is drawn 1:1 and repeated, read back and compared with the engine texels (TTFAIL lines).
+void PS2HWD_TextureTest(void);
 // Negative controls: bit 0 = ignore Z test, bit 1 = ignore alpha test, bit 2 = ignore blending, bit 3 = never write Z.
 extern int ps2hwd_hash_on; // -hwhash: HWHASH lines (a hash of the GIF stream of every frame)
 extern int ps2hwd_dbg_flags;

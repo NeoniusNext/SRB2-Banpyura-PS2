@@ -709,21 +709,26 @@ enum
 	CK_MULT, // alpha = one channel of the palette colour (multiplicative blend, one pass per channel): param = channel
 	CK_RAMP, // darkness / fog ramps (ps2_hw_draw.inc), built from a rampspec_t
 	CK_WIPE, // tinted wipe, one colour channel: param = channel | fade-in << 2 | polygon colour << 8
+	CK_LIGHT, // PS2-HW-71 palette rendering: a row of a colormap light table through the screen palette: param = pal_param(), flag = keyed
 };
 
 // the 256 entries of a CLUT image in index order (0x80 alpha = opaque); the caller swizzles
 static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 {
 	int i;
+	const u32 *op = out_pal(); // PS2-HW-71: the screen palette (flash, 565 crush) in palette rendering mode, else the texture palette
 
 	switch (kind)
 	{
+		case CK_LIGHT:
+			pal_light_entries(param, keyed, e);
+			break;
 		case CK_OPAQUE:
 		case CK_KEYED:
 			for (i = 0; i < 256; i++)
-				e[i] = H.pal[i] | (0x80u << 24);
+				e[i] = op[i] | (0x80u << 24);
 			if (kind == CK_KEYED)
-				e[255] = H.pal[255];
+				e[255] = op[255];
 			break;
 		case CK_ALPHA:
 			for (i = 0; i < 256; i++)
@@ -744,7 +749,7 @@ static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 
 			for (i = 0; i < 256; i++)
 			{
-				float r = (float)(H.pal[i] & 255) * (1.0f / 255.0f), g = (float)((H.pal[i] >> 8) & 255) * (1.0f / 255.0f), b = (float)((H.pal[i] >> 16) & 255) * (1.0f / 255.0f);
+				float r = (float)(op[i] & 255) * (1.0f / 255.0f), g = (float)((op[i] >> 8) & 255) * (1.0f / 255.0f), b = (float)((op[i] >> 16) & 255) * (1.0f / 255.0f);
 				float bright = sqrtf(r * r + g * g + b * b), o[3];
 				int k;
 
@@ -777,7 +782,7 @@ static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 		case CK_MULT:
 			for (i = 0; i < 256; i++)
 			{
-				u32 channel = (H.pal[i] >> (8 * (param & 3))) & 255u;
+				u32 channel = (op[i] >> (8 * (param & 3))) & 255u;
 				u32 modulation = (param >> 8) & 255u;
 				// Quantize the final factor once, rather than separately rounding texture and polygon channels.
 				e[i] = 0x00FFFFFFu | (((channel * modulation * 128u + 32512u) / 65025u) << 24);
@@ -791,7 +796,7 @@ static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 
 static int clut_palette_dependent(u32 kind)
 {
-	return kind == CK_OPAQUE || kind == CK_KEYED || kind == CK_TINT || kind == CK_MULT;
+	return kind == CK_OPAQUE || kind == CK_KEYED || kind == CK_TINT || kind == CK_MULT || kind == CK_LIGHT;
 }
 
 static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
@@ -832,6 +837,8 @@ static void clut_fixed_refresh(int all)
 	H.clut_loaded = 0;
 }
 
+static u8 clut_hint[256]; // hash of a CLUT key -> slot + 1 (verified against the key, a stale hint only costs the linear search)
+
 // the block of a CLUT variant, built (and uploaded) when it is not cached
 static u32 clut_get(u32 kind, u32 param, u32 keyed)
 {
@@ -845,10 +852,27 @@ static u32 clut_get(u32 kind, u32 param, u32 keyed)
 		return clut_fixed_blk(kind);
 	}
 	H.clut_tick++;
+	// PS2-HW-72: palette rendering asks for a CLUT per colormap row of every lit polygon: a direct mapped index in front of the linear search (124 slots)
+	{
+		const u32 h = (u32)((key ^ (key >> 20) ^ (key >> 40)) * 2654435761u) >> 24;
+		const int hi = (int)clut_hint[h] - 1;
+
+		if (hi >= CLUT_FIXED && H.clut_ent[hi].key == key)
+		{
+			if (clut_palette_dependent(kind) && H.clut_ent[hi].gen != H.pal_gen)
+			{
+				clut_build_into(H.clut_base + (u32)hi * CLUT_BLOCKS, kind, param, keyed);
+				H.clut_ent[hi].gen = H.pal_gen;
+			}
+			H.clut_ent[hi].stamp = H.clut_tick;
+			return H.clut_base + (u32)hi * CLUT_BLOCKS;
+		}
+	}
 	for (i = CLUT_FIXED; i < CLUT_SLOTS; i++)
 	{
 		if (H.clut_ent[i].key == key)
 		{
+			clut_hint[(u32)((key ^ (key >> 20) ^ (key >> 40)) * 2654435761u) >> 24] = (u8)(i + 1);
 			if (clut_palette_dependent(kind) && H.clut_ent[i].gen != H.pal_gen)
 			{
 				clut_build_into(H.clut_base + (u32)i * CLUT_BLOCKS, kind, param, keyed);
@@ -873,6 +897,7 @@ static u32 clut_get(u32 kind, u32 param, u32 keyed)
 	H.clut_ent[victim].key = key;
 	H.clut_ent[victim].stamp = H.clut_tick;
 	H.clut_ent[victim].gen = H.pal_gen;
+	clut_hint[(u32)((key ^ (key >> 20) ^ (key >> 40)) * 2654435761u) >> 24] = (u8)(victim + 1);
 	clut_build_into(H.clut_base + (u32)victim * CLUT_BLOCKS, kind, param, keyed);
 	return H.clut_base + (u32)victim * CLUT_BLOCKS;
 }
@@ -956,9 +981,19 @@ static int rgba_to_indices(const u32 *src, u32 n, u8 *dst, int *holes, int *uses
 // write rows [r0, r0+nr) of the stored texture: W2 pixels per row of bpp bytes, produced by fill(row, dst)
 typedef void (*rowfill_t)(void *ctx, u32 row, u8 *dst);
 
+// PS2-HW-73: a transfer must stay inside the 4 MiB of GS memory: the GS wraps the address, PCSX2 too, and the picture of another texture is overwritten
+// without any error. The pool allocator keeps to it by construction; this is the check that says so when it does not.
+static inline void vram_guard(u32 blk, int psm, u32 W2, u32 H2, u32 tbw, const char *what)
+{
+	if (blk < H.pool_base || blk + tex_footprint(psm, W2, H2, tbw) > VRAM_BLOCKS)
+		hw_failure(what);
+}
+
 static void upload_bands(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, u32 bpp, rowfill_t fill, void *ctx)
 {
 	u32 rowbytes = W2 * bpp;
+
+	vram_guard(blk, (int)psm, W2, H2, tbw, "texture upload outside the texture pool of the GS memory");
 	u32 band = (65536u / rowbytes) & ~15u; // rows per band, multiple of 16
 	u32 r0, nr, y;
 	qw_t *p;
@@ -1217,6 +1252,7 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 	u32 band = (262144u / W2) & ~15u, r0, nr, c0 = cyc();
 	qw_t *p;
 
+	vram_guard(blk, (int)psm, W2, H2, tbw, "zero-copy texture upload outside the texture pool of the GS memory");
 	H.serial++;
 	if (band < 16)
 		band = 16;

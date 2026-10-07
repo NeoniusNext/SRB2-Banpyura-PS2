@@ -49,14 +49,17 @@
 #include "ps2_hw_vif.inc" // PS2-HW-44: VIF1 as the transport of the GIF stream (-hwdbg 0x4000000)
 #include "ps2_hw_regs.inc"
 #include "ps2_hw_gs.inc"
+#include "ps2_hw_val.inc" // PS2-HW-74: -hwdbg 536870912 validates the GIF stream
 #include "ps2_hw_xform.inc"
 #include "ps2_hw_vu0.inc"
 #include "ps2_hw_light.inc"
+#include "ps2_hw_pal.inc" // PS2-HW-71: palette rendering (light tables as CLUT rows)
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
+#include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
 
 static FOutVector *sky_vertices;
 static float *sky_colors;
@@ -316,6 +319,9 @@ void PS2HWD_Shutdown(void)
 		ring_wait(0);
 		gs_wait_finished();
 	}
+	// PS2-HW-71: the light tables stay (the engine keeps their ids in its colormaps until it clears them: ClearLightTables); the screen palette is set again
+	spal_set = 0;
+	pal_last_mode = -1;
 	if (H.vbl_installed)
 	{
 		DisableIntc(INTC_VBLANK_S);
@@ -332,6 +338,7 @@ void PS2HWD_Shutdown(void)
 		RemoveDmacHandler(DMAC_VIF1, V.dmac);
 		V.dmac_set = 0;
 	}
+	val_shutdown();
 	vu1_shutdown();
 	V.on = 0;
 	if (H.sema_vbl >= 0)
@@ -640,7 +647,9 @@ void PS2HWD_GetStats(ps2hwd_stats_t *out, int reset)
 static void hw_SetTexturePalette(RGBA_t *ppal)
 {
 	if (H.up && ppal)
+	{
 		palette_set(ppal);
+	}
 }
 
 static void hw_FinishUpdate(INT32 waitvbl)
@@ -1101,7 +1110,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 		want = tex_want(TexInfo, &vis);
 		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != H.frame_no + 1)
 			pk->ps2_full_fr = H.frame_no + 1;
-		if (!vis && !r)
+		if (!vis && !r && !TT.on) // PS2-HW-69: the conformance test draws textures no frame plan sees
 		{
 			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
 			H.cur_tex = NOREC;
@@ -1184,6 +1193,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 		TX.regen_n++;
 		H.st.tex_regen++;
 	}
+	if (TT.on)
+		tt_capture(TexInfo); // PS2-HW-69: the texels as the engine hands them over
 	if ((ps2hwd_dbg_flags & HWDBG_IMMDBG) && (u32)TexInfo->width * TexInfo->height >= PLAN_MIN_TEXELS)
 		CONS_Printf("HWIMM f=%u %s %ux%u want=%u UPLOAD imm=%d phase=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, imm_level, batch_phase);
 	ri = tex_upload(TexInfo);
@@ -1403,34 +1414,51 @@ static void hw_SetShaderInfo(hwdshaderinfo_t info, INT32 value)
 		H.leveltime = value;
 }
 
-// palette rendering (an RGB-to-palette 3D lookup of every pixel) has no GS equivalent; the PS2 profile never enables it
+// PS2-HW-71: palette rendering (gr_paletterendering): the colour of a texel is lighttable[index][row]. The GS does it with CLUTs (ps2_hw_pal.inc): the
+// RGB-to-index lookup is not needed (the textures are indexed), the light tables are kept as indices, the screen palette is applied in the CLUTs.
 static void hw_SetPaletteLookup(UINT8 *lut)
 {
 	(void)lut;
-	hw_limit(HW_PALETTE_SHADER, "RGB-to-index palette lookup shader unavailable");
 }
 
 static UINT32 hw_CreateLightTable(RGBA_t *hw_lighttable)
 {
-	(void)hw_lighttable;
-	hw_limit(HW_LIGHT_TABLE, "per-fragment light tables unavailable; handle 0 returned");
-	return 0;
+	if (!H.up)
+		return 0;
+	return lt_store(0, hw_lighttable);
 }
 
 static void hw_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
 {
-	(void)id; (void)hw_lighttable;
-	hw_limit(HW_LIGHT_TABLE, "per-fragment light table update unavailable");
+	if (H.up && id && id < LT_MAX && lt_idx[id])
+	{
+		ov_flush_all(); // queued draws use the old rows
+		lt_store(id, hw_lighttable);
+	}
 }
 
 static void hw_ClearLightTables(void)
 {
+	if (H.up)
+		ov_flush_all();
+	lt_clear();
 }
 
 static void hw_SetScreenPalette(RGBA_t *palette)
 {
-	(void)palette;
-	hw_limit(HW_PALETTE_SHADER, "screen palette postprocessing unavailable");
+	u32 np[256];
+	int i;
+
+	if (!H.up || !palette)
+		return;
+	for (i = 0; i < 256; i++)
+		np[i] = (u32)palette[i].s.red | ((u32)palette[i].s.green << 8) | ((u32)palette[i].s.blue << 16);
+	if (spal_set && !memcmp(np, spal, sizeof np))
+		return;
+	ov_flush_all(); // pending draws must consume the previous screen palette before the CLUTs change
+	memcpy(spal, np, sizeof np);
+	spal_set = 1;
+	H.pal_gen++; // every CLUT made from the palette is rebuilt when it is next used
 }
 
 void PS2HWD_FillDriver(struct hwdriver_s *drv)

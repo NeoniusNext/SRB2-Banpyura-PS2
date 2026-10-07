@@ -87,6 +87,36 @@ Facts from runs in the emulator (details and pictures: `docs/GATES/g1/opt9-HF.md
 * `-hwdbg` bits: 2048 engine fallback lighting (A/B), 4096 light parameters of frame 150 (`HWT lit`). `HWFX frame N: ...` lists the effects drawn in the last 300 frames.
 * `-vidshot kN` / `KN` (first frame with `leveltime >= N`, `K` only in a level started after the previous shot), `wN` (N-th frame of a wipe), keys `console`, `f1`, `f2` for `-vidkeys`.
 
+## OPT10-HF (2026-10-07): palette rendering, texture conformance test, measurement tools
+
+Facts from runs in the emulator (details, pictures and numbers: `docs/GATES/g1/opt10-HF.md`):
+
+* The PC OpenGL driver of SRB2 renders by default with **palette rendering** (`gr_paletterendering On`): colour = `lighttable[texel index][row]`, row = `clamp(floor(R_DoomColormap), 0, 31)`, the screen palette
+  (flash, 565 crush) at the end. This is what the software renderer draws. The GLSL equation of the non palette path (`mix(colour, fade, darkness)`, OPT9) is another picture (hue shifts of the dark colormap
+  rows, tinted colormaps, the DSZ1 water: mean error 14 against 5 with the palette path switched off on the PC). **PS2-HW-71:** `HWR_ShouldUsePaletteRendering()` is true on the PS2 as on the PC; the GS does the lookup with
+  CLUTs (`ps2_hw_pal.inc`): `CreateLightTable`/`UpdateLightTable` keep the 32 x 256 table as palette indices, a lit polygon with a table id and a PSMT8 texture is cut where the row changes (the staircase of
+  `ps2_hw_light.inc`, classes 0 and 1 are one row) and each piece is drawn with the CLUT of its row (`CK_LIGHT`: row of the table through the screen palette); `SetScreenPalette` is applied when a CLUT is built
+  (flashes and the 565 look without a post process, the engine's final screen texture is the frame itself); direct colour textures, flat colours and fog blocks keep the GLSL equations. A polygon whose table id is not
+  known (renderer switch before the engine rebuilt its tables) falls back to the GLSL equations. Result against the PC picture, same frame, 320x200 framebuffer: MAD 0.7-2.3 on seven maps (3.4 on the DSZ1 water).
+* The 1:1 texture check `-hwtextest` (**PS2-HW-69**, `ps2_hw_tt.inc`, needs `-hwfbh 200`): every map texture (both chroma key variants) and level flat is made resident like the engine does, drawn 1:1 with a GS sprite and repeated through
+  the wall/floor polygon path, read back and compared with the texels the engine handed over. `tools/ps2/hftt.py` runs it on a list of maps (`TTFAIL` lines name the texture and the first wrong pixel).
+* UV of a GS sprite: the register holds 14 bits (1/16 texel), so 1024.0 wraps to 0 (**PS2-HW-70**: clamped to 1023.9375 in `sprite_tex`); the GS samples `U0 + n` at pixel `n` (no half texel), so a sub-texel start moves the picture by a texel.
+* `-hwfbh N` (**PS2-HW-68**): internal frame buffer height; 200 = one pixel per engine pixel (the default 224 stretches 200 rows and the `-vidshot` readback resamples them bilinearly: soft HUD edges in pictures).
+* `-vidshot iN` (N-th intermission frame), `-vidcmd 'cmd~arg;cmd2'` (console commands on the third frame); PC side `-ps2ref-shot/-ps2ref-keys/-ps2ref-cmd` (src/ps2ref.c) take the engine's own OpenGL screenshot of the same frame.
+* Textures taller or wider than 1024 (THZ pipes `THPIP*` 128x1536) are stored decimated by 2 (`dx/dy`), the one remaining quality loss of the texture path (`TTDECIM` lines).
+* **GIF stream validator (PS2-HW-74, `ps2_hw_val.inc`, `-hwdbg 536870912`, bit 29 of `ps2hwd_dbg_flags`)**: every ring buffer is parsed as the GIF and the GS parse it, in `pk_flush` before it is queued, and checked against the
+  rules a real GS keeps and PCSX2 forgives: DMA tags and 16-byte aligned REF addresses, register field widths (TEX0 TW/TH/TBW/CLD, CLAMP, SCISSOR, FRAME, ZBUF, ALPHA, TEST.ZTE, BITBLTBUF, TRXPOS, TRXREG), IMAGE size
+  against TRXREG, no register write inside a transfer, VRAM bounds by the exact GS block tables, **TEXFLUSH after local memory was written under a texture** (the real GS texture cache; PCSX2 has none), vertices inside the
+  +-2000 pixel guard band, Z within the Z buffer format, Q > 0, texel span of one primitive <= UV_EXTENT. The output is `HWVAL <class> f=<frame>: ...` (three examples per class) and `HWVAL SUMMARY`. Not checked: the VU1 path
+  (`-hwdbg 0x4000000`). Host test of the validator itself: `tools/ps2/hf_valtest.c` (4 clean streams, 27 seeded faults). The `-hwdbg` bits in use: 1..16384 (see above), 0x100000..0x2000000 HT, 0x4000000 VU1, 0x8000000 HWDBG_LODDBG,
+  0x10000000 HWDBG_IMMDBG, **0x20000000 the validator**; a value that is a bit of another feature changes the run (the validator first took 0x8000000 and printed the plan of every frame).
+* Memory (S/HT find): **PS2-HW-76 / PS2-146 (S)** the patches of the wall textures are not kept after the composition (`hw_cache.c`; they were pinned as `PU_PATCH` for the session: 4.9 MB after 7 level changes; the merge kept S's `loaded_here` version of the same fix);
+  **PS2-HW-79** the batch arrays (`PU_HWRBATCH`) go back to the zone at every level change (`HWR_ReleaseBatching`; 1.45 MB after THZ2/ACZ1 against 0.42 MB). With both, the 50 map change chain (7 light maps) passes in the HW renderer.
+  `-zreserve 3072` (the C heap kept outside the zone) costs the zone 1.1 MB against 1536: the maps GFZ2, THZ2, ACZ1, ERZ1, MAP08, MAP40 do not load with 3072 and load with 1536; MAP10, 11, 14, 23 do not fit even with the
+  engine default of 512.
+* Measurement tools of OPT10-HF: `pcshot.py` (PC reference), `hf_run.py`, `hfpanel.py`, `hfbatch.py` (`--zreserve`, `--emu`), `hfscreens.py`, `hftt.py`, `hf_perfcmp.py` (HWPROF windows of two runs), `hf_zcaller.py` (`-zcaller` log by tag and
+  caller), `hf_chaincmp.py` (every picture of a map change chain has a twin), `hf_hudaddon.py` (Lua HUD test add-on), console command `hf_split 1` (splitscreen in single player, PC and PS2).
+
 ## Complete callback matrix
 
 `P` = implementation exercised by standalone primitive/readback tests;
@@ -128,11 +158,11 @@ Every row remains **U for full engine/PC comparison**, including rows marked P.
 | SetShader | stores requested slot; custom slots warn | Explicit experimental built-in passes; capability refusal keeps engine fallback routing |
 | UnSetShader | fixed-function state already active | No shader allocation to release |
 | SetShaderInfo | stores LEVELTIME | Water/ripple/time-driven texture effects remain missing |
-| SetPaletteLookup | warning; no RGB-to-index LUT shader | Missing palette-rendering postprocess |
-| CreateLightTable | warning; returns invalid handle 0 | Missing per-fragment palette light table |
-| UpdateLightTable | warning; no table | Missing |
-| ClearLightTables | empty since no tables allocated | Safe cleanup of unsupported subsystem |
-| SetScreenPalette | warning; no screen palette shader | Missing palette fade/postprocess |
+| SetPaletteLookup | no-op (PS2-HW-71): the textures are indexed, no RGB-to-index lookup is needed | OPT10: palette rendering is done with CLUTs, see the OPT10-HF section |
+| CreateLightTable | keeps the 32 x 256 colours as palette indices (8 KB), returns an id (PS2-HW-71) | rows of the table are CLUT images (`CK_LIGHT`) |
+| UpdateLightTable | rebuilds the indices, new CLUT generation | as CreateLightTable |
+| ClearLightTables | frees the tables | engine calls it at level free |
+| SetScreenPalette | stores the (flash / 565 crushed) screen palette; the CLUTs of palette textures are built from it | flashes and fades without a post process; flat colours and direct colour textures do not follow a flash |
 | GetModeList (`_WINDOWS` only) | not a member of the PS2 build's struct | Platform-specific PC callback; PS2 mode enumeration belongs to i_video |
 
 ## PC HW capability matrix
