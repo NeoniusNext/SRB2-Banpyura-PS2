@@ -302,8 +302,8 @@ static int vu_poly(const FOutVector *base, int n)
 
 		if (lo < H.near_plane)
 			lo = H.near_plane; // what the near plane leaves is not nearer
-		c0 = lf_class(zfrag_of_w(lo));
-		if (c0 != lf_class(zfrag_of_w(whi)))
+		c0 = lf_class_w(lo);
+		if (c0 != lf_class_w(whi))
 			return 0; // two darkness classes: cut_and_emit makes the pieces
 		if (!((LF.have >> c0) & 1))
 		{

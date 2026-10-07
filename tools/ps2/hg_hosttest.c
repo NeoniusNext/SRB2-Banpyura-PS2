@@ -864,6 +864,36 @@ static void test_clip(void)
 			fl_bad += hw_floorf(xi) != __builtin_floorf(xi);
 		}
 		EXPECT(!fl_bad, "hw_floorf differs from floorf in %d values", fl_bad);
+	}	{
+		/* lf_class_w (PS2-HW-60: the light class with a memory of proven depth ranges) against lf_class(zfrag_of_w()) for random walks and jumps of w */
+		static const int lights[] = {0, 40, 96, 128, 160, 200, 255};
+		int li, k, cl_bad = 0;
+		long cl_n = 0, cl_slow = 0;
+
+		for (li = 0; li < 7; li++)
+		{
+			float w = 8.0f;
+
+			light_setup(&P.rs.lp, lights[li], li & 1, 0, 31);
+			lit_fast_plan();
+			for (k = 0; k < 60000; k++)
+			{
+				const u32 r = rnd();
+
+				if ((r & 7) == 0)
+					w = (float)rndf(1.0, 4000.0);
+				else
+					w += (float)rndf(-6.0, 6.0);
+				if (w < 0.5f)
+					w = 0.5f;
+				if (lf_class_w(w) != lf_class(zfrag_of_w(w)))
+					cl_bad++;
+				cl_n++;
+			}
+			cl_slow += __builtin_popcountll(LF.known);
+		}
+		EXPECT(!cl_bad, "lf_class_w differs from lf_class in %d of %ld depths", cl_bad, cl_n);
+		(void)cl_slow;
 	}
 	{
 		char d[200];

@@ -18,6 +18,9 @@ static struct
 	u64 have; // bit c: fog[c] / fogon[c] are valid for the plan
 	u8 fog[33];
 	u8 fogon[33];
+	u64 known; // bit c: [lo[c], hi[c]] is a range of eye depths (w) proven to be in class c (PS2-HW-60)
+	float lo[33], hi[33];
+	int last;
 } LF;
 
 static void lit_fast_plan(void)
@@ -31,6 +34,8 @@ static void lit_fast_plan(void)
 	LF.cap = (155.0f - lp->light) * 0.26f;
 	LF.cf = lp->cfudge;
 	LF.have = 0;
+	LF.known = 0;
+	LF.last = 0;
 }
 
 // doom_class(&P.rs.lp, z)
@@ -46,6 +51,38 @@ static inline int lf_class(float z)
 	if (cm >= 31.0f)
 		return 32;
 	return (int)cm + 1;
+}
+
+// lf_class(zfrag_of_w(w)) with a memory: the class is a non-decreasing function of w, so when two eye depths of the plan had class c,
+// every depth in between has it too. A polygon almost always lies between depths already seen in its class: two compares instead of
+// two divisions and the class arithmetic (this was 2 % of the frame).
+static int lf_class_w_slow(float w)
+{
+	const int c = lf_class(zfrag_of_w(w));
+
+	if (!((LF.known >> c) & 1))
+	{
+		LF.known |= 1ull << c;
+		LF.lo[c] = LF.hi[c] = w;
+	}
+	else
+	{
+		if (w < LF.lo[c])
+			LF.lo[c] = w;
+		if (w > LF.hi[c])
+			LF.hi[c] = w;
+	}
+	LF.last = c;
+	return c;
+}
+
+static inline int lf_class_w(float w)
+{
+	const int c = LF.last;
+
+	if (((LF.known >> c) & 1) && w >= LF.lo[c] && w <= LF.hi[c])
+		return c;
+	return lf_class_w_slow(w);
 }
 
 #ifdef HW_VU0
@@ -99,8 +136,8 @@ static int lit_fast_poly(const cv_t *v, const void *pvv, int cnt, float sb, floa
 		if (v[i].w > whi)
 			whi = v[i].w;
 	}
-	c0 = lf_class(zfrag_of_w(wlo));
-	if (c0 != lf_class(zfrag_of_w(whi)))
+	c0 = lf_class_w(wlo);
+	if (c0 != lf_class_w(whi))
 		return 0; // spans two classes: cut_and_emit makes the pieces
 	if (!((LF.have >> c0) & 1))
 	{
