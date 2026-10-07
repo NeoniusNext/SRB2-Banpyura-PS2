@@ -19,6 +19,7 @@ boolean PS2HWFB_LoadLevel(void);              // P_LoadLevel(false, false) under
 void PS2HWFB_PreLoad(UINT32 numssectors);    // the start of the map load (p_setup.c): a huge map goes to software before anything is loaded
 void PS2HWFB_BuildLevel(void);               // the hardware part of a level load (p_setup.c, replaces HWR_LoadLevel): guarded, falls back to software
 void PS2HWFB_LevelLoaded(void);              // the end of P_LoadLevel: back to the hardware renderer when it was given up for an earlier level
+void PS2HWFB_NoteStartFailure(void);         // i_video.c: the hardware driver did not start when asked to (counts towards giving it up)
 boolean PS2HWFB_ForcedSoftware(void);        // the user wants Hardware, the game runs Software because of memory
 void PS2HWFB_Init(void);                     // command line (-hwfbtest N: leave the hardware renderer as if memory ran out at frame N)
 void PS2HWFB_Report(void);                   // one line with the counters (end of the memory report)

@@ -40,8 +40,8 @@ static INT32 hwfb_test = -1, hwfb_test_period;    // -hwfbtest N[,period]: an ou
 static UINT32 hwfb_test_next;
 static char hwfb_last[160];
 // What the hardware renderer needs on top of the level (measured, opt11-STAB.md section 2: 84 maps in Hardware, 35 frames each): the batch arrays (0.4..1.45 MB),
-// the working set of textures, the GS driver's C heap growth; the maps that run need >= 3.5 MB free after the level and the plane polygons were built.
-#define HWFB_MINFREE_DEFAULT (3u << 20)
+// the working set of textures, the GS driver's C heap growth; the maps that run have >= 3.5 MB free after the level and the plane polygons were built (the busiest ones use 2.2 MB of it in the first 35 frames); below 2.5 MB the first frames would run the arena dry.
+#define HWFB_MINFREE_DEFAULT (5u << 19) // 2.5 MB
 // A map this big (subsectors) never fits next to the hardware renderer's polygons (MAP11 15 942; the biggest that runs is MAP23 with 12 590)
 #define HWFB_MAXSS_DEFAULT 14000u
 static size_t hwfb_minfree = HWFB_MINFREE_DEFAULT;
@@ -64,8 +64,32 @@ boolean PS2HWFB_ForcedSoftware(void)
 #endif
 }
 
+// ps2_finale N (tests): 1 ending, 2 credits, 3 evaluation, 4 continue, 5 game end, 6 intro: the screens that only a finished game shows, started from the console
+static void Command_Ps2Finale_f(void)
+{
+	switch (COM_Argc() > 1 ? atoi(COM_Argv(1)) : 0)
+	{
+		case 1: F_StartEnding(); break;
+		case 2: F_StartCredits(); break;
+		case 3: F_StartGameEvaluation(); break;
+		case 4: F_StartContinue(); break;
+		case 5: F_StartGameEnd(); break;
+		case 6: F_StartIntro(); break;
+		default: CONS_Printf("ps2_finale 1..6: ending, credits, evaluation, continue, game end, intro\n"); break;
+	}
+}
+
+void PS2HWFB_NoteStartFailure(void)
+{
+	snprintf(hwfb_last, sizeof hwfb_last, "the hardware driver did not start");
+	hwfb_fallbacks++;
+	if (hwfb_fallbacks >= HWFB_MAX_FALLBACKS)
+		hwfb_gaveup = true;
+}
+
 void PS2HWFB_Init(void)
 {
+	COM_AddCommand("ps2_finale", Command_Ps2Finale_f, 0);
 	if (M_CheckParm("-hwfbfree") && M_IsNextParm())
 		hwfb_minfree = (size_t)atol(M_GetNextParm()) << 10;
 	if (M_CheckParm("-hwfbss") && M_IsNextParm())

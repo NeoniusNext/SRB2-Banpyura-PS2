@@ -163,6 +163,7 @@ void Z_GuardPop(zguard_t *g);
 void Z_GuardLanded(zguard_t *g);
 boolean Z_GuardArmed(void);
 boolean Z_GuardThrow(const char *reason); // false when no guard is armed (or a Lua hook is running): the caller reports the error as before
+UINT32 Z_GuardAllocs(void); // allocations made while a guard was armed (the size of the fault injection test, -zoomnth)
 UINT32 Z_GuardRecovered(void); // how many times the allocator went back to a guard
 void Z_OutOfMemoryFatal(size_t size, INT32 tag, size_t align);
 size_t Z_EmergencyFree(void); // after a frame was abandoned: every cache block, the reclaim hooks; returns the free bytes

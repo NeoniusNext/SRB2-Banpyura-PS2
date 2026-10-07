@@ -249,6 +249,8 @@ static void rec_init(void)
 
 // PS2-171 (OPT11-STAB): the driver's big work arrays (ovq, cutbuf, plan_info, blk_owner: 230 KB) are zone blocks that exist while the driver runs.
 // They were .bss: a game that runs the software renderer (MAP11 / CEZ2 has 0.2 MB of the arena left) carried them for nothing.
+static unsigned hwbig_nomem_n;
+
 static void hwbig_free(void)
 {
 	Z_Free(ovq_p);
@@ -263,6 +265,11 @@ static void hwbig_free(void)
 
 static boolean hwbig_alloc(void)
 {
+	if (M_CheckParm("-hwnomem") && !(hwbig_nomem_n++ & 1)) // test: every other start of the driver finds no memory (-hwnomem: the fallback to software and the return)
+	{
+		CONS_Alert(CONS_ERROR, "PS2 GS hardware renderer: no memory for its work arrays (-hwnomem)\n");
+		return false;
+	}
 	ovq_p = Z_TryMallocAlign(sizeof *ovq_p, PU_STATIC, NULL, 6);
 	cutbuf_p = Z_TryMallocAlign(sizeof *cutbuf_p, PU_STATIC, NULL, 6);
 	plan_info_p = Z_TryMallocAlign(sizeof *plan_info_p, PU_STATIC, NULL, 6);
