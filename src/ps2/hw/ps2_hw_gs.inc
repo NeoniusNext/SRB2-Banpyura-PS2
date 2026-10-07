@@ -631,11 +631,17 @@ static int gs_setup(void)
 	H.outid = H.mode == PS2HWD_VIDEO_480P ? 2 : (H.mode == PS2HWD_VIDEO_PAL ? (field_frame ? 4 : 1) : (field_frame ? 3 : 0));
 
 	V.on = (ps2hwd_dbg_flags & HWDBG_VU1) != 0; // PS2-HW-44: -hwdbg 0x4000000: the stream goes through VIF1, the VU1 program draws the polygons
-	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, (1 << DMA_CHANNEL_GIF) | (V.on ? 1 << DMA_CHANNEL_VIF1 : 0));
+	// OPT10 (HG): dmaKit does not take the VIF1 channel (with it in the mask gsKit_init_screen hangs in PCSX2): the channel is reset by hand below
+	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
 	dmaKit_chan_init(DMA_CHANNEL_GIF);
 	if (V.on)
-		dmaKit_chan_init(DMA_CHANNEL_VIF1);
+	{
+		*D1_CHCR = 0;
+		*D1_QWC = 0;
+		__asm__ volatile("sync.l");
+	}
 
+	CONS_Printf("HWD init: gsKit_init_global\n");
 	gs = gsKit_init_global_custom(8 * 1024, 8 * 1024); // gsKit's own draw queues are never used
 	if (!gs)
 		return -1;
@@ -665,6 +671,7 @@ static int gs_setup(void)
 	gs->DoubleBuffering = GS_SETTING_ON;
 	gs->ZBuffering = GS_SETTING_ON;
 	gs->Dithering = GS_SETTING_OFF;
+	CONS_Printf("HWD init: gsKit_init_screen\n");
 	gsKit_init_screen(gs); // video mode, CRTC and magnification; gsKit's own VRAM addresses are not used (it rounds buffer sizes by bytes, not pages)
 	{
 		// gsKit magnifies to the widest area its table allows (NTSC: 2880 clocks); the picture is shown over the same area as
@@ -682,7 +689,9 @@ static int gs_setup(void)
 		gs->MagH = mh - 1;
 		gs->DW = ndw;
 	}
+	CONS_Printf("HWD init: mode_switch\n");
 	gsKit_mode_switch(gs, GS_ONESHOT);
+	CONS_Printf("HWD init: mode switched\n");
 	H.magh = gs->MagH + 1;
 	H.magv = gs->MagV + 1;
 
@@ -723,18 +732,21 @@ static int gs_setup(void)
 	if (H.sema_vbl < 0 || H.sema_dma < 0)
 		return -4;
 
+	CONS_Printf("HWD init: rings ready\n");
 	*GS_IMR = 0xFF00; // no GS interrupts, only vblank is used
 	H.dmac = AddDmacHandler(DMAC_GIF, dmac_gif_handler, 0);
 	if (H.dmac >= 0)
 		EnableDmac(DMAC_GIF);
 	if (V.on)
 	{
+		CONS_Printf("HWD VU1: adding the VIF1 handler\n");
 		V.dmac = AddDmacHandler(DMAC_VIF1, dmac_gif_handler, 0);
 		if (V.dmac >= 0)
 		{
 			EnableDmac(DMAC_VIF1);
 			V.dmac_set = 1;
 		}
+		CONS_Printf("HWD VU1: handler %d, booting the microcode\n", V.dmac);
 		if (V.dmac < 0 || !vu1_boot())
 		{
 			CONS_Printf("HWD VU1: VIF1 interrupt or microcode upload failed, the GIF ring is used\n");
