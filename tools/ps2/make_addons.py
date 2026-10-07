@@ -610,6 +610,28 @@ def make_hud(out):
     print('wrote', path, path.stat().st_size, 'bytes')
 
 
+POS_LUA = r"""
+-- OPT10-X demo/save test (PS2-110): prints the first player's state every 35 level tics through the Lua API; the recording run and the playback run of the
+-- same demo (same add-ons) must print the same lines (tools/ps2/demo_addon_test.py).
+local function out(s) print("FTLUA "..s) end
+out("pos loaded")
+addHook("ThinkFrame", function()
+	if gamestate ~= GS_LEVEL or leveltime == 0 or leveltime % 35 ~= 0 then return end
+	local p = players[0]
+	local mo = p and p.mo
+	if not mo then return end
+	out(string.format("pos %d %d %d %d rings %d score %d skin %s rnd %d", leveltime, mo.x, mo.y, mo.z, p.rings, p.score, mo.skin, P_RandomKey(1000)))
+end)
+"""
+
+
+def make_pos(out):
+    path = out / 'ZP.pk3'
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('Lua/ZPOS.lua', POS_LUA.replace(chr(10), chr(13) + chr(10)))
+    print('wrote', path, path.stat().st_size, 'bytes')
+
+
 def make_demo(out):
     path = out / 'ZD.pk3'
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -661,6 +683,8 @@ def main():
         make_demo(out)
     if 'hud' in which:
         make_hud(out)
+    if 'pos' in which:
+        make_pos(out)
 
 
 if __name__ == '__main__':

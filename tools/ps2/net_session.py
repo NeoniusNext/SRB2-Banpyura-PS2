@@ -39,6 +39,7 @@ import opt_run  # noqa: E402  (stage())
 PCSX2_ROOT = run_pcsx2.PCSX2_ROOT
 ASSETS = os.environ.get('SRB2WADDIR', '/opt/srb2-assets')
 XVFB = ['xvfb-run', '-a', '-s', '-screen 0 800x600x24']
+DEAD_MS = 'http://127.0.0.1:9/MS/0'  # nothing listens on port 9 (discard): the master server URL of a node that must not reach any master server
 
 
 def host_ip():
@@ -115,7 +116,13 @@ class Node:
         for dst, src in s.get('copy', {}).items():  # files copied into the node directory (the host: root of a PS2 node): add-ons for -file
             shutil.copy2(ROOT / src, self.dir / dst)
         if s['kind'] == 'ps2':
-            opt_run.stage(self.dir, (ROOT / s['elf']).resolve(), (ROOT / self.pak).resolve(), None, s.get('cfg', ''))
+            # SAFETY (OPT10-X): the engine's default master server is the REAL one (http://ds.ms.srb2.org/MS/0). A test never registers on it or talks to it:
+            # every PS2 node starts with a master server URL of its own (the mock, the read-only relay) or with a dead local port, set in reference.cfg
+            # which is read before the server is started.
+            cfg = s.get('cfg', '')
+            if 'masterserver "' not in cfg:
+                cfg = f'masterserver "{DEAD_MS}"\n' + cfg
+            opt_run.stage(self.dir, (ROOT / s['elf']).resolve(), (ROOT / self.pak).resolve(), None, cfg)
             if not s.get('keep_downloads'):  # a file left by an earlier run would be found by the client and never downloaded
                 shutil.rmtree(self.dir / '.srb2' / 'DOWNLOAD', ignore_errors=True)
                 (self.dir / '.srb2' / '$$$.sav').unlink(missing_ok=True)
@@ -137,8 +144,16 @@ class Node:
             cwd = (ROOT / s['cwd']).resolve() if s.get('cwd') else self.dir
             cwd.mkdir(parents=True, exist_ok=True)
             av = s.get('args', [])
+            is_engine = 'python' not in exe.name
             if '-home' in av:  # the engine's data folder is <home>/.srb2 (the engine does not create it itself: "Can't create file .../$$$.sav")
                 (Path(av[av.index('-home') + 1]) / '.srb2').mkdir(parents=True, exist_ok=True)
+                if is_engine:
+                    # SAFETY (OPT10-X): see the PS2 branch. config.cfg is read before "Starting Server" (a "+masterserver" argument is applied too late: the
+                    # first version of the menu-browse scenario registered on the real master server that way). Spec keys: "masterserver" (URL) and "cfg" (more lines).
+                    (Path(av[av.index('-home') + 1]) / '.srb2' / 'config.cfg').write_text(f'masterserver "{s.get("masterserver", DEAD_MS)}"\n' + s.get('cfg', ''))
+            if is_engine:  # no route out of the container for an engine: the proxy variables are what lets an engine reach the real master server
+                for k in [k for k in env if k.lower() in ('https_proxy', 'http_proxy', 'all_proxy')]:
+                    del env[k]
             self.log = open(self.dir / 'out.txt', 'wb')
             args = [str(exe)] + s.get('args', [])
             env.setdefault('SRB2WADDIR', ASSETS)
@@ -268,9 +283,20 @@ def run_session(spec):
         except OSError:
             pass
     result['seconds'] = round(time.time() - t0, 1)
+    # AUDIT (OPT10-X): no engine log may name the real master server (ds.ms.srb2.org) in a request: the only master servers of a test are the mock, the read-only
+    # relay (ms_relay.py) and the dead local port. A hit is a failure of the session (exit code 4) whatever else happened.
+    hits = []
+    for n in nodes:
+        for fname in ('out.txt', 'boot.txt'):
+            for line in n.text(fname).splitlines():
+                if 'ds.ms.srb2.org' in line and ('connecting' in line or 'Registering' in line):
+                    hits.append(f'{n.id}/{fname}: {line.strip()[:160]}')
+    if hits:
+        result['real_master_server_contact'] = hits[:10]
+        print('MASTER SERVER AUDIT FAILED: an engine contacted the real master server:', *hits[:5], sep='\n  ', flush=True)
     (out / 'result.json').write_text(json.dumps(result, indent=1))
     print(json.dumps(result), flush=True)
-    return 3 if result.get('died') else 0 if not result['timeout'] and all(result['conditions'].values() or [True]) else 2
+    return 4 if hits else 3 if result.get('died') else 0 if not result['timeout'] and all(result['conditions'].values() or [True]) else 2
 
 
 def main():

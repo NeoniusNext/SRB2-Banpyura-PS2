@@ -69,9 +69,10 @@ def pcsrv(extra=None, home=HOME1, start=0, ms=False, warp='MAP01', longto=True, 
     a = ['-dedicated', '-server', '-nomusic', '-nosound', '-netsync', '-home', home, '-warp', warp]
     if longto:  # see CFG_SYNC: a slow PS2 client must not be dropped while its level loads (the timeout scenarios pass longto=False)
         a += ['+nettimeout', '2100', '+jointimeout', '2100']
-    if ms:
-        a += ['-room', '1', '+masterserver', MSURL, '+servername', 'PC test server']
     d = {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR, 'args': a + (extra or []), 'start': start}
+    if ms:  # registration on the MOCK master server: the URL, the room and the name go into config.cfg (net_session.py), read before the server starts
+        d['masterserver'] = MSURL
+        d['cfg'] = 'masterserver_room_id "1"\nservername "PC test server"\n'
     d.update(kw)
     return d
 
