@@ -752,6 +752,75 @@ void V_DrawStretchyFixedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vsca
 	deststart = desttop;
 	destend = desttop + pwidth;
 
+#ifdef PS2_OPT_DRAW
+	// PS2-169: the pixel loop below with the loop invariants in locals (screens[], vid.width, v_colormap, v_translevel and post->length are
+	// reloaded after every pixel store otherwise: the destination is a char pointer) and the four pixel functions written out (no call through
+	// a function pointer per pixel). The expressions are those of standardpdraw/mappedpdraw/translucentpdraw/transmappedpdraw.
+	{
+		const UINT8 *const scrbase = screens[scrn&V_PARAMMASK];
+		const INT32 vwidth = vid.width;
+		const UINT8 *const cmap = v_colormap;
+		const UINT8 *const tlev = v_translevel;
+		const INT32 kind = (patchdrawfunc == standardpdraw) ? 0 : (patchdrawfunc == mappedpdraw) ? 1 : (patchdrawfunc == translucentpdraw) ? 2 : 3;
+
+		for (col = 0; (col>>FRACBITS) < patch->width; col += colfrac, ++offx, desttop++)
+		{
+			if (scrn & V_FLIP) // offx is measured from right edge instead of left
+			{
+				if (x+pwidth-offx < 0) // don't draw off the left of the screen (WRAP PREVENTION)
+					break;
+				if (x+pwidth-offx >= vwidth) // don't draw off the right of the screen (WRAP PREVENTION)
+					continue;
+			}
+			else
+			{
+				if (x+offx < 0) // don't draw off the left of the screen (WRAP PREVENTION)
+					continue;
+				if (x+offx >= vwidth) // don't draw off the right of the screen (WRAP PREVENTION)
+					break;
+			}
+
+			column = &patch->columns[col>>FRACBITS];
+
+			for (unsigned i = 0; i < column->num_posts; i++)
+			{
+				const post_t *post = &column->posts[i];
+				const size_t plen = post->length;
+				source = column->pixels + post->data_offset;
+				dest = desttop;
+				if (scrn & V_FLIP)
+					dest = deststart + (destend - desttop);
+				dest += FixedInt(FixedMul(post->topdelta<<FRACBITS,vdup))*vwidth;
+
+#define PS2_V_POSTLOOP(PIXEL) \
+				for (ofs = 0; dest < deststop && (size_t)(ofs>>FRACBITS) < plen; ofs += rowfrac) \
+				{ \
+					if (dest >= scrbase) /* don't draw off the top of the screen (CRASH PREVENTION) */ \
+						*dest = (PIXEL); \
+					dest += vwidth; \
+				}
+				switch (kind)
+				{
+				case 0:
+					PS2_V_POSTLOOP(source[ofs>>FRACBITS])
+					break;
+				case 1:
+					PS2_V_POSTLOOP(*(cmap + source[ofs>>FRACBITS]))
+					break;
+				case 2:
+					PS2_V_POSTLOOP(*(tlev + ((source[ofs>>FRACBITS]<<8)&0xff00) + (*dest&0xff)))
+					break;
+				default:
+					PS2_V_POSTLOOP(*(tlev + (((*(cmap + source[ofs>>FRACBITS]))<<8)&0xff00) + (*dest&0xff)))
+					break;
+				}
+#undef PS2_V_POSTLOOP
+			}
+		}
+		return;
+	}
+#endif
+
 	for (col = 0; (col>>FRACBITS) < patch->width; col += colfrac, ++offx, desttop++)
 	{
 		if (scrn & V_FLIP) // offx is measured from right edge instead of left

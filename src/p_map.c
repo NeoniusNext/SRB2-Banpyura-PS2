@@ -2074,6 +2074,19 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 			if (!(rover->fofflags & FOF_EXISTS))
 				continue;
 
+#ifdef PS2_OPT_REND
+			// PS2-173: the two heights (pure functions) are only needed by the rovers that get past the tests below; a rover that the chain
+			// below would skip anyway (not goo water, not lava/water the player may stand on, not the skim exception, not solid for this
+			// kind of thing, not quicksand) is skipped before they are computed
+			if (!((rover->fofflags & (FOF_SWIMMABLE|FOF_GOOWATER)) == (FOF_SWIMMABLE|FOF_GOOWATER) && !(thing->flags & MF_NOGRAVITY))
+				&& !(thing->player && (P_CheckSolidLava(rover) || P_CanRunOnWater(thing->player, rover)))
+				&& !(thing->type == MT_SKIM && (rover->fofflags & FOF_SWIMMABLE))
+				&& !((rover->fofflags & FOF_BLOCKPLAYER && thing->player)
+				    || (rover->fofflags & FOF_BLOCKOTHERS && !thing->player)
+					|| rover->fofflags & FOF_QUICKSAND))
+				continue;
+#endif
+
 			topheight = P_GetFOFTopZ(thing, newsubsec->sector, rover, x, y, NULL);
 			bottomheight = P_GetFOFBottomZ(thing, newsubsec->sector, rover, x, y, NULL);
 
@@ -2179,9 +2192,27 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 	{
 		validcount++;
 
+#ifdef PS2_OPT_REND
+		// PS2-168: the cells of the box that lie inside the blockmap, in the same order (xl and yl are never negative: they come from an unsigned
+		// shift), and nothing at all in a level without polyobjects (the array is NULL there, PS2-88). The loop body is the original's.
+		if (polyblocklinks)
+		{
+			const INT32 pxh = xh >= bmapwidth ? bmapwidth - 1 : xh;
+			const INT32 pyh = yh >= bmapheight ? bmapheight - 1 : yh;
+
+			for (by = yl; by <= pyh; by++)
+			{
+				polymaplink_t **const prow = polyblocklinks + (size_t)by * bmapwidth;
+
+				for (bx = xl; bx <= pxh; bx++)
+#else
 		for (by = yl; by <= yh; by++)
 			for (bx = xl; bx <= xh; bx++)
+#endif
 			{
+#ifdef PS2_OPT_REND
+				polymaplink_t *plink = prow[bx]; // haleyjd 02/22/06: consider polyobject lines
+#else
 				INT32 offset;
 				polymaplink_t *plink; // haleyjd 02/22/06
 
@@ -2192,6 +2223,7 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 
 				// haleyjd 02/22/06: consider polyobject lines
 				plink = POLYBLOCKLINK(offset);
+#endif
 
 				while (plink)
 				{
@@ -2245,6 +2277,10 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 					plink = (polymaplink_t *)(plink->link.next);
 				}
 			}
+#ifdef PS2_OPT_REND
+			}
+		}
+#endif
 	}
 
 	// tmfloorthing is set when tmfloorz comes from a thing's top

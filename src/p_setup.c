@@ -8482,6 +8482,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	Z_FlushCache(); // PS2-72: the level starts from an arena without the last level's caches between its blocks
 #endif
 	mobjcache = NULL;
+#ifdef PS2_OPT_REND
+	R_ResetSectorEdgeCache(); // PS2-164: the per-sector edge records lived in PU_LEVEL
+#endif
 	ZCK("level-free-after");
 
 	R_InitializeLevelInterpolators();
