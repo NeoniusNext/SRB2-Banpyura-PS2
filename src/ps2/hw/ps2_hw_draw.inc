@@ -2166,7 +2166,22 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		}
 		vu_sync();
 	}
-	for (i = 0; i < n; i++)
+	i = 0;
+#ifdef HW_VU0
+	if (vu0 && !P.oldpath)
+	{
+		// PS2-HW-62: two vertices per VU0 sequence (the divide of one hides behind the multiplies of the other)
+		for (; i + 1 < n; i += 2)
+		{
+			int oc0, oc1;
+
+			vu0_xform2(&base[idx ? idx[i] : (u32)i], &base[idx ? idx[i + 1] : (u32)(i + 1)], &vbuf_a[i], &vbuf_a[i + 1], &pvbuf[i], &pvbuf[i + 1], &oc0, &oc1);
+			and_ &= oc0 & oc1;
+			or_ |= oc0 | oc1;
+		}
+	}
+#endif
+	for (; i < n; i++)
 	{
 		u32 vi = idx ? idx[i] : (u32)i;
 		int oc;

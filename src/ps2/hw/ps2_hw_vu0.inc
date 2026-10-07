@@ -94,4 +94,71 @@ static inline int vu0_xform(const FOutVector *s, cv_t *d, pv_t *o)
 	f = ((f & 0x15u) << 1) | ((f >> 1) & 0x15u);
 	return d->w <= 0.0f ? 0x3F : (int)f; // behind the eye: the polygon is clipped, whatever |w| says
 }
+// Two vertices at once (PS2-HW-62). The multiply chain of the second vertex runs while the first one waits for the divide, the guard band tests of both
+// precede the divide, and the clip flags of both are read by one cfc2 (the 24 bit history: the second vertex in bits 0..5, the first in 6..11); the divide of
+// the second vertex runs while the first one is projected. The arithmetic of every vertex is the one of vu0_xform, operation for operation (the only
+// difference: the projection writes xyz and the 1/w into w with a mask instead of the other way round), so the results are bit-identical.
+static inline void vu0_xform2(const FOutVector *s0, const FOutVector *s1, cv_t *d0, cv_t *d1, pv_t *o0, pv_t *o1, int *oc0, int *oc1)
+{
+	float in[8] __attribute__((aligned(16)));
+	u32 f, fa, fb;
+
+	in[0] = s0->x;
+	in[1] = s0->y;
+	in[2] = s0->z;
+	in[3] = 1.0f;
+	in[4] = s1->x;
+	in[5] = s1->y;
+	in[6] = s1->z;
+	in[7] = 1.0f;
+	__asm__ volatile(
+		"lqc2 $vf5, 0(%1)\n"
+		"lqc2 $vf14, 16(%1)\n"
+		"vmulaw $ACC, $vf4, $vf0\n"
+		"vmaddax $ACC, $vf1, $vf5\n"
+		"vmadday $ACC, $vf2, $vf5\n"
+		"vmaddz $vf6, $vf3, $vf5\n"
+		"vmulaw $ACC, $vf4, $vf0\n"
+		"vmaddax $ACC, $vf1, $vf14\n"
+		"vmadday $ACC, $vf2, $vf14\n"
+		"vmaddz $vf15, $vf3, $vf14\n"
+		"vmul $vf7, $vf6, $vf8\n"
+		"vmul $vf16, $vf15, $vf8\n"
+		"vclipw.xyz $vf7, $vf7\n"
+		"vclipw.xyz $vf16, $vf16\n"
+		"vdiv $Q, $vf0w, $vf6w\n"
+		"sqc2 $vf6, 0(%2)\n"
+		"sqc2 $vf15, 0(%3)\n"
+		"cfc2 %0, $vi18\n"
+		"vwaitq\n"
+		"vmulq.xyz $vf9, $vf6, $Q\n"
+		"vmulq.w $vf10, $vf0, $Q\n"
+		"vdiv $Q, $vf0w, $vf15w\n"
+		"vmulaw $ACC, $vf12, $vf0\n"
+		"vmadd.xyz $vf10, $vf9, $vf11\n"
+		"vmax.z $vf10, $vf10, $vf0\n"
+		"vmini.z $vf10, $vf10, $vf13\n"
+		"vftoi0.xyz $vf10, $vf10\n"
+		"sqc2 $vf10, 0(%4)\n"
+		"vwaitq\n"
+		"vmulq.xyz $vf17, $vf15, $Q\n"
+		"vmulq.w $vf18, $vf0, $Q\n"
+		"vmulaw $ACC, $vf12, $vf0\n"
+		"vmadd.xyz $vf18, $vf17, $vf11\n"
+		"vmax.z $vf18, $vf18, $vf0\n"
+		"vmini.z $vf18, $vf18, $vf13\n"
+		"vftoi0.xyz $vf18, $vf18\n"
+		"sqc2 $vf18, 0(%5)\n"
+		: "=&r"(f) : "r"(in), "r"(d0), "r"(d1), "r"(o0), "r"(o1) : "memory");
+	d0->a[0] = s0->s;
+	d0->a[1] = s0->t;
+	d1->a[0] = s1->s;
+	d1->a[1] = s1->t;
+	fa = (f >> 6) & 0x3F;
+	fb = f & 0x3F;
+	fa = ((fa & 0x15u) << 1) | ((fa >> 1) & 0x15u);
+	fb = ((fb & 0x15u) << 1) | ((fb >> 1) & 0x15u);
+	*oc0 = d0->w <= 0.0f ? 0x3F : (int)fa;
+	*oc1 = d1->w <= 0.0f ? 0x3F : (int)fb;
+}
 #endif

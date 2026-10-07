@@ -4,6 +4,7 @@ paths they replace:
   water   - water_fast (one sweep, ps2_hw_water.inc) against emit_water_poly (band by band), same ripple bands (-hwdbg WATERPOL)
   plancache - begin_draw with the plan cache against begin_draw_inner without it: identical GIF packets for random draw sequences
   clip    - clip_poly (per-plane distance arrays) against the plane-at-a-time reference: bit-identical vertices
+  sort    - HWR_GroupSort32 (src/hardware/hw_sort.h, PS2-HW-62) against the stable radix sort: identical order
   litclip - lit_fast_poly for clipped polygons (PS2-HW-62) against cut_and_emit (-hwdbg 8192): bit-identical GIF vertices
 Every group has a negative control (neg=N: a deliberate mutation) that must turn it red.
 
@@ -33,7 +34,7 @@ def copy_sources(work):
 def build(work):
     exe = work / "hg_hosttest"
     cmd = ["gcc", "-std=gnu11", "-O2", "-g", "-Wall", "-Wno-unused-function", "-Wno-unused-variable", "-Wno-unused-but-set-variable", "-Wno-misleading-indentation",
-           "-Wno-unused-parameter", "-Wno-sign-compare", "-Wno-pointer-sign", "-Wno-stringop-overflow", "-Wno-array-bounds", "-DPS2_PROFILE", "-I" + str(work),
+           "-Wno-unused-parameter", "-Wno-sign-compare", "-Wno-pointer-sign", "-Wno-stringop-overflow", "-Wno-array-bounds", "-DPS2_PROFILE", "-I" + str(work), "-I" + str(ROOT / "src/hardware"),
            str(ROOT / "tools/ps2/hg_hosttest.c"), "-o", str(exe), "-lm"]
     r = subprocess.run(cmd, capture_output=True, text=True)
     (work / "build.log").write_text(r.stdout + r.stderr)

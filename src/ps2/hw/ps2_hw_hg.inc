@@ -48,6 +48,10 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF13 skybox view emit_poly n/cyc: vu=%u fast=%u/%u lit=%u/%u cut=%u/%u water=%u/%u | single=%u begin=%u batches=%u fans=%u\n", G.sk_n[0] / frames, G.sk_n[1] / frames, G.sk_c[1] / frames,
 		G.sk_n[2] / frames, G.sk_c[2] / frames, G.sk_n[3] / frames, G.sk_c[3] / frames, G.sk_n[4] / frames, G.sk_c[4] / frames, G.sk_single / frames, G.sk_begin / frames, G.sk_batches / frames, G.sk_fans / frames);
 	I_OutputMsg("HWPROF19 plane cycles: hit=%u miss=%u bypass=%u\n", (unsigned)(ps2hwp_cyc[HWP_PL_HIT] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_MISS] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_BYP] / frames));
+	I_OutputMsg("HWPROF21 RenderBatches parts (all views): init=%u sort=%u plan=%u draw=%u end=%u | skybox view: init=%u sort=%u plan=%u draw=%u end=%u\n", (unsigned)(ps2hwp_cyc[HWP_B_INIT] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_BATCHSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_B_PLAN] / frames), (unsigned)(ps2hwp_cyc[HWP_BATCHDRAW] / frames), (unsigned)(ps2hwp_cyc[HWP_B_END] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_KB_INIT] / frames), (unsigned)(ps2hwp_cyc[HWP_KB_SORT] / frames), (unsigned)(ps2hwp_cyc[HWP_KB_PLAN] / frames), (unsigned)(ps2hwp_cyc[HWP_KB_DRAW] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_KB_END] / frames));
 	I_OutputMsg("HWPROF20 cut_and_emit by reason n/cyc: pow2=%u/%u plan=%u/%u big=%u/%u vcol=%u/%u clipped=%u/%u classes=%u/%u other=%u/%u\n", G.cw_n[0] / frames, G.cw_c[0] / frames, G.cw_n[1] / frames, G.cw_c[1] / frames,
 		G.cw_n[2] / frames, G.cw_c[2] / frames, G.cw_n[3] / frames, G.cw_c[3] / frames, G.cw_n[4] / frames, G.cw_c[4] / frames, G.cw_n[5] / frames, G.cw_c[5] / frames, G.cw_n[6] / frames, G.cw_c[6] / frames);
 	I_OutputMsg("HWPROF18 plane cache key misses: height=%u light=%u flags=%u texture=%u offsets=%u epoch=%u poly=%u\n", ps2hwp_cnt[HWC_PKM_H] / frames, ps2hwp_cnt[HWC_PKM_L] / frames, ps2hwp_cnt[HWC_PKM_F] / frames,

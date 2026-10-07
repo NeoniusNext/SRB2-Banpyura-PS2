@@ -24,9 +24,10 @@ static struct
 	u64 known; // bit c: [lo[c], hi[c]] is a range of eye depths (w) proven to be in class c (PS2-HW-60)
 	float lo[33], hi[33];
 	int last;
+	int ok; // base / cap / cf are valid for the plan (they are calculated when the first class is asked for: a plan often draws nothing that needs them)
 } LF;
 
-static void lit_fast_plan(void)
+static void lf_params(void)
 {
 	const lightp_t *lp = &P.rs.lp;
 	float lightnum = lp->light / 17.0f, startmap;
@@ -36,6 +37,12 @@ static void lit_fast_plan(void)
 	LF.base = startmap * lp->sfudge;
 	LF.cap = (155.0f - lp->light) * 0.26f;
 	LF.cf = lp->cfudge;
+	LF.ok = 1;
+}
+
+static void lit_fast_plan(void)
+{
+	LF.ok = 0;
 	LF.have = 0;
 	LF.thz_have = 0;
 	LF.known = 0;
@@ -47,6 +54,8 @@ static inline int lf_class(float z)
 {
 	float lightz = z / 16.0f, scale, cm;
 
+	if (!LF.ok)
+		lf_params();
 	lightz = lightz < 0.0f ? 0.0f : lightz > 127.0f ? 127.0f : lightz;
 	scale = 160.0f / (lightz + 1.0f);
 	cm = lmaxf(LF.base - scale * 0.5f * LF.cf, LF.cap);

@@ -547,6 +547,30 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 			for (i = 0; i < n; i++)
 				sink += vu0_xform(&pts[i], &d, &pv) + pv.xi;
 			out->cyc_vu0 = cyc() - c0;
+			c0 = cyc();
+			for (i = 0; i + 1 < n; i += 2)
+			{
+				cv_t d2[2];
+				pv_t p2[2];
+				int oc2[2];
+
+				vu0_xform2(&pts[i], &pts[i + 1], &d2[0], &d2[1], &p2[0], &p2[1], &oc2[0], &oc2[1]);
+				sink += oc2[0] + oc2[1] + p2[0].xi + p2[1].xi;
+			}
+			out->cyc_vu0p = (cyc() - c0) * n / (n & ~1u);
+			for (i = 0; i + 1 < n; i += 2)
+			{
+				cv_t d1[2], d2[2];
+				pv_t p1[2], p2[2];
+				int oc1[2], oc2[2];
+
+				oc1[0] = vu0_xform(&pts[i], &d1[0], &p1[0]);
+				oc1[1] = vu0_xform(&pts[i + 1], &d1[1], &p1[1]);
+				vu0_xform2(&pts[i], &pts[i + 1], &d2[0], &d2[1], &p2[0], &p2[1], &oc2[0], &oc2[1]);
+				if (oc1[0] != oc2[0] || oc1[1] != oc2[1] || memcmp(&d1[0], &d2[0], sizeof(float) * 6) || memcmp(&d1[1], &d2[1], sizeof(float) * 6) || memcmp(&p1[0], &p2[0], sizeof p1[0])
+					|| memcmp(&p1[1], &p2[1], sizeof p1[1]))
+					out->pair_diff++;
+			}
 			(void)sink;
 		}
 		for (i = 0; i < n; i++)

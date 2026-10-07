@@ -54,6 +54,15 @@ enum
 	HWP_PL_HIT, // HWR_RenderPlane: served from the plane cache
 	HWP_PL_MISS, // ... calculated and stored
 	HWP_PL_BYP, // ... not cacheable (slope, horizon line, ...)
+	// parts of HWR_RenderBatches (HWPROF21): all views, and the skybox view alone (KB_)
+	HWP_B_INIT, // PS2HWD_BatchDraw + the index array
+	HWP_B_PLAN, // PS2HWD_PlanBegin .. PlanEnd (the texture planner)
+	HWP_B_END, // PS2HWD_BatchEnd
+	HWP_KB_INIT,
+	HWP_KB_SORT,
+	HWP_KB_PLAN,
+	HWP_KB_DRAW,
+	HWP_KB_END,
 	HWP_NUM
 };
 
@@ -78,11 +87,14 @@ static inline unsigned int ps2hwp_now(void)
 // nested (inclusive) span: HWP_SPAN_BEGIN(name) ... HWP_SPAN_END(name, idx)
 #define HWP_SPAN_BEGIN(name) unsigned int name = ps2hwp_now()
 #define HWP_SPAN_END(name, idx) do { ps2hwp_cyc[idx] += (unsigned int)(ps2hwp_now() - (name)); } while (0)
+// the same, also added to idxk while the skybox view runs
+#define HWP_SPAN_END2(name, idx, idxk) do { const unsigned int d_ = (unsigned int)(ps2hwp_now() - (name)); ps2hwp_cyc[idx] += d_; if (ps2hwp_skyview) ps2hwp_cyc[idxk] += d_; } while (0)
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
 #define HWP_SPAN_BEGIN(name) ((void)0)
 #define HWP_SPAN_END(name, idx) ((void)0)
+#define HWP_SPAN_END2(name, idx, idxk) ((void)0)
 #define HWC_ADD(i) ((void)0)
 #define ps2hwp_skyview 0
 #endif

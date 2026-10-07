@@ -107,7 +107,7 @@ static int neg;
 /* ---- test framework ---- */
 static int group_fail, total_fail, groups;
 static const char *group_name;
-#define NEGCOUNT 5
+#define NEGCOUNT 6
 
 static void group_begin(const char *name)
 {
@@ -711,6 +711,70 @@ static void test_litclip(void)
 	}
 }
 
+/* ---- group: sort (PS2-HW-62: HWR_GroupSort32 against the stable radix sort) ---- */
+#include "hw_sort.h"
+static void test_sort(void)
+{
+	static unsigned int keys[8192], idx[8192], k2[8192], i2[8192], tk[8192], ti[8192], rk[8192], ri[8192];
+	int trial, groupsorts = 0, fallbacks = 0, bad = 0;
+
+	group_begin("sort");
+	for (trial = 0; trial < 400; trial++)
+	{
+		const unsigned int n = trial % 11 == 0 ? (unsigned int)(rnd() % 4) : trial % 7 == 0 ? 8192 : 1 + (rnd() % 3000);
+		const unsigned int distinct = trial % 13 == 0 ? 1 : trial % 5 == 0 ? 900 + (rnd() % 3000) : 1 + (rnd() % 400);
+		unsigned int pool[4096], i;
+		int r;
+
+		for (i = 0; i < distinct && i < 4096; i++)
+			pool[i] = (trial % 3 == 0) ? (rnd() & 0x7FFFFFFFu) ^ 0x80000000u : (((rnd() % 200) << 16) | (rnd() & 0xFFFFu)) ^ 0x80000000u;
+		for (i = 0; i < n; i++)
+		{
+			keys[i] = pool[rnd() % (distinct < 4096 ? distinct : 4096)];
+			idx[i] = i;
+			k2[i] = keys[i];
+			i2[i] = i;
+		}
+		r = HWR_GroupSort32(keys, idx, tk, ti, n);
+		if (r < 0)
+		{
+			fallbacks++;
+			continue;
+		}
+		groupsorts++;
+		/* reference: the radix sort of the same input (its result is in k2/i2, or in rk/ri) */
+		{
+			const unsigned int *ref;
+
+			if (HWR_RadixSort32(k2, i2, rk, ri, n))
+				ref = i2;
+			else
+				ref = ri;
+			if (neg == 6 && n > 3)
+			{
+				const unsigned int t = ti[0];
+
+				ti[0] = ti[n - 1];
+				ti[n - 1] = t; /* negative control 6: a wrong order */
+			}
+			for (i = 0; i < n; i++)
+				if (ti[i] != ref[i])
+				{
+					bad++;
+					EXPECT(0, "trial %d (n %u, %u distinct): position %u: group sort %u, radix %u", trial, n, distinct, i, ti[i], ref[i]);
+					break;
+				}
+		}
+	}
+	EXPECT(groupsorts >= 250 && fallbacks >= 20, "%d sorts by groups, %d fallbacks: the test does not reach both paths", groupsorts, fallbacks);
+	{
+		char d[200];
+
+		snprintf(d, sizeof d, "%d random inputs sorted by groups (%d with too many distinct keys: left to the radix sort): the order is the stable radix sort's (%d differences)", groupsorts, fallbacks, bad);
+		group_end(d);
+	}
+}
+
 /* ---- group: plan cache ---- */
 typedef struct
 {
@@ -1068,10 +1132,11 @@ int main(int argc, char **argv)
 			neg = atoi(argv[i] + 4);
 	cap = malloc(sizeof(qw_t) * CAP_MAX);
 	if (neg)
-		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : neg == 4 ? "clip" : neg == 5 ? "litclip" : "bands");
+		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : neg == 4 ? "clip" : neg == 5 ? "litclip" : neg == 6 ? "sort" : "bands");
 	test_water();
 	test_bands();
 	test_litclip();
+	test_sort();
 	test_plancache();
 	test_clip();
 	printf("HG negctl-count %d\n", NEGCOUNT);

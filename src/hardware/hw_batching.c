@@ -19,6 +19,7 @@
 #include "../ps2/hw/ps2_hwd.h"
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
+extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 #endif
 
 // The texture for the next polygon given to HWR_ProcessPolygon.
@@ -335,6 +336,9 @@ void HWR_RenderBatches(void)
 	nextSurfaceInfo.LightInfo.light_level = 0;
 
 	currently_batching = false;// no longer collecting batches
+#ifdef PS2_PROFILE
+	HWP_SPAN_BEGIN(tb_init);
+#endif
 #ifdef PS2
 	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
 #endif
@@ -362,7 +366,13 @@ void HWR_RenderBatches(void)
 			sorted = false;
 	}
 
+#ifdef PS2_PROFILE
+	HWP_SPAN_END2(tb_init, HWP_B_INIT, HWP_KB_INIT);
+#endif
 	// sort polygons
+#ifdef PS2_PROFILE
+	HWP_SPAN_BEGIN(tb_sort);
+#endif
 	PS_START_TIMING(ps_hw_batchsorttime);
 #ifdef PS2 // PS2-HW-19: stable radix sort of the polygon keys (qsort of ~2000 polygons costs about 1.3 M cycles)
 	if (!sorted)
@@ -379,7 +389,13 @@ void HWR_RenderBatches(void)
 		}
 		for (i = 0; i < polygonArraySize; i++)
 			rkeys[i] = (UINT32)polygonArray[i].hash ^ 0x80000000u; // the signed order of comparePolygons
-		if (!HWR_RadixSort32(rkeys, polygonIndexArray, rtmpk, rtmpi, (UINT32)polygonArraySize))
+		// PS2-HW-62: the batches of a frame are ~250 distinct keys among thousands of polygons: HWR_GroupSort32 (-hwdbg 8192 = the radix sort only)
+		if ((ps2hwd_dbg_flags & 8192) || HWR_GroupSort32(rkeys, polygonIndexArray, rtmpk, rtmpi, (UINT32)polygonArraySize) < 0)
+		{
+			if (!HWR_RadixSort32(rkeys, polygonIndexArray, rtmpk, rtmpi, (UINT32)polygonArraySize))
+				memcpy(polygonIndexArray, rtmpi, (size_t)polygonArraySize * sizeof(UINT32));
+		}
+		else
 			memcpy(polygonIndexArray, rtmpi, (size_t)polygonArraySize * sizeof(UINT32));
 	}
 #else
@@ -387,6 +403,9 @@ void HWR_RenderBatches(void)
 		qsort(polygonIndexArray, polygonArraySize, sizeof(unsigned int), comparePolygons);
 #endif
 	PS_STOP_TIMING(ps_hw_batchsorttime);
+#ifdef PS2_PROFILE
+	HWP_SPAN_END2(tb_sort, HWP_BATCHSORT, HWP_KB_SORT);
+#endif
 	// sort order
 	// 1. shader
 	// 2. texture
@@ -395,6 +414,9 @@ void HWR_RenderBatches(void)
 	// not sure about what order of the last 2 should be, or if it even matters
 
 #ifdef PS2 // PS2-HW-34: the driver plans the frame's textures (mip level, visibility) before the first batch is drawn
+#ifdef PS2_PROFILE
+	HWP_SPAN_BEGIN(tb_plan);
+#endif
 	PS2HWD_PlanBegin();
 	for (i = 0; i < polygonArraySize; i++)
 	{
@@ -404,8 +426,14 @@ void HWR_RenderBatches(void)
 			PS2HWD_PlanPolygon(pa->texture, &unsortedVertexArray[pa->vertsIndex], pa->numVerts);
 	}
 	PS2HWD_PlanEnd();
+#ifdef PS2_PROFILE
+	HWP_SPAN_END2(tb_plan, HWP_B_PLAN, HWP_KB_PLAN);
+#endif
 #endif
 
+#ifdef PS2_PROFILE
+	HWP_SPAN_BEGIN(tb_draw);
+#endif
 	PS_START_TIMING(ps_hw_batchdrawtime);
 
 	currentShader = polygonArray[polygonIndexArray[0]].shader;
@@ -623,8 +651,17 @@ void HWR_RenderBatches(void)
 	// reset the arrays (set sizes to 0)
 	polygonArraySize = 0;
 	unsortedVertexArraySize = 0;
+#ifdef PS2_PROFILE
+	HWP_SPAN_END2(tb_draw, HWP_BATCHDRAW, HWP_KB_DRAW);
+	{
+		HWP_SPAN_BEGIN(tb_end);
+#endif
 #ifdef PS2
 	PS2HWD_BatchEnd();
+#endif
+#ifdef PS2_PROFILE
+		HWP_SPAN_END2(tb_end, HWP_B_END, HWP_KB_END);
+	}
 #endif
 
 	PS_STOP_TIMING(ps_hw_batchdrawtime);

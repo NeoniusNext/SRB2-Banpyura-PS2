@@ -52,6 +52,63 @@ void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)
 {
 	(void)m;
 }
+/* the hooks the texture planner (OPT10 HT) and the profile build added */
+void I_OutputMsg(const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	vprintf(fmt, ap);
+	va_end(ap);
+}
+const char *HWR_PS2_TexName(const GLMipmap_t *m)
+{
+	(void)m;
+	return "-";
+}
+void HWR_PS2_LockData(void *p)
+{
+	(void)p;
+}
+void HWR_PS2_UnlockData(void *p)
+{
+	(void)p;
+}
+void HWR_PS2_FreeData(void *p)
+{
+	(void)p;
+}
+void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser)
+{
+	(void)m; (void)newuser;
+	return NULL;
+}
+void *HWR_PS2_AllocData(size_t bytes, void **newuser)
+{
+	(void)bytes; (void)newuser;
+	return NULL;
+}
+const u8 *HWR_PS2_FlatPin(const GLMipmap_t *m)
+{
+	(void)m;
+	return NULL;
+}
+boolean HWR_PS2_FlatStreamable(const GLMipmap_t *m)
+{
+	(void)m;
+	return false;
+}
+boolean HWR_PS2_FlatRows(const GLMipmap_t *m, UINT32 row0, UINT32 nrows, UINT8 *dest)
+{
+	(void)m; (void)row0; (void)nrows; (void)dest;
+	return false;
+}
+void HWR_PS2_FlatUnpin(const u8 *p, size_t bytes)
+{
+	(void)p; (void)bytes;
+}
+unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc;
+int ps2hwp_skyview;
 
 static int failures, checks;
 #define CHECK(name, cond, ...) do { int ok_ = (cond) ? 1 : 0; failures += !ok_; checks++; printf("H0 %s %s ", ok_ ? "PASS" : "FAIL", name); printf(__VA_ARGS__); printf("\n"); } while (0)
@@ -1151,7 +1208,7 @@ static void test_filter(void)
 static void test_vu0(void)
 {
 	ps2hwd_vu0test_t r;
-	unsigned int seed, n = 0, ocd = 0, dxn = 0, dyn = 0, dzn = 0, cs = 0, cv = 0;
+	unsigned int seed, n = 0, ocd = 0, dxn = 0, dyn = 0, dzn = 0, cs = 0, cv = 0, cp = 0, pd = 0;
 	int mdx = 0, mdy = 0, mdz = 0, have = 0;
 	float mq = 0.0f;
 
@@ -1168,9 +1225,11 @@ static void test_vu0(void)
 		if (r.max_q_rel > mq) mq = r.max_q_rel;
 		cs += r.cyc_scalar;
 		cv += r.cyc_vu0;
+		cp += r.cyc_vu0p;
+		pd += r.pair_diff;
 	}
-	printf("H0 vu0 n=%u outcode_diff=%u dx_nonzero=%u dy_nonzero=%u dz_nonzero=%u max_dx=%d max_dy=%d max_dz=%d max_q_rel=%g cycles/vertex scalar=%u vu0=%u\n",
-		n, ocd, dxn, dyn, dzn, mdx, mdy, mdz, (double)mq, cs / (n ? n : 1), cv / (n ? n : 1));
+	printf("H0 vu0 n=%u outcode_diff=%u dx_nonzero=%u dy_nonzero=%u dz_nonzero=%u max_dx=%d max_dy=%d max_dz=%d max_q_rel=%g cycles/vertex scalar=%u vu0=%u vu0_pair=%u pair_diff=%u\n",
+		n, ocd, dxn, dyn, dzn, mdx, mdy, mdz, (double)mq, cs / (n ? n : 1), cv / (n ? n : 1), cp / (n ? n : 1), pd);
 	CHECK("vu0_transform", have && n >= 40000 && ocd * 2000 <= n && mdx <= 1 && mdy <= 1 && mdz <= 8 && mq < 2e-6f,
 		"%u vertices, %u outcode differences, max dX %d dY %d dZ %d, max 1/w relative error %g", n, ocd, mdx, mdy, mdz, (double)mq);
 }

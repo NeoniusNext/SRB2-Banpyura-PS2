@@ -115,7 +115,8 @@ typedef struct
 	int max_dx, max_dy, max_dz; // largest integer difference (X, Y in 1/16 pixel, Z in Z24 LSB)
 	float max_q_rel; // largest relative difference of 1/w
 	int have_vu0; // 0 when the driver was built without the VU0 path
-	unsigned int cyc_scalar, cyc_vu0; // EE cycles of the two paths over the same n vertices (n <= 4096)
+	unsigned int cyc_scalar, cyc_vu0, cyc_vu0p; // EE cycles of the two paths over the same n vertices (n <= 4096); cyc_vu0p: the paired transform (PS2-HW-62)
+	unsigned int pair_diff; // vertices whose pair results differ from the single ones (must be 0)
 } ps2hwd_vu0test_t;
 void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out);
 
