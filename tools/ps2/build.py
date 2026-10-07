@@ -58,7 +58,7 @@ NO_FEATURES = [x for x in os.environ.get('SRB2_PS2_NO', '').lower().split(',') i
 for _f in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DPS2_NO_' + _f.upper()]
 if 'addons' in NO_FEATURES:
-    CFLAGS = CFLAGS + ['-DNOMD5']  # PS2-139: MD5 (demo file lists, net file lists, map digests, remote admin) comes with the add-ons; the cut-down profile keeps it off
+    CFLAGS = CFLAGS + ['-DNOMD5']  # PS2-111: MD5 (demo file lists, net file lists, map digests, remote admin) comes with the add-ons; the cut-down profile keeps it off
 if 'zippng' not in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DHAVE_ZLIB', '-DHAVE_PNG']  # PS2-100: pk3 (ZIP) and PNG pictures of add-ons; cooked packs stay the fast path
     LIBS = [l for l in LIBS if l != '-lm'] + ['-lpng16', '-lz', '-lm']

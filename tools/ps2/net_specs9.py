@@ -204,18 +204,23 @@ write('osk-shot', osk_spec(True))
 write('osk-connect', osk_spec(False))
 
 # 5. life of a connection: leave and join again, a server that disappears, a client that disappears.
+# The pad presses Cross only while a join screen is up (server info, file list): a Cross on the title screen after "exitgame" opens the main menu, and the
+# next one starts "1 Player" (m_menu.c -> G_DeferedInitNew -> SV_StartSinglePlayerServer) UNDER the connection that "connect" has just made: the game then
+# stops being a netgame while node 1 is still "ingame" and the server loop times it out -> I_Error "Tried to transmit to another node" (found by OPT10-X
+# with the PS2 net diagnostics; unreachable for a person: the main menu cannot be reached while a netgame runs). Success = the player left (exitgame) and
+# came back ("rejoined the game" on the server) and played on for `grace` seconds.
 write('reconnect', {
     'timeout': 1200,
     'nodes': [pcsrv(start=0, longto=False),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'],
-                  files={'pad.txt': pad(*crosses(200, 5000)), 'cmd.txt': f'1500:exitgame|1760:connect {H}'}, start=8)],
-    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=3000'}, {'node': 'srv', 'text': 'NETSYNC gametic=3000'}], 'grace': 3})
+                  files={'pad.txt': pad(*crosses(200, 1100), *crosses(1780, 2600)), 'cmd.txt': f'1500:exitgame|1760:connect {H}'}, start=8)],
+    'until': [{'node': 'srv', 'text': 'rejoined the game'}], 'grace': 100})
 
 write('server-kill', {
     'timeout': 900,
     'nodes': [dict(pcsrv(start=0, longto=False), stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0}),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
-                  files={'pad.txt': pad(*crosses(200, 5000))}, start=8)],
+                  files={'pad.txt': pad(*crosses(200, 1100))}, start=8)],
     'until': [{'node': 'cli', 'text': 'PS2 net: server timeout'}], 'grace': 3})
 
 write('client-kill', {
@@ -354,6 +359,15 @@ def hw_net(name, srv, cli_renderer='Hardware', mode='coop', mmap='MAP01'):
 hw_net('hw-net-coop', 'pc')
 hw_net('sw-net-coop', 'pc', 'Software')
 hw_net('hw-net-match', 'pc', mode='match', mmap='MAPM0')
+
+# 13. split screen and the network together: a PS2 client with two local players (pad 1 and pad 2) joins a PC dedicated server; the console command
+# "splitscreen 1" after the join adds the second player (CL_AddSplitscreenPlayer). Both players walk and jump; the server sees players=2.
+write('split-net', {
+    'timeout': 900,
+    'nodes': [pcsrv(start=0),
+              ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] , cfg=CFG_SYNC,
+                  files={'pad.txt': pad(*crosses(150, 700, 60)) + ',' + walk(1, 800, 9000, seed=3) + ',' + walk(2, 800, 9000, seed=4), 'cmd.txt': '700:splitscreen 1'}, start=8)],
+    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=2800'}, {'node': 'srv', 'text': 'NETSYNC gametic=2800'}], 'grace': 3})
 
 if __name__ == '__main__':
     for n, s in SPECS.items():
