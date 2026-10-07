@@ -23,7 +23,8 @@ static int plan_active;
 #define PLAN_PCT_MAX 75u // the planned images of a frame may take this share of the pool (per cent; the rest is for sprites, patches, the small textures)
 #define PLAN_PCT_MIN 35u // ... and this much when the controller (plan_frame_end) finds the working set of the frame does not fit
 #define PLAN_PCT_DOWN 6u // per frame in which an image used by the frame was evicted in the frame
-#define PLAN_CALM_FRAMES 45 // calm frames before the budget grows by one per cent
+#define PLAN_CALM_FRAMES 20 // calm frames before the budget grows by one per cent
+#define PLAN_THRASH_BLK 256u // blocks of images used by a frame and evicted in it that make the frame count as thrashing (a few small ones are the fragmentation)
 #define PLAN_TOL_EXACT 1.0f // texel magnification allowed by the exact plan
 #define PLAN_TOL_RELAX 2.0f // ... and by the relaxed plan (images stored one level coarser to fit the budget)
 #define PLAN_BIG_BLOCKS 512u // an image of at least this many blocks (at its exact level) may be stored PLAN_BIG_EXTRA levels coarser than the exact plan when the budget needs it
@@ -342,7 +343,7 @@ static void plan_frame_end(void)
 	// the controller of the budget: images of the frame that were evicted within the frame mean the working set does not fit the pool (or its pieces)
 	if (!H.plan_pct)
 		H.plan_pct = PLAN_PCT_MAX;
-	if (H.thrash_n)
+	if (H.thrash_blk >= PLAN_THRASH_BLK)
 	{
 		H.plan_pct = H.plan_pct > PLAN_PCT_MIN + PLAN_PCT_DOWN ? H.plan_pct - PLAN_PCT_DOWN : PLAN_PCT_MIN;
 		H.plan_calm = 0;
