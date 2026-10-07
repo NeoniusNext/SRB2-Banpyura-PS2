@@ -27,13 +27,19 @@ def main():
     ap.add_argument('--until', default='')
     ap.add_argument('--demo', default='', help='attract demo (DEMO_001..4): staged and played with -timedemo')
     ap.add_argument('--pak', default=str(PAK))
+    ap.add_argument('--files', default='', help='add-ons (paths, comma separated): copied next to the ELF and loaded with -file')
     ap.add_argument('--emu', default='', help='AppRun of another emulator copy (e.g. /opt/pcsx2/hwgl: PCSX2 with the OpenGL hardware renderer)')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     run = Path(a.out).resolve() / a.name
     cfg = ''.join(x.strip() + '\n' for x in a.cfg.split(';') if x.strip())
     opt_run.stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None, cfg)
-    args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt'] + (['-timedemo', a.demo + '.lmp'] if a.demo else []) + a.extra
+    import shutil
+    fargs = []
+    for f in [x for x in a.files.split(',') if x]:
+        shutil.copy2(f, run / Path(f).name)
+        fargs += ['-file', Path(f).name]
+    args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt'] + (['-timedemo', a.demo + '.lmp'] if a.demo else []) + fargs + a.extra
     until = a.until
     if not until:
         until = 'VIDSHOT COMPLETE' if '-vidshot' in a.extra else ('ZQUIT DONE' if any(x in ('-zquit', '-zquitall') for x in a.extra) else '')
