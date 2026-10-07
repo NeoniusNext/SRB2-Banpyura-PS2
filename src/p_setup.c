@@ -95,6 +95,7 @@
 #endif
 #ifdef PS2
 #include "ps2/ps2_hwfb.h" // PS2-170
+#include "r_segs.h" // PS2-172
 #endif
 
 //
@@ -7669,6 +7670,13 @@ static boolean P_LoadMapFromFile(void)
 	udmf = textmap != NULL;
 #endif
 
+#ifdef PS2
+	{
+		const virtlump_t *ssectors = udmf ? NULL : vres_Find(virt, "SSECTORS");
+
+		PS2HWFB_PreLoad(ssectors ? (UINT32)(ssectors->size / 4) : 0); // PS2-170: a map too big for the hardware renderer's memory leaves it before it is loaded
+	}
+#endif
 	ZCK("map-begin");
 	if (!P_LoadMapData(virt))
 		return false;
@@ -8564,6 +8572,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
 #ifdef PS2
 	Z_FlushCache(); // PS2-72: the level starts from an arena without the last level's caches between its blocks
+	R_ReleaseDrawSegScales(); // PS2-172: the busiest view of the earlier levels does not stay in the arena
 #endif
 	mobjcache = NULL;
 #ifdef PS2_OPT_REND

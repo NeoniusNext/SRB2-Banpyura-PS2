@@ -398,7 +398,8 @@ void PS2HWD_BatchEnd(void)
 // When no free hole is big enough, the cheapest aligned window of the pool is emptied: its cost is the sum of the per-block
 // weights of the records it overlaps (older = cheaper), and a window that touches a record that must stay is not a candidate.
 // A request that no window can satisfy fails WITHOUT evicting anything (a failed 1 MiB sky must not flush the working set).
-static u16 blk_owner[VRAM_BLOCKS];
+static u16 (*blk_owner_p)[VRAM_BLOCKS]; // PS2-171: the VRAM block owner map: zone memory while the driver runs (hwbig_alloc, ps2_hwd.c)
+#define blk_owner (*blk_owner_p)
 
 static void own_set(int ri)
 {

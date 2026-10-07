@@ -3275,13 +3275,35 @@ typedef struct
 } zbuffersprite_t;
 
 // this list is used to store data about linkdraw sprites
+#ifdef PS2
+// PS2-171 (OPT11-STAB): 172 KB of .bss that a software game never uses: the list grows in the zone (64 entries at first) and is given back with the renderer
+static zbuffersprite_t *linkdrawlist;
+static UINT32 linkdrawcap;
+#else
 zbuffersprite_t linkdrawlist[MAXVISSPRITES];
+#endif
 UINT32 linkdrawcount = 0;
 
 // add the necessary data to the list for delayed z-buffer drawing
 static void HWR_LinkDrawHackAdd(FOutVector *verts, gl_vissprite_t *spr)
 {
+#ifdef PS2
+	if (linkdrawcount >= linkdrawcap && linkdrawcap < MAXVISSPRITES)
+	{
+		const UINT32 ncap = linkdrawcap ? (linkdrawcap * 2 < MAXVISSPRITES ? linkdrawcap * 2 : MAXVISSPRITES) : 64;
+		zbuffersprite_t *n = linkdrawlist ? Z_TryReallocAlign(linkdrawlist, ncap * sizeof *linkdrawlist, PU_STATIC, NULL, 4)
+			: Z_TryMallocAlign(ncap * sizeof *linkdrawlist, PU_STATIC, NULL, 4);
+
+		if (n) // no room: this sprite's depth-only pass is dropped (a link-draw sprite is a tiny part of a frame)
+		{
+			linkdrawlist = n;
+			linkdrawcap = ncap;
+		}
+	}
+	if (linkdrawcount < linkdrawcap)
+#else
 	if (linkdrawcount < MAXVISSPRITES)
+#endif
 	{
 		memcpy(linkdrawlist[linkdrawcount].verts, verts, sizeof(FOutVector) * 4);
 		linkdrawlist[linkdrawcount].spr = spr;
@@ -6998,6 +7020,9 @@ void HWR_Shutdown(void)
 	HWR_FreeMapTextures();
 	HWD.pfnFlushScreenTextures();
 #ifdef PS2
+	Z_Free(linkdrawlist); // PS2-171
+	linkdrawlist = NULL;
+	linkdrawcap = linkdrawcount = 0;
 	gl_maploaded = false;
 	// Keep model/shader CPU initialization; their owners remain valid across GS reacquisition.
 #endif

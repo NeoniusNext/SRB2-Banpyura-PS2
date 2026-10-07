@@ -54,6 +54,9 @@
 
 #include "lua_hud.h"
 #include "lua_libs.h"
+#ifdef PS2
+#include "ps2/ps2_hwfb.h" // PS2-170
+#endif
 
 gameaction_t gameaction;
 gamestate_t gamestate = GS_NULL;
@@ -1914,7 +1917,11 @@ void G_DoLoadLevel(boolean resetplayer)
 	}
 
 	// Setup the level.
+#ifdef PS2
+	if (!PS2HWFB_LoadLevel()) // PS2-170: a local game whose map does not fit in memory goes back to the title screen with a message, it does not end in an error
+#else
 	if (!P_LoadLevel(false, false)) // this never returns false?
+#endif
 	{
 		// fail so reset game stuff
 		Command_ExitGame_f();

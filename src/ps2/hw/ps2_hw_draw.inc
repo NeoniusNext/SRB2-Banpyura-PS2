@@ -256,7 +256,9 @@ static void lru_touch(int i)
 // ---- overlay queue: ramp passes of solid polygons, drawn later in one state ----
 
 #define OVQ_QW 4096
-static qw_t ovq[OVQ_QW] __attribute__((aligned(64)));
+// PS2-171 (OPT11-STAB): one of the driver's big work arrays: taken from the zone when the driver starts (hwbig_alloc, ps2_hwd.c), given back when it stops; it was .bss, which a software game carried for nothing
+static qw_t (*ovq_p)[OVQ_QW];
+#define ovq (*ovq_p)
 static struct
 {
 	u32 n; // qwords queued
@@ -1365,7 +1367,8 @@ static void clip_attr2(const cv_t *in, int n, cv_t *outlo, int *nlo, cv_t *outhi
 }
 
 #define CUTBUF (PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA + 16)
-static cv_t cutbuf[3][3][CUTBUF];
+static cv_t (*cutbuf_p)[3][3][CUTBUF]; // PS2-171: see ovq
+#define cutbuf (*cutbuf_p)
 #define MAXCUTS 40
 #define UV_EXTENT 4096.0f // texels of s or t one GS primitive may span (14.4 fixed point U/V; the rest is cut at whole repeats)
 

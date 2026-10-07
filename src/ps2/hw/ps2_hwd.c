@@ -34,6 +34,7 @@
 #include "../../hardware/hw_drv.h"
 #include "../../hardware/hw_main.h"
 #include "../../m_argv.h" // -hwnosplit
+#include "../../z_zone.h" // PS2-171: hwbig_alloc
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
@@ -246,12 +247,47 @@ static void rec_init(void)
 		H.scr_rec[i] = NOREC;
 }
 
+// PS2-171 (OPT11-STAB): the driver's big work arrays (ovq, cutbuf, plan_info, blk_owner: 230 KB) are zone blocks that exist while the driver runs.
+// They were .bss: a game that runs the software renderer (MAP11 / CEZ2 has 0.2 MB of the arena left) carried them for nothing.
+static void hwbig_free(void)
+{
+	Z_Free(ovq_p);
+	Z_Free(cutbuf_p);
+	Z_Free(plan_info_p);
+	Z_Free(blk_owner_p);
+	ovq_p = NULL;
+	cutbuf_p = NULL;
+	plan_info_p = NULL;
+	blk_owner_p = NULL;
+}
+
+static boolean hwbig_alloc(void)
+{
+	ovq_p = Z_TryMallocAlign(sizeof *ovq_p, PU_STATIC, NULL, 6);
+	cutbuf_p = Z_TryMallocAlign(sizeof *cutbuf_p, PU_STATIC, NULL, 6);
+	plan_info_p = Z_TryMallocAlign(sizeof *plan_info_p, PU_STATIC, NULL, 6);
+	blk_owner_p = Z_TryMallocAlign(sizeof *blk_owner_p, PU_STATIC, NULL, 6);
+	if (ovq_p && cutbuf_p && plan_info_p && blk_owner_p)
+	{
+		memset(ovq_p, 0, sizeof *ovq_p);
+		memset(cutbuf_p, 0, sizeof *cutbuf_p);
+		memset(plan_info_p, 0, sizeof *plan_info_p);
+		memset(blk_owner_p, 0, sizeof *blk_owner_p);
+		return true;
+	}
+	hwbig_free();
+	CONS_Alert(CONS_ERROR, "PS2 GS hardware renderer: no memory for its work arrays\n");
+	return false;
+}
+
 boolean PS2HWD_Init(void)
 {
 	int rc;
 
 	if (H.up)
 		return true;
+	if (!hwbig_alloc())
+		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
 	tex_nosplit = M_CheckParm("-hwnosplit") != 0; // PS2-HW-70 off: images over 1024 rows are decimated
 	tex_split_rows = 1024;
@@ -370,6 +406,7 @@ void PS2HWD_Shutdown(void)
 	if (H.gs)
 		gsKit_deinit_global(H.gs);
 	memset(&H, 0, sizeof H);
+	hwbig_free();
 }
 
 // PS2-170 (OPT11-STAB): the engine jumped out of a frame (out of memory, a resource failure: z_zone.h Z_GUARD_TRY) and is going to shut the driver down.
@@ -1105,10 +1142,13 @@ static void settex_now(GLMipmap_t *TexInfo)
 	if (ps2hwd_dbg_flags & HWDBG_NOUP) // OPT10 HG measurement: one dummy image for every texture
 	{
 		static GLMipmap_t noup_mip;
-		static u8 noup_data[256 * 256] __attribute__((aligned(64)));
+		static u8 *noup_data; // PS2-171: measurement mode only: taken from the C heap when used (was 64 KB of .bss)
+
 		texrec_t *d = rec_of(&noup_mip);
 
-		if (!d)
+		if (!d && !noup_data)
+			noup_data = memalign(64, 256 * 256);
+		if (!d && noup_data)
 		{
 			int x, y;
 

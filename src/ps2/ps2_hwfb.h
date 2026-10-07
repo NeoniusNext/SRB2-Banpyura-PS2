@@ -15,6 +15,8 @@
 #include "../doomtype.h"
 
 void PS2HWFB_Display(void (*display)(void)); // D_Display under the guard (d_main.c)
+boolean PS2HWFB_LoadLevel(void);              // P_LoadLevel(false, false) under the guard (g_game.c, G_DoLoadLevel); FALSE: the map does not fit in memory, the caller leaves to the title
+void PS2HWFB_PreLoad(UINT32 numssectors);    // the start of the map load (p_setup.c): a huge map goes to software before anything is loaded
 void PS2HWFB_BuildLevel(void);               // the hardware part of a level load (p_setup.c, replaces HWR_LoadLevel): guarded, falls back to software
 void PS2HWFB_LevelLoaded(void);              // the end of P_LoadLevel: back to the hardware renderer when it was given up for an earlier level
 boolean PS2HWFB_ForcedSoftware(void);        // the user wants Hardware, the game runs Software because of memory

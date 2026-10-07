@@ -13,6 +13,7 @@
 #include "../z_zone.h"
 #include "../console.h"
 #include "../p_setup.h"
+#include "../p_local.h"
 #include "../command.h"
 #include "ps2_hwfb.h"
 #include "ps2_mem.h"
@@ -31,13 +32,20 @@ void HWR_ReleaseBatching(void);
 #define HWFB_SOFT_WINDOW 12    // ... within this many frames
 
 static boolean hwfb_bad[NUMMAPS + 1]; // maps that did not fit in the hardware renderer (this session)
-static UINT32 hwfb_fallbacks, hwfb_returns, hwfb_softretries, hwfb_thrown;
+static UINT32 hwfb_fallbacks, hwfb_returns, hwfb_softretries, hwfb_thrown, hwfb_levelfails;
 static boolean hwfb_gaveup;
 static UINT32 hwfb_softframe[HWFB_SOFT_RETRIES]; // the frame numbers of the last abandoned software frames
 static UINT32 hwfb_frame;                         // displayed frames
 static INT32 hwfb_test = -1, hwfb_test_period;    // -hwfbtest N[,period]: an out-of-memory fallback at the Nth hardware frame (and every `period` frames after a return)
 static UINT32 hwfb_test_next;
-static char hwfb_last[128];
+static char hwfb_last[160];
+// What the hardware renderer needs on top of the level (measured, opt11-STAB.md section 2: 84 maps in Hardware, 35 frames each): the batch arrays (0.4..1.45 MB),
+// the working set of textures, the GS driver's C heap growth; the maps that run need >= 3.5 MB free after the level and the plane polygons were built.
+#define HWFB_MINFREE_DEFAULT (3u << 20)
+// A map this big (subsectors) never fits next to the hardware renderer's polygons (MAP11 15 942; the biggest that runs is MAP23 with 12 590)
+#define HWFB_MAXSS_DEFAULT 14000u
+static size_t hwfb_minfree = HWFB_MINFREE_DEFAULT;
+static UINT32 hwfb_maxss = HWFB_MAXSS_DEFAULT;
 
 static INT32 MapSlot(void)
 {
@@ -58,6 +66,10 @@ boolean PS2HWFB_ForcedSoftware(void)
 
 void PS2HWFB_Init(void)
 {
+	if (M_CheckParm("-hwfbfree") && M_IsNextParm())
+		hwfb_minfree = (size_t)atol(M_GetNextParm()) << 10;
+	if (M_CheckParm("-hwfbss") && M_IsNextParm())
+		hwfb_maxss = (UINT32)atol(M_GetNextParm());
 	if (M_CheckParm("-hwfbtest") && M_IsNextParm())
 	{
 		const char *p = M_GetNextParm();
@@ -73,8 +85,8 @@ void PS2HWFB_Init(void)
 
 void PS2HWFB_Report(void)
 {
-	I_OutputMsg("ps2_hwfb: fallbacks %lu returns %lu soft-retries %lu thrown %lu zone-jumps %lu gaveup %d last \"%s\"\n", (unsigned long)hwfb_fallbacks,
-		(unsigned long)hwfb_returns, (unsigned long)hwfb_softretries, (unsigned long)hwfb_thrown, (unsigned long)Z_GuardRecovered(), (int)hwfb_gaveup, hwfb_last);
+	I_OutputMsg("ps2_hwfb: fallbacks %lu returns %lu soft-retries %lu thrown %lu level-fails %lu zone-jumps %lu gaveup %d last \"%s\"\n", (unsigned long)hwfb_fallbacks,
+		(unsigned long)hwfb_returns, (unsigned long)hwfb_softretries, (unsigned long)hwfb_thrown, (unsigned long)hwfb_levelfails, (unsigned long)Z_GuardRecovered(), (int)hwfb_gaveup, hwfb_last);
 }
 
 #ifdef HWRENDER
@@ -185,6 +197,62 @@ void PS2HWFB_Display(void (*display)(void))
 	FrameLanded(&g);
 }
 
+// G_DoLoadLevel: a map of a local game (single player, split screen, demo, title map) that does not fit in memory is not an error of the program: the
+// level is dropped, the message says why, the caller goes back to the title screen (as for any map that fails to load). A network game does not take
+// this path: its clients and server must load the map the others play.
+boolean PS2HWFB_LoadLevel(void)
+{
+	zguard_t g;
+
+	if (netgame)
+		return P_LoadLevel(false, false);
+	if (Z_GUARD_TRY(&g))
+	{
+		const boolean ok = P_LoadLevel(false, false);
+
+		Z_GuardPop(&g);
+		return ok;
+	}
+	Z_GuardLanded(&g);
+	{
+		char why[128];
+
+		if (g.size)
+			snprintf(why, sizeof why, "%lu bytes (%s)", (unsigned long)g.size, PS2Mem_TagName(g.tag));
+		else
+			snprintf(why, sizeof why, "%s", g.reason);
+		snprintf(hwfb_last, sizeof hwfb_last, "map %d does not fit: %.100s", (int)gamemap, why);
+		CONS_Alert(CONS_ERROR, "Not enough memory to load map %s: %s. Back to the title screen.\n", G_BuildMapName(gamemap), why);
+		I_OutputMsg("ps2_hwfb: LEVEL LOAD FAILED map %d: %s\n", (int)gamemap, why);
+	}
+	hwfb_levelfails++;
+	levelloading = false;
+	P_MapEnd();
+#ifdef HWRENDER
+	if (rendermode == render_opengl)
+		ForceSoftware("the level did not fit", true); // the title screen and the next map get the memory of the hardware renderer
+#endif
+	return false;
+}
+
+// The start of the map load (p_setup.c, P_LoadMapFromFile, nothing of the map is in memory yet): a map with this many subsectors does not fit next to the hardware
+// renderer (its plane polygons, batches and the C heap of the driver stay in the arena while the level is loaded): software from the first frame.
+void PS2HWFB_PreLoad(UINT32 numssectors)
+{
+#ifdef HWRENDER
+	if (rendermode != render_opengl || numssectors < hwfb_maxss)
+		return;
+	{
+		char why[96];
+
+		snprintf(why, sizeof why, "map with %lu subsectors is too big for it", (unsigned long)numssectors);
+		ForceSoftware(why, true);
+	}
+#else
+	(void)numssectors;
+#endif
+}
+
 // The hardware part of a level load (HWR_LoadLevel). A level that does not fit in the hardware renderer leaves it before the first frame is drawn.
 void PS2HWFB_BuildLevel(void)
 {
@@ -203,6 +271,13 @@ void PS2HWFB_BuildLevel(void)
 	{
 		HWR_LoadLevel();
 		Z_GuardPop(&g);
+		if (Z_ArenaFree() < hwfb_minfree)
+		{
+			char why[96];
+
+			snprintf(why, sizeof why, "only %lu KB of memory left after the level, it needs %lu", (unsigned long)(Z_ArenaFree() >> 10), (unsigned long)(hwfb_minfree >> 10));
+			ForceSoftware(why, true);
+		}
 		return;
 	}
 	Z_GuardLanded(&g);
