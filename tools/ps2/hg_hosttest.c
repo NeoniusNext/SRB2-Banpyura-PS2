@@ -583,7 +583,7 @@ static void test_bands(void)
 	}
 }
 
-/* ---- group: litclip (PS2-HW-62: a clipped polygon of one darkness class takes the lit fast path instead of cut_and_emit) ---- */
+/* ---- group: litclip (PS2-HW-59: a clipped polygon of one darkness class takes the lit fast path instead of cut_and_emit) ---- */
 static void test_litclip(void)
 {
 	const u32 flags = PF_Masked | PF_Modulated | PF_ColorMapped | PF_Occlude;
@@ -711,7 +711,7 @@ static void test_litclip(void)
 	}
 }
 
-/* ---- group: sort (PS2-HW-62: HWR_GroupSort32 against the stable radix sort) ---- */
+/* ---- group: sort (PS2-HW-59: HWR_GroupSort32 against the stable radix sort) ---- */
 #include "hw_sort.h"
 static void test_sort(void)
 {
@@ -1059,7 +1059,7 @@ static void test_clip(void)
 		}
 		EXPECT(!fl_bad, "hw_floorf differs from floorf in %d values", fl_bad);
 	}	{
-		/* lf_class_w (PS2-HW-60: the light class with a memory of proven depth ranges) against lf_class(zfrag_of_w()) for random walks and jumps of w */
+		/* lf_class_w (PS2-HW-43b: the light class with a memory of proven depth ranges) against lf_class(zfrag_of_w()) for random walks and jumps of w */
 		static const int lights[] = {0, 40, 96, 128, 160, 200, 255};
 		int li, k, cl_bad = 0, th_bad = 0;
 		long cl_n = 0, cl_slow = 0, th_n = 0;

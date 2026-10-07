@@ -94,7 +94,7 @@ static inline int vu0_xform(const FOutVector *s, cv_t *d, pv_t *o)
 	f = ((f & 0x15u) << 1) | ((f >> 1) & 0x15u);
 	return d->w <= 0.0f ? 0x3F : (int)f; // behind the eye: the polygon is clipped, whatever |w| says
 }
-// Two vertices at once (PS2-HW-62). The multiply chain of the second vertex runs while the first one waits for the divide, the guard band tests of both
+// Two vertices at once (PS2-HW-59). The multiply chain of the second vertex runs while the first one waits for the divide, the guard band tests of both
 // precede the divide, and the clip flags of both are read by one cfc2 (the 24 bit history: the second vertex in bits 0..5, the first in 6..11); the divide of
 // the second vertex runs while the first one is projected. The arithmetic of every vertex is the one of vu0_xform, operation for operation (the only
 // difference: the projection writes xyz and the 1/w into w with a mask instead of the other way round), so the results are bit-identical.

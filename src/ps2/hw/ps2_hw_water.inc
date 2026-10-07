@@ -142,7 +142,7 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 	{
 		int c1;
 
-		cls0 = lf_class_w(wlo); // PS2-HW-62: the plan's memory of classes and step depths (LM_BANDS: lit_fast_plan ran in begin_draw)
+		cls0 = lf_class_w(wlo); // PS2-HW-59: the plan's memory of classes and step depths (LM_BANDS: lit_fast_plan ran in begin_draw)
 		c1 = lf_class_w(whi);
 		nc = cls0 == c1 ? 0 : lf_thresholds(cls0, c1, z0, z1, th, cls, WF_NPLANE);
 	}

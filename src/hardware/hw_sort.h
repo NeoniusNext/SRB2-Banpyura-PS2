@@ -65,7 +65,7 @@ static inline int HWR_RadixSort32(unsigned int *keys, unsigned int *idx, unsigne
 	return in_src;
 }
 
-// PS2-HW-62: the same stable order for keys with few distinct values (the batches of a frame: ~250 distinct keys among ~3000 polygons, 70 in the skybox
+// PS2-HW-59: the same stable order for keys with few distinct values (the batches of a frame: ~250 distinct keys among ~3000 polygons, 70 in the skybox
 // view). The polygons are counted per distinct key through a small hash table, only the distinct keys are sorted (8 bit digits), and one scatter puts every
 // polygon at its place: no 2048-entry histograms to clear and sum (three of them cost 75 000 cycles even for a view of 70 polygons), one pass instead of three.
 // Only the order of idx is made: it ends in ti and the function returns 0; keys / tk are scratch (tk holds the group of every polygon). Returns -1 (nothing
@@ -75,10 +75,10 @@ static inline int HWR_RadixSort32(unsigned int *keys, unsigned int *idx, unsigne
 
 static inline int HWR_GroupSort32(const unsigned int *keys, const unsigned int *idx, unsigned int *tk, unsigned int *ti, unsigned int n)
 {
-	static unsigned int hk[HWR_GS_SLOTS];
-	static unsigned short hv[HWR_GS_SLOTS]; // distinct key number + 1 of the slot, 0 = free
-	static unsigned int dk[HWR_GS_MAX], cnt[HWR_GS_MAX], off[HWR_GS_MAX];
-	static unsigned short ord[2][HWR_GS_MAX];
+	unsigned int hk[HWR_GS_SLOTS]; // 23 KB of stack, as much as the histograms of HWR_RadixSort32: no static memory (the zone is tight)
+	unsigned short hv[HWR_GS_SLOTS]; // distinct key number + 1 of the slot, 0 = free
+	unsigned int dk[HWR_GS_MAX], cnt[HWR_GS_MAX], off[HWR_GS_MAX];
+	unsigned short ord[2][HWR_GS_MAX];
 	unsigned short *grp = (unsigned short *)(void *)tk;
 	unsigned int i, m = 0, pass, run = 0;
 	unsigned int c8[256];

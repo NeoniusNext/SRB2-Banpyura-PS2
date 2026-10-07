@@ -37,8 +37,8 @@ enum
 #define MAXPASS 4
 static void lit_fast_plan(void); // ps2_hw_fast.inc (PS2-HW-43)
 static inline int lf_class_w(float w); // ps2_hw_fast.inc
-static int lf_thresholds(int c0, int c1, float z0, float z1, float *th, int *cls, int max); // ps2_hw_fast.inc (PS2-HW-62)
-static u32 lf_fog(int cls, int *on); // ps2_hw_fast.inc (PS2-HW-62)
+static int lf_thresholds(int c0, int c1, float z0, float z1, float *th, int *cls, int max); // ps2_hw_fast.inc (PS2-HW-59)
+static u32 lf_fog(int cls, int *on); // ps2_hw_fast.inc (PS2-HW-59)
 #define PRIM_IIP (1u << 3)
 #define PRIM_TME (1u << 4)
 #define PRIM_FGE (1u << 5)
@@ -943,7 +943,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		&& P.pass[0].tex == (u8)textured && !(ps2hwd_dbg_flags & 64);
 	P.oldpath = (ps2hwd_dbg_flags & 8192) != 0;
 	if (P.lmode == LM_BANDS)
-		lit_fast_plan(); // PS2-HW-43 (PS2-HW-62: also for the plans that take cut_and_emit: the class memory, the fog and the step depths are per plan)
+		lit_fast_plan(); // PS2-HW-43 (PS2-HW-59: also for the plans that take cut_and_emit: the class memory, the fog and the step depths are per plan)
 	P.vu = 0;
 	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible);
 	P.serial = H.serial - 1; // the first polygon sets the state up
@@ -1081,7 +1081,7 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 	u32 zi;
 
 	zf = clampf(zf, 0.0f, P.zmax);
-	zi = (u32)(int)zf; // 0 <= zf <= Z24: the signed conversion is one instruction, the unsigned one a compare and a branch (PS2-HW-62)
+	zi = (u32)(int)zf; // 0 <= zf <= Z24: the signed conversion is one instruction, the unsigned one a compare and a branch (PS2-HW-59)
 	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4 || pk->fmt == 5)
 	{
 		if (pk->ramp)
@@ -1181,7 +1181,7 @@ static void emit_reglist_fan(const cv_t *v, int cnt, const pack_t *pk, u32 prim)
 		u32 zi;
 
 		zf = clampf(zf, 0.0f, P.zmax);
-		zi = (u32)(int)zf; // (PS2-HW-62)
+		zi = (u32)(int)zf; // (PS2-HW-59)
 		if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 5)
 		{
 			qw_t st;
@@ -1289,7 +1289,7 @@ static int clip_attr(const cv_t *in, int n, cv_t *out, int which, float cut, int
 	return m;
 }
 
-// clip_attr(side 0) and clip_attr(side 1) of the same cut in one walk over the edges (PS2-HW-62): the same vertices in the same order (the point on
+// clip_attr(side 0) and clip_attr(side 1) of the same cut in one walk over the edges (PS2-HW-59): the same vertices in the same order (the point on
 // an edge is computed once, from the end with the smaller value, and goes to both parts), half the loads, compares and interpolations.
 static void clip_attr2(const cv_t *in, int n, cv_t *outlo, int *nlo, cv_t *outhi, int *nhi, int which, float cut, int na)
 {
@@ -1520,7 +1520,7 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 			if (P.oldpath)
 				np = clip_attr(rem, nrem, piece, cl->which, cl->cuts[k], 0, na);
 			else
-				clip_attr2(rem, nrem, piece, &np, rb, &nr2, cl->which, cl->cuts[k], na); // PS2-HW-62: both parts at once (the recursion below does not touch this stage's buffers)
+				clip_attr2(rem, nrem, piece, &np, rb, &nr2, cl->which, cl->cuts[k], na); // PS2-HW-59: both parts at once (the recursion below does not touch this stage's buffers)
 			if (np >= 3)
 			{
 				piece_t p2 = *pc;
@@ -1709,7 +1709,7 @@ static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na)
 		}
 		else
 		{
-			// PS2-HW-62: the classes of the ends from the plan's memory of depth ranges; one class = no step (doom_thresholds finds none either), no divisions
+			// PS2-HW-59: the classes of the ends from the plan's memory of depth ranges; one class = no step (doom_thresholds finds none either), no divisions
 			cls0 = lf_class_w(wlo);
 			if (cls0 == lf_class_w(whi))
 			{
@@ -2170,7 +2170,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 #ifdef HW_VU0
 	if (vu0 && !P.oldpath)
 	{
-		// PS2-HW-62: two vertices per VU0 sequence (the divide of one hides behind the multiplies of the other)
+		// PS2-HW-59: two vertices per VU0 sequence (the divide of one hides behind the multiplies of the other)
 		for (; i + 1 < n; i += 2)
 		{
 			int oc0, oc1;

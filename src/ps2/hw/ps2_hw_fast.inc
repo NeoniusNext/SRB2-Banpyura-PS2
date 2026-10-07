@@ -6,7 +6,7 @@
 //   * needs no texture repeat cut,
 //   * lies in ONE darkness class,
 // straight to the packer, and sets the GS state up only when it changed (P.serial). An unclipped polygon takes the GS integers VU0 already
-// made (the results of the transform are in pvbuf); a clipped one (PS2-HW-62: it used to go the general way for that reason alone) is
+// made (the results of the transform are in pvbuf); a clipped one (PS2-HW-59: it used to go the general way for that reason alone) is
 // packed with the scalar projection of emit_reglist_fan / put_vertex, exactly as emit_piece does it. Everything else goes the general way,
 // which the checks here mirror exactly (cut_and_emit stage 2 -> emit_piece).
 // The class function is doom_class() with the lighting constants of the plan precomputed (same operations in the same order, no floorf).
@@ -19,9 +19,9 @@ static struct
 	u64 have; // bit c: fog[c] / fogon[c] are valid for the plan
 	u8 fog[33];
 	u8 fogon[33];
-	u64 thz_have; // bit m: thz[m] = doom_depth_of_level(lp, m) is valid for the plan (PS2-HW-62)
+	u64 thz_have; // bit m: thz[m] = doom_depth_of_level(lp, m) is valid for the plan (PS2-HW-59)
 	float thz[33];
-	u64 known; // bit c: [lo[c], hi[c]] is a range of eye depths (w) proven to be in class c (PS2-HW-60)
+	u64 known; // bit c: [lo[c], hi[c]] is a range of eye depths (w) proven to be in class c (PS2-HW-43b)
 	float lo[33], hi[33];
 	int last;
 	int ok; // base / cap / cf are valid for the plan (they are calculated when the first class is asked for: a plan often draws nothing that needs them)
@@ -241,7 +241,7 @@ static int lit_fast_poly(const cv_t *v, const void *pvv, int cnt, float sb, floa
 			emit_reglist_fan_pv(v, pv, cnt, &pk, PRIM_TRIFAN | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)));
 		else
 #endif
-			emit_reglist_fan(v, cnt, &pk, PRIM_TRIFAN | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE))); // PS2-HW-62: a clipped polygon (no VU0 integers): the packer of emit_piece
+			emit_reglist_fan(v, cnt, &pk, PRIM_TRIFAN | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE))); // PS2-HW-59: a clipped polygon (no VU0 integers): the packer of emit_piece
 	}
 #ifdef HW_VU0
 	else if (pv && (pk.fmt == 0 || pk.fmt == 1))

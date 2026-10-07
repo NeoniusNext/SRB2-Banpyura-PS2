@@ -883,7 +883,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 #ifdef PS2_PROFILE
 	if (!slope)
 	{
-		// PS2-HW-61: the flat's texture mapping without what does not change per vertex: scrollx / xscale and scrolly / yscale once, a multiplication
+		// PS2-HW-58b: the flat's texture mapping without what does not change per vertex: scrollx / xscale and scrolly / yscale once, a multiplication
 		// where the flat size is a power of two (exact), no multiplication by a scale of 1, and for a turned flat sin / cos of the angle ONCE as floats:
 		// the macro called the double precision cos() and sin() four times per vertex (soft float: 600..1000 cycles each).
 		// Deviation (registered): the turned flat's coordinates are products of floats, not of a float and a double (1 ulp of a float).
@@ -975,7 +975,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
 
 #ifdef PS2_PROFILE
-	if (subsector && HWR_PlaneHasHorizon(subsector)) // PS2-HW-61: the flag is made once per subsector; the loop below looked at every line of the subsector (a seg and its linedef) for every plane
+	if (subsector && HWR_PlaneHasHorizon(subsector)) // PS2-HW-58b: the flag is made once per subsector; the loop below looked at every line of the subsector (a seg and its linedef) for every plane
 #else
 	if (subsector)
 #endif
