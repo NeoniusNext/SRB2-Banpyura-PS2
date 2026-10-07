@@ -11,12 +11,14 @@ import re
 import subprocess
 from pathlib import Path
 
-NM = 'D:/ps2dev/ee/bin/mips64r5900el-ps2-elf-nm.exe'
+import os
+IS_WIN = os.name == 'nt'
+NM = 'D:/ps2dev/ee/bin/mips64r5900el-ps2-elf-nm.exe' if IS_WIN else os.environ.get('PS2DEV', '/opt/ps2dev-x/ps2dev') + '/ee/bin/mips64r5900el-ps2-elf-nm'
 
 
 def symbols(elf):
     out = subprocess.run([NM, '-n', '-S', '--defined-only', str(elf)], capture_output=True, text=True,
-                         env={'PATH': 'D:/ps2dev/ee/bin;C:/Windows/System32'}).stdout
+                         env={'PATH': 'D:/ps2dev/ee/bin;C:/Windows/System32'} if IS_WIN else None).stdout
     syms = []
     for l in out.splitlines():
         p = l.split()

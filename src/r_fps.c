@@ -635,9 +635,96 @@ void R_ClearLevelInterpolatorState(thinker_t *thinker)
 	}
 }
 
+#ifdef PS2_INTERPSTAT // host diagnostics: how many level interpolators of each type are applied per frame
+#include <stdio.h>
+static unsigned long long ps2_istat[8], ps2_icalls, ps2_ilanes[4];
+static void PS2_InterpStatDump(void)
+{
+	fprintf(stderr, "INTERPSTAT frames %llu per frame: plane %.1f scroll %.1f side %.1f poly %.1f dynslope %.1f\n", ps2_icalls,
+		(double)ps2_istat[0] / ps2_icalls, (double)ps2_istat[1] / ps2_icalls, (double)ps2_istat[2] / ps2_icalls, (double)ps2_istat[3] / ps2_icalls, (double)ps2_istat[4] / ps2_icalls);
+	fprintf(stderr, "INTERPSTAT dynslope values per frame: unchanged %.2f, arithmetic %.2f (same bits but not finite/normal %.2f, different %.2f)\n", (double)ps2_ilanes[0] / ps2_icalls, (double)ps2_ilanes[1] / ps2_icalls, (double)ps2_ilanes[2] / ps2_icalls, (double)ps2_ilanes[3] / ps2_icalls);
+}
+#endif
+#ifdef PS2_OPT_REND
+// PS2-166: the software renderer's dynamic slopes carry seven doubles per slope that are interpolated again for every frame (R_LerpDVector3 x2,
+// R_LerpDouble: three soft-float operations per value, about 20 000 cycles per slope; 90..100 such slopes in two of the demos). Without frame
+// interpolation (frac == FRACUNIT) the result for one value is `from + (1.0 * (to - from))`. When the old and the new state are bitwise equal
+// (and the value is finite, zero or normal) that is `from` itself, except that a negative zero becomes positive (-0 - -0 = +0, -0 + +0 = +0:
+// IEEE round to nearest and libgcc's fp-bit alike). Anything else (the value moved, subnormals, infinities, NaN) takes the original arithmetic.
+static ATTRINLINE double PS2_LerpDoubleOne(const double *from, const double *to)
+{
+	UINT64 x, y;
+
+	memcpy(&x, from, sizeof x);
+	memcpy(&y, to, sizeof y);
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 9 // negative control of the host A/B: a value that moved is not followed
+	y = x;
+#endif
+	if (x == y)
+	{
+		const UINT32 e = (UINT32)(x >> 52) & 0x7FF;
+
+		if (!(e == 0x7FF || (e == 0 && (x << 12)))) // not infinity, NaN, subnormal
+		{
+			double r;
+
+			if (!(x << 1))
+				x = 0; // -0 becomes +0
+			memcpy(&r, &x, sizeof r);
+#ifdef PS2_NODECHECK // shadow check (host and EE: the EE does it in libgcc's soft float): the original arithmetic gives the same bits
+			{
+				volatile double one = 1.0; // (FixedToDouble(FRACUNIT), kept from being folded away)
+				const double ref = *from + (one * (*to - *from));
+				UINT64 rb;
+
+				memcpy(&rb, &ref, sizeof rb);
+				if (rb != x)
+					I_Error("PS2-166: interpolated slope value differs from the arithmetic (%08x%08x vs %08x%08x)", (unsigned)(x >> 32), (unsigned)x, (unsigned)(rb >> 32), (unsigned)rb);
+			}
+#endif
+#ifdef PS2_INTERPSTAT
+			ps2_ilanes[0]++;
+#endif
+			return r;
+		}
+	}
+#ifdef PS2_INTERPSTAT
+	ps2_ilanes[1]++;
+	{
+		UINT64 xx, yy;
+		memcpy(&xx, from, sizeof xx);
+		memcpy(&yy, to, sizeof yy);
+		if (xx == yy) ps2_ilanes[2]++; // same bits but NaN/infinity/subnormal
+		else ps2_ilanes[3]++; // really different
+	}
+#endif
+	return *from + (1.0 * (*to - *from));
+}
+
+static void PS2_ApplyDynSlopeOne(const levelinterpolator_t *interp, pslope_t *slope)
+{
+	slope->dorigin.x = PS2_LerpDoubleOne(&interp->dynslope.oldorigin.x, &interp->dynslope.bakorigin.x);
+	slope->dorigin.y = PS2_LerpDoubleOne(&interp->dynslope.oldorigin.y, &interp->dynslope.bakorigin.y);
+	slope->dorigin.z = PS2_LerpDoubleOne(&interp->dynslope.oldorigin.z, &interp->dynslope.bakorigin.z);
+	slope->dnormdir.x = PS2_LerpDoubleOne(&interp->dynslope.oldnormdir.x, &interp->dynslope.baknormdir.x);
+	slope->dnormdir.y = PS2_LerpDoubleOne(&interp->dynslope.oldnormdir.y, &interp->dynslope.baknormdir.y);
+	slope->dnormdir.z = PS2_LerpDoubleOne(&interp->dynslope.oldnormdir.z, &interp->dynslope.baknormdir.z);
+	slope->dzdelta = PS2_LerpDoubleOne(&interp->dynslope.olddzdelta, &interp->dynslope.bakdzdelta);
+}
+#endif
+
 void R_ApplyLevelInterpolators(fixed_t frac)
 {
 	size_t i, ii;
+#ifdef PS2_INTERPSTAT
+	{
+		static int reg;
+		if (!reg) { reg = 1; atexit(PS2_InterpStatDump); }
+		ps2_icalls++;
+		for (i = 0; i < levelinterpolators_len; i++)
+			ps2_istat[levelinterpolators[i]->type == LVLINTERP_SectorPlane ? 0 : levelinterpolators[i]->type == LVLINTERP_SectorScroll ? 1 : levelinterpolators[i]->type == LVLINTERP_SideScroll ? 2 : levelinterpolators[i]->type == LVLINTERP_Polyobj ? 3 : 4]++;
+	}
+#endif
 
 	for (i = 0; i < levelinterpolators_len; i++)
 	{
@@ -689,7 +776,15 @@ void R_ApplyLevelInterpolators(fixed_t frac)
 			interp->dynslope.slope->zdelta = R_LerpFixed(interp->dynslope.oldzdelta, interp->dynslope.bakzdelta, frac);
 			if (rendermode == render_soft)
 			{
-				double dfrac = FixedToDouble(frac);
+				double dfrac;
+#ifdef PS2_OPT_REND
+				if (frac == FRACUNIT)
+				{
+					PS2_ApplyDynSlopeOne(interp, interp->dynslope.slope);
+					break;
+				}
+#endif
+				dfrac = FixedToDouble(frac);
 				R_LerpDVector3(&interp->dynslope.oldorigin, &interp->dynslope.bakorigin, dfrac, &interp->dynslope.slope->dorigin);
 				R_LerpDVector3(&interp->dynslope.oldnormdir, &interp->dynslope.baknormdir, dfrac, &interp->dynslope.slope->dnormdir);
 				interp->dynslope.slope->dzdelta = R_LerpDouble(interp->dynslope.olddzdelta, interp->dynslope.bakdzdelta, dfrac);
