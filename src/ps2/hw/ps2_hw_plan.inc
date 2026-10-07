@@ -300,6 +300,35 @@ static GLMipmap_t *imm_cur[IMM_MAX], *imm_prev[IMM_MAX];
 static int imm_ncur, imm_nprev;
 static float imm_ptotal[IMM_MAX], imm_pseps[IMM_MAX];
 
+// the engine drops its textures (a new level, a cache flush): nothing the plan remembers may be touched again
+static void plan_reset(void)
+{
+	plan_n = 0;
+	plan_frame = 0;
+	imm_ncur = imm_nprev = 0;
+	plan_active = 0;
+}
+
+// one texture is deleted: the plan forgets it (its record in this frame's table, the carried immediate images)
+static void plan_forget(const GLMipmap_t *m)
+{
+	const GLMipmap_t *k = m->ps2_twin ? m->ps2_twin : m;
+	int i;
+
+	for (i = 0; i < plan_n; i++)
+		if (plan_info[i].key == k)
+		{
+			plan_info[i].total = 0.0f; // not visible: nothing is planned for it
+			memset(plan_info[i].hist, 0, sizeof plan_info[i].hist);
+		}
+	for (i = 0; i < imm_nprev; i++)
+		if (imm_prev[i] == k)
+			imm_prev[i] = imm_prev[--imm_nprev], imm_ptotal[i] = imm_ptotal[imm_nprev], imm_pseps[i] = imm_pseps[imm_nprev], i--;
+	for (i = 0; i < imm_ncur; i++)
+		if (imm_cur[i] == k)
+			imm_cur[i] = imm_cur[--imm_ncur], i--;
+}
+
 // called at the end of every frame: the immediate images of this frame are the carried ones of the next
 static void plan_frame_end(void)
 {

@@ -331,6 +331,8 @@ void PS2HWD_Shutdown(void)
 	rel_release_all();
 	dc_flush();
 	tex_free_all();
+	H.imm_tex = NULL;
+	plan_reset();
 	ramp_tex = NOREC;
 	OV.n = 0;
 	for (i = 0; i < NBUF; i++)
@@ -1058,6 +1060,8 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		dma_fence(); // the engine frees the texels after this call: no queued DMA may read them (also when the image was evicted meanwhile)
 	if (H.imm_tex == TexInfo)
 		H.imm_tex = NULL;
+	if (H.up)
+		plan_forget(TexInfo);
 	if (H.up && (r = rec_of(TexInfo)) != NULL)
 	{
 		ov_flush_all();
@@ -1083,6 +1087,7 @@ static void hw_ClearMipMapCache(void)
 	ov_flush_all();
 	dma_fence();
 	H.imm_tex = NULL;
+	plan_reset();
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)

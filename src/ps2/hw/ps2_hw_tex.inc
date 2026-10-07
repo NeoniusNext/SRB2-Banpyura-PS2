@@ -1765,7 +1765,18 @@ static int tex_upload(GLMipmap_t *m)
 	}
 	else if (c->dx || c->dy)
 	{
+		static int logged;
+
 		H.st.tex_decimated++;
+		if (logged++ < 8)
+			CONS_Printf("HWD decimated texture %s %ux%u -> %ux%u (dx %u dy %u, cap %u)\n", HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)(sw >> c->dx), (unsigned)(sh >> c->dy), (unsigned)c->dx, (unsigned)c->dy, (unsigned)H.tex_cap_blocks);
+	}
+	if (lv && !dce)
+	{
+		static int logged2;
+
+		if (logged2++ < 8)
+			CONS_Printf("HWD level %u of %s %ux%u made without the data cache (no zone memory): plain decimation\n", (unsigned)lv, HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh);
 	}
 
 	if (!dce && l0 && !lv && !c->dx && !c->dy)
