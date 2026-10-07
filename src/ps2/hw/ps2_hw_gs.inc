@@ -97,8 +97,8 @@ static void poll_dma(void)
 // OPT5 watchdog: what every stuck wait reports instead of freezing silently (PS2-HW-21)
 static void wd_diag(const char *why)
 {
-	printf("HWD WATCHDOG: %s | frame_no=%u frame_open=%d finish_pending=%d pend=%d pend_done=%d disp=%d target=%d | vbl=%u flips=%u flip_vbl=%u irq_seen=%d | dma: pending=%d busy=%d q_n=%d cur=%d wr=%u CHCR=%08x MADR=%08x QWC=%08x GIF_STAT=%08x CSR=%08x\n",
-		why, H.frame_no, H.frame_open, H.finish_pending, H.pend, H.pend_done, H.disp, H.target, (unsigned)H.vbl, (unsigned)H.flips,
+	I_OutputMsg("HWD WATCHDOG: %s | VIF1 STAT=%08x D1 CHCR=%08x MADR=%08x QWC=%08x TADR=%08x V.on=%d | frame_no=%u frame_open=%d finish_pending=%d pend=%d pend_done=%d disp=%d target=%d | vbl=%u flips=%u flip_vbl=%u irq_seen=%d | dma: pending=%d busy=%d q_n=%d cur=%d wr=%u CHCR=%08x MADR=%08x QWC=%08x GIF_STAT=%08x CSR=%08x\n",
+		why, (unsigned)*VIF1_STAT, (unsigned)*D1_CHCR, (unsigned)*D1_MADR, (unsigned)*D1_QWC, (unsigned)*D1_TADR, V.on, H.frame_no, H.frame_open, H.finish_pending, H.pend, H.pend_done, H.disp, H.target, (unsigned)H.vbl, (unsigned)H.flips,
 		(unsigned)H.flip_vbl, H.irq_seen, H.pending, H.dma_busy, H.q_n, H.cur, H.wr, (unsigned)*D2_CHCR, (unsigned)*D2_MADR, (unsigned)*D2_QWC,
 		(unsigned)*GIF_STAT_REG, (unsigned)*GS_CSR);
 	fflush(stdout);
@@ -179,6 +179,13 @@ static void pk_flush(void)
 		b[H.run].d[0] = dma_tag(qwc, DMAT_END, 0);
 		if (V.on)
 			b[H.run].d[1] = vif_gif_codes(qwc); // PS2-HW-44
+	}
+	else if (V.on)
+	{
+		// OPT10 (HG): the element in front of the empty run may be a CNT tag with data behind it (VU1 constants, an UNPACK chunk): turning it into a
+		// REFE tag made the DMA read its data from address 0 (a stuck chain after a hundred frames). The run's own tag ends the chain instead.
+		b[H.run].d[0] = dma_tag(0, DMAT_END, 0);
+		b[H.run].d[1] = 0; // VIF NOP, NOP
 	}
 	else
 	{
