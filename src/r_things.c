@@ -3403,14 +3403,17 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 {
 	drawnode_t *entry;
 	drawseg_t *ds;
-	INT32 i, p, best, x1, x2;
+	INT32 i, p, best;
+#ifndef PS2_OPT_NODES // (used by the original draw node scan only: -Werror of the hardware configuration)
+	INT32 x1, x2;
+	fixed_t scale = 0;
+#endif
 	fixed_t bestdelta, delta;
 	vissprite_t *rover;
 	static vissprite_t vsprsortedhead;
 	drawnode_t *r2;
 	visplane_t *plane;
 	INT32 sintersect;
-	fixed_t scale = 0;
 
 	// Add the 3D floors, thicksides, and masked textures...
 	for (ds = drawsegs + mask->drawsegs[1]; ds-- > drawsegs + mask->drawsegs[0];)
