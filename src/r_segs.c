@@ -1929,7 +1929,7 @@ R_FORCEINLINE void R_RenderSegLoopT(const boolean plain, const INT32 tiers)
 				else if (!rw_ceilingmarked)
 					cclip[cx] = topclip;
 
-				if (oldtexturecolumn_top != -1)
+				if (topslide_ && oldtexturecolumn_top != -1) // PS2-165: FixedMul(0, x) is 0 (the slide is zero on every wall without slopes)
 					toptexturemid_ += FixedMul(topslide_, oldtexturecolumn_top-textureoffset);
 				oldtexturecolumn_top = textureoffset;
 			}
@@ -1989,7 +1989,7 @@ R_FORCEINLINE void R_RenderSegLoopT(const boolean plain, const INT32 tiers)
 				else if (!rw_floormarked)
 					fclip[cx] = bottomclip;
 
-				if (oldtexturecolumn_bottom != -1)
+				if (botslide_ && oldtexturecolumn_bottom != -1)
 					bottomtexturemid_ += FixedMul(botslide_, oldtexturecolumn_bottom-textureoffset);
 				oldtexturecolumn_bottom = textureoffset;
 			}
@@ -2013,7 +2013,7 @@ R_FORCEINLINE void R_RenderSegLoopT(const boolean plain, const INT32 tiers)
 
 		if (midwork)
 		{
-			if (oldtexturecolumn != -1)
+			if ((midslide_ | midbackslide_) && oldtexturecolumn != -1)
 			{
 				INT32 diff = oldtexturecolumn-textureoffset;
 				if (midneg_)

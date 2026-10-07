@@ -259,6 +259,12 @@ def main():
         CFLAGS.append('-DPS2_MEMPROF')
         for fn in ('memcpy', 'memset', 'memmove'):
             LDFLAGS.append('-Wl,--wrap=' + fn)
+    elif os.environ.get('SRB2_PS2_FASTMEM', '1') != '0':
+        # PS2-163: 128-bit bulk memcpy/memset (src/ps2/ps2_memops.c), newlib's code for everything else
+        for fn in ('memcpy', 'memset'):
+            LDFLAGS.append('-Wl,--wrap=' + fn)
+    else:
+        CFLAGS.append('-DPS2_NO_FASTMEM')
     if a.sample:
         CFLAGS.append('-DPS2_SAMPLE')
         CFLAGS.append('-g1')  # line tables for tools/ps2/sample_report.py (no code change)

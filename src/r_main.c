@@ -1039,8 +1039,92 @@ void R_Init(void)
 //
 // R_IsPointInSector
 //
+#ifdef PS2_OPT_REND
+// PS2-164: the even-odd test walks every line of the sector (line -> two sectors, two vertices: six dependent loads per line, ~900 cycles per call
+// on a sector with many lines, P_MobjFloorZ/CeilingZ call it for every object on a slope). The lines that can count (the two sectors differ, not
+// horizontal) are kept as flat records with v1 below v2, in the same order. Built on first use for a sector; the level load drops the table
+// (R_ResetSectorEdgeCache). Sectors with a polyobject line keep the original loop: those vertices move.
+typedef struct { fixed_t x1, y1, x2, y2; } ps2_sedge_t;
+typedef struct { UINT32 n; UINT32 pad[3]; ps2_sedge_t e[1]; } ps2_sedges_t;
+static ps2_sedges_t **sedge_tab;
+static size_t sedge_tabn;
+static ps2_sedges_t sedge_nocache; // marker: this sector is walked line by line
+
+void R_ResetSectorEdgeCache(void)
+{
+	sedge_tab = NULL; // the memory was PU_LEVEL: gone with the level
+	sedge_tabn = 0;
+}
+
+static boolean R_IsPointInSectorLines(sector_t *sector, fixed_t x, fixed_t y);
+
+static ps2_sedges_t *R_BuildSectorEdges(sector_t *sector, size_t idx)
+{
+	ps2_sedges_t *se;
+	size_t i, n = 0;
+
+	for (i = 0; i < sector->linecount; i++)
+		if (sector->lines[i]->polyobj)
+			return sedge_tab[idx] = &sedge_nocache;
+	se = Z_Malloc(sizeof (ps2_sedges_t) + sizeof (ps2_sedge_t) * sector->linecount, PU_LEVEL, NULL);
+	for (i = 0; i < sector->linecount; i++)
+	{
+		const line_t *line = sector->lines[i];
+		const vertex_t *v1, *v2;
+
+		if (line->frontsector == line->backsector)
+			continue;
+		v1 = line->v1;
+		v2 = line->v2;
+		if (v1->y > v2->y)
+		{
+			const vertex_t *tmp = v1;
+			v1 = v2;
+			v2 = tmp;
+		}
+		else if (v1->y == v2->y)
+			continue; // horizontal line, we can't match this
+		se->e[n].x1 = v1->x;
+		se->e[n].y1 = v1->y;
+		se->e[n].x2 = v2->x;
+		se->e[n].y2 = v2->y;
+		n++;
+	}
+	se->n = (UINT32)n;
+	return sedge_tab[idx] = se;
+}
+
 boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y)
 {
+	const size_t idx = (size_t)(sector - sectors);
+	const ps2_sedges_t *se;
+	const ps2_sedge_t *e;
+	UINT32 n, passes = 0;
+
+	if (idx >= numsectors)
+		return R_IsPointInSectorLines(sector, x, y);
+	if (sedge_tabn != numsectors || !sedge_tab)
+	{
+		sedge_tab = Z_Calloc(sizeof (*sedge_tab) * numsectors, PU_LEVEL, NULL);
+		sedge_tabn = numsectors;
+	}
+	se = sedge_tab[idx];
+	if (!se)
+		se = R_BuildSectorEdges(sector, idx);
+	if (se == &sedge_nocache)
+		return R_IsPointInSectorLines(sector, x, y);
+	for (e = se->e, n = se->n; n; n--, e++)
+		if (e->y1 < y && y <= e->y2 && PS2_EdgeXLess(e->x1, e->y1, e->x2, e->y2, x, y))
+			passes++;
+	return passes & 1;
+}
+
+static boolean R_IsPointInSectorLines(sector_t *sector, fixed_t x, fixed_t y)
+{
+#else
+boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y)
+{
+#endif
 	size_t i;
 	size_t passes = 0;
 

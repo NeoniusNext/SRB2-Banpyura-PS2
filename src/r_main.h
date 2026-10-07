@@ -81,6 +81,9 @@ fixed_t R_PointToDist(fixed_t x, fixed_t y);
 fixed_t R_PointToDist2(fixed_t px2, fixed_t py2, fixed_t px1, fixed_t py1);
 
 boolean R_IsPointInSector(sector_t *sector, fixed_t x, fixed_t y);
+#ifdef PS2_OPT_REND
+void R_ResetSectorEdgeCache(void); // PS2-164: called by P_LoadLevel after the level zone is freed
+#endif
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y);
 subsector_t *R_PointInSubsectorOrNull(fixed_t x, fixed_t y);
 
