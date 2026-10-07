@@ -535,7 +535,14 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 
 			// Otherwise, we load it here.
 			if (realpatch == NULL)
+#ifdef PS2_PROFILE
+				// OPT10-HF (PS2-HW-76): the patch is only the source of this composition. PU_PATCH keeps it for the whole session
+				// (4.9 MB of PU_PATCH after 7 level changes: the 8th change ran out of zone memory, the software renderer stays at 0.5 MB);
+				// PU_PATCH_LOWPRIORITY is freed at every level load (p_setup.c) like the other level-bound patches
+				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH_LOWPRIORITY);
+#else
 				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
+#endif
 		}
 
 		HWR_DrawTexturePatchInCache(mipmap, blockwidth, blockheight, texture, patch, realpatch);
