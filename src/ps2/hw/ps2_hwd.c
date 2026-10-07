@@ -609,12 +609,7 @@ static void hw_SetTexturePalette(RGBA_t *ppal)
 {
 	if (H.up && ppal)
 	{
-		u32 before = H.pal[1] ^ H.pal[32] ^ H.pal[100];
-
 		palette_set(ppal);
-		if ((H.pal[1] ^ H.pal[32] ^ H.pal[100]) != before)
-			I_OutputMsg("HWPAL texture palette set: pal[1]=%06x pal[32]=%06x pal[100]=%06x (screen palette %s: spal[32]=%06x spal[100]=%06x)\n", (unsigned)H.pal[1], (unsigned)H.pal[32],
-				(unsigned)H.pal[100], spal_set ? "set" : "unset", (unsigned)spal[32], (unsigned)spal[100]);
 	}
 }
 
@@ -1191,7 +1186,8 @@ static void hw_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
 
 static void hw_ClearLightTables(void)
 {
-	ov_flush_all();
+	if (H.up)
+		ov_flush_all();
 	lt_clear();
 }
 
@@ -1206,18 +1202,6 @@ static void hw_SetScreenPalette(RGBA_t *palette)
 		np[i] = (u32)palette[i].s.red | ((u32)palette[i].s.green << 8) | ((u32)palette[i].s.blue << 16);
 	if (spal_set && !memcmp(np, spal, sizeof np))
 		return;
-	{
-		int far = 0;
-
-		for (i = 0; i < 256; i++)
-		{
-			int dr = (int)(np[i] & 255) - (int)(H.pal[i] & 255), dg = (int)((np[i] >> 8) & 255) - (int)((H.pal[i] >> 8) & 255), db = (int)((np[i] >> 16) & 255) - (int)((H.pal[i] >> 16) & 255);
-
-			far += (dr > 12 || dr < -12 || dg > 12 || dg < -12 || db > 12 || db < -12);
-		}
-		I_OutputMsg("HWPAL screen palette set: %d of 256 entries differ from the texture palette by more than 12 (pal[1]=%06x spal[1]=%06x pal[32]=%06x spal[32]=%06x)\n", far,
-			(unsigned)H.pal[1], (unsigned)np[1], (unsigned)H.pal[32], (unsigned)np[32]);
-	}
 	ov_flush_all(); // pending draws must consume the previous screen palette before the CLUTs change
 	memcpy(spal, np, sizeof np);
 	spal_set = 1;
