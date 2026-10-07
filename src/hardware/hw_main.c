@@ -49,6 +49,7 @@
 #include "../ps2/hw/ps2_hw_prof.h" // PS2-HW-15: COP0 phase accumulators of the hardware renderer (HWPROF lines)
 unsigned long long ps2hwp_cyc[HWP_NUM];
 unsigned int ps2hwp_cnt[HWC_NUM];
+extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
@@ -302,6 +303,49 @@ static FUINT HWR_CalcWallLight(FUINT lightnum, fixed_t v1x, fixed_t v1y, fixed_t
 	return (FUINT)finallight;
 }
 
+#ifdef PS2_PROFILE
+// PS2-HW-51: the "fake contrast" of a wall depends on the direction of its seg only (a division, an angle and a fixed point divide: 210 cycles
+// for each of the 1000 segs of a frame). The extra light of a seg is kept (one INT16 per seg, 0x7F7F = not made yet) and the cache is dropped
+// when the console variable changes. Polyobject segs move: they are always calculated.
+static INT16 *wallxl_cache;
+static INT32 wallxl_mode = -1;
+
+static FUINT HWR_CalcSegLight(FUINT lightnum, const seg_t *seg, fixed_t v1x, fixed_t v1y, fixed_t v2x, fixed_t v2y)
+{
+	INT16 *e;
+	INT32 xl;
+	INT16 finallight = lightnum;
+
+	if (cv_glfakecontrast.value == 0)
+		return lightnum;
+	if (seg->polyseg || (ps2hwd_dbg_flags & 0x40000))
+		return HWR_CalcWallLight(lightnum, v1x, v1y, v2x, v2y);
+	if (!wallxl_cache || wallxl_mode != cv_glfakecontrast.value)
+	{
+		if (!wallxl_cache)
+			Z_Malloc(numsegs * sizeof(INT16), PU_LEVEL, &wallxl_cache);
+		memset(wallxl_cache, 0x7F, numsegs * sizeof(INT16));
+		wallxl_mode = cv_glfakecontrast.value;
+	}
+	e = &wallxl_cache[seg - segs];
+	if (*e == 0x7F7F)
+	{
+		// the extra light is what HWR_CalcWallLight adds to a light level that cannot clamp: 128 (clamp only after the addition)
+		*e = (INT16)((INT32)HWR_CalcWallLight(128, v1x, v1y, v2x, v2y) - 128);
+	}
+	xl = *e;
+	if (xl != 0)
+	{
+		finallight += xl;
+		if (finallight < 0)
+			finallight = 0;
+		if (finallight > 255)
+			finallight = 255;
+	}
+	return (FUINT)finallight;
+}
+#endif
+
 static FUINT HWR_CalcSlopeLight(FUINT lightnum, angle_t dir, fixed_t delta)
 {
 	INT16 finallight = lightnum;
@@ -502,7 +546,11 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		}
 	}
 
+#ifdef PS2_PROFILE // PS2-HW-49: ANG2RAD is a soft-double multiply, conversion and truncation; angle 0 (almost every flat) gives exactly 0
+	anglef = angle ? ANG2RAD(InvAngle(angle)) : 0.0f;
+#else
 	anglef = ANG2RAD(InvAngle(angle));
+#endif
 
 #define SETUP3DVERT(vert, vx, vy) {\
 		/* Hurdler: add scrolling texture on floor/ceiling */\
@@ -1266,7 +1314,11 @@ static void HWR_ProcessSeg(void)
 
 	FUINT lightnum = HWR_SideLightLevel(gl_sidedef, gl_frontsector->lightlevel);
 	extracolormap_t *colormap = gl_frontsector->extra_colormap;
+#ifdef PS2_PROFILE
+	lightnum = colormap ? lightnum : HWR_CalcSegLight(lightnum, gl_curline, vs.x, vs.y, ve.x, ve.y);
+#else
 	lightnum = colormap ? lightnum : HWR_CalcWallLight(lightnum, vs.x, vs.y, ve.x, ve.y);
+#endif
 
 	FSurfaceInfo Surf;
 	Surf.PolyColor.s.alpha = 255;
@@ -4013,6 +4065,10 @@ static int CompareVisSprites(const void *p1, const void *p2)
 		return -1;
 }
 
+#ifdef PS2_PROFILE
+static unsigned sortcheck_ok;
+#endif
+
 static void HWR_SortVisSprites(void)
 {
 	UINT32 i;
@@ -4023,6 +4079,81 @@ static void HWR_SortVisSprites(void)
 	{
 		gl_vsprorder[i] = HWR_GetVisSprite(i);
 	}
+#ifdef PS2_PROFILE
+	// PS2-HW-50: qsort with CompareVisSprites (a call per comparison, five loads and several branches each) cost 0.3 M cycles for 530 sprites.
+	// Without bounding boxes and linkdraw pairs (the comparator's special cases) the order is a plain key: transparent last, then eye depth
+	// far to near, then display offset; a stable merge sort of the keys gives the same order (equal keys keep the traversal order).
+	{
+		static UINT64 skey[MAXVISSPRITES];
+		static UINT16 oa[MAXVISSPRITES], ob[MAXVISSPRITES];
+		boolean plain = true;
+		UINT32 width, lo;
+
+		for (i = 0; i < gl_visspritecount && plain; i++)
+		{
+			gl_vissprite_t *spr = gl_vsprorder[i];
+			union { float f; UINT32 u; } tz;
+			UINT32 s;
+			int transparency;
+
+			if (spr->bbox || (!spr->precip && (spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer))
+			{
+				plain = false;
+				break;
+			}
+			transparency = (!spr->precip && (spr->mobj->flags2 & MF2_SHADOW)) || (spr->mobj->frame & FF_TRANSMASK);
+			tz.f = spr->tz;
+			s = tz.u ^ ((tz.u & 0x80000000u) ? 0xFFFFFFFFu : 0x80000000u); // ascending with the float
+			skey[i] = ((UINT64)(transparency != 0) << 63) | ((UINT64)(~s) << 31) | (UINT64)((UINT32)(spr->dispoffset + 0x4000) & 0x7FFFu);
+			oa[i] = (UINT16)i;
+		}
+		if (plain)
+		{
+			UINT16 *src = oa, *dst = ob, *t;
+
+			for (width = 1; width < gl_visspritecount; width *= 2)
+			{
+				for (lo = 0; lo < gl_visspritecount; lo += 2 * width)
+				{
+					UINT32 mid = lo + width < gl_visspritecount ? lo + width : gl_visspritecount;
+					UINT32 hi = lo + 2 * width < gl_visspritecount ? lo + 2 * width : gl_visspritecount;
+					UINT32 x = lo, y = mid, o = lo;
+
+					while (x < mid && y < hi)
+						dst[o++] = (skey[src[y]] < skey[src[x]]) ? src[y++] : src[x++];
+					while (x < mid)
+						dst[o++] = src[x++];
+					while (y < hi)
+						dst[o++] = src[y++];
+				}
+				t = src;
+				src = dst;
+				dst = t;
+			}
+			{
+				static gl_vissprite_t *copy[MAXVISSPRITES]; // gl_vsprorder is rewritten from a copy of itself
+
+				memcpy(copy, gl_vsprorder, gl_visspritecount * sizeof copy[0]);
+				for (i = 0; i < gl_visspritecount; i++)
+					gl_vsprorder[i] = copy[src[i]];
+				if (ps2hwd_dbg_flags & 0x20000) // -hwdbg 131072: the old qsort of the same sprites; every position where the two orders disagree (ties aside) is reported
+				{
+					UINT32 bad = 0;
+
+					qsort(copy, gl_visspritecount, sizeof copy[0], CompareVisSprites);
+					for (i = 0; i < gl_visspritecount; i++)
+						if (CompareVisSprites(&gl_vsprorder[i], &copy[i]) != 0)
+							bad++;
+					if (bad)
+						I_OutputMsg("HWSORTCHECK %u of %u positions differ from qsort\n", (unsigned)bad, (unsigned)gl_visspritecount);
+					else
+						sortcheck_ok++;
+				}
+			}
+			return;
+		}
+	}
+#endif
 	qsort(gl_vsprorder, gl_visspritecount, sizeof(gl_vissprite_t*), CompareVisSprites);
 }
 
