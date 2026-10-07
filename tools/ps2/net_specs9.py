@@ -266,8 +266,8 @@ def pair(name, srv, cli, tics, pollsrv=None, pollcli=None, srv_args=None, srv_cm
         nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
                           args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2] + (cli_args or []),
                           start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6}))
-    write(name, {'timeout': timeout, 'nodes': nodes,
-                 'until': [{'node': 'srv', 'text': f'NETSYNC gametic={tics}'}, {'node': 'cli', 'text': f'NETSYNC gametic={tics}'}], 'grace': 3})
+    write(name, {'timeout': timeout, 'nodes': nodes, 'abort_on': [{'node': 'srv', 'text': 'left the game (Connection timeout)'}],
+                 'until': [{'node': 'srv', 'text': 'NETSYNC gametic=', 'min': tics}, {'node': 'cli', 'text': 'NETSYNC gametic=', 'min': tics}], 'grace': 3})
 
 
 SOAK = 6545  # a multiple of 35: NETSYNC lines are printed at gametic % TICRATE == 0
@@ -296,7 +296,7 @@ for cname, ckind in (('pccli', 'pc'), ('ps2cli', 'ps2')):
         cli = ps2('cli', EMU2, ['-skipintro', '-connect', H, '-clientport', '5030', '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
                   files={'pad.txt': pad(*crosses(150, 3000, 60))}, cfg=CFG_SYNC, start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 2})
     write(f'addons-ps2srv-{cname}', {'timeout': 1500, 'nodes': [srv, cli],
-                                    'until': [{'node': 'srv', 'text': 'NETSYNC gametic=2100'}, {'node': 'cli', 'text': 'NETSYNC gametic=2100'}], 'grace': 3})
+                                    'until': [{'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 2100}, {'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 2100}], 'grace': 3})
 
 # 9. a PS2 host started from the menu (Multiplayer > Internet/LAN > Room > Start) registers on the mock master server; a PC client joins it.
 HOSTPAD = [(250, 'start'), (330, 'down'), (400, 'cross'),                       # title > main menu > Multiplayer
@@ -366,7 +366,7 @@ write('split-net', {
     'timeout': 900,
     'nodes': [pcsrv(start=0),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] , cfg=CFG_SYNC,
-                  files={'pad.txt': pad(*crosses(150, 700, 60)) + ',' + walk(1, 800, 9000, seed=3) + ',' + walk(2, 800, 9000, seed=4), 'cmd.txt': '700:splitscreen 1'}, start=8)],
+                  files={'pad.txt': pad(*crosses(150, 700, 60)) + ',' + walk(1, 800, 9000, seed=3) + ',' + walk(2, 800, 9000, seed=4), 'cmd.txt': '1500:splitscreen 1'}, start=8)],
     'until': [{'node': 'cli', 'text': 'NETSYNC gametic=2800'}, {'node': 'srv', 'text': 'NETSYNC gametic=2800'}], 'grace': 3})
 
 if __name__ == '__main__':

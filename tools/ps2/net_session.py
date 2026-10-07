@@ -18,10 +18,13 @@ two net copies are not shared). Spec (JSON):
 "pc" nodes write stdout+stderr to <out>/<name>/<id>/out.txt (CONS_Printf goes to stderr unbuffered); "stdin" lines are sent at the given seconds
 after the node started (dedicated servers); "xvfb": true/false overrides the "needs a display" guess (not "-dedicated" = needs one).
 "until" conditions: all (or any, with "any": true) must appear; the session then waits "grace" seconds and stops every node.
-Exit code: 0 all conditions met, 2 timeout/condition missing, 3 an emulator died or its network did not start (--retries N starts the session again).
+Exit code: 0 all conditions met, 2 timeout/condition missing, 3 an emulator died or its network did not start (--retries N starts the session again),
+4 an engine log names the real master server (audit), 5 an "abort_on" line appeared (the run cannot succeed any more), 6 an emulator log outgrew the
+runaway limit (SRB2_PCSX2_LOG_LIMIT_MB, default 300; not retried).
 """
 import argparse
 import json
+import re
 import os
 import shutil
 import signal
@@ -250,6 +253,20 @@ def run_session(spec):
                     n.stopped = True
                 if n.started and not n.stopped:
                     n.feed()
+                    if n.spec['kind'] == 'ps2':
+                        # RUNAWAY GUARD (as run_pcsx2.py): an emulator log that outgrows LOG_LIMIT (a TLB-miss storm wrote 16 GB once) ends the session, the log is truncated
+                        try:
+                            big = (n.dir / 'pcsx2.log').stat().st_size > run_pcsx2.LOG_LIMIT
+                        except OSError:
+                            big = False
+                        if big:
+                            for m in nodes:
+                                m.stop()
+                            (n.dir / 'pcsx2.log').write_text('RUNAWAY: emulator log exceeded %d MB, session stopped by net_session.py; log truncated\n' % (run_pcsx2.LOG_LIMIT >> 20))
+                            result['died'] = n.id
+                            result['runaway'] = True
+                            print(f'[{time.strftime("%H:%M:%S")}] {n.id}: RUNAWAY emulator log, session stopped', flush=True)
+                            raise StopIteration
                     if n.spec['kind'] == 'ps2' and not n.spec.get('may_fail_net') and 'PS2 net: the network drivers did not start' in n.text(''):
                         # PCSX2's DEV9 sometimes cannot open its host adapter ("Socket: Failed to get MAC address for adapter"): an emulator start-up flake, run again
                         result['died'] = n.id
@@ -260,13 +277,22 @@ def run_session(spec):
                         result['died'] = n.id
                         print(f'[{time.strftime("%H:%M:%S")}] {n.id}: the emulator exited (code {n.proc.returncode}) before the session ended', flush=True)
                         raise StopIteration
+            for ab in spec.get('abort_on', []):  # {"node", "text"}: a line that says this run cannot succeed any more (a dropped client): end it now, exit code 5
+                if ab['text'] in next(n for n in nodes if n.id == ab['node']).text(ab.get('file', '')):
+                    result['aborted'] = f"{ab['node']}: {ab['text']}"
+                    print(f'[{time.strftime("%H:%M:%S")}] aborted: {result["aborted"]}', flush=True)
+                    raise StopIteration
             conds = spec.get('until', [])
             if conds:
                 hits = []
                 for c in conds:
                     node = next(n for n in nodes if n.id == c['node'])
-                    hit = c['text'] in node.text(c.get('file', ''))
-                    result['conditions'][f"{c['node']}:{c['text']}"] = hit
+                    if 'min' in c:  # {"node", "text": "NETSYNC gametic=", "min": 2100}: the largest number after the text is >= min (a client that joins late never prints one exact value)
+                        nums = [int(x) for x in re.findall(re.escape(c['text']) + r'(\d+)', node.text(c.get('file', '')))]
+                        hit = bool(nums) and max(nums) >= c['min']
+                    else:
+                        hit = c['text'] in node.text(c.get('file', ''))
+                    result['conditions'][f"{c['node']}:{c['text']}" + (f">={c['min']}" if 'min' in c else '')] = hit
                     hits.append(hit)
                 if (any(hits) if spec.get('any') else all(hits)):
                     time.sleep(spec.get('grace', 3))
@@ -298,7 +324,7 @@ def run_session(spec):
         print('MASTER SERVER AUDIT FAILED: an engine contacted the real master server:', *hits[:5], sep='\n  ', flush=True)
     (out / 'result.json').write_text(json.dumps(result, indent=1))
     print(json.dumps(result), flush=True)
-    return 4 if hits else 3 if result.get('died') else 0 if not result['timeout'] and all(result['conditions'].values() or [True]) else 2
+    return 4 if hits else 6 if result.get('runaway') else 3 if result.get('died') else 5 if result.get('aborted') else 0 if not result['timeout'] and all(result['conditions'].values() or [True]) else 2
 
 
 def main():
