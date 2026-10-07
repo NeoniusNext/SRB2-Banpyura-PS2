@@ -20,8 +20,10 @@ static int plan_active;
 #define PLAN_MAX 256 // images of one frame's plan (more are stored at full size)
 #define PLAN_BINS 32 // texel size histogram: 4 bins per octave, 2^-5 .. 2^3 pixels
 #define PLAN_EPS 0.02f // share of an image's visible area that may be magnified by more than the plan allows
-#define PLAN_BUDGET_NUM 3 // the planned images of a frame may take this share of the pool: 3/4 (the rest is for sprites, patches, the small textures)
-#define PLAN_BUDGET_DEN 4
+#define PLAN_PCT_MAX 75u // the planned images of a frame may take this share of the pool (per cent; the rest is for sprites, patches, the small textures)
+#define PLAN_PCT_MIN 35u // ... and this much when the controller (plan_frame_end) finds the working set of the frame does not fit
+#define PLAN_PCT_DOWN 6u // per frame in which an image used by the frame was evicted in the frame
+#define PLAN_CALM_FRAMES 45 // calm frames before the budget grows by one per cent
 #define PLAN_TOL_EXACT 1.0f // texel magnification allowed by the exact plan
 #define PLAN_TOL_RELAX 2.0f // ... and by the relaxed plan (images stored one level coarser to fit the budget)
 #define PLAN_BIG_BLOCKS 512u // an image of at least this many blocks (at its exact level) may be stored PLAN_BIG_EXTRA levels coarser than the exact plan when the budget needs it
@@ -337,6 +339,23 @@ static void plan_frame_end(void)
 {
 	int i;
 
+	// the controller of the budget: images of the frame that were evicted within the frame mean the working set does not fit the pool (or its pieces)
+	if (!H.plan_pct)
+		H.plan_pct = PLAN_PCT_MAX;
+	if (H.thrash_n)
+	{
+		H.plan_pct = H.plan_pct > PLAN_PCT_MIN + PLAN_PCT_DOWN ? H.plan_pct - PLAN_PCT_DOWN : PLAN_PCT_MIN;
+		H.plan_calm = 0;
+	}
+	else if (++H.plan_calm >= PLAN_CALM_FRAMES && H.plan_pct < PLAN_PCT_MAX)
+	{
+		H.plan_pct++;
+		H.plan_calm = 0;
+	}
+	TX.thrash_n += H.thrash_n;
+	TX.thrash_blk += H.thrash_blk;
+	H.thrash_n = H.thrash_blk = 0;
+
 	for (i = 0; i < imm_ncur; i++)
 	{
 		GLMipmap_t *k = imm_cur[i];
@@ -367,14 +386,16 @@ void PS2HWD_PlanEnd(void)
 		return;
 	plan_active = 0;
 	TX.plan_cyc += cyc() - plan_t0; // the measuring of the polygons (PlanPolygon) is the time between Begin and End
-	budget = H.pool_blocks / PLAN_BUDGET_DEN * PLAN_BUDGET_NUM;
+	if (!H.plan_pct)
+		H.plan_pct = PLAN_PCT_MAX;
+	budget = H.pool_blocks / 100u * H.plan_pct;
 	if (budget > H.plan_reserve)
 		budget -= H.plan_reserve;
 	for (i = 0; i < plan_n; i++)
 	{
 		GLMipmap_t *k = plan_info[i].key;
 		float s = plan_seps(&plan_info[i]);
-		int lm = plan_lmax(k), le, lrx;
+		int lm = plan_lmax(k), le, lrx, full;
 
 		key[n] = k;
 		tot[n] = plan_info[i].total;
@@ -390,8 +411,11 @@ void PS2HWD_PlanEnd(void)
 		cap[n] = (u8)(lrx > lm ? lm : lrx);
 		if (cap[n] < lx[n])
 			cap[n] = lx[n];
+		full = k->ps2_full_fr && H.frame_no + 1 - k->ps2_full_fr < PLAN_FULL_KEEP;
+		if (full)
+			lx[n] = cap[n] = 0; // something draws it at full size without knowing its geometry (the sky dome): that is what it costs
 		sum += plan_blocks(k, lx[n]);
-		if (plan_blocks(k, lx[n]) >= PLAN_BIG_BLOCKS && lx[n] + PLAN_BIG_EXTRA <= lm)
+		if (!full && plan_blocks(k, lx[n]) >= PLAN_BIG_BLOCKS && lx[n] + PLAN_BIG_EXTRA <= lm)
 			cap[n] = (u8)(lx[n] + PLAN_BIG_EXTRA); // a big image may go further when the budget needs it
 		n++;
 	}
@@ -569,11 +593,12 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 	{
 		if (pi)
 			plan_add(pi, 1.0e6f, 1.0f);
+		k->ps2_full_fr = H.frame_no + 1; // drawn at full size, whatever else says: the batches of the frame must not make it coarser (and back, every frame)
 		lv = 0;
 	}
 	k->ps2_vis = 1;
-	if (verts && k->ps2_ihfr && H.frame_no + 1 - k->ps2_ihfr <= 2 && k->ps2_ihint > lv)
-		lv = k->ps2_ihint; // the budget of the frame asks for a coarser level than this polygon alone would
+	if (verts && k->ps2_ihfr && H.frame_no + 1 - k->ps2_ihfr <= 2)
+		lv = k->ps2_ihint; // the plan of the whole previous frame (with the budget) decides: the polygons seen so far in this frame would make the level flip from polygon to polygon
 	lm = plan_lmax(k);
 	imm_level = lv > lm ? lm : lv;
 	if (!verts)

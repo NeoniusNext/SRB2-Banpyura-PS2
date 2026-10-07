@@ -299,6 +299,7 @@ static void own_clear(u32 blk, u32 n);
 
 // drop a texture from VRAM; the engine finds `downloaded` cleared and regenerates/uploads it when it needs it again
 static void lod_account(texrec_t *r);
+static int batch_phase; // (defined below)
 
 static void tex_drop(int i, int count_eviction)
 {
@@ -322,6 +323,14 @@ static void tex_drop(int i, int count_eviction)
 		rec_release(i);
 		return;
 	}
+	if (count_eviction && !r->screen && !r->pin && r->stamp == H.frame_no)
+	{
+		H.thrash_n++; // an image the frame uses is evicted in the frame: it has to be uploaded again when it is drawn (PS2-HW-39: feeds the budget controller)
+		H.thrash_blk += r->nblk;
+	}
+	if (count_eviction && (ps2hwd_dbg_flags & HWDBG_IMMDBG) && r->nblk >= 128)
+		CONS_Printf("HWIMM f=%u EVICT %s %ux%u lvl=%d blk=%u age=%u done=%d cur=%d phase=%d\n", (unsigned)H.frame_no, r->owner ? HWR_PS2_TexName(r->owner) : "-", (unsigned)r->sw, (unsigned)r->sh, (int)r->dx,
+			(unsigned)r->nblk, (unsigned)(H.frame_no - r->stamp), (int)(r->done == H.frame_no + 1), H.cur_tex == i, batch_phase);
 	// the image goes, and every view of it with it (their engine owners find `downloaded` cleared)
 	while (r->sec != NOREC)
 	{
@@ -529,6 +538,15 @@ static u32 vram_alloc_evicting(u32 n, u32 align, int hi)
 		b = hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
 		if (b)
 			return b;
+		if (!tries)
+		{
+			TX.alloc_fail++; // no free range fits: something has to go (PS2-HW-39: how often there was room in total, but not in one piece)
+			if (H.pool_blocks - H.used_blocks >= n)
+			{
+				TX.alloc_frag++;
+				TX.alloc_frag_blk += n;
+			}
+		}
 		if (n <= SMALL_REQUEST && !(ps2hwd_dbg_flags & 32))
 		{
 			int v = small_victim();
@@ -1024,6 +1042,25 @@ static dcent_t *dc_find(u32 key, u32 w, u32 h, u32 lvl)
 	return NULL;
 }
 
+// the cached level of the texture that is the nearest finer one than `lv` but not the full size (levels 1 .. lv-1): the source of a coarser level
+// (a fourth of the work of making it from the full size, and no need for the full size texels at all)
+static dcent_t *dc_find_finer(u32 key, u32 w, u32 h, u32 lv, u32 *slv)
+{
+	u32 l;
+
+	for (l = lv - 1; l >= 1 && l < lv; l--)
+	{
+		dcent_t *e = dc_find(key, w >> l, h >> l, l);
+
+		if (e)
+		{
+			*slv = l;
+			return e;
+		}
+	}
+	return NULL;
+}
+
 // a free entry for `bytes` more texels, evicting the least recently used idle ones; NULL when the budget cannot be met
 static dcent_t *dc_slot(u32 bytes)
 {
@@ -1462,7 +1499,7 @@ static int scan_has_ff(const u8 *d, u32 n)
 // four samples of the block (its corners inside a margin of a quarter) is taken: the one whose luminance is farthest from the mean of the four,
 // which keeps a thin dark or light line visible where picking the middle texel would lose it (the PC driver's point sampling shows such a line
 // in a part of the pixels, never in none). Index 255 (hole / chroma key) is kept when at least two samples have it, else it is not picked.
-static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
+static void dec_level_ref(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
 {
 	u32 lum[256], i, x, y, bw = 1u << lv, o0 = bw >> 2, o1 = bw - 1 - o0, ow = sw >> lv, oh = sh >> lv;
 
@@ -1517,6 +1554,84 @@ static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
 	}
 }
 
+// The same as dec_level_ref, made fast (PS2-HW-39): 200 cycles per output texel became about 40 (a level 1 of a 1024 x 1024 plane took 55 M cycles = a
+// frame hitch of 0.2 s). A block of four equal samples is copied; the division of the mean is a multiplication (exact for the sums that occur).
+static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
+{
+	u8 lum[256];
+	u32 i, x, y, bw = 1u << lv, o0 = bw >> 2, o1 = bw - 1 - o0, ow = sw >> lv, oh = sh >> lv;
+
+	for (i = 0; i < 256; i++)
+		lum[i] = (u8)(((H.pal[i] & 255u) * 77u + ((H.pal[i] >> 8) & 255u) * 150u + ((H.pal[i] >> 16) & 255u) * 29u) >> 8);
+	for (y = 0; y < oh; y++)
+	{
+		const u8 *r0 = src + (size_t)(y * bw + o0) * sw + o0, *r1 = src + (size_t)(y * bw + o1) * sw + o0;
+		const u32 dxb = o1 - o0; // distance of the second sample column from the first
+		u8 *o = dst + (size_t)y * ow;
+
+		for (x = 0; x < ow; x++, r0 += bw, r1 += bw)
+		{
+			const u32 a = r0[0], b = r0[dxb], c = r1[0], d = r1[dxb];
+			u32 sum, mean, la, lb, lc, ld, da, db, dc, dd, best, bestd, holes;
+
+			if (!((a ^ b) | (a ^ c) | (a ^ d)))
+			{
+				o[x] = (u8)a; // four equal samples: that colour (index 255 stays a hole)
+				continue;
+			}
+			holes = (a == 255) + (b == 255) + (c == 255) + (d == 255);
+			if (holes >= 2)
+			{
+				o[x] = 255;
+				continue;
+			}
+			la = lum[a];
+			lb = lum[b];
+			lc = lum[c];
+			ld = lum[d];
+			if (holes)
+			{
+				// three samples count: the hole contributes nothing
+				sum = (a != 255 ? la : 0) + (b != 255 ? lb : 0) + (c != 255 ? lc : 0) + (d != 255 ? ld : 0);
+				mean = ((sum + 1) * 21846u) >> 16; // (sum + 1) / 3
+			}
+			else
+			{
+				sum = la + lb + lc + ld;
+				mean = (sum + 2) >> 2;
+			}
+			// the sample whose luminance is farthest from the mean (the first of equals); holes are not candidates
+			da = a == 255 ? 0 : (la > mean ? la - mean : mean - la);
+			db = b == 255 ? 0 : (lb > mean ? lb - mean : mean - lb);
+			dc = c == 255 ? 0 : (lc > mean ? lc - mean : mean - lc);
+			dd = d == 255 ? 0 : (ld > mean ? ld - mean : mean - ld);
+			best = 256; // none yet
+			bestd = 0;
+			if (a != 255)
+			{
+				best = a;
+				bestd = da;
+			}
+			if (b != 255 && (best == 256 || db > bestd))
+			{
+				best = b;
+				bestd = db;
+			}
+			if (c != 255 && (best == 256 || dc > bestd))
+			{
+				best = c;
+				bestd = dc;
+			}
+			if (d != 255 && (best == 256 || dd > bestd))
+			{
+				best = d;
+				bestd = dd;
+			}
+			o[x] = (u8)best;
+		}
+	}
+}
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -1527,7 +1642,8 @@ static int tex_upload(GLMipmap_t *m)
 	fillctx_t fc, *c = &fc;
 	u32 t0 = cyc();
 	const u8 *data = m->data;
-	dcent_t *dce = NULL, *l0 = NULL;
+	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL;
+	u32 ssw = sw, ssh = sh, slv = 0; // size and level of the texels `data` holds when it is a cached level (dsrc) and not the full size
 	u32 lv = 0; // mip level the texture is stored at (PS2-HW-34); the texels of a level are made by dec_level
 	int lvdec = 0; // the stored texels are those of the cache entry of that level
 
@@ -1546,7 +1662,13 @@ static int tex_upload(GLMipmap_t *m)
 				lvdec = 1;
 			}
 		}
-		if (!dce && (l0 = dc_find(dc_key(m), sw, sh, 0)) != NULL)
+		if (lv && !dce && (dsrc = dc_find_finer(dc_key(m), sw, sh, lv, &slv)) != NULL)
+		{
+			data = dsrc->p; // PS2-HW-39: a finer level is cached: the coarser one is made from it
+			ssw = sw >> slv;
+			ssh = sh >> slv;
+		}
+		if (!dce && !dsrc && (l0 = dc_find(dc_key(m), sw, sh, 0)) != NULL)
 			data = l0->p; // the texels of this texture (or its other variant) are in the data cache: the engine need not make them again
 	}
 	if (!data && lv && m->regen_kind == 2 && m->format == GL_TEXFMT_P_8 && (tex_flatpin = HWR_PS2_FlatPin(m)) != NULL)
@@ -1583,7 +1705,7 @@ static int tex_upload(GLMipmap_t *m)
 				else
 				{
 					if (!m->ps2_h255)
-						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, n) ? 2 : 1);
+						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, dsrc ? ssw * ssh : n) ? 2 : 1);
 					has255 = m->ps2_h255 == 2;
 				}
 				if (clut == 2 && !has255)
@@ -1711,7 +1833,7 @@ static int tex_upload(GLMipmap_t *m)
 		align = 1;
 		while (align < nblk && align < PAGE_BLOCKS)
 			align <<= 1;
-		blk = vram_alloc_evicting(nblk, align, 0);
+		blk = vram_alloc_evicting(nblk, align, nblk >= BIG_IMAGE_BLOCKS ? 1 : 0); // PS2-HW-39: big images from the top of the pool, small ones from the bottom: they do not cut each other's room into pieces
 		if (blk)
 			break;
 		if (!H.cap_adapt || H.cap_idx >= NCAPS - 1)
@@ -1727,16 +1849,48 @@ static int tex_upload(GLMipmap_t *m)
 		if (!dce)
 		{
 			dcent_t *ne;
-			void *srcblk = l0 ? (void *)l0->p : (void *)m->data;
+			void *srcblk = dsrc ? (void *)dsrc->p : l0 ? (void *)l0->p : (void *)m->data;
+			u32 dt0 = cyc();
 
-			if (srcblk)
+			if (srcblk && data == (const u8 *)srcblk)
 				HWR_PS2_LockData(srcblk); // the allocation below may purge the zone's caches, the source among them
 			if (l0)
 				l0->busy++;
+			if (dsrc)
+				dsrc->busy++;
 			ne = dc_slot(W2 * H2);
 			if (ne && HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
 			{
-				dec_level(data, sw, sh, lv, ne->p);
+				dec_level(data, ssw, ssh, lv - slv, ne->p);
+				if (ps2hwd_dbg_flags & HWDBG_COMPOSE)
+				{
+					// the reference version of the same level: the bytes must be the same (PS2-HW-39)
+					static unsigned dchecked, dbad;
+					u8 *ref = malloc((size_t)W2 * H2);
+
+					if (ref)
+					{
+						dec_level_ref(data, ssw, ssh, lv - slv, ref);
+						dchecked++;
+						if (memcmp(ref, ne->p, (size_t)W2 * H2))
+						{
+							dbad++;
+							CONS_Printf("HWC level MISMATCH %s %ux%u level %u (%u of %u differ)\n", HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)lv, dbad, dchecked);
+						}
+						else if (!(dchecked & 7))
+						{
+							CONS_Printf("HWC level check: %u levels identical, %u differ\n", dchecked - dbad, dbad);
+						}
+						free(ref);
+					}
+				}
+				{
+					static int dl_logged;
+
+					if (dl_logged++ < 40)
+						CONS_Printf("HWD level %u of %s %ux%u made in %u cycles from %s\n", (unsigned)lv, HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)(cyc() - dt0),
+							dsrc ? "a cached level" : l0 ? "the cached full size" : tex_flatpin ? "the engine's flat" : "the engine's data");
+				}
 				ne->key = dc_key(m);
 				ne->bytes = W2 * H2;
 				ne->w = (u16)W2;
@@ -1750,13 +1904,17 @@ static int tex_upload(GLMipmap_t *m)
 			}
 			if (l0)
 				l0->busy--;
-			if (srcblk)
+			if (dsrc)
+				dsrc->busy--;
+			if (srcblk && data == (const u8 *)srcblk)
 				HWR_PS2_UnlockData(srcblk);
 		}
 		else
 		{
 			data = dce->p;
 		}
+		if (!dce && dsrc)
+			c->dx = c->dy = lv - slv; // no room for the level: plain decimation of the cached level
 		if (dce)
 		{
 			lvdec = 1;
@@ -1783,8 +1941,8 @@ static int tex_upload(GLMipmap_t *m)
 	if (!dce && l0 && !lv && !c->dx && !c->dy)
 		dce = l0; // the full size texels are in the data cache: the upload reads them from there
 	c->src = data;
-	c->sw = sw;
-	c->sh = sh;
+	c->sw = ssw;
+	c->sh = ssh;
 	c->W2 = W2;
 	c->H2 = H2;
 
@@ -2059,14 +2217,14 @@ static void tx_report(void)
 	static int win;
 	u32 f = TX.frames ? TX.frames : 1;
 
-	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u plancyc=%u immcyc=%u mkpatch=%u/%u\n",
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u plancyc=%u immcyc=%u mkpatch=%u/%u allocfail=%u/%u/%u thrash=%u/%u pct=%u\n",
 		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
 		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
 		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
 		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
 		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
 		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.downgrades, (unsigned)TX.invisible,
-		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f);
+		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f, (unsigned)TX.alloc_fail, (unsigned)TX.alloc_frag, (unsigned)TX.alloc_frag_blk, (unsigned)(TX.thrash_n / f), (unsigned)(TX.thrash_blk / f), (unsigned)H.plan_pct);
 	ps2hwt_mkpatch_n = ps2hwt_mkpatch_cyc = 0;
 	memset(&TX, 0, sizeof TX);
 }

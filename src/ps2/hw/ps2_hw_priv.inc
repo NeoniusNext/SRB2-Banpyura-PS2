@@ -284,6 +284,7 @@ static struct
 	u32 plan_reserve; // OPT10 (PS2-HW-37): blocks the frame plan leaves for the textures it does not plan (sprites, patches, small textures): measured on the previous frames
 	u32 unplanned_cur; // blocks of those textures drawn so far in this frame
 	u32 plan_last, plan_exact; // the last plan's working set (budget applied / exact levels), blocks
+	u32 plan_pct, plan_calm, thrash_n, thrash_blk; // PS2-HW-39: the budget of the plan in per cent of the pool (a controller: an image of the frame evicted in the frame lowers it, calm frames raise it)
 	GLMipmap_t *imm_tex; // PS2-HW-37: a big map texture selected outside the batches: made resident (at the level its polygon needs) when the polygon is drawn
 	int tex_filter; // HWD_SET_TEXTUREFILTER_*
 	u32 pal[256]; // GS CLUT entries, 0x00BBGGRR, no alpha, in index order
@@ -325,8 +326,10 @@ int ps2hwd_dbg_flags;
 #define HWDBG_NOGATE 0x800000 // the old frame start: wait for the flip of the previous frame before drawing the next one
 #define HWDBG_COMPOSE 0x1000000 // hw_cache.c: every composed P_8 texture is checked against the original column loops
 #define HWDBG_NOPLAN 0x2000000 // no frame plan: every texture is stored at full size
+#define HWDBG_IMMDBG 0x10000000 // HWIMM lines: every upload / re-make of a big map texture (frame, name, level asked for, level stored, action)
 #define HWDBG_LODDBG 0x8000000 // HWLOD lines: the polygons of the frame plan of frame % 105 == 60 (texture, size, vertices, texel size in pixels, level)
 
+#define BIG_IMAGE_BLOCKS 512u // PS2-HW-39: images of at least this many blocks are placed from the top of the pool (screen captures are there too), the others from the bottom
 #define PLAN_MIN_TEXELS 65536u // PS2-HW-34: smaller textures are always stored at full size: their share of the working set is small and the estimate costs cycles
 #define PLAN_FULL_KEEP 150 // frames a texture that was drawn unplanned keeps its full size in the plans
 
@@ -348,7 +351,7 @@ typedef struct
 	u32 upgrades; // images made again at a finer level than they were stored at
 	u32 downgrades; // images made again at a coarser level than they were stored at (PS2-HW-37)
 	u32 invisible; // textures not uploaded: no polygon of the frame can see them
-	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
+	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc, alloc_fail, alloc_frag, alloc_frag_blk, thrash_n, thrash_blk; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
 } txstats_t;
 static txstats_t TX;
 
