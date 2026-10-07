@@ -41,6 +41,7 @@ import opt_run  # noqa: E402  (stage())
 
 PCSX2_ROOT = run_pcsx2.PCSX2_ROOT
 ASSETS = os.environ.get('SRB2WADDIR', '/opt/srb2-assets')
+STARTUP_HANG = 300  # seconds without an engine log and with a pcsx2.log that stays tiny = the emulator hangs in its start-up (a flake: the session is run again)
 XVFB = ['xvfb-run', '-a', '-s', '-screen 0 800x600x24']
 DEAD_MS = 'http://127.0.0.1:9/MS/0'  # nothing listens on port 9 (discard): the master server URL of a node that must not reach any master server
 
@@ -80,6 +81,16 @@ def emu_path(name):
     q = PCSX2_ROOT / name / 'AppRun'
     if not q.exists():
         raise SystemExit(f'no emulator copy {name!r} ({q})')
+    # PCSX2 rewrites its PCSX2.ini when it exits; an emulator killed in that moment leaves an EMPTY file, and the next start then waits forever in the first-run
+    # wizard (seen once: net1, 0 bytes, "Loading config" the last line of pcsx2.log). <copy>/usr/bin/PCSX2.ini.good (made once by hand) is the way back.
+    ini = PCSX2_ROOT / name / 'usr/bin/inis/PCSX2.ini'
+    good = PCSX2_ROOT / name / 'usr/bin/PCSX2.ini.good'
+    try:
+        if good.exists() and ini.stat().st_size < 1000:
+            shutil.copy2(good, ini)
+            print(f'restored the empty {ini} from {good.name}', flush=True)
+    except OSError:
+        pass
     return str(q)
 
 
@@ -196,7 +207,7 @@ class Node:
             if self.proc.poll() is None:
                 killgroup(self.proc, signal.SIGINT)  # polite first: PCSX2 flushes its log, the engine runs I_Quit
                 try:
-                    self.proc.wait(8)
+                    self.proc.wait(25)  # PCSX2 saves PCSX2.ini on its way out: a kill during that write leaves an empty file (see emu_path)
                 except subprocess.TimeoutExpired:
                     pass
             killgroup(self.proc, signal.SIGKILL)  # leftovers of the xvfb-run tree (own session: never touches other processes)
@@ -266,6 +277,16 @@ def run_session(spec):
                             result['died'] = n.id
                             result['runaway'] = True
                             print(f'[{time.strftime("%H:%M:%S")}] {n.id}: RUNAWAY emulator log, session stopped', flush=True)
+                            raise StopIteration
+                    if n.spec['kind'] == 'ps2' and time.time() - n.started > STARTUP_HANG and not (n.dir / 'boot.txt').exists():
+                        # an emulator that hangs in its Qt start-up (pcsx2.log stops at "Loading config from ...", 0% CPU for 10 minutes was seen under load): a flake, run again
+                        try:
+                            small = (n.dir / 'pcsx2.log').stat().st_size < 1500
+                        except OSError:
+                            small = True
+                        if small:
+                            result['died'] = n.id
+                            print(f'[{time.strftime("%H:%M:%S")}] {n.id}: the emulator hangs at its start (no engine log after {STARTUP_HANG} s)', flush=True)
                             raise StopIteration
                     if n.spec['kind'] == 'ps2' and not n.spec.get('may_fail_net') and 'PS2 net: the network drivers did not start' in n.text(''):
                         # PCSX2's DEV9 sometimes cannot open its host adapter ("Socket: Failed to get MAC address for adapter"): an emulator start-up flake, run again
