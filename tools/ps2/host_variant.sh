@@ -10,10 +10,13 @@ NAME=$1; FLAGS=$2; EXPECT=$3; shift 3
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 cd "$ROOT"
 B=build/host-$NAME
-if [ ! -f $B/b/build.ninja ]; then
+# (re)configure when the build directory is new or was made for other flags
+if [ ! -f $B/b/build.ninja ] || [ "$(cat $B/flags.stamp 2>/dev/null)" != "$FLAGS" ]; then
+  mkdir -p $B
   cmake -S . -B $B/b -G Ninja -DCMAKE_BUILD_TYPE=Release -DSRB2_CONFIG_STATIC_STDLIB=OFF -DSRB2_CONFIG_USE_GME=OFF -DSRB2_CONFIG_HWRENDER=OFF -DSRB2_CONFIG_PS2REF=ON \
     -DSRB2_CONFIG_PS2PROFILE=ON "-DSRB2_PS2_NO=lua;udmf;addons;limits;zippng" -DSRB2_HOST_PROFILE_LZ4_SOURCE=$ROOT/tools/ps2/host_lz4_shim.c \
     -DSRB2_HOST_PROFILE_LZ4_INCLUDE_DIR=/opt/ps2dev-x/ps2dev/ps2sdk/ports/include "-DCMAKE_C_FLAGS=-DPS2_NOOPT_SLOPE -DPS2_NOOPT_SEGS -fwrapv $FLAGS" > /dev/null
+  printf "%s" "$FLAGS" > $B/flags.stamp
 fi
 ninja -C $B/b -j${JOBS:-3} 2>&1 | tail -1
 EXE=$(ls $B/b/bin/*)

@@ -4001,7 +4001,9 @@ static boolean R_CheckSpriteVisible(vissprite_t *spr, INT32 x1, INT32 x2)
 
 #ifdef PS2_OPT_SPR
 // The body of the original scan for one draw segment that touches the sprite's columns (same statements, same order).
-static void R_ClipVisSpriteSeg(vissprite_t *spr, const drawseg_xrange_item_t *curr, INT32 x1, INT32 x2)
+// PS2-170: *unsetbot/*unsettop count the columns of the sprite whose clipbot/cliptop still hold -2 (nothing but a draw segment
+// writes them in this scan, and only over -2).
+static void R_ClipVisSpriteSeg(vissprite_t *spr, const drawseg_xrange_item_t *curr, INT32 x1, INT32 x2, INT32 *unsetbot, INT32 *unsettop)
 {
 	drawseg_t *ds = curr->user;
 	INT32 x, r1, r2, silhouette;
@@ -4046,27 +4048,50 @@ static void R_ClipVisSpriteSeg(vissprite_t *spr, const drawseg_xrange_item_t *cu
 	if (silhouette == SIL_BOTTOM)
 	{
 		// bottom sil
+		INT32 nb = 0;
 		for (x = r1; x <= r2; x++)
 			if (spr->clipbot[x] == -2)
-				spr->clipbot[x] = ds->sprbottomclip[x];
+			{
+				const INT16 v = ds->sprbottomclip[x];
+				spr->clipbot[x] = v;
+				nb += (v != -2);
+			}
+		*unsetbot -= nb;
 	}
 	else if (silhouette == SIL_TOP)
 	{
 		// top sil
+		INT32 nt = 0;
 		for (x = r1; x <= r2; x++)
 			if (spr->cliptop[x] == -2)
-				spr->cliptop[x] = ds->sprtopclip[x];
+			{
+				const INT16 v = ds->sprtopclip[x];
+				spr->cliptop[x] = v;
+				nt += (v != -2);
+			}
+		*unsettop -= nt;
 	}
 	else if (silhouette == (SIL_TOP|SIL_BOTTOM))
 	{
 		// both
+		INT32 nb = 0, nt = 0;
 		for (x = r1; x <= r2; x++)
 		{
 			if (spr->clipbot[x] == -2)
-				spr->clipbot[x] = ds->sprbottomclip[x];
+			{
+				const INT16 v = ds->sprbottomclip[x];
+				spr->clipbot[x] = v;
+				nb += (v != -2);
+			}
 			if (spr->cliptop[x] == -2)
-				spr->cliptop[x] = ds->sprtopclip[x];
+			{
+				const INT16 v = ds->sprtopclip[x];
+				spr->cliptop[x] = v;
+				nt += (v != -2);
+			}
 		}
+		*unsetbot -= nb;
+		*unsettop -= nt;
 	}
 }
 #endif
@@ -4103,9 +4128,11 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 		const INT32 words = drawsegs_bin_words;
 		const INT32 nbm1 = drawsegs_bin_count - 1;
 		INT32 b1 = (x1 < 0 ? 0 : x1) >> DSBIN_SHIFT, b2 = (x2 < 0 ? 0 : x2) >> DSBIN_SHIFT, w;
+		// PS2-170: the draw segments only fill columns that still hold -2; once none is left the rest of the scan cannot change anything
+		INT32 unsetbot = x2 >= x1 ? x2 - x1 + 1 : 0, unsettop = unsetbot;
 		if (b1 > nbm1) b1 = nbm1;
 		if (b2 > nbm1) b2 = nbm1;
-		for (w = 0; w < words; w++)
+		for (w = 0; w < words && (unsetbot | unsettop); w++)
 		{
 			const UINT32 *row = drawsegs_bins + (size_t)b1 * words + w;
 			UINT32 m = *row;
@@ -4123,7 +4150,13 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 				PS2SUB_N(61);
 				if (curr->x1 > x2 || curr->x2 < x1)
 					continue; // does not cover sprite
-				R_ClipVisSpriteSeg(spr, curr, x1, x2);
+				R_ClipVisSpriteSeg(spr, curr, x1, x2, &unsetbot, &unsettop);
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 11 // negative control of the host A/B: the scan stops one column early
+				if (unsetbot + unsettop <= 1)
+#else
+				if (!(unsetbot | unsettop))
+#endif
+					break;
 			}
 		}
 	}

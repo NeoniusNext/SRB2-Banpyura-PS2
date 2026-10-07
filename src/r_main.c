@@ -1050,10 +1050,17 @@ static ps2_sedges_t **sedge_tab;
 static size_t sedge_tabn;
 static ps2_sedges_t sedge_nocache; // marker: this sector is walked line by line
 
+#ifdef PS2_OPT_BSPC
+static void R_ClearSubsectorMemo(void);
+#endif
+
 void R_ResetSectorEdgeCache(void)
 {
 	sedge_tab = NULL; // the memory was PU_LEVEL: gone with the level
 	sedge_tabn = 0;
+#ifdef PS2_OPT_BSPC
+	R_ClearSubsectorMemo(); // PS2-167
+#endif
 }
 
 static boolean R_IsPointInSectorLines(sector_t *sector, fixed_t x, fixed_t y);
@@ -1196,6 +1203,24 @@ typedef struct
 } bspcache_t;
 static bspcache_t bspc;
 static UINT16 bspc_cell[BSPC_MAXCELLS]; // start node of every cell (a node index, or a subsector with NF_SUBSECTOR)
+
+// PS2-167: R_PointInSubsector is a pure function of (x, y) for a given node array, and most of its callers ask again and again for the position of
+// an object that does not move (P_CheckPosition(mobj, mobj->x, mobj->y) for every thinker, about 1800 per tic in a crowded level). A direct mapped
+// memo of complete answers (both coordinates compared, subsector index + 1, 0 = empty) is cleared with the level (R_ResetSectorEdgeCache).
+#ifndef SSMEMO_BITS
+#define SSMEMO_BITS 12
+#endif
+typedef struct { fixed_t x, y; UINT32 ss1; } ps2_ssmemo_t;
+static ps2_ssmemo_t ssmemo[1 << SSMEMO_BITS];
+#define SSMEMO_INDEX(x, y) ((((UINT32)(x) >> FRACBITS) + ((UINT32)(y) >> FRACBITS) * 73u) & ((1u << SSMEMO_BITS) - 1))
+#ifdef PS2_BSPSTAT
+unsigned long long ps2_ssmemo_hits;
+#endif
+
+static void R_ClearSubsectorMemo(void)
+{
+	memset(ssmemo, 0, sizeof ssmemo);
+}
 #ifdef PS2_BSPCHECK
 UINT32 bspcheck_count; // calls verified
 #endif
@@ -1325,18 +1350,47 @@ void PS2_BspStatDump(void)
 	fprintf(stderr, "BSPSTAT calls %llu steps %llu (%.2f per call) leaf-start %llu (%.1f%%) cells %ux%u shift %d\n", ps2_bspstat[0], ps2_bspstat[1],
 		ps2_bspstat[0] ? (double)ps2_bspstat[1] / ps2_bspstat[0] : 0.0, ps2_bspstat[2], ps2_bspstat[0] ? 100.0 * ps2_bspstat[2] / ps2_bspstat[0] : 0.0,
 		(unsigned)bspc.cw, (unsigned)bspc.ch, (int)bspc.shift - FRACBITS);
+	fprintf(stderr, "BSPSTAT memo hits %llu (descents above: the memo misses), hit rate %.1f%%\n", ps2_ssmemo_hits,
+		100.0 * ps2_ssmemo_hits / (double)(ps2_ssmemo_hits + ps2_bspstat[0] + 1));
 }
 #endif
 
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 {
 	size_t nodenum = numnodes-1;
+#ifdef PS2_OPT_BSPC
+	ps2_ssmemo_t *memo = NULL;
+#endif
 
 #ifdef PS2_OPT_BSPC
 	if (numnodes)
 	{
 		if (bspc.nodes != nodes || bspc.numnodes != numnodes || !R_BSPCacheSigEq())
+		{
 			R_BuildBSPCache();
+			R_ClearSubsectorMemo();
+		}
+		memo = &ssmemo[SSMEMO_INDEX(x, y)];
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 10 // negative control of the host A/B: the memo compares the x coordinate only
+		if (memo->ss1 && memo->x == x)
+#else
+		if (memo->ss1 && memo->x == x && memo->y == y)
+#endif
+		{
+#ifdef PS2_BSPSTAT
+			ps2_ssmemo_hits++;
+#endif
+#ifdef PS2_BSPCHECK // host self-check: a memo answer must be the full descent's subsector
+			{
+				size_t full = numnodes - 1;
+				while (!(full & NF_SUBSECTOR))
+					full = nodes[full].children[R_PointOnSideI(x, y, nodes + full)];
+				if ((full & ~NF_SUBSECTOR) != memo->ss1 - 1)
+					I_Error("R_PointInSubsector: memo mismatch at %d,%d", (int)(x >> FRACBITS), (int)(y >> FRACBITS));
+			}
+#endif
+			return &subsectors[memo->ss1 - 1];
+		}
 		if (bspc.ok)
 		{
 			const UINT32 cx = (UINT32)(x - bspc.orgx) >> bspc.shift, cy = (UINT32)(y - bspc.orgy) >> bspc.shift;
@@ -1384,6 +1438,14 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 			I_Error("R_PointInSubsector: cache mismatch at %d,%d", (int)(x >> FRACBITS), (int)(y >> FRACBITS));
 		if (!(++bspcheck_count & 0xffff))
 			I_OutputMsg("BSPCHECK %u calls verified\n", (unsigned)bspcheck_count); // log only: a console line would show in the frames
+	}
+#endif
+#ifdef PS2_OPT_BSPC
+	if (memo)
+	{
+		memo->x = x;
+		memo->y = y;
+		memo->ss1 = (UINT32)(nodenum & ~NF_SUBSECTOR) + 1;
 	}
 #endif
 	return &subsectors[nodenum & ~NF_SUBSECTOR];
