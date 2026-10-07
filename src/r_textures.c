@@ -428,6 +428,17 @@ static UINT8 *R_FallbackTexture(size_t texnum)
 		CONS_Alert(CONS_WARNING, "R_GenerateTexture: no room for texture %d (%dx%d): plain column instead\n", (int)texnum, (int)width, (int)height);
 	return block;
 }
+
+// W_CacheLumpNumPwad for the scratch copy of a lump (freed by the caller): NULL when there is no room instead of ending the run
+static UINT8 *R_TryReadLump(UINT16 wadnum, lumpnum_t lumpnum)
+{
+	const size_t len = W_LumpLengthPwad(wadnum, lumpnum);
+	UINT8 *p = Z_TryMallocAlign(len ? len : 1, R_TEXTURE_WORK_TAG, NULL, 2);
+
+	if (p)
+		W_ReadLumpHeaderPwad(wadnum, lumpnum, p, 0, 0);
+	return p;
+}
 #endif
 
 //
@@ -496,7 +507,13 @@ UINT8 *R_GenerateTexture(size_t texnum)
 
 #ifdef PS2_PROFILE
 		// PU_STATIC while in use (a PU_CACHE block could be purged by the allocations below), freed on every path
+#if defined(PS2)
+		pdata = R_TryReadLump(wadnum, lumpnum);
+		if (!pdata)
+			return R_FallbackTexture(texnum);
+#else
 		pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
+#endif
 #else
 		pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
 #endif
@@ -544,7 +561,17 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #endif
 			texturememory += blocksize;
 
+#if defined(PS2)
+			block = Z_TryMallocAlign(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum], 2);
+			if (!block)
+			{
+				Z_Free(pdata);
+				return R_FallbackTexture(texnum);
+			}
+			memset(block, 0, blocksize);
+#else
 			block = Z_Calloc(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
+#endif
 			blocktex = block;
 
 #ifdef PS2_PROFILE
@@ -668,7 +695,20 @@ UINT8 *R_GenerateTexture(size_t texnum)
 		}
 #endif
 		if (rawlump)
+		{
+#if defined(PS2)
+			pdata = R_TryReadLump(wadnum, lumpnum);
+			if (!pdata)
+			{
+				Z_Free(temp_columns);
+				Z_Free(opaque_pixels);
+				Z_Free(temp_block);
+				return R_FallbackTexture(texnum);
+			}
+#else
 			pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
+#endif
+		}
 #endif
 
 #if defined(PS2_PROFILE) && !defined(PS2_NOOPT_texstream)
@@ -678,7 +718,18 @@ UINT8 *R_GenerateTexture(size_t texnum)
 			free_patch = false;
 			if (realpatch == NULL)
 			{
+#if defined(PS2)
+				pdata = R_TryReadLump(wadnum, lumpnum);
+				if (!pdata)
+				{
+					Z_Free(temp_columns);
+					Z_Free(opaque_pixels);
+					Z_Free(temp_block);
+					return R_FallbackTexture(texnum);
+				}
+#else
 				pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
+#endif
 				rawbytes = W_LumpLengthPwad(wadnum, lumpnum);
 				rawpatch = (softwarepatch_t *)pdata;
 #ifdef PS2_ZIPPNG

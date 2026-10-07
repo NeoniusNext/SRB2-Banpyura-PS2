@@ -879,9 +879,16 @@ void R_InitSprites(void)
 // R_ClearSprites
 // Called at frame start.
 //
+#if defined(PS2) && defined(PS2_PROFILE)
+static UINT32 vissprite_limit = MAXVISSPRITES; // lowered for the rest of the frame when a chunk could not be allocated
+#endif
+
 void R_ClearSprites(void)
 {
 	visspritecount = numvisiblesprites = clippedvissprites = 0;
+#if defined(PS2) && defined(PS2_PROFILE)
+	vissprite_limit = MAXVISSPRITES;
+#endif
 }
 
 //
@@ -915,9 +922,20 @@ static vissprite_t *R_GetVisSprite(UINT32 num)
 			// the first bytes of the next block header of the zone (flags: "prev-free flag 1 but previous block is used" after the Tutorial map,
 			// found by the soak; with ZDEBUG red zones: "red zone overwritten", owner r_things.c:914). The arrays of the original are MAXVIDWIDTH wide.
 			const size_t w = (size_t)vid.width + 1;
+#if defined(PS2)
+			// and a chunk is 95 KB: when the arena has no room for one (MAP11 in play: 13 chunks = 1.2 MB of PU_LEVEL) the sprites beyond it are not drawn
+			vissprite_t *vs = Z_TryMallocAlign(sizeof(vissprite_t) * VISSPRITESPERCHUNK + 2 * w * sizeof (INT16) * VISSPRITESPERCHUNK, PU_LEVEL, &visspritechunks[chunk], 2);
+#else
 			vissprite_t *vs = Z_Malloc(sizeof(vissprite_t) * VISSPRITESPERCHUNK + 2 * w * sizeof (INT16) * VISSPRITESPERCHUNK, PU_LEVEL, &visspritechunks[chunk]);
-			INT16 *clip = (INT16 *)(vs + VISSPRITESPERCHUNK);
+#endif
+			INT16 *clip;
 			UINT32 i;
+
+#if defined(PS2)
+			if (!vs)
+				return NULL;
+#endif
+			clip = (INT16 *)(vs + VISSPRITESPERCHUNK);
 
 			for (i = 0; i < VISSPRITESPERCHUNK; i++, clip += 2 * w)
 			{
@@ -943,7 +961,11 @@ static vissprite_t *R_GetVisSprite(UINT32 num)
 
 static vissprite_t *R_NewVisSprite(void)
 {
+#if defined(PS2) && defined(PS2_PROFILE)
+	if (visspritecount >= vissprite_limit)
+#else
 	if (visspritecount == MAXVISSPRITES)
+#endif
 	{
 #ifdef PS2_PROFILE
 		overflowsprite.clipbot = overflowclip; // PS2-87
@@ -952,7 +974,25 @@ static vissprite_t *R_NewVisSprite(void)
 		return &overflowsprite;
 	}
 
+#ifdef PS2_PROFILE
+	{
+		vissprite_t *vs = R_GetVisSprite(visspritecount);
+
+		if (!vs)
+		{
+#if defined(PS2)
+			vissprite_limit = visspritecount; // no more attempts this frame
+#endif
+			overflowsprite.clipbot = overflowclip; // no room for another chunk: PS2-148
+			overflowsprite.cliptop = overflowclip + MAXVIDWIDTH + 1;
+			return &overflowsprite;
+		}
+		visspritecount++;
+		return vs;
+	}
+#else
 	return R_GetVisSprite(visspritecount++);
+#endif
 }
 
 //
