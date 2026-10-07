@@ -989,6 +989,8 @@ extern void HWR_PS2_FreeData(void *data);
 extern void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser);
 extern void *HWR_PS2_AllocData(size_t bytes, void **newuser);
 extern const u8 *HWR_PS2_FlatPin(const GLMipmap_t *m);
+extern boolean HWR_PS2_FlatStreamable(const GLMipmap_t *m);
+extern boolean HWR_PS2_FlatRows(const GLMipmap_t *m, UINT32 row0, UINT32 nrows, UINT8 *dest);
 extern unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // hw_cache.c
 extern void HWR_PS2_FlatUnpin(const u8 *p, size_t bytes);
 static const u8 *tex_flatpin; // PS2-HW-38: the engine's flat pinned by the last tex_upload (the caller unpins it)
@@ -1632,6 +1634,56 @@ static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
 	}
 }
 
+// PS2-HW-41: level `lv` of a big raw flat made band by band from its lump into a data cache entry (NULL: no room / the lump cannot be read)
+static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
+{
+	enum { BAND = 64 }; // rows per read: a multiple of the block of the coarsest level (32)
+	const u32 sw = m->width, sh = m->height, W2 = sw >> lv, H2 = sh >> lv;
+	u32 row0, t0 = cyc();
+	dcent_t *ne = dc_slot(W2 * H2);
+	u8 *band;
+
+	if (!ne || !HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
+		return NULL;
+	band = malloc((size_t)sw * BAND);
+	if (!band)
+	{
+		HWR_PS2_FreeData(ne->p);
+		ne->p = NULL;
+		return NULL;
+	}
+	for (row0 = 0; row0 < sh; row0 += BAND)
+	{
+		u32 rows = sh - row0 < BAND ? sh - row0 : BAND;
+
+		if (!HWR_PS2_FlatRows(m, row0, rows, band))
+		{
+			free(band);
+			HWR_PS2_FreeData(ne->p);
+			ne->p = NULL;
+			return NULL;
+		}
+		dec_level(band, sw, rows, lv, ne->p + (size_t)(row0 >> lv) * W2);
+	}
+	free(band);
+	ne->key = dc_key(m);
+	ne->bytes = W2 * H2;
+	ne->w = (u16)W2;
+	ne->h = (u16)H2;
+	ne->lvl = (u8)lv;
+	ne->busy = 0;
+	ne->stamp = ++dc_seq;
+	dc_bytes += ne->bytes;
+	TX.lvl_cyc += cyc() - t0;
+	{
+		static int logged;
+
+		if (logged++ < 40)
+			CONS_Printf("HWD level %u of %s %ux%u made in %u cycles from the lump (bands)\n", (unsigned)lv, HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)(cyc() - t0));
+	}
+	return ne;
+}
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -1672,6 +1724,11 @@ static int tex_upload(GLMipmap_t *m)
 		}
 		if (!dce && !dsrc && (l0 = dc_find(dc_key(m), sw, sh, 0)) != NULL)
 			data = l0->p; // the texels of this texture (or its other variant) are in the data cache: the engine need not make them again
+		if (lv && !dce && !dsrc && !l0 && !m->data && m->format == GL_TEXFMT_P_8 && HWR_PS2_FlatStreamable(m) && (dce = flat_make_level(m, lv)) != NULL)
+		{
+			data = dce->p; // PS2-HW-41: made now from the lump; from here on it is a cached level like any other
+			lvdec = 1;
+		}
 	}
 	if (!data && lv && m->regen_kind == 2 && m->format == GL_TEXFMT_P_8 && (tex_flatpin = HWR_PS2_FlatPin(m)) != NULL)
 		data = tex_flatpin; // PS2-HW-38: a level of a flat is made from the engine's flat itself

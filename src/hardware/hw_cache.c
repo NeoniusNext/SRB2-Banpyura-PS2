@@ -1158,6 +1158,30 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 
 // OPT10 (PS2-HW-38): the mip levels of a big flat (the 1 MiB cloud planes) are made from the engine's own converted flat, pinned while the driver
 // reads it: no second copy of 1 MiB (two of them at once ran the 22 MiB arena out of a contiguous 1 MiB block)
+// PS2-HW-41: can the rows of this flat be read straight from its lump? (a raw flat of the size of the texture, not resident as the engine's flat: the levels
+// of a 1 MiB cloud plane are then made from bands of 64 rows, and no 1 MiB block is ever needed - the arena of the full build has none to give)
+boolean HWR_PS2_FlatStreamable(const GLMipmap_t *m)
+{
+	const texture_t *t;
+	const texpatch_t *patch;
+
+	if (m->regen_kind != 2 || m->regen_id < 0 || (size_t)m->regen_id >= gl_numtextures || !textures[m->regen_id])
+		return false;
+	t = textures[m->regen_id];
+	if (t->flat != NULL || t->type != TEXTURETYPE_FLAT || t->patchcount < 1)
+		return false;
+	patch = &t->patches[0];
+	return W_LumpLengthPwad(patch->wad, patch->lump) == (size_t)m->width * m->height;
+}
+
+boolean HWR_PS2_FlatRows(const GLMipmap_t *m, UINT32 row0, UINT32 nrows, UINT8 *dest)
+{
+	const texpatch_t *patch = &textures[m->regen_id]->patches[0];
+	size_t bytes = (size_t)m->width * nrows;
+
+	return W_ReadLumpHeaderPwad(patch->wad, patch->lump, dest, bytes, (size_t)row0 * m->width) == bytes;
+}
+
 const UINT8 *HWR_PS2_FlatPin(const GLMipmap_t *m)
 {
 	UINT8 *p;
