@@ -389,6 +389,47 @@ static void R_WriteTexturePosts(post_t *posts, const UINT8 *mask, INT32 width, I
 }
 #endif
 
+#if defined(PS2) && defined(PS2_PROFILE)
+// PS2-148 (OPT10-S): a composite texture that does not fit in the arena must not end the game ("Out of memory allocating 524288 bytes" on MAP11 after
+// the levels before it, 4194304 bytes on MAPMG: 2048x2048 CLUDSSSS). The texture becomes a column of one colour: every column of the texture points at
+// the same single post and the same run of `height` pixels (width columns of 12 bytes and one post instead of width*height bytes). It is an ordinary
+// cache block with an owner: the zone may evict it, and the next use tries the real composite again.
+#define R_COMPOSITE_TRY_MIN (64u << 10)
+#define R_FALLBACK_PIXEL 15 // a grey of the palette ramp (0 white .. 31 black)
+static unsigned r_fallbacktextures;
+
+static UINT8 *R_FallbackTexture(size_t texnum)
+{
+	texture_t *texture = textures[texnum];
+	const size_t width = (size_t)texture->width, height = (size_t)texture->height;
+	size_t columnofs, postofs, blocksize;
+	UINT8 *block;
+	column_t *columns;
+	post_t *post;
+	size_t x;
+
+	blocksize = R_TextureCacheLayout(height, width, 1, &columnofs, &postofs);
+	block = Z_Calloc(blocksize, PU_CACHE, &texturecache[texnum]);
+	memset(block, R_FALLBACK_PIXEL, height);
+	columns = (column_t *)(block + columnofs);
+	post = (post_t *)(block + postofs);
+	post->topdelta = 0;
+	post->length = (unsigned)height;
+	post->data_offset = 0;
+	for (x = 0; x < width; x++)
+	{
+		columns[x].num_posts = 1;
+		columns[x].posts = post;
+		columns[x].pixels = block;
+	}
+	texture->transparency = false;
+	texturecolumns[texnum] = columns;
+	if (r_fallbacktextures++ < 8)
+		CONS_Alert(CONS_WARNING, "R_GenerateTexture: no room for texture %d (%dx%d): plain column instead\n", (int)texnum, (int)width, (int)height);
+	return block;
+}
+#endif
+
 //
 // R_GenerateTexture
 //
@@ -542,6 +583,16 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #ifdef PS2_PROFILE
 	// PS2-76: the biggest block first. The mask and the column array below are small, but they took the middle of the one hole
 	// that would have held WxH (MAP11, 1024x512: 498 KB hole split by a 64 KB mask, "Out of memory allocating 524288 bytes")
+#if defined(PS2)
+	if (total_pixels >= R_COMPOSITE_TRY_MIN)
+	{
+		temp_block = Z_TryMallocAlign(total_pixels, R_TEXTURE_WORK_TAG, NULL, 2);
+		if (!temp_block)
+			return R_FallbackTexture(texnum);
+		memset(temp_block, 0, total_pixels);
+	}
+	else
+#endif
 	temp_block = Z_Calloc(total_pixels, R_TEXTURE_WORK_TAG, NULL);
 #endif
 #ifdef R_OPAQUE_PACKED
