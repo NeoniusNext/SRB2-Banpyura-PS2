@@ -91,6 +91,9 @@ typedef struct gl_vissprite_s
 
 	patch_t *gpatch;
 	mobj_t *mobj; // NOTE: This is a precipmobj_t if precip is true !!! Watch out.
+#ifdef PS2_PROFILE
+	UINT8 ps2_hid; // PS2-HW-72 check mode (-hwdbg 16777216): the sprite would have been culled; HWR_DrawSprite checks its quad against that
+#endif
 } gl_vissprite_t;
 
 // --------

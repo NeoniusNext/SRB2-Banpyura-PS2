@@ -1472,6 +1472,7 @@ static void tex_cap_control(void)
 // The stored size of a texture: every axis over the GS limit of 1024 texels is halved (by taking every (1 << d)-th texel), then the larger
 // axis is halved until the GS footprint is within `cap` blocks (cap 0 = no cap). Returns 0 when the size cannot be made valid.
 static int tex_nosplit; // -hwnosplit: images over 1024 rows are decimated (A/B of PS2-HW-70)
+static u32 tex_split_rows = 1024; // rows of the first piece of a split image: the GS limit; -hwsplitrows N (64..1024, a multiple of 64) makes every map texture of N+1..2N rows two images (the test of the split on ordinary content)
 
 // splittable: the texture may be stored as two images when it has more than 1024 rows (PS2-HW-70: a P_8 map texture or flat of 1025..2048 rows and at most
 // 1024 columns, no footprint cap in force) instead of with every second row
@@ -1479,7 +1480,7 @@ static int tex_plan(int psm, u32 sw, u32 sh, u32 cap, int splittable, u32 *pdx, 
 {
 	u32 dx = 0, dy = 0;
 
-	if (!cap && splittable && !tex_nosplit && psm == PSM_T8 && sw <= 1024 && sh > 1024 && sh <= 2048 && !(sh & 1))
+	if (!cap && splittable && !tex_nosplit && psm == PSM_T8 && sw <= 1024 && sh > 1024 && sh <= 2048 && !(sh & 1) && tex_split_rows == 1024)
 	{
 		*pdx = *pdy = 0;
 		return 1;
@@ -1717,6 +1718,7 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 
 	if (!ne || !HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
 		return NULL;
+	HWR_PS2_LockData(ne->p); // the zone may purge an unlocked block at any allocation (malloc below, the lump read): the caller unlocks it when it is done with it
 	band = malloc((size_t)sw * BAND);
 	if (!band)
 	{
@@ -1768,7 +1770,7 @@ static int tex_upload(GLMipmap_t *m)
 	const u8 *data = m->data;
 	u32 cw = sw, ch = sh; // the part of the block that is stored (PS2-HW-39)
 	int crop = 0;
-	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL;
+	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL, *dlock = NULL; // dlock: a level this call made, locked until the upload has read it
 	u32 ssw = sw, ssh = sh, slv = 0; // size and level of the texels `data` holds when it is a cached level (dsrc) and not the full size
 	u32 lv = 0; // mip level the texture is stored at (PS2-HW-34); the texels of a level are made by dec_level
 	int lvdec = 0; // the stored texels are those of the cache entry of that level
@@ -1801,6 +1803,7 @@ static int tex_upload(GLMipmap_t *m)
 		if (lv && !dce && !dsrc && !l0 && !m->data && m->format == GL_TEXFMT_P_8 && HWR_PS2_FlatStreamable(m) && (dce = flat_make_level(m, lv)) != NULL)
 		{
 			data = dce->p; // PS2-HW-38: made now from the lump; from here on it is a cached level like any other
+			dlock = dce;
 			lvdec = 1;
 		}
 	}
@@ -1992,12 +1995,12 @@ static int tex_upload(GLMipmap_t *m)
 			W2 = cw;
 			H2 = ch;
 		}
-		split = !lv && !dx && !dy && !crop && shareable && psm == PSM_T8 && sw <= 1024 && sh > 1024; // tex_plan let it through whole
+		split = !lv && !dx && !dy && !crop && shareable && psm == PSM_T8 && sw <= 1024 && sh > tex_split_rows && sh <= 2 * tex_split_rows && !tex_nosplit && !H.tex_cap_blocks; // tex_plan let it through whole (or it is a test: -hwsplitrows)
 		hb = 0;
 		if (split)
 		{
-			H2 = 1024;
-			hb = sh - 1024;
+			H2 = tex_split_rows;
+			hb = sh - tex_split_rows;
 		}
 		tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
 		nblkA = tex_footprint(psm, W2, H2, tbw);
@@ -2043,6 +2046,8 @@ static int tex_upload(GLMipmap_t *m)
 			ne = dc_slot(W2 * H2);
 			if (ne && HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
 			{
+				HWR_PS2_LockData(ne->p); // not purgable until the upload has read it (the check below, the record tables: any allocation may purge a free block)
+				dlock = ne;
 				dec_level(data, ssw, ssh, lv - slv, ne->p);
 				if (ps2hwd_dbg_flags & HWDBG_COMPOSE)
 				{
@@ -2056,8 +2061,14 @@ static int tex_upload(GLMipmap_t *m)
 						dchecked++;
 						if (memcmp(ref, ne->p, (size_t)W2 * H2))
 						{
+							u32 kk = 0;
+
 							dbad++;
+							while (kk < W2 * H2 && ref[kk] == ne->p[kk])
+								kk++;
 							CONS_Printf("HWC level MISMATCH %s %ux%u level %u (%u of %u differ)\n", HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)lv, dbad, dchecked);
+							CONS_Printf("HWC   first at %u of %u: made %u, reference %u; source %p %ux%u (slv %u, from %s, m->data %p) output %p %u bytes\n", (unsigned)kk, (unsigned)(W2 * H2), (unsigned)ne->p[kk], (unsigned)ref[kk],
+								(const void *)data, (unsigned)ssw, (unsigned)ssh, (unsigned)slv, dsrc ? "a cached level" : l0 ? "the cached full size" : "the engine's data", (const void *)m->data, (const void *)ne->p, (unsigned)(W2 * H2));
 						}
 						else if (!(dchecked & 7))
 						{
@@ -2184,6 +2195,8 @@ static int tex_upload(GLMipmap_t *m)
 	{
 		tex_fail_why = "record table";
 		vram_free(blk, nblk);
+		if (dlock && dlock->p && !dlock->busy)
+			HWR_PS2_UnlockData(dlock->p);
 		return NOREC;
 	}
 	{
@@ -2234,6 +2247,8 @@ static int tex_upload(GLMipmap_t *m)
 			tex_fail_why = "record table";
 			vram_free(blk + nblkA, nblk - nblkA);
 			tex_drop(ri, 0);
+			if (dlock && dlock->p && !dlock->busy)
+				HWR_PS2_UnlockData(dlock->p);
 			return NOREC;
 		}
 		a = &H.rec[ri];
@@ -2269,6 +2284,8 @@ static int tex_upload(GLMipmap_t *m)
 	H.st.upload_bytes += W2 * (H2 + hb) * bpp;
 	H.st.cyc_tex += cyc() - t0;
 	tx_note_upload(m, psm, nblk);
+	if (dlock && dlock->p && !dlock->busy)
+		HWR_PS2_UnlockData(dlock->p); // a zero-copy upload keeps the lock (busy) until its DMA has read the texels
 	return ri;
 }
 

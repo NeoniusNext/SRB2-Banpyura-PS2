@@ -55,6 +55,7 @@ unsigned long long ps2hwp_cyc[HWP_NUM];
 unsigned int ps2hwp_cnt[HWC_NUM];
 int ps2hwp_skyview;
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
+static boolean HWR_PS2_NoCull(void);
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 #else
 #define HWP_LOCAL ((void)0)
@@ -3487,6 +3488,13 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 			shadowVerts[i].y = FIXED_TO_FLOAT(groundz) + flip * 0.05f;
 	}
 
+#ifdef PS2_PROFILE
+	// PS2-HW-72: a shadow that cannot put a pixel on the screen is not made (its polygon would be set up, copied into a batch and drawn for nothing)
+	shadowVerts[0].s = shadowVerts[1].s = shadowVerts[2].s = shadowVerts[3].s = shadowVerts[0].t = shadowVerts[1].t = shadowVerts[2].t = shadowVerts[3].t = 0.0f;
+	if (!HWR_PS2_NoCull() && PS2HWD_QuadHidden(shadowVerts))
+		return;
+#endif
+
 	shadowVerts[0].s = shadowVerts[3].s = 0;
 	shadowVerts[2].s = shadowVerts[1].s = ((GLPatch_t *)gpatch->hardware)->max_s;
 
@@ -4161,6 +4169,23 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 		// Let dispoffset work first since this adjust each vertex
 		HWR_RotateSpritePolyToAim(spr, wallVerts, false);
+#ifdef PS2_PROFILE
+		if (spr->ps2_hid) // PS2-HW-72 check mode: HWR_ProjectSprite would have culled this sprite: its quad here must hold no pixel centre either
+		{
+			static unsigned chk, bad;
+
+			chk++;
+			if (!PS2HWD_QuadHidden(wallVerts))
+			{
+				bad++;
+				CONS_Printf("HWC sprite cull MISMATCH %u of %u (sprite %s)\n", bad, chk, spr->mobj && (UINT32)spr->mobj->sprite < NUMSPRITES ? sprnames[spr->mobj->sprite] : "?");
+			}
+			else if (!(chk & 1023))
+			{
+				CONS_Printf("HWC sprite cull check: %u sprites, %u differ\n", chk, bad);
+			}
+		}
+#endif
 	}
 
 	// This needs to be AFTER the shadows so that the regular sprites aren't drawn completely black.
@@ -5162,29 +5187,44 @@ static boolean HWR_PS2_NoCull(void) // -hwnocull: every sprite is made (A/B of P
 	return nocull;
 }
 
-static boolean HWR_PS2_SpriteHidden(const gl_vissprite_t *spr)
+// the quad HWR_DrawSprite would hand to HWR_ProcessPolygon for a sprite (x1..x2 / z1..z2 along the view, gz..gzt in height, the display offset, and for a view
+// that looks up or down the turn around the foot of HWR_RotateSpritePolyToAim: basey is the height of the foot, the same formulas)
+static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
 {
 	FOutVector wv[4];
 
-	wv[0].x = wv[3].x = spr->x1;
-	wv[2].x = wv[1].x = spr->x2;
-	wv[2].y = wv[3].y = spr->gzt;
-	wv[0].y = wv[1].y = spr->gz;
-	wv[0].z = wv[3].z = spr->z1;
-	wv[1].z = wv[2].z = spr->z2;
+	wv[0].x = wv[3].x = x1;
+	wv[2].x = wv[1].x = x2;
+	wv[2].y = wv[3].y = gzt;
+	wv[0].y = wv[1].y = gz;
+	wv[0].z = wv[3].z = z1;
+	wv[1].z = wv[2].z = z2;
 	wv[0].s = wv[1].s = wv[2].s = wv[3].s = 0.0f;
 	wv[0].t = wv[1].t = wv[2].t = wv[3].t = 0.0f;
-	if (spr->dispoffset)
+	if (dispoffset)
 	{
-		float co = -gl_viewcos*(0.05f*spr->dispoffset);
-		float si = -gl_viewsin*(0.05f*spr->dispoffset);
+		float co = -gl_viewcos*(0.05f*dispoffset);
+		float si = -gl_viewsin*(0.05f*dispoffset);
 		wv[0].z = wv[3].z = wv[0].z+si;
 		wv[1].z = wv[2].z = wv[1].z+si;
 		wv[0].x = wv[3].x = wv[0].x+co;
 		wv[1].x = wv[2].x = wv[1].x+co;
 	}
-	if (fabsf(gl_viewludcos) > 1.0e-6f) // a view that looks up or down: the quad is turned around its foot (HWR_RotateSpritePolyToAim)
-		HWR_RotateSpritePolyToAim((gl_vissprite_t *)spr, wv, false);
+	if (aim)
+	{
+		float lowy = wv[0].y;
+
+		wv[2].y = wv[3].y = (gzt - basey) * gl_viewludsin + basey;
+		wv[0].y = wv[1].y = (lowy - basey) * gl_viewludsin + basey;
+		wv[3].x += ((gzt - basey) * gl_viewludcos) * gl_viewcos;
+		wv[2].x += ((gzt - basey) * gl_viewludcos) * gl_viewcos;
+		wv[0].x += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		wv[1].x += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		wv[3].z += ((gzt - basey) * gl_viewludcos) * gl_viewsin;
+		wv[2].z += ((gzt - basey) * gl_viewludcos) * gl_viewsin;
+		wv[0].z += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+		wv[1].z += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+	}
 	return PS2HWD_QuadHidden(wv) != 0;
 }
 #endif
@@ -5637,8 +5677,30 @@ static void HWR_ProjectSprite(mobj_t *thing)
 			dispoffset *= -1;
 	}
 
+#ifdef PS2_PROFILE
+	UINT8 ps2_hidden = 0;
+
+	// PS2-HW-72: no pixel centre inside the quad (or the quad outside the view): nothing would be drawn, nothing is made of it. Not for the sprites that have
+	// more to draw than the quad (the drop shadow, the model, the link draw hack), nor the floor sprites.
+	if (!splat && !cv_glmodels.value && !((thing->flags2 & MF2_LINKDRAW) && thing->tracer) && !(cv_shadow.value && thing->shadowscale) && !HWR_PS2_NoCull())
+	{
+		const boolean aim = cv_glspritebillboarding.value && !papersprite && fabsf(gl_viewludcos) > 1.0e-6f; // as HWR_RotateSpritePolyToAim: not for a view that looks level
+		const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
+
+		if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+		{
+			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds
+				return;
+			ps2_hidden = 1;
+		}
+	}
+#endif
+
 	// store information in a vissprite
 	vis = HWR_NewVisSprite();
+#ifdef PS2_PROFILE
+	vis->ps2_hid = ps2_hidden;
+#endif
 	vis->x1 = x1;
 	vis->x2 = x2;
 	vis->z1 = z1;
@@ -5704,14 +5766,6 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	vis->bbox = false;
 
 	vis->angle = interp.angle;
-
-#ifdef PS2_PROFILE
-	// PS2-HW-72: no pixel centre inside the quad (or the quad outside the view): nothing would be drawn, nothing is made of it. Not for the sprites that have
-	// more to draw than the quad (the drop shadow, the model, the link draw hack), nor the floor sprites.
-	if (vis != &gl_overflowsprite && !splat && !cv_glmodels.value && !((thing->flags2 & MF2_LINKDRAW) && thing->tracer) && !(cv_shadow.value && thing->shadowscale)
-		&& !HWR_PS2_NoCull() && HWR_PS2_SpriteHidden(vis))
-		gl_visspritecount--;
-#endif
 }
 
 // Precipitation projector for hardware mode

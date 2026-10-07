@@ -37,6 +37,7 @@ typedef struct
 	GLMipmap_t *key; // the original mipmap of a variant pair
 	float total; // visible area of the polygons measured so far, pixels squared
 	float smax; // diagnostics: the largest texel seen
+	u32 npoly; // contributions measured
 	float hist[PLAN_BINS]; // area by texel size
 } planinfo_t;
 
@@ -288,6 +289,7 @@ static inline void plan_add(planinfo_t *pi, float s, float area)
 {
 	pi->hist[plan_bin(s)] += area;
 	pi->total += area;
+	pi->npoly++;
 	if (s > pi->smax)
 		pi->smax = s;
 	pi->key->ps2_vis = 1;
@@ -410,6 +412,7 @@ void PS2HWD_PlanEnd(void)
 	static GLMipmap_t *key[ENT_MAX];
 	static float tot[ENT_MAX];
 	static u8 lx[ENT_MAX], cap[ENT_MAX];
+	static u32 npl[ENT_MAX];
 	u32 budget, sum = 0, exact_sum;
 	int i, n = 0, step;
 
@@ -429,6 +432,7 @@ void PS2HWD_PlanEnd(void)
 		int lm = plan_lmax(k), le, lrx, full;
 
 		key[n] = k;
+		npl[n] = plan_info[i].npoly;
 		tot[n] = plan_info[i].total;
 		if (!(plan_info[i].total > 0.0f))
 		{
@@ -460,6 +464,7 @@ void PS2HWD_PlanEnd(void)
 		if (j < n || !(imm_ptotal[i] > 0.0f))
 			continue; // planned in this frame already / nothing was seen
 		key[n] = k;
+		npl[n] = 0;
 		tot[n] = imm_ptotal[i];
 		le = imm_pseps[i] >= 1.0e5f ? 0 : lod_level_for(imm_pseps[i], PLAN_TOL_EXACT);
 		lrx = imm_pseps[i] >= 1.0e5f ? 0 : lod_level_for(imm_pseps[i], PLAN_TOL_RELAX);
@@ -511,7 +516,7 @@ void PS2HWD_PlanEnd(void)
 
 			if (!r && k->nextcolormap)
 				r = rec_of(k->nextcolormap);
-			CONS_Printf("HWPLAN %s %ux%u area=%.0f cap=%d want=%d blk=%u stored=%s lvl %d blk %u%s\n", HWR_PS2_TexName(k), (unsigned)k->width, (unsigned)k->height, tot[i], (int)cap[i], (int)lx[i],
+			CONS_Printf("HWPLAN %s %ux%u n=%u area=%.0f cap=%d want=%d blk=%u stored=%s lvl %d blk %u%s\n", HWR_PS2_TexName(k), (unsigned)k->width, (unsigned)k->height, (unsigned)npl[i], tot[i], (int)cap[i], (int)lx[i],
 				(unsigned)plan_blocks(k, lx[i]), r ? "yes" : "no", r ? (int)r->dx : -1, r ? (unsigned)r->nblk : 0u, i >= plan_n ? " (immediate, carried)" : "");
 		}
 	H.plan_last = sum; // diagnostics: the planned working set of the last plan
@@ -644,8 +649,10 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 // the -0.5 shift). A sprite quad that lies between pixel centres, or outside the view, draws nothing, and everything the engine and the driver do for it
 // (vissprite, sort, patch lookup, polygon set-up, packing) is wasted: 4000+ EE cycles. The engine asks here for the quad it would draw (the four vertices
 // as HWR_DrawSprite hands them to HWR_ProcessPolygon); true = it cannot show a pixel: all four vertices lie outside one side of the view volume, or the
-// screen box of the quad (widened by 0.1 pixel: the GS snaps vertices to 1/16 pixel) contains no pixel centre. A quad that reaches the near plane is
+// screen box of the quad contains no pixel centre (quad_no_centre: widened by 0.1 pixel, the GS snaps vertices to 1/16 pixel). A quad that reaches the near plane is
 // never called hidden (it is clipped by the driver).
+#include "ps2_hw_quad.h" // quad_no_centre (host test tools/ps2/hw_quad_hosttest.py)
+
 int PS2HWD_QuadHidden(const void *vp)
 {
 	const FOutVector *v = (const FOutVector *)vp;
@@ -688,7 +695,7 @@ int PS2HWD_QuadHidden(const void *vp)
 	}
 	if (x1 - x0 > 8.0f || y1 - y0 > 8.0f)
 		return 0; // big: it covers a centre for sure
-	if (ceilf(x0 - 0.1f) > floorf(x1 + 0.1f) || ceilf(y0 - 0.1f) > floorf(y1 + 0.1f))
+	if (quad_no_centre(x0, x1, y0, y1))
 	{
 		spr_hid_yes++;
 		return 1; // no pixel centre in the box

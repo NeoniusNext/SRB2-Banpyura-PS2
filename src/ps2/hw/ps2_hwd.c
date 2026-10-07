@@ -251,6 +251,14 @@ boolean PS2HWD_Init(void)
 		return true;
 	memset(&H, 0, sizeof H);
 	tex_nosplit = M_CheckParm("-hwnosplit") != 0; // PS2-HW-70 off: images over 1024 rows are decimated
+	tex_split_rows = 1024;
+	if (M_CheckParm("-hwsplitrows") && M_IsNextParm())
+	{
+		const int rows = atoi(M_GetNextParm());
+
+		if (rows >= 64 && rows <= 1024 && !(rows & 63))
+			tex_split_rows = (u32)rows; // test: the split is exercised on ordinary textures
+	}
 	H.dmac = -1;
 	H.sema_vbl = H.sema_dma = -1;
 	H.shader = -1;
