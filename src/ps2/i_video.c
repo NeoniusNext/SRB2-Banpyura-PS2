@@ -289,6 +289,12 @@ static boolean Impl_HWAcquire(void)
 	return true;
 }
 
+// PS2-170: the driver is up but the engine does not own it yet (a jump out of its start): the ordinary release does nothing then
+boolean PS2Video_HWOwned(void)
+{
+	return hwd_on;
+}
+
 static void Impl_HWRelease(void)
 {
 	if (!hwd_on)

@@ -149,6 +149,8 @@ static void ForceSoftware(const char *why, boolean mark)
 		hwfb_gaveup = true;
 		CONS_Alert(CONS_WARNING, "The Hardware renderer failed %lu times: it stays off (Options -> Video to try it again).\n", (unsigned long)hwfb_fallbacks);
 	}
+	if (!PS2Video_HWOwned())
+		PS2HWD_Shutdown(); // half started driver: Impl_HWRelease would not touch it
 	setrenderneeded = render_soft;
 	SCR_SetMode(); // the renderer switch of Options -> Video: HWR_ClearAllTextures, HWR_Shutdown, the driver goes down, the software path takes the GS
 	Z_FreeTag(PU_HWRPLANE);         // the plane polygons of the level (no owner; they would live until the level ends)

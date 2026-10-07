@@ -21,6 +21,7 @@ void PS2HWFB_BuildLevel(void);               // the hardware part of a level loa
 void PS2HWFB_LevelLoaded(void);              // the end of P_LoadLevel: back to the hardware renderer when it was given up for an earlier level
 void PS2HWFB_NoteStartFailure(void);         // i_video.c: the hardware driver did not start when asked to (counts towards giving it up)
 boolean PS2HWFB_ForcedSoftware(void);        // the user wants Hardware, the game runs Software because of memory
+boolean PS2Video_HWOwned(void);              // i_video.c: the engine owns the started hardware driver
 void PS2HWFB_Init(void);                     // command line (-hwfbtest N: leave the hardware renderer as if memory ran out at frame N)
 void PS2HWFB_Report(void);                   // one line with the counters (end of the memory report)
 

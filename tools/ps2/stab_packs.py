@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-GOOD = Path('/home/user/SRB2-Banpyura-PS2/build/pak')
+GOOD = ROOT / 'build/pakx'  # hard links of the cooked packs + FINEACON.DAT (python3 tools/ps2/net_env.py makes it)
 BASE = ROOT / 'build/pakbad'
 PACKS = ['SRB2.PAK', 'ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK']
 
