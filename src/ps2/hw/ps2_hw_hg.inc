@@ -17,6 +17,7 @@ static struct
 	u32 sing_cyc[8]; // their cycles
 	u32 c_fast, c_lit, c_cut, c_water; // cycles of emit_poly by branch
 	u32 plan_hit, plan_miss; // plan cache (PS2-HW-46)
+	u32 p_cutold, c_cutold; // polygons / cycles of the old cut_and_emit (repeat cuts, wide polygons)
 	u32 pc_key, pc_copy, pc_touch, pc_misc, pc_miss; // cycles: key + lookup, P/LF copy, texture touch, rest of a hit, a miss
 } G;
 
@@ -27,6 +28,7 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		frames = 1;
 	I_OutputMsg("HWPROF3 batches=%u fans=%u single=%u vu=%u fast=%u lit=%u cut=%u water=%u begin=%u/%u tris=%u vuchunks=%u planhit=%u planmiss=%u\n", G.batches / frames, G.fans / frames, G.single / frames,
 		G.p_vu / frames, G.p_fast / frames, G.p_lit / frames, G.p_cut / frames, G.p_water / frames, G.begin_n / frames, G.begin_cyc / frames, G.tri_n / frames, G.vu_chunks / frames, G.plan_hit / frames, G.plan_miss / frames);
+	I_OutputMsg("HWPROF9 cut_and_emit (repeats etc.) polys=%u cyc=%u\n", G.p_cutold / frames, G.c_cutold / frames);
 	I_OutputMsg("HWPROF8 plan cache cycles: key=%u copy=%u touch=%u misc=%u miss=%u\n", G.pc_key / frames, G.pc_copy / frames, G.pc_touch / frames, G.pc_misc / frames, G.pc_miss / frames);
 	I_OutputMsg("HWPROF4 segs=%u subsecs=%u planes=%u sprites=%u proc=%u procbatch=%u\n", ps2hwp_cnt[HWC_SEGS] / frames, ps2hwp_cnt[HWC_SUBSECS] / frames, ps2hwp_cnt[HWC_PLANES] / frames,
 		ps2hwp_cnt[HWC_SPRITES] / frames, ps2hwp_cnt[HWC_PROC] / frames, ps2hwp_cnt[HWC_PROC_BATCH] / frames);

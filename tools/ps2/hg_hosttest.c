@@ -105,7 +105,7 @@ static int neg;
 /* ---- test framework ---- */
 static int group_fail, total_fail, groups;
 static const char *group_name;
-#define NEGCOUNT 2
+#define NEGCOUNT 3
 
 static void group_begin(const char *name)
 {
@@ -473,6 +473,113 @@ static void test_water(void)
 	(void)maxdq;
 }
 
+
+/* ---- group: bands (the light staircase cut of ordinary walls and floors) ---- */
+static void test_bands(void)
+{
+	const u32 flags = PF_Masked | PF_Modulated | PF_ColorMapped | PF_Occlude;
+	int trial, total_pieces[2] = {0, 0}, compared = 0, polys = 0, countdiff = 0, cutpolys = 0;
+	double maxdxy = 0, maxdst = 0;
+
+	group_begin("bands");
+	for (trial = 0; trial < 500; trial++)
+	{
+		FOutVector vv[8];
+		FSurfaceInfo surf;
+		int pass, n, k;
+		double x0 = rndf(40, 700), z0 = rndf(-700, 700), x1 = rndf(40, 1800), z1 = rndf(-900, 900), y0 = rndf(-20, 60), y1 = rndf(80, 260);
+		int lvl = (int)(rnd() % 256), wall = rnd() % 2;
+
+		water_setup((float)rndf(-30, 30));
+		H.leveltime = 0;
+		memset(&surf, 0, sizeof surf);
+		surf.PolyColor.rgba = 0xFFFFFFFFu;
+		surf.LightInfo.light_level = lvl;
+		surf.LightInfo.fade_start = (rnd() % 4 == 0) ? 3 : 0;
+		surf.LightInfo.fade_end = (rnd() % 4 == 0) ? 22 : 31;
+		H.shaders_on = 1;
+		H.shader = wall ? 1 : 0; /* wall / floor light constants */
+		if (wall)
+		{
+			n = 4;
+			vv[0].x = (float)x0; vv[0].z = (float)z0; vv[0].y = (float)y0;
+			vv[1].x = (float)x1; vv[1].z = (float)z1; vv[1].y = (float)y0;
+			vv[2].x = (float)x1; vv[2].z = (float)z1; vv[2].y = (float)y1;
+			vv[3].x = (float)x0; vv[3].z = (float)z0; vv[3].y = (float)y1;
+		}
+		else
+		{
+			n = 3 + (int)(rnd() % 4);
+			water_poly(vv, n, x0 + 200, z0 * 0.5, rndf(60, 400), rndf(60, 600));
+		}
+		for (k = 0; k < n; k++)
+		{
+			vv[k].s = (float)(vv[k].x / 128.0);
+			vv[k].t = (float)(vv[k].y / 128.0 - vv[k].z / 128.0);
+		}
+		for (pass = 0; pass < 2; pass++)
+		{
+			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDCUT : 0;
+			if (pass == 1 && neg == 3)
+				ps2hwd_dbg_flags |= 0; /* (negative control 3 mutates the expected class below) */
+			cap_reset();
+			H.gsr.valid = 0;
+			if (!begin_draw(flags, &surf))
+			{
+				EXPECT(0, "begin_draw refused");
+				continue;
+			}
+			emit_fan(vv, NULL, n, NULL);
+			decode_fans(pass);
+			total_pieces[pass] += nfans[pass];
+		}
+		ps2hwd_dbg_flags = 0;
+		polys++;
+		if (nfans[0] > 1)
+			cutpolys++;
+		if (nfans[0] != nfans[1])
+		{
+			countdiff += abs(nfans[0] - nfans[1]);
+			EXPECT(abs(nfans[0] - nfans[1]) <= 2, "trial %d: %d pieces by cut_and_emit, %d by the sweep", trial, nfans[0], nfans[1]);
+			continue;
+		}
+		{
+			int i;
+
+			for (i = 0; i < nfans[0]; i++)
+			{
+				const gfan_t *a = &fans[0][i], *b = &fans[1][i];
+
+				if (a->n != b->n)
+				{
+					EXPECT(0, "trial %d piece %d: %d vertices old, %d new", trial, i, a->n, b->n);
+					continue;
+				}
+				for (k = 0; k < a->n; k++)
+				{
+					double dxy = fmax(abs(a->v[k].x - b->v[k].x), abs(a->v[k].y - b->v[k].y));
+
+					maxdxy = fmax(maxdxy, dxy);
+					maxdst = fmax(maxdst, fmax(fabs(a->v[k].s - b->v[k].s), fabs(a->v[k].t - b->v[k].t)) / fmax(fabs(a->v[k].q), 1e-9));
+					EXPECT(dxy <= 2.0, "trial %d piece %d vertex %d: xy differ by %.0f", trial, i, k, dxy);
+					EXPECT(a->v[k].f == b->v[k].f + (neg == 3 ? 1 : 0), "trial %d piece %d vertex %d: fog %d vs %d", trial, i, k, a->v[k].f, b->v[k].f);
+					EXPECT(abs(a->v[k].z - b->v[k].z) <= 64, "trial %d piece %d vertex %d: z %d vs %d", trial, i, k, a->v[k].z, b->v[k].z);
+					EXPECT(fabs(a->v[k].s - b->v[k].s) <= 2e-3 * fmax(1.0, fabs(a->v[k].s)) + 1e-4 && fabs(a->v[k].t - b->v[k].t) <= 2e-3 * fmax(1.0, fabs(a->v[k].t)) + 1e-4,
+						"trial %d piece %d vertex %d: st differ", trial, i, k);
+				}
+				compared++;
+			}
+		}
+	}
+	{
+		char d[220];
+
+		snprintf(d, sizeof d, "%d polygons (%d cut into several pieces), %d/%d pieces (cut_and_emit / sweep), %d compared (max xy %.0f LSB, st %.2g), %d count differences", polys, cutpolys, total_pieces[0],
+			total_pieces[1], compared, maxdxy, maxdst, countdiff);
+		group_end(d);
+	}
+}
+
 /* ---- group: plan cache ---- */
 typedef struct
 {
@@ -665,8 +772,9 @@ int main(int argc, char **argv)
 			neg = atoi(argv[i] + 4);
 	cap = malloc(sizeof(qw_t) * CAP_MAX);
 	if (neg)
-		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : "plancache");
+		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : "bands");
 	test_water();
+	test_bands();
 	test_plancache();
 	printf("HG negctl-count %d\n", NEGCOUNT);
 	printf("HG RESULT %s: %d groups, %d failed\n", total_fail ? "FAILED" : "PASSED", groups, total_fail);

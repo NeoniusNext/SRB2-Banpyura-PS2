@@ -13,6 +13,7 @@
 // z = 640 and about 0.5 pixel at z = 320 (320 pixel wide view, 90 degree field of view): the far bands moved the picture by less than half a pixel.
 
 #define HWDBG_OLDWATER 0x10000000 // -hwdbg 268435456: the old band by band water polygon (A/B)
+#define HWDBG_OLDCUT 0x40000000 // -hwdbg 1073741824: cut_and_emit makes the light staircase pieces (A/B of band_sweep)
 #define HWDBG_WATERPOL 0x20000000 // -hwdbg 536870912: the sweep with the old ripple bands (16 units up to 640): equivalence test against HWDBG_OLDWATER
 #define WF_MAXV 24 // vertices of a polygon the sweep takes (more: the old code)
 #define WF_NPLANE 80 // planes (ripple bands + darkness steps) per polygon
@@ -92,14 +93,14 @@ static int wf_chain(const cv_t *v, int cnt, int from, int to, int dir, const flo
 	return pj == m ? n : -1;
 }
 
-// 1 when the polygon was drawn
-static int water_fast(const cv_t *v, int cnt, piece_t pc)
+// 1 when the polygon was drawn. ripple = 0: only the steps of the light staircase cut the polygon (PS2-HW-48: what cut_and_emit's stage 2 does, in one sweep)
+static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 {
 	float zc[WF_NPLANE], cw[WF_NPLANE], rz[RIPPLE_MAXPLANES], th[WF_NPLANE], bds[RIPPLE_MAXPLANES + 1], bdt[RIPPLE_MAXPLANES + 1], z0, z1, wlo, whi;
 	int icl[WF_NPLANE + 1], ib[WF_NPLANE + 1], cls[WF_NPLANE], bidxa[WF_NPLANE], bidxb[WF_NPLANE];
 	int i, imin = 0, imax = 0, m = 0, nr = 0, nc = 0, na_, nb_, f = 0, j, cls0 = -1;
 
-	if ((ps2hwd_dbg_flags & HWDBG_OLDWATER) || cnt < 3 || cnt > WF_MAXV || P.cutx || P.cuty || P.lmode != LM_BANDS)
+	if ((ps2hwd_dbg_flags & (ripple ? HWDBG_OLDWATER : HWDBG_OLDCUT)) || cnt < 3 || cnt > WF_MAXV || P.cutx || P.cuty || P.lmode != LM_BANDS)
 		return 0;
 	if (ripple_pol_old != ((ps2hwd_dbg_flags & HWDBG_WATERPOL) != 0))
 		ripple_policy((ps2hwd_dbg_flags & HWDBG_WATERPOL) != 0);
@@ -120,6 +121,8 @@ static int water_fast(const cv_t *v, int cnt, piece_t pc)
 	z0 = zfrag_of_w(wlo);
 	z1 = zfrag_of_w(whi);
 	// ripple planes strictly inside (z0, z1) and the light staircase steps
+	if (!ripple)
+		f = ripple_nplanes; /* no ripple planes: the single band beyond the last one has no shift */
 	while (f < ripple_nplanes && ripple_planes[f] <= z0)
 		f++;
 	for (i = f; i < ripple_nplanes && ripple_planes[i] < z1; i++)
@@ -217,4 +220,9 @@ static int water_fast(const cv_t *v, int cnt, piece_t pc)
 	}
 	H.st.bands += (u32)m + 1;
 	return 1;
+}
+
+static inline int water_fast(const cv_t *v, int cnt, piece_t pc)
+{
+	return band_sweep(v, cnt, pc, 1);
 }

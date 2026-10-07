@@ -2157,10 +2157,15 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		G.p_water++, emit_water_poly(v, cnt, pc, na);
 		G.c_water += cyc() - gt1;
 	}
+	else if (P.lmode == LM_BANDS && !P.water && !big && !vcol && !P.vcol && band_sweep(v, cnt, pc, 0))
+	{
+		G.p_cut++; // PS2-HW-48: the polygon cut at the steps of the light staircase in one sweep
+		G.c_cut += cyc() - gt1;
+	}
 	else
 	{
-		G.p_cut++, cut_and_emit(v, cnt, 0, pc, na);
-		G.c_cut += cyc() - gt1;
+		G.p_cutold++, cut_and_emit(v, cnt, 0, pc, na);
+		G.c_cutold += cyc() - gt1;
 	}
 	H.st.cyc_draw += cyc() - t0;
 }
