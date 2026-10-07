@@ -27,7 +27,7 @@
 void HWR_ReleaseBatching(void);
 #endif
 
-#define HWFB_MAX_FALLBACKS 6   // the hardware renderer is given up for good (until the player selects it again) after this many failures
+static UINT32 hwfb_maxfall = 6; // the hardware renderer is given up for good (until the player selects it again) after this many failures (-hwfbmax N for the stress tests)
 #define HWFB_SOFT_RETRIES 3    // frames in a row abandoned in the software renderer before the out-of-memory error is reported as before
 #define HWFB_SOFT_WINDOW 12    // ... within this many frames
 
@@ -39,6 +39,9 @@ static UINT32 hwfb_frame;                         // displayed frames
 static INT32 hwfb_test = -1, hwfb_test_period;    // -hwfbtest N[,period]: an out-of-memory fallback at the Nth hardware frame (and every `period` frames after a return)
 static UINT32 hwfb_test_next;
 static char hwfb_last[160];
+// The measurement tools (HWPROF windows, -ps2prof) must see an out-of-memory as what it is: a silent switch to software in the middle of a run would put software numbers
+// into the hardware table. With -ps2prof (unless -hwfb) or -hwnofb no guard is armed: the old behaviour, the run stops with the report.
+static boolean hwfb_off;
 // What the hardware renderer needs on top of the level (measured, opt11-STAB.md section 2: 84 maps in Hardware, 35 frames each): the batch arrays (0.4..1.45 MB),
 // the working set of textures, the GS driver's C heap growth; the maps that run have >= 3.5 MB free after the level and the plane polygons were built (the busiest ones use 2.2 MB of it in the first 35 frames); below 2.5 MB the first frames would run the arena dry.
 #define HWFB_MINFREE_DEFAULT (5u << 19) // 2.5 MB
@@ -83,13 +86,18 @@ void PS2HWFB_NoteStartFailure(void)
 {
 	snprintf(hwfb_last, sizeof hwfb_last, "the hardware driver did not start");
 	hwfb_fallbacks++;
-	if (hwfb_fallbacks >= HWFB_MAX_FALLBACKS)
+	if (hwfb_fallbacks >= hwfb_maxfall)
 		hwfb_gaveup = true;
 }
 
 void PS2HWFB_Init(void)
 {
 	COM_AddCommand("ps2_finale", Command_Ps2Finale_f, 0);
+	if (M_CheckParm("-hwfbmax") && M_IsNextParm())
+		hwfb_maxfall = (UINT32)atoi(M_GetNextParm());
+	hwfb_off = M_CheckParm("-hwnofb") || (M_CheckParm("-ps2prof") && !M_CheckParm("-hwfb"));
+	if (hwfb_off)
+		I_OutputMsg("ps2_hwfb: out-of-memory recovery is OFF (%s)\n", M_CheckParm("-hwnofb") ? "-hwnofb" : "-ps2prof without -hwfb");
 	if (M_CheckParm("-hwfbfree") && M_IsNextParm())
 		hwfb_minfree = (size_t)atol(M_GetNextParm()) << 10;
 	if (M_CheckParm("-hwfbss") && M_IsNextParm())
@@ -136,7 +144,7 @@ static void ForceSoftware(const char *why, boolean mark)
 	if (mark && slot)
 		hwfb_bad[slot] = true;
 	hwfb_fallbacks++;
-	if (hwfb_fallbacks >= HWFB_MAX_FALLBACKS && !hwfb_gaveup)
+	if (hwfb_fallbacks >= hwfb_maxfall && !hwfb_gaveup)
 	{
 		hwfb_gaveup = true;
 		CONS_Alert(CONS_WARNING, "The Hardware renderer failed %lu times: it stays off (Options -> Video to try it again).\n", (unsigned long)hwfb_fallbacks);
@@ -194,6 +202,11 @@ void PS2HWFB_Display(void (*display)(void))
 	zguard_t g;
 
 	hwfb_frame++;
+	if (hwfb_off)
+	{
+		display();
+		return;
+	}
 #ifdef HWRENDER
 	if (hwfb_test > 0 && rendermode == render_opengl && hwfb_test_next && hwfb_frame >= hwfb_test_next)
 	{
@@ -228,7 +241,7 @@ boolean PS2HWFB_LoadLevel(void)
 {
 	zguard_t g;
 
-	if (netgame)
+	if (netgame || hwfb_off)
 		return P_LoadLevel(false, false);
 	if (Z_GUARD_TRY(&g))
 	{
@@ -264,7 +277,7 @@ boolean PS2HWFB_LoadLevel(void)
 void PS2HWFB_PreLoad(UINT32 numssectors)
 {
 #ifdef HWRENDER
-	if (rendermode != render_opengl || numssectors < hwfb_maxss)
+	if (hwfb_off || rendermode != render_opengl || numssectors < hwfb_maxss)
 		return;
 	{
 		char why[96];
@@ -286,6 +299,11 @@ void PS2HWFB_BuildLevel(void)
 
 	if (rendermode != render_opengl)
 		return;
+	if (hwfb_off)
+	{
+		HWR_LoadLevel();
+		return;
+	}
 	if (slot && hwfb_bad[slot])
 	{
 		ForceSoftware("this map did not fit before", false);
@@ -325,7 +343,7 @@ void PS2HWFB_LevelLoaded(void)
 #ifdef HWRENDER
 	const INT32 slot = MapSlot();
 
-	if (!PS2HWFB_ForcedSoftware() || hwfb_gaveup)
+	if (hwfb_off || !PS2HWFB_ForcedSoftware() || hwfb_gaveup)
 		return;
 	if (slot && hwfb_bad[slot])
 		return;

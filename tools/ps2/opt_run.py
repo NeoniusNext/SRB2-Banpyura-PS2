@@ -80,6 +80,7 @@ def main():
     ap.add_argument('--no-ref', action='store_true')
     ap.add_argument('--playdemo', action='store_true', help='-playdemo (real time, frame interpolation possible) instead of -timedemo')
     ap.add_argument('--cfg', action='append', default=[], help='extra line of the staged reference.cfg (e.g. fpscap "Match refresh rate"); repeatable')
+    ap.add_argument('--home-file', action='append', default=[], help='SRC=DST: copy SRC to <run>/.srb2/DST after staging (a damaged reference.cfg, gamedata.dat, a save file; OPT11-STAB)')
     ap.add_argument('--emu', default='', help='pcsx2-qt.exe of another private copy (e.g. D:/PCSX2-net1/pcsx2-qt.exe: DEV9 Ethernet in Sockets mode for the network tests)')
     ap.add_argument('--golden', action='store_true', help='compare the PS2REF dump of --demo with golden/phase0-v2/run1/<demo> (tics.csv, frames.csv, frame-*.idx)')
     ap.add_argument('--compare-to', default='', help='run directory (under --out) whose refout must be byte-identical: tics.csv, frames.csv, frame-*.idx')
@@ -87,6 +88,9 @@ def main():
     a = ap.parse_args()
     run = Path(a.out).resolve() / a.name
     refout = stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None, ''.join(l + '\n' for l in a.cfg))
+    for hf in a.home_file:
+        src, _, dst = hf.partition('=')
+        shutil.copy2(src, run / '.srb2' / dst)
     args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt']
     if a.demo and not a.no_ref:
         args += ['-ps2ref', 'host:/refout']

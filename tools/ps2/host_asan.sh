@@ -35,7 +35,8 @@ if [ "$1" = build ]; then
   for f in d_netfil mserv http-mserv; do
     (cd $B && eval "$CMD -c $W/src/netcode/$f.c -o $W/$S/$f.o") > /dev/null 2>&1
   done
-  cmake -S . -B $B -DCMAKE_EXE_LINKER_FLAGS="$SAN $W/$S/d_netfil.o $W/$S/mserv.o $W/$S/http-mserv.o $W/$S/shim.o" >> $B/configure.log 2>&1
+  # OPT11-STAB: the CMake host profile now compiles d_netfil.c / mserv.c / http-mserv.c and the stubs of build_host_profile_wad.c itself: nothing is linked by hand any more
+  cmake -S . -B $B -DCMAKE_EXE_LINKER_FLAGS="$SAN" >> $B/configure.log 2>&1
   ninja -C $B -j2
   ls -la $B/bin/
   exit 0

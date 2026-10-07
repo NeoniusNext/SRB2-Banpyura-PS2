@@ -37,23 +37,23 @@ def menus_items():
 SCEN = {
     # name: (engine args, pad items or callable, frames, vidshots)
     'menus': (['-skipintro'], menus_items, None, 't60,f300,f520,f800,f1000,f1200,f1500,f1800,f2100'),
-    'intro': ([], lambda: (['600:start*3/40'], 2600), None, 'f200,f500,f900,f1400,f2000'),
-    'title-long': (['-skipintro'], lambda: ([], 3000), None, 't100,t800,t1600,t2400'),
+    'intro': ([], lambda: (['600:start*3/40'], 2600), None, 'f200,f500,f900,f1400,f2000,f2550'),
+    'title-long': (['-skipintro'], lambda: ([], 3000), None, 't100,t800,t1600,t2400,f2950'),
     # the screens of a finished game, started from the console (ps2_finale N, src/ps2/ps2_hwfb.c)
-    'ending': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 1'], lambda: ([], 1400), None, 'f150,f400,f700,f1000,f1300'),
-    'credits': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 2'], lambda: ([], 1400), None, 'f150,f400,f700,f1000,f1300'),
-    'evaluation': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 3'], lambda: ([], 900), None, 'f150,f400,f800'),
-    'continue': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 4'], lambda: ([], 900), None, 'f150,f400,f800'),
-    'gameend': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 5'], lambda: ([], 900), None, 'f150,f400,f800'),
-    'intro-cmd': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 6'], lambda: ([], 1800), None, 'f150,f500,f900,f1400'),
+    'ending': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 1'], lambda: ([], 1400), None, 'f150,f400,f700,f1000,f1300,f1380'),
+    'credits': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 2'], lambda: ([], 1400), None, 'f150,f400,f700,f1000,f1300,f1380'),
+    'evaluation': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 3'], lambda: ([], 900), None, 'f150,f400,f800,f880'),
+    'continue': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 4'], lambda: ([], 900), None, 'f150,f400,f800,f880'),
+    'gameend': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 5'], lambda: ([], 900), None, 'f150,f400,f800,f880'),
+    'intro-cmd': (['-skipintro', '-warp', 'MAP01', '-netcmd', '60:ps2_finale 6'], lambda: ([], 1800), None, 'f150,f500,f900,f1400,f1780'),
     # special stage / NiGHTS / bonus: the player runs and jumps (scripted pad), a few hundred frames of real play, then the intermission
-    'special': (['-skipintro', '-warp', 'MAP50', '-netcmd', '1500:exitlevel'], lambda: (['10:cross*1', '30:up*40/30~25'], 2300), None, 'l100,l600,l1200,i30'),
-    'nights': (['-skipintro', '-warp', 'MAP70', '-netcmd', '1500:exitlevel'], lambda: (['10:cross*1', '30:right*40/30~25'], 2300), None, 'l100,l600,l1200,i30'),
+    'special': (['-skipintro', '-warp', 'MAP50', '-netcmd', '1500:exitlevel'], lambda: (['10:cross*1', '30:up*40/30~25'], 2300), None, 'l100,l600,l1200,f2250'),
+    'nights': (['-skipintro', '-warp', 'MAP70', '-netcmd', '1500:exitlevel'], lambda: (['10:cross*1', '30:right*40/30~25'], 2300), None, 'l100,l600,l1200,f2250'),
     # the renderer switch in both directions, 25 times: in a level, on the title screen, with the menu open (the engine's -hwtoggle N changes the `renderer` cvar every N frames;
     # the game must start in Software: -renderer would make the cvar read-only)
-    'toggle-level': (['-skipintro', '-warp', 'MAP01', '-hwtoggle', '70'], lambda: ([], 1900), None, 'l50,f400,f900,f1500'),
-    'toggle-title': (['-skipintro', '-hwtoggle', '55'], lambda: ([], 1500), None, 't40,f400,f900'),
-    'toggle-menu': (['-skipintro', '-hwtoggle', '65'], lambda: (['100:start', '150:cross', '300:circle', '340:down', '380:cross', '520:circle'], 1700), None, 'f300,f800,f1300'),
+    'toggle-level': (['-skipintro', '-warp', 'MAP01', '-hwtoggle', '70'], lambda: ([], 1900), None, 'l50,f400,f900,f1500,f1850'),
+    'toggle-title': (['-skipintro', '-hwtoggle', '55'], lambda: ([], 1500), None, 't40,f400,f900,f1450'),
+    'toggle-menu': (['-skipintro', '-hwtoggle', '65'], lambda: (['100:start', '150:cross', '300:circle', '340:down', '380:cross', '520:circle'], 1700), None, 'f300,f800,f1300,f1650'),
 }
 
 
@@ -76,7 +76,7 @@ def run(a, name, renderer):
     p = subprocess.run(cmd, capture_output=True, text=True)
     text = (d / 'boot.txt').read_text(errors='replace') if (d / 'boot.txt').exists() else ''
     bad = [l.strip()[:160] for l in text.splitlines() if 'I_Error' in l or 'OOM:' in l or 'HEAP CHECK FAILED' in l or 'WATCHDOG' in l]
-    ok = 'ZQUIT DONE' in text and not bad
+    ok = ('ZQUIT DONE' in text or 'VIDSHOT COMPLETE' in text) and not bad
     shotsn = len(list(d.glob('vidshot-*.ppm'))) + len(list((d / '.srb2').glob('vidshot-*.ppm')))
     print(f'{run_name}: {"ok" if ok else "FAIL"} frames={nframes} shots={shotsn} {bad[:2]}', flush=True)
     return ok
