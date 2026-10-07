@@ -910,7 +910,7 @@ static vissprite_t *R_GetVisSprite(UINT32 num)
 		// Allocate chunk if necessary
 		if (!visspritechunks[chunk])
 		{
-			// PS2-150 (OPT10-S): one column more than the view has: the clip loops of a floor sprite (SC_SPLAT, R_ClipSprites: x2 = viewwidth, and
+			// PS2-148 (OPT10-S): one column more than the view has: the clip loops of a floor sprite (SC_SPLAT, R_ClipSprites: x2 = viewwidth, and
 			// R_CheckSpriteVisible, <= x2) run to x == viewwidth. With exactly vid.width columns the last sprite of a chunk wrote two bytes behind its block:
 			// the first bytes of the next block header of the zone (flags: "prev-free flag 1 but previous block is used" after the Tutorial map,
 			// found by the soak; with ZDEBUG red zones: "red zone overwritten", owner r_things.c:914). The arrays of the original are MAXVIDWIDTH wide.

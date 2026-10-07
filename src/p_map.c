@@ -4530,7 +4530,7 @@ void P_Initsecnode(void)
 // should make sure it sets all fields properly.
 
 #ifdef PS2_PROFILE
-// PS2-151 (OPT10-S): the nodes are never freed one by one (the free list keeps them, the level tag frees them all), but each was a block of its own: 28 bytes of
+// PS2-149 (OPT10-S): the nodes are never freed one by one (the free list keeps them, the level tag frees them all), but each was a block of its own: 28 bytes of
 // payload became a 48-byte block (16-byte header, 16-byte rounding). MAP11 has 8200 of them; 64 to a block cost 28 bytes each.
 #define SECNODE_CHUNK 64
 

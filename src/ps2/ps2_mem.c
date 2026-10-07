@@ -1541,7 +1541,7 @@ static int ChainNext(const char **list, char *out, size_t outsize)
 	return n != 0;
 }
 
-// PS2-148 (OPT10-S): NULL-write detector (-zck / -znull). On the EE the first kilobytes of RAM are the kernel's (exception vectors, handler tables): a store through a
+// PS2-147 (OPT10-S): NULL-write detector (-zck / -znull). On the EE the first kilobytes of RAM are the kernel's (exception vectors, handler tables): a store through a
 // NULL-based pointer (NULL + member offset) does not fault, neither on the console nor in PCSX2, it corrupts the kernel and the console dies later and elsewhere.
 // The low words are copied at the first frame; each frame compares them and names the first change (word offset, old and new value, frame).
 #define NULLGUARD_WORDS 1024

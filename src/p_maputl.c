@@ -720,7 +720,7 @@ static blocknode_t *P_CreateBlockNode(mobj_t *thing, int x, int y)
 #ifdef PS2_PROFILE
 	else
 	{
-		// PS2-151 (OPT10-S): 64 nodes to a block (they are never freed one by one): a 24-byte node was a 48-byte block, MAP11 has 8800 of them
+		// PS2-149 (OPT10-S): 64 nodes to a block (they are never freed one by one): a 24-byte node was a 48-byte block, MAP11 has 8800 of them
 		int i;
 
 		block = Z_Malloc(sizeof(blocknode_t) * 64, PU_LEVEL, NULL);
