@@ -20,7 +20,7 @@ after the node started (dedicated servers); "xvfb": true/false overrides the "ne
 "until" conditions: all (or any, with "any": true) must appear; the session then waits "grace" seconds and stops every node.
 Exit code: 0 all conditions met, 2 timeout/condition missing, 3 an emulator died or its network did not start (--retries N starts the session again),
 4 an engine log names the real master server (audit), 5 an "abort_on" line appeared (the run cannot succeed any more), 6 an emulator log outgrew the
-runaway limit (SRB2_PCSX2_LOG_LIMIT_MB, default 300; not retried), 7 the engine log of a PS2 node did not grow for 300 s ("stall": SECONDS per node): the game is stuck.
+runaway limit (SRB2_PCSX2_LOG_LIMIT_MB, default 300; not retried), 7 the engine log of a PS2 node did not grow for 200 s ("stall": SECONDS per node): the emulator is stuck (retried like 3).
 """
 import argparse
 import json
@@ -41,7 +41,7 @@ import opt_run  # noqa: E402  (stage())
 
 PCSX2_ROOT = run_pcsx2.PCSX2_ROOT
 ASSETS = os.environ.get('SRB2WADDIR', '/opt/srb2-assets')
-STALL = 300  # seconds an engine log of a running PS2 node may stay unchanged (the engine prints ASTAT/NETSYNC lines all the time): longer = the game is stuck, exit code 7
+STALL = 200  # seconds an engine log of a running PS2 node may stay unchanged (the engine prints ASTAT/NETSYNC lines all the time): longer = the emulator is stuck, exit code 7 (retried like 3)
 STARTUP_HANG = 300  # seconds without an engine log and with a pcsx2.log that stays tiny = the emulator hangs in its start-up (a flake: the session is run again)
 XVFB = ['xvfb-run', '-a', '-s', '-screen 0 800x600x24']
 DEAD_MS = 'http://127.0.0.1:9/MS/0'  # nothing listens on port 9 (discard): the master server URL of a node that must not reach any master server
@@ -282,8 +282,9 @@ def run_session(spec):
                             print(f'[{time.strftime("%H:%M:%S")}] {n.id}: RUNAWAY emulator log, session stopped', flush=True)
                             raise StopIteration
                     if n.spec['kind'] == 'ps2' and not n.spec.get('may_exit'):
-                        # STALL WATCHDOG: soak-ps2srv-pccli once stopped printing at gametic 5215 (the emulator kept running, its CPU thread in the frame limiter, the guest
-                        # printed nothing for 7 minutes until the 40 minute session timeout): a node whose engine log does not grow for STALL seconds ends the session (code 7)
+                        # STALL WATCHDOG: PCSX2 itself hangs now and then under load (seen 4 times: gdb on the stuck process shows the CPU thread waiting in MTGS::s_sem_Vsync
+                        # and the GS thread in xcb_wait_for_reply, the Xvfb idle; the guest sits in the BIOS idle loop): the engine log stops growing. A node whose log does
+                        # not grow for STALL seconds ends the session (code 7, run again by --retries)
                         try:
                             size = (n.dir / 'boot.txt').stat().st_size
                         except OSError:
@@ -292,7 +293,7 @@ def run_session(spec):
                             n.log_size, n.log_changed = size, time.time()
                         elif size >= 0 and time.time() - n.log_changed > n.spec.get('stall', STALL):
                             result['stalled'] = n.id
-                            print(f'[{time.strftime("%H:%M:%S")}] {n.id}: the engine log has not grown for {n.spec.get("stall", STALL)} s (last size {size}): the game is stuck', flush=True)
+                            print(f'[{time.strftime("%H:%M:%S")}] {n.id}: the engine log has not grown for {n.spec.get("stall", STALL)} s (last size {size}): the emulator is stuck', flush=True)
                             raise StopIteration
                     if n.spec['kind'] == 'ps2' and time.time() - n.started > STARTUP_HANG and not (n.dir / 'boot.txt').exists():
                         # an emulator that hangs in its Qt start-up (pcsx2.log stops at "Loading config from ...", 0% CPU for 10 minutes was seen under load): a flake, run again
@@ -373,7 +374,7 @@ def main():
     code = 3
     for attempt in range(a.retries + 1):
         code = run_session(spec)
-        if code != 3:
+        if code not in (3, 7):  # 3: emulator died / DEV9; 7: emulator stuck (PCSX2's GS thread waits for an X reply for ever, see the report)
             break
         print(f'session {spec["name"]}: emulator failure, attempt {attempt + 1} of {a.retries + 1}', flush=True)
         time.sleep(3)
