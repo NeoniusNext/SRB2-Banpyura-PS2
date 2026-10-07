@@ -456,7 +456,9 @@ static UINT8 HWR_CeilingLightLevel(sector_t *sector, INT16 base_lightlevel)
 // sloped and a subsector without a horizon line the previous result is kept and handed to HWR_ProcessPolygon again when all of those are the
 // same (about 3 000 cycles for the vertices with their texture coordinates and the lighting, against a few hundred for the compare). The key
 // holds every input, so a moving platform, a scrolling flat or a light change simply misses.
-// -hwdbg 65536: off; -hwdbg 32768: every hit is also calculated and compared (HWPLANECHECK lines: the number of differences must be 0).
+// OFF by default: it saves 0.36 M of 10.7 M cycles on DEMO_001 but needs 230 KB (C heap or zone) and MAP02 of the test set has no 230 KB to spare
+// (zone OOM "request 1048576 B tag 26" in frame 6..8 with the cache, none without). -hwdbg 65536: on; -hwdbg 32768 (with 65536): every hit is also
+// calculated and compared (HWPLANECHECK lines: the number of differences must be 0).
 extern boolean Cubeapply;
 extern float Cubepal[2][2][2][3];
 
@@ -502,7 +504,7 @@ static boolean HWR_PlaneCacheFrame(void)
 	const float *cp = &Cubepal[0][0][0][0];
 	int i;
 
-	if ((ps2hwd_dbg_flags & 0x10000) || pcache_dead)
+	if (!(ps2hwd_dbg_flags & 0x10000) || pcache_dead) // OPT-IN (-hwdbg 65536): 230 KB of the C heap made MAP02 run out of zone memory (see above)
 		return false;
 	if (!pcache)
 	{
@@ -550,6 +552,19 @@ static boolean HWR_PlaneCacheFrame(void)
 		plane_epoch++;
 	}
 	return true;
+}
+
+// a new level: nothing of the cache and of the horizon flags is valid
+static void HWR_PlaneCacheReset(void)
+{
+	if (pcache)
+		memset(pcache, 0, PCACHE_SETS * PCACHE_WAYS * sizeof(planecache_t));
+	parena_used = 0;
+	plane_epoch_sig = 0;
+	free(subhoriz);
+	subhoriz = NULL;
+	subhoriz_n = 0;
+	pc_owner = NULL;
 }
 
 static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
@@ -865,6 +880,46 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		vert->z = (vy);\
 }
 
+#ifdef PS2_PROFILE
+	if (!slope)
+	{
+		// PS2-HW-61: the flat's texture mapping without what does not change per vertex: scrollx / xscale and scrolly / yscale once, a multiplication
+		// where the flat size is a power of two (exact), no multiplication by a scale of 1, and for a turned flat sin / cos of the angle ONCE as floats:
+		// the macro called the double precision cos() and sin() four times per vertex (soft float: 600..1000 cycles each).
+		// Deviation (registered): the turned flat's coordinates are products of floats, not of a float and a double (1 ulp of a float).
+		const float sadd = scrollx / xscale, tadd = scrolly / yscale;
+		const boolean pw = ((int)fflatwidth & ((int)fflatwidth - 1)) == 0 && (float)(int)fflatwidth == fflatwidth, ph = ((int)fflatheight & ((int)fflatheight - 1)) == 0 && (float)(int)fflatheight == fflatheight;
+		const float invw = 1.0f / fflatwidth, invh = 1.0f / fflatheight;
+		const boolean unit = xscale == 1.0f && yscale == 1.0f;
+		const float ca = angle ? (float)cos(anglef) : 1.0f, sa = angle ? (float)sin(anglef) : 0.0f;
+
+		for (i = 0, v3d = planeVerts; i < (INT32)nrPlaneVerts; i++, v3d++, pv++)
+		{
+			const float vx = pv->x, vy = pv->y;
+			float s = (pw ? vx * invw : vx / fflatwidth) + sadd;
+			float t = -(ph ? vy * invh : vy / fflatheight) + tadd;
+
+			if (angle)
+			{
+				const float s0 = s, t0 = t;
+
+				s = s0 * ca - t0 * sa;
+				t = s0 * sa + t0 * ca;
+			}
+			if (!unit)
+			{
+				s *= xscale;
+				t *= yscale;
+			}
+			v3d->s = s;
+			v3d->t = t;
+			v3d->x = vx;
+			v3d->y = height;
+			v3d->z = vy;
+		}
+	}
+	else
+#endif
 	for (i = 0, v3d = planeVerts; i < (INT32)nrPlaneVerts; i++,v3d++,pv++)
 		SETUP3DVERT(v3d, pv->x, pv->y);
 
@@ -919,7 +974,11 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
 
+#ifdef PS2_PROFILE
+	if (subsector && HWR_PlaneHasHorizon(subsector)) // PS2-HW-61: the flag is made once per subsector; the loop below looked at every line of the subsector (a seg and its linedef) for every plane
+#else
 	if (subsector)
+#endif
 	{
 		// Horizon lines
 		FOutVector horizonpts[6];
@@ -6468,6 +6527,9 @@ void HWR_LoadLevel(void)
 #endif
 
 	HWR_CreatePlanePolygons((INT32)numnodes - 1);
+#ifdef PS2_PROFILE
+	HWR_PlaneCacheReset();
+#endif
 
 	// Build the sky dome
 	HWR_ClearSkyDome();
