@@ -391,6 +391,23 @@ static FUINT HWR_CalcSlopeLight(FUINT lightnum, angle_t dir, fixed_t delta)
 	return (FUINT)finallight;
 }
 
+#ifdef PS2_PROFILE
+// PS2-HW-58: the texture scale of a side is almost always FRACUNIT; FixedDiv(a, FRACUNIT) is a (the overflow test passes for every texture height),
+// and a texture offset inside [0, height) needs no modulo: both cost a long division of 40..70 cycles on the EE
+static inline fixed_t HWR_DivScale(fixed_t a, fixed_t scale)
+{
+	return scale == FRACUNIT ? a : FixedDiv(a, scale);
+}
+
+static inline fixed_t HWR_ModHeight(fixed_t x, fixed_t m)
+{
+	return (UINT32)x < (UINT32)m ? x : x % m;
+}
+#else
+#define HWR_DivScale(a, scale) FixedDiv((a), (scale))
+#define HWR_ModHeight(x, m) ((x) % (m))
+#endif
+
 static UINT8 HWR_SideLightLevel(side_t *side, INT16 base_lightlevel)
 {
 	return (max(max(0, cv_secbright.value), min(255, SIDE_LIGHT(side) +
@@ -685,6 +702,10 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 			else
 			{
 				HWC_ADD(tag ? HWC_PLANE_KEYMISS : HWC_PLANE_MISS);
+				if (tag) // which input changed (the first that differs)
+					HWC_ADD(pce->fixedheight != fixedheight ? HWC_PKM_H : pce->lightlevel != (INT16)lightlevel ? HWC_PKM_L : (pce->flags_in != PolyFlags || pce->alpha != alpha) ? HWC_PKM_F
+						: (pce->texnum != (INT16)texnum || pce->colormap != planecolormap) ? HWC_PKM_T : (pce->xscale != kxs || pce->yscale != kys || pce->xoff != kxo || pce->yoff != kyo || pce->angle != kang) ? HWC_PKM_O
+						: pce->epoch != (UINT16)plane_epoch ? HWC_PKM_E : HWC_PKM_P);
 				pc_hit = false;
 				pce->fof = FOFsector;
 				pce->xsub = (UINT16)(xsub - extrasubsectors);
@@ -1320,7 +1341,7 @@ static void HWR_RenderMidtexture(INT32 gl_midtexture, float cliplow, float cliph
 	else
 		back = gl_linedef->backsector;
 
-	fixed_t texheight = FixedDiv(textureheight[gl_midtexture], abs(SIDE_SCALEY_MID(gl_sidedef)));
+	fixed_t texheight = HWR_DivScale(textureheight[gl_midtexture], abs(SIDE_SCALEY_MID(gl_sidedef)));
 	INT32 repeats;
 
 	if (gl_sidedef->repeatcnt)
@@ -1378,7 +1399,7 @@ static void HWR_RenderMidtexture(INT32 gl_midtexture, float cliplow, float cliph
 	// Find the wall's coordinates
 	fixed_t midtexheight = texheight * repeats;
 
-	fixed_t rowoffset = FixedDiv(gl_sidedef->rowoffset + SIDE_OFFSETY_MID(gl_sidedef), abs(SIDE_SCALEY_MID(gl_sidedef)));
+	fixed_t rowoffset = HWR_DivScale(gl_sidedef->rowoffset + SIDE_OFFSETY_MID(gl_sidedef), abs(SIDE_SCALEY_MID(gl_sidedef)));
 
 	// Texture is not skewed
 	if (gl_linedef->flags & ML_NOSKEW)
@@ -1625,7 +1646,7 @@ static void HWR_ProcessSeg(void)
 			}
 
 			fixed_t texheight = textureheight[gl_toptexture];
-			fixed_t texheightscaled = FixedDiv(texheight, abs(SIDE_SCALEY_TOP(gl_sidedef)));
+			fixed_t texheightscaled = HWR_DivScale(texheight, abs(SIDE_SCALEY_TOP(gl_sidedef)));
 
 			// PEGGING
 			// FIXME: This is probably not correct?
@@ -1644,7 +1665,7 @@ static void HWR_ProcessSeg(void)
 				texturevpeg += gl_sidedef->rowoffset + SIDE_OFFSETY_TOP(gl_sidedef);
 
 			// This is so that it doesn't overflow and screw up the wall, it doesn't need to go higher than the texture's height anyway
-			texturevpeg %= texheightscaled;
+			texturevpeg = HWR_ModHeight(texturevpeg, texheightscaled);
 
 			wallVerts[3].t = wallVerts[2].t = texturevpeg * grTex->scaleY;
 			wallVerts[0].t = wallVerts[1].t = (texturevpeg + (gl_frontsector->ceilingheight - gl_backsector->ceilingheight) * yscale) * grTex->scaleY;
@@ -1730,7 +1751,7 @@ static void HWR_ProcessSeg(void)
 				texturevpeg += gl_sidedef->rowoffset + SIDE_OFFSETY_BOTTOM(gl_sidedef);
 
 			// This is so that it doesn't overflow and screw up the wall, it doesn't need to go higher than the texture's height anyway
-			texturevpeg %= FixedDiv(textureheight[gl_bottomtexture], abs(SIDE_SCALEY_BOTTOM(gl_sidedef)));
+			texturevpeg = HWR_ModHeight(texturevpeg, HWR_DivScale(textureheight[gl_bottomtexture], abs(SIDE_SCALEY_BOTTOM(gl_sidedef))));
 
 			wallVerts[3].t = wallVerts[2].t = texturevpeg * grTex->scaleY;
 			wallVerts[0].t = wallVerts[1].t = (texturevpeg + (gl_backsector->floorheight - gl_frontsector->floorheight) * yscale) * grTex->scaleY;
