@@ -1,7 +1,7 @@
 """OPT10-HF: parity of the non-level screens (title, menu, console, intermission, wipe): PC OpenGL against PS2-HW, same frame specs on both sides.
 
 usage: hfscreens.py --tag scr [--elf build/outl/SRB2.ELF] [--only title,menu] [--emu AppRun]
-Scenarios: title (t100,t220), menu (key enter at frame 150, f400), console (key ` at frame 20, f120), inter (k40=exitlevel, i150), wipe (-warp 1, w3, w6).
+Scenarios: title (t100,t220), menu (key enter at frame 150, f400), console (key ` at frame 20, f120), inter (k40=exitlevel, i4, i10: the intermission lasts a few seconds, the PS2 draws a few frames a second), wipe (a map change at k20, wipe frames w1,w3,w5).
 Result: build/panels/<tag>_<scenario>_<n>.png and <tag>.json (MAD etc., the title and wipe frames depend on the timing of the animation: look at the pictures).
 """
 import argparse
@@ -18,8 +18,8 @@ SCEN = {
     'title': ('t100,t220', '', '', '', ['t100', 't220']),
     'menu': ('f400', '150:enter', '150:enter', '', ['f400']),
     'console': ('f120', '20:console', '20:console', '', ['f120']),
-    'inter': ('k40=exitlevel,i150', '', '', '1', ['k40_0', 'i150']),
-    'wipe': ('w3,w6', '', '', '1', ['w3', 'w6']),
+    'inter': ('k40=exitlevel,i4,i10', '', '', '1', ['k40_0', 'i4_', 'i10_']),
+    'wipe': ('k20=map~4,w1,w3,w5', '', '', '1', ['k20_0', 'w1_', 'w3_', 'w5_']),
 }
 
 
