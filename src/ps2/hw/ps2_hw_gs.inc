@@ -259,7 +259,7 @@ static void pk_ref(const void *data, u32 qwc)
 		t = b + H.run; // an empty run: its tag becomes the reference
 	}
 	t->d[0] = dma_tag(qwc, DMAT_REF, phys(data));
-	t->d[1] = V.on ? vif_gif_codes(qwc) : 0;
+	t->d[1] = V.on ? ((u64)VIF_NOP | ((u64)VIF_DIRECT(qwc) << 32)) : 0; // OPT10 (HG): no FLUSH here: the referenced data continue a GIF packet (the IMAGE data of an upload) that FLUSH would wait for forever
 	H.run = H.wr++;
 }
 
