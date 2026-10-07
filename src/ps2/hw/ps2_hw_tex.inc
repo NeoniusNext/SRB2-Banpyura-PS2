@@ -801,6 +801,8 @@ static void clut_fixed_refresh(int all)
 	H.clut_loaded = 0;
 }
 
+static u8 clut_hint[256]; // hash of a CLUT key -> slot + 1 (verified against the key, a stale hint only costs the linear search)
+
 // the block of a CLUT variant, built (and uploaded) when it is not cached
 static u32 clut_get(u32 kind, u32 param, u32 keyed)
 {
@@ -814,10 +816,27 @@ static u32 clut_get(u32 kind, u32 param, u32 keyed)
 		return clut_fixed_blk(kind);
 	}
 	H.clut_tick++;
+	// PS2-HW-72: palette rendering asks for a CLUT per colormap row of every lit polygon: a direct mapped index in front of the linear search (124 slots)
+	{
+		const u32 h = (u32)((key ^ (key >> 20) ^ (key >> 40)) * 2654435761u) >> 24;
+		const int hi = (int)clut_hint[h] - 1;
+
+		if (hi >= CLUT_FIXED && H.clut_ent[hi].key == key)
+		{
+			if (clut_palette_dependent(kind) && H.clut_ent[hi].gen != H.pal_gen)
+			{
+				clut_build_into(H.clut_base + (u32)hi * CLUT_BLOCKS, kind, param, keyed);
+				H.clut_ent[hi].gen = H.pal_gen;
+			}
+			H.clut_ent[hi].stamp = H.clut_tick;
+			return H.clut_base + (u32)hi * CLUT_BLOCKS;
+		}
+	}
 	for (i = CLUT_FIXED; i < CLUT_SLOTS; i++)
 	{
 		if (H.clut_ent[i].key == key)
 		{
+			clut_hint[(u32)((key ^ (key >> 20) ^ (key >> 40)) * 2654435761u) >> 24] = (u8)(i + 1);
 			if (clut_palette_dependent(kind) && H.clut_ent[i].gen != H.pal_gen)
 			{
 				clut_build_into(H.clut_base + (u32)i * CLUT_BLOCKS, kind, param, keyed);
@@ -842,6 +861,7 @@ static u32 clut_get(u32 kind, u32 param, u32 keyed)
 	H.clut_ent[victim].key = key;
 	H.clut_ent[victim].stamp = H.clut_tick;
 	H.clut_ent[victim].gen = H.pal_gen;
+	clut_hint[(u32)((key ^ (key >> 20) ^ (key >> 40)) * 2654435761u) >> 24] = (u8)(victim + 1);
 	clut_build_into(H.clut_base + (u32)victim * CLUT_BLOCKS, kind, param, keyed);
 	return H.clut_base + (u32)victim * CLUT_BLOCKS;
 }
