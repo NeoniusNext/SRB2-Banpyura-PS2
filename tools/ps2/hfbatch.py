@@ -34,6 +34,7 @@ def main():
     ap.add_argument('--timeout', type=float, default=600)
     ap.add_argument('--norun', action='store_true', help='do not run the emulator, only (re)build the panels from the existing runs')
     ap.add_argument('--refonly', action='store_true')
+    ap.add_argument('--emu', default='', help='AppRun of another emulator copy (e.g. /opt/pcsx2/hf128/AppRun: 128 MB RAM for the maps that do not fit 32 MB)')
     a = ap.parse_args()
     cfgtag = hashlib.md5(a.cfg.encode()).hexdigest()[:4] if a.cfg else 'def'
     Path(a.panels).mkdir(parents=True, exist_ok=True)
@@ -52,6 +53,8 @@ def main():
         if not a.norun:
             cmd = [sys.executable, str(T / 'hf_run.py'), runname, '--elf', a.elf, '--timeout', str(a.timeout), '--cfg', a.cfg, '--',
                    '-skipintro', '-warp', m, '-renderer', 'Hardware', '-zreserve', '3072', '-vidshot', f'k{a.tick}'] + a.hwextra.split()
+            if a.emu:
+                cmd[2:2] = ['--emu', a.emu]
             rc, out = run(cmd)
             print(out.strip(), flush=True)
         hw = sorted((ROOT / 'build/runs' / runname).glob('vidshot-*k*.ppm'))
