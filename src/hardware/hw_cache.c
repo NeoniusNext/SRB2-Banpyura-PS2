@@ -672,7 +672,7 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 		grPatch->max_s = (float)patch->width / (float)grMipmap->width;
 		grPatch->max_t = (float)patch->height / (float)grMipmap->height;
 #ifdef PS2_PROFILE
-		grMipmap->ps2_uw = (UINT16)patch->width; // PS2-HW-40: the GS driver stores only the real part of the power of two block
+		grMipmap->ps2_uw = (UINT16)patch->width; // PS2-HW-39: the GS driver stores only the real part of the power of two block
 		grMipmap->ps2_uh = (UINT16)patch->height;
 #endif
 	}
@@ -1158,7 +1158,7 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 
 // OPT10 (PS2-HW-38): the mip levels of a big flat (the 1 MiB cloud planes) are made from the engine's own converted flat, pinned while the driver
 // reads it: no second copy of 1 MiB (two of them at once ran the 22 MiB arena out of a contiguous 1 MiB block)
-// PS2-HW-41: can the rows of this flat be read straight from its lump? (a raw flat of the size of the texture, not resident as the engine's flat: the levels
+// PS2-HW-38: can the rows of this flat be read straight from its lump? (a raw flat of the size of the texture, not resident as the engine's flat: the levels
 // of a 1 MiB cloud plane are then made from bands of 64 rows, and no 1 MiB block is ever needed - the arena of the full build has none to give)
 boolean HWR_PS2_FlatStreamable(const GLMipmap_t *m)
 {

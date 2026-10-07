@@ -1634,7 +1634,7 @@ static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
 	}
 }
 
-// PS2-HW-41: level `lv` of a big raw flat made band by band from its lump into a data cache entry (NULL: no room / the lump cannot be read)
+// PS2-HW-38: level `lv` of a big raw flat made band by band from its lump into a data cache entry (NULL: no room / the lump cannot be read)
 static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 {
 	enum { BAND = 64 }; // rows per read: a multiple of the block of the coarsest level (32)
@@ -1694,7 +1694,7 @@ static int tex_upload(GLMipmap_t *m)
 	fillctx_t fc, *c = &fc;
 	u32 t0 = cyc();
 	const u8 *data = m->data;
-	u32 cw = sw, ch = sh; // the part of the block that is stored (PS2-HW-40)
+	u32 cw = sw, ch = sh; // the part of the block that is stored (PS2-HW-39)
 	int crop = 0;
 	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL;
 	u32 ssw = sw, ssh = sh, slv = 0; // size and level of the texels `data` holds when it is a cached level (dsrc) and not the full size
@@ -1726,7 +1726,7 @@ static int tex_upload(GLMipmap_t *m)
 			data = l0->p; // the texels of this texture (or its other variant) are in the data cache: the engine need not make them again
 		if (lv && !dce && !dsrc && !l0 && !m->data && m->format == GL_TEXFMT_P_8 && HWR_PS2_FlatStreamable(m) && (dce = flat_make_level(m, lv)) != NULL)
 		{
-			data = dce->p; // PS2-HW-41: made now from the lump; from here on it is a cached level like any other
+			data = dce->p; // PS2-HW-38: made now from the lump; from here on it is a cached level like any other
 			lvdec = 1;
 		}
 	}
@@ -1745,7 +1745,7 @@ static int tex_upload(GLMipmap_t *m)
 
 	memset(c, 0, sizeof *c);
 	n = sw * sh;
-	// PS2-HW-40: a patch (sprite) is a block of the next power of two size around the real picture (a 100 x 150 sprite is 128 x 256): only the picture
+	// PS2-HW-39: a patch (sprite) is a block of the next power of two size around the real picture (a 100 x 150 sprite is 128 x 256): only the picture
 	// is stored (texture coordinates are scaled by the size of the block, clamping at the picture's edge), a quarter to a half of the blocks and bytes
 	if (m->regen_kind == 0 && m->format == GL_TEXFMT_AP_88 && m->ps2_uw && m->ps2_uh && m->ps2_uw <= sw && m->ps2_uh <= sh && (m->ps2_uw < sw || m->ps2_uh < sh) && !H.tex_cap_blocks)
 	{
