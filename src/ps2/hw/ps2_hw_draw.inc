@@ -1977,7 +1977,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	{
 		planc_active = NULL;
 		ok = begin_draw_inner(flags, surf);
-		G.begin_n++;
+		G.begin_n++, G.sk_begin += ps2hwp_skyview;
 		G.begin_cyc += cyc() - t0;
 		return ok;
 	}
@@ -2018,7 +2018,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 #endif
 		H.cur_flags = flags;
 		G.plan_hit++;
-		G.begin_n++;
+		G.begin_n++, G.sk_begin += ps2hwp_skyview;
 		G.pc_misc += cyc() - c3;
 		G.begin_cyc += cyc() - t0;
 		return 1;
@@ -2037,7 +2037,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		planc_active = NULL;
 	}
 	G.plan_miss++;
-	G.begin_n++;
+	G.begin_n++, G.sk_begin += ps2hwp_skyview;
 	G.pc_miss += cyc() - t0;
 	G.begin_cyc += cyc() - t0;
 	return ok;
@@ -2063,6 +2063,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		if (!idx && !vcol && vu_poly(base, n))
 		{
 			G.p_vu++;
+			HG_SKY(0, 0);
 			return; // PS2-HW-45: the VU1 program transforms, clips and packs it
 		}
 		vu_sync();
@@ -2116,14 +2117,10 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 
 		for (i = 0; i < cnt; i++)
 		{
-			if (v[i].a[0] < smin)
-				smin = v[i].a[0];
-			if (v[i].a[1] < tmin)
-				tmin = v[i].a[1];
-			if (v[i].a[0] > smax)
-				smax = v[i].a[0];
-			if (v[i].a[1] > tmax)
-				tmax = v[i].a[1];
+			smin = hw_minf(smin, v[i].a[0]);
+			tmin = hw_minf(tmin, v[i].a[1]);
+			smax = hw_maxf(smax, v[i].a[0]);
+			tmax = hw_maxf(tmax, v[i].a[1]);
 		}
 		pc.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
 		pc.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
@@ -2146,21 +2143,25 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		emit_fast_fan(v, NULL, cnt, pc.sb, pc.tb);
 #endif
 		G.c_fast += cyc() - gt1;
+		HG_SKY(1, cyc() - gt1);
 	}
 	else if (P.litfast && !big && !vcol && !P.vcol && !(ps2hwd_dbg_flags & 8192) && lit_fast_poly(v, LF_PV(vu0, or_), cnt, pc.sb, pc.tb))
 	{
 		G.p_lit++; // PS2-HW-43: drawn
 		G.c_lit += cyc() - gt1;
+		HG_SKY(2, cyc() - gt1);
 	}
 	else if (P.water && P.textured && !P.vcol && !vcol && !big)
 	{
 		G.p_water++, emit_water_poly(v, cnt, pc, na);
 		G.c_water += cyc() - gt1;
+		HG_SKY(4, cyc() - gt1);
 	}
 	else if (P.lmode == LM_BANDS && !P.water && !big && !vcol && !P.vcol && band_sweep(v, cnt, pc, 0))
 	{
 		G.p_cut++; // PS2-HW-48: the polygon cut at the steps of the light staircase in one sweep
 		G.c_cut += cyc() - gt1;
+		HG_SKY(3, cyc() - gt1);
 	}
 	else
 	{

@@ -20,6 +20,7 @@ typedef int16_t s16;
 #define memalign(alignment, bytes) malloc(bytes)
 #include "ps2_hw_priv.inc"
 #include "ps2_hw_hg.inc"
+int ps2hwp_skyview;
 #include "ps2_hw_vif.inc"
 #include "ps2_hw_regs.inc"
 
@@ -105,7 +106,7 @@ static int neg;
 /* ---- test framework ---- */
 static int group_fail, total_fail, groups;
 static const char *group_name;
-#define NEGCOUNT 3
+#define NEGCOUNT 4
 
 static void group_begin(const char *name)
 {
@@ -763,6 +764,115 @@ static void test_plancache(void)
 	free(ref);
 }
 
+/* ---- group: clip (clip_poly with the per-plane distance arrays against the reference of before PS2-HW-54) ---- */
+static int clip_poly_ref(cv_t *a, cv_t *b, int n, int na, int mask, cv_t **res)
+{
+	cv_t *in = a, *out = b, *t;
+	float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
+	int p, i, k;
+
+	for (p = 0; p < 6 && n > 0; p++)
+	{
+		int m = 0;
+
+		if (!(mask & (1 << p)))
+			continue;
+		for (i = 0; i < n; i++)
+		{
+			const cv_t *v0 = &in[i], *v1 = &in[i + 1 == n ? 0 : i + 1];
+			float d0 = plane_dist(v0, p, gx, gy), d1 = plane_dist(v1, p, gx, gy);
+
+			if (d0 >= 0.0f)
+				out[m++] = *v0;
+			if ((d0 >= 0.0f) != (d1 >= 0.0f))
+			{
+				float tt = d0 / (d0 - d1);
+				cv_t *o = &out[m++];
+
+				o->x = v0->x + (v1->x - v0->x) * tt;
+				o->y = v0->y + (v1->y - v0->y) * tt;
+				o->z = v0->z + (v1->z - v0->z) * tt;
+				o->w = v0->w + (v1->w - v0->w) * tt;
+				for (k = 0; k < na; k++)
+					o->a[k] = v0->a[k] + (v1->a[k] - v0->a[k]) * tt;
+			}
+		}
+		n = m;
+		t = in;
+		in = out;
+		out = t;
+	}
+	*res = in;
+	return n;
+}
+
+static void test_clip(void)
+{
+	cv_t a1[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA], b1[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA], a2[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA], b2[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA];
+	int it, nclip = 0, nout = 0, verts = 0;
+
+	group_begin("clip");
+	host_init();
+	for (it = 0; it < 6000; it++)
+	{
+		const int n = 3 + (int)(rnd() % 10), na = (rnd() & 1) ? 6 : 2, mask = (int)(rnd() & 63);
+		cv_t *r1, *r2;
+		int i, k, c1, c2, bad = 0;
+
+		for (i = 0; i < n; i++)
+		{
+			a1[i].x = (float)rndf(-4.0, 4.0);
+			a1[i].y = (float)rndf(-4.0, 4.0);
+			a1[i].z = (float)rndf(-3.0, 3.0);
+			a1[i].w = (float)rndf(-1.0, 4.0);
+			for (k = 0; k < 6; k++)
+				a1[i].a[k] = (float)rndf(-2.0, 2.0);
+		}
+		memcpy(a2, a1, sizeof(cv_t) * (size_t)n);
+		c1 = clip_poly_ref(a1, b1, n, na, mask, &r1);
+		c2 = clip_poly(a2, b2, n, na, neg == 4 ? (mask | 1) : mask, &r2);
+		if (c1 != c2)
+			bad++;
+		else
+			for (i = 0; i < c1; i++)
+			{
+				if (r1[i].x != r2[i].x || r1[i].y != r2[i].y || r1[i].z != r2[i].z || r1[i].w != r2[i].w)
+					bad++;
+				for (k = 0; k < na; k++)
+					if (r1[i].a[k] != r2[i].a[k])
+						bad++;
+			}
+		EXPECT(!bad, "polygon %d (n %d, na %d, mask %02x): %d vertices against %d, %d values differ", it, n, na, mask, c2, c1, bad);
+		nclip += mask != 0 && c1 != n;
+		nout += c1 == 0;
+		verts += c1;
+	}
+	{
+		/* hw_floorf (PS2-HW-53) against the library floor: fractions, negatives, exact integers, huge values, the edges of the int range */
+		int fl_bad = 0;
+		long fl_n;
+		float edge[] = {0.0f, -0.0f, 0.5f, -0.5f, 1.0f, -1.0f, 4.0f, -4.0f, 4.0001f, -4.0001f, 2147482880.0f, -2147482880.0f, 2147483648.0f, -2147483648.0f, 3e9f, -3e9f, 1e30f, -1e30f, 8388607.5f, -8388607.5f, 16777216.0f};
+
+		for (fl_n = 0; fl_n < (long)(sizeof edge / sizeof edge[0]); fl_n++)
+			fl_bad += hw_floorf(edge[fl_n]) != __builtin_floorf(edge[fl_n]);
+		for (fl_n = 0; fl_n < 2000000; fl_n++)
+		{
+			const float x = (float)rndf(-70000.0, 70000.0) * ((fl_n & 3) == 0 ? 0.001f : (fl_n & 3) == 1 ? 1.0f : (fl_n & 3) == 2 ? 30000.0f : 1.0f);
+			const float xi = (float)(int)(x * 0.5f); /* integers too */
+
+			fl_bad += hw_floorf(x) != __builtin_floorf(x);
+			fl_bad += hw_floorf(xi) != __builtin_floorf(xi);
+		}
+		EXPECT(!fl_bad, "hw_floorf differs from floorf in %d values", fl_bad);
+	}
+	{
+		char d[200];
+
+		snprintf(d, sizeof d, "6000 random polygons x plane masks (%d changed by clipping, %d clipped away, %d vertices out): bit-identical to the one-plane-at-a-time reference", nclip, nout, verts);
+		group_end(d);
+	}
+}
+
 int main(int argc, char **argv)
 {
 	int i;
@@ -772,10 +882,11 @@ int main(int argc, char **argv)
 			neg = atoi(argv[i] + 4);
 	cap = malloc(sizeof(qw_t) * CAP_MAX);
 	if (neg)
-		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : "bands");
+		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : neg == 4 ? "clip" : "bands");
 	test_water();
 	test_bands();
 	test_plancache();
+	test_clip();
 	printf("HG negctl-count %d\n", NEGCOUNT);
 	printf("HG RESULT %s: %d groups, %d failed\n", total_fail ? "FAILED" : "PASSED", groups, total_fail);
 	printf("HG COMPLETE\n");

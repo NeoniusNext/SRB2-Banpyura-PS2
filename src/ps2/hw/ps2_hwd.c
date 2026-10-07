@@ -672,6 +672,7 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		const int gk = ((PolyFlags & PF_NoTexture) ? 1 : 0) | ((PolyFlags & PF_NoDepthTest) ? 2 : 0) | ((PolyFlags & PF_Occlude) ? 4 : 0);
 
 		G.single++;
+		G.sk_single += ps2hwp_skyview;
 		G.sing_by[gk]++;
 		if (begin_draw((u32)PolyFlags, pSurf))
 			emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
@@ -694,6 +695,8 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	}
 	G.batches++;
 	G.fans += nfans;
+	G.sk_batches += ps2hwp_skyview;
+	G.sk_fans += ps2hwp_skyview ? nfans : 0;
 	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
 		return;
 	if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45

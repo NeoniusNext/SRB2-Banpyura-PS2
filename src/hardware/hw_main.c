@@ -49,6 +49,7 @@
 #include "../ps2/hw/ps2_hw_prof.h" // PS2-HW-15: COP0 phase accumulators of the hardware renderer (HWPROF lines)
 unsigned long long ps2hwp_cyc[HWP_NUM];
 unsigned int ps2hwp_cnt[HWC_NUM];
+int ps2hwp_skyview;
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 #else
 #define HWP_LOCAL ((void)0)
@@ -4503,6 +4504,9 @@ static void HWR_DrawSprites(void)
 #ifdef PS2_PROFILE
 	// PS2-HW-52: the opaque sprites and the shadows are collected and drawn as batches (see HWR_ProcessPolygon); -hwdbg 524288 draws them one by one
 	boolean sprbatch = cv_glbatching.value && gl_visspritecount > 1 && !currently_batching && !(ps2hwd_dbg_flags & 0x80000);
+
+	if (sprbatch)
+		HWC_ADD(HWC_SPR_ON);
 #endif
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, cv_glmodellighting.value);
 	for (i = 0; i < gl_visspritecount; i++)
@@ -4516,6 +4520,7 @@ static void HWR_DrawSprites(void)
 			if (!spr->bbox && !spr->precip && spr->dispoffset)
 			{
 				// sprites with a display offset overlay one another at (nearly) the same depth, where the order of drawing decides: not batched
+				HWC_ADD(HWC_SPR_SOLO);
 				if (currently_batching)
 					HWR_RenderBatches();
 				hwr_sprite_batch = false;
@@ -4528,6 +4533,7 @@ static void HWR_DrawSprites(void)
 			sprwas = currently_batching && hwr_sprite_batch;
 		}
 #endif
+		HWP_SPAN_BEGIN(tsd);
 		if (spr->bbox)
 			HWR_DrawBoundingBox(spr);
 		else if (spr->precip)
@@ -4538,8 +4544,14 @@ static void HWR_DrawSprites(void)
 			{
 #ifdef PS2_PROFILE
 				hwr_sprite_shadow = true;
+				if (currently_batching)
+					HWC_ADD(HWC_SPR_SHADOW);
 #endif
+				{
+				HWP_SPAN_BEGIN(tsh);
 				HWR_DrawDropShadow(spr->mobj, spr, spr->mobj->shadowscale);
+				HWP_SPAN_END(tsh, HWP_SP_SHADOW);
+				}
 #ifdef PS2_PROFILE
 				hwr_sprite_shadow = false;
 #endif
@@ -4597,16 +4609,21 @@ static void HWR_DrawSprites(void)
 				}
 			}
 		}
+		HWP_SPAN_END(tsd, HWP_SP_DRAW);
 #ifdef PS2_PROFILE
 		if (sprwas && !hwr_sprite_batch)
-			sprbatch = false; // the first polygon that was not order independent drew the batch: what follows is drawn in order
+			HWC_ADD(HWC_SPR_FLUSH), sprbatch = false; // the first polygon that was not order independent drew the batch: what follows is drawn in order
 #endif
 	}
 #ifdef PS2_PROFILE
+	{
+	HWP_SPAN_BEGIN(tsf);
 	if (currently_batching)
 		HWR_RenderBatches();
 	hwr_sprite_batch = false;
 	hwr_sprite_shadow = false;
+	HWP_SPAN_END(tsf, HWP_SP_FLUSH);
+	}
 #endif
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, 0);
 
@@ -5781,6 +5798,9 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 	const float fpov = FixedToFloat(R_GetPlayerFov(player));
 	HWP_SPAN_BEGIN(tk0);
 
+#ifdef PS2_PROFILE
+	ps2hwp_skyview = 1;
+#endif
 	HWR_SetupView(player, viewnumber, fpov, true);
 	HWP_SPAN_END(tk0, HWP_K_SET);
 
@@ -5790,13 +5810,19 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 	//------------------------------------------------------------------------
 	HWP_SPAN_BEGIN(tk1);
 	HWR_ClearView();
+	HWP_SPAN_END(tk1, HWP_K_CLR);
 
+	{
+	HWP_SPAN_BEGIN(tkd);
 	if (drawsky)
 		HWR_DrawSkyBackground(player);
+	HWP_SPAN_END(tkd, HWP_K_DOME);
+	}
 
 	//Hurdler: it doesn't work in splitscreen mode
 	drawsky = splitscreen;
 
+	HWP_SPAN_BEGIN(tkc);
 	HWR_ClearSprites();
 
 	drawcount = 0;
@@ -5822,6 +5848,7 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 		HWD.pfnSetSpecialState(HWD_SET_WIREFRAME, 1);
 
 	validcount++;
+	HWP_SPAN_END(tkc, HWP_K_CLIP);
 	HWP_SPAN_END(tk1, HWP_K_BG);
 
 	{
@@ -5881,6 +5908,9 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 	// added by Hurdler for correct splitscreen
 	// moved here by hurdler so it works with the new near clipping plane
 	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
+#ifdef PS2_PROFILE
+	ps2hwp_skyview = 0;
+#endif
 }
 
 // ==========================================================================
@@ -5916,7 +5946,11 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 		HWR_RenderSkyboxView(viewnumber, player); // This is drawn before everything else so it is placed behind
 	PS_STOP_TIMING(ps_hw_skyboxtime);
 
+	{
+	HWP_SPAN_BEGIN(tms);
 	HWR_SetupView(player, viewnumber, fpov, false);
+	HWP_SPAN_END(tms, HWP_M_SETUP);
+	}
 
 	framecount++; // timedemo
 
@@ -5945,6 +5979,7 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	//Hurdler: it doesn't work in splitscreen mode
 	drawsky = splitscreen;
 
+	HWP_SPAN_BEGIN(tmc);
 	HWR_ClearSprites();
 
 	drawcount = 0;
@@ -5971,6 +6006,7 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 
 	ps_numbspcalls.value.i = 0;
 	ps_numpolyobjects.value.i = 0;
+	HWP_SPAN_END(tmc, HWP_M_CLIP);
 	HWP_LAP(HWP_CLEAR);
 	PS_START_TIMING(ps_bsptime);
 

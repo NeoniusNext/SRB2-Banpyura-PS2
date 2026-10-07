@@ -43,14 +43,23 @@ enum
 	HWP_K_BAT, // HWR_RenderBatches
 	HWP_K_SPR, // sprites
 	HWP_K_NODE, // HWR_CreateDrawNodes
+	HWP_K_CLR, // HWR_ClearView
+	HWP_K_DOME, // HWR_DrawSkyBackground
+	HWP_K_CLIP, // clipper set-up, SetTransform, shader state (to the BSP walk)
+	HWP_M_SETUP, // main view: HWR_SetupView
+	HWP_M_CLIP, // main view: clipper set-up .. before the BSP walk
+	HWP_SP_SHADOW, // HWR_DrawSprites: drop shadows (HWR_DrawDropShadow)
+	HWP_SP_DRAW, // HWR_DrawSprites: HWR_DrawSprite / precipitation / models
+	HWP_SP_FLUSH, // HWR_DrawSprites: HWR_RenderBatches of the collected sprites
 	HWP_NUM
 };
 
 extern unsigned long long ps2hwp_cyc[HWP_NUM];
 
 // OPT10 (HG): event counters of the engine side (HWPROF3 line, per frame)
-enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_NUM };
+enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_SPR_ON, HWC_SPR_FLUSH, HWC_SPR_SOLO, HWC_SPR_SHADOW, HWC_NUM };
 extern unsigned int ps2hwp_cnt[HWC_NUM];
+extern int ps2hwp_skyview; // 1 while HWR_RenderSkyboxView runs (the counters of the driver are split by view)
 #define HWC_ADD(i) (ps2hwp_cnt[i]++)
 
 static inline unsigned int ps2hwp_now(void)
@@ -72,6 +81,7 @@ static inline unsigned int ps2hwp_now(void)
 #define HWP_SPAN_BEGIN(name) ((void)0)
 #define HWP_SPAN_END(name, idx) ((void)0)
 #define HWC_ADD(i) ((void)0)
+#define ps2hwp_skyview 0
 #endif
 
 #endif

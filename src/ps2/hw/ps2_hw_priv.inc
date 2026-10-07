@@ -90,6 +90,48 @@ static inline u32 phys(const void *p)
 	return (u32)(uintptr_t)p & 0x0FFFFFFFu;
 }
 
+// OPT10 (PS2-HW-53): floorf of newlib is a call of ~40 cycles; the integer conversion gives the same value for every float of int range
+// (above 2^24 a float is an integer already), and the EE has MIN.S / MAX.S instructions that gcc does not use for the ?: form (NaN rules).
+static inline float hw_floorf(float x)
+{
+	if (x > -2147483000.0f && x < 2147483000.0f)
+	{
+		const int i = (int)x;
+
+		return (float)(i - (x < (float)i));
+	}
+	return __builtin_floorf(x);
+}
+#define floorf hw_floorf
+
+#ifdef __mips__
+static inline float hw_minf(float a, float b)
+{
+	float r;
+
+	__asm__("min.s %0,%1,%2" : "=f"(r) : "f"(a), "f"(b));
+	return r;
+}
+
+static inline float hw_maxf(float a, float b)
+{
+	float r;
+
+	__asm__("max.s %0,%1,%2" : "=f"(r) : "f"(a), "f"(b));
+	return r;
+}
+#else
+static inline float hw_minf(float a, float b)
+{
+	return b < a ? b : a;
+}
+
+static inline float hw_maxf(float a, float b)
+{
+	return b > a ? b : a;
+}
+#endif
+
 #define HWGIF_TAG(nloop, eop, pre, prim, flg, nreg) \
 	((u64)(nloop) | ((u64)(eop) << 15) | ((u64)(pre) << 46) | ((u64)(prim) << 47) | ((u64)(flg) << 58) | ((u64)(nreg) << 60))
 #define GIF_REGS_AD 0xEull

@@ -195,7 +195,9 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		// buffer and are not blended (opaque sprites) and for the drop shadows (blended onto the floor without depth write: a shadow behind a sprite
 		// fails the depth test against it, one in front of the floor patch it covers is drawn over the floor either way). The first polygon of
 		// anything else (translucent or additive sprites, link draw, bounding boxes) draws what was collected first and goes the immediate way.
-		const boolean opaque = (PolyFlags & PF_Blending) == PF_Masked && (PolyFlags & PF_Occlude)
+		// (Things are spawned with the blend mode AST_TRANSLUCENT, so a sprite at full alpha is PF_Translucent with alpha 255: the same as masked.)
+		const FBITFIELD blending = PolyFlags & PF_Blending;
+		const boolean opaque = (blending == PF_Masked || (blending == PF_Translucent && pSurf && pSurf->PolyColor.s.alpha == 0xFF)) && (PolyFlags & PF_Occlude)
 			&& !(PolyFlags & (PF_Invisible | PF_NoDepthTest | PF_Corona | PF_Ripple | PF_WireFrame | PF_NoTexture | PF_Decal)) && !horizonSpecial;
 
 		if (!opaque && !hwr_sprite_shadow)
