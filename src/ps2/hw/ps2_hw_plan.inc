@@ -174,7 +174,7 @@ static int plan_measure(const GLMipmap_t *m, const FOutVector *verts, unsigned i
 	}
 	else
 	{
-		cv_t tri[3];
+		cv_t tri[3 + PS2HWD_CLIPEXTRA]; // plan_clip alternates between this and vbuf_b: both must hold the triangle after six clips (a triangle of 3 only overflowed the stack)
 
 		for (i = 1; i + 1 < (int)n; i++)
 		{

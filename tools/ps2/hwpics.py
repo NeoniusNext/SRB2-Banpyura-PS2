@@ -20,6 +20,10 @@ def run(name, mp, elf, shots, extra, timeout):
            '-renderer', 'Hardware', '-zreserve', '3072', '-vidshot', shots] + extra
     with open(ROOT / 'build/runs' / (name + '.out'), 'w') as out:
         subprocess.run(cmd, stdout=out, stderr=subprocess.STDOUT)
+    try:
+        (ROOT / 'build/runs' / name / 'pcsx2.log').unlink()  # the emulator log can reach gigabytes in an exception storm
+    except OSError:
+        pass
     log = (ROOT / 'build/runs' / name / 'boot.txt')
     txt = log.read_text(errors='replace') if log.exists() else ''
     err = 'OOM' if 'OOM:' in txt else ('ERR' if 'I_Error' in txt else 'ok')

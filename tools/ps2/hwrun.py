@@ -14,6 +14,16 @@ ROOT = Path(__file__).resolve().parents[2]
 PAK = '/home/user/SRB2-Banpyura-PS2/build/pak'
 
 
+def cleanup(name):
+    # the emulator log can grow to gigabytes in an exception storm: nothing needs it after the run (the engine log is boot.txt)
+    log = ROOT / 'build/runs' / name / 'pcsx2.log'
+    try:
+        if log.exists():
+            log.unlink()
+    except OSError:
+        pass
+
+
 def main():
     args = sys.argv[1:]
     elf = str(ROOT / 'build/out/SRB2.ELF')
@@ -56,8 +66,10 @@ def main():
         procs.append((name, p))
         if not par:
             p.wait()
+            cleanup(name)
     for name, p in procs:
         p.wait()
+        cleanup(name)
         tail = (ROOT / 'build/runs' / (name + '.out')).read_text(errors='replace').strip().splitlines()[-4:]
         print(f'{name}: rc={p.returncode}')
         for t in tail:
