@@ -549,9 +549,24 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
 		case 1: memset(block, HWR_PATCHES_CHROMAKEY_COLORINDEX, blocksize); break;
 		case 2:
 				// fill background with chromakey, alpha = 0
+#ifdef PS2_PROFILE
+				{
+					// OPT10 (HT): four texels per store (when block is 8 byte aligned; the tail and the unaligned case go texel by texel)
+					const UINT64 pat = (UINT64)bu16 * 0x0001000100010001ull;
+					UINT64 *q = (UINT64 *)(void *)block;
+
+					i = 0;
+					if (((size_t)block & 7u) == 0)
+						for (; i + 4 <= blocksize; i += 4)
+							*q++ = pat;
+					for (; i < blocksize; i++)
+						memcpy(block+i*sizeof(UINT16), &bu16, sizeof(UINT16));
+				}
+#else
 				for (i = 0; i < blocksize; i++)
 				//[segabor]
 					memcpy(block+i*sizeof(UINT16), &bu16, sizeof(UINT16));
+#endif
 				break;
 		case 4: memset(block, 0x00, blocksize*sizeof(UINT32)); break;
 	}

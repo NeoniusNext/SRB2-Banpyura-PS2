@@ -105,22 +105,6 @@ static int plan_clip(cv_t *a, cv_t *b, int n, int mask, cv_t **res)
 	return n;
 }
 
-// the area of the clipped polygon in pixels squared (a polygon without area draws nothing)
-static float plan_area(const cv_t *c, int n)
-{
-	float px = 0.5f * H.vpw, py = 0.5f * H.vph, sum = 0.0f;
-	int i;
-
-	for (i = 0; i < n; i++)
-	{
-		const cv_t *a = &c[i], *b = &c[i + 1 == n ? 0 : i + 1];
-		float ax = a->x / a->w * px, ay = a->y / a->w * py, bx = b->x / b->w * px, by = b->y / b->w * py;
-
-		sum += ax * by - bx * ay;
-	}
-	return 0.5f * fabsf(sum);
-}
-
 // what the view sees of polygon verts[0..n) that carries texture m: the contributions (largest texel in pixels, visible area in pixels squared) go to
 // pm_s / pm_a, their number is returned (0 = nothing is seen: outside the view, no area). A planar polygon is one contribution; a kinked one (the
 // engine's horizon fill) is measured by the triangles of its fan, which is how the GS draws it. A polygon with an unusable texture mapping (an area on
@@ -129,8 +113,11 @@ static float pm_s[PS2HWD_MAXPOLY], pm_a[PS2HWD_MAXPOLY];
 
 static int plan_part(cv_t *poly, int n, int or_, float *s, float *area)
 {
+	static float sx[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA], sy[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA];
 	cv_t *v = poly;
-	int cnt = n;
+	int cnt = n, i, ok = lodc_ok;
+	const float px = 0.5f * H.vpw, py = 0.5f * H.vph;
+	float su = 0.0f, sv = 0.0f, sum = 0.0f;
 
 	if (or_)
 	{
@@ -138,15 +125,52 @@ static int plan_part(cv_t *poly, int n, int or_, float *s, float *area)
 		if (cnt < 3)
 			return 0;
 	}
-	*area = plan_area(v, cnt);
+	// one pass: the screen position of every vertex (for the area) and the size of a texel along u and v (poly_density) share one reciprocal of w
+	for (i = 0; i < cnt; i++)
+	{
+		const float w = v[i].w;
+		float iw, iw2, dxs, dys, sz;
+
+		if (w < 1e-4f)
+		{
+			ok = 0; // cannot be measured (the polygon is drawn: full size)
+			sx[i] = sy[i] = 0.0f;
+			continue;
+		}
+		iw = 1.0f / w;
+		sx[i] = v[i].x * iw * px;
+		sy[i] = v[i].y * iw * py;
+		if (!ok)
+			continue;
+		iw2 = iw * iw;
+		dxs = (lodc[0][0] * w - v[i].x * lodc[2][0]) * iw2 * px;
+		dys = (lodc[1][0] * w - v[i].y * lodc[2][0]) * iw2 * py;
+		sz = dxs * dxs + dys * dys;
+		if (sz > su)
+			su = sz;
+		dxs = (lodc[0][1] * w - v[i].x * lodc[2][1]) * iw2 * px;
+		dys = (lodc[1][1] * w - v[i].y * lodc[2][1]) * iw2 * py;
+		sz = dxs * dxs + dys * dys;
+		if (sz > sv)
+			sv = sz;
+	}
+	for (i = 0; i < cnt; i++)
+	{
+		const int j = i + 1 == cnt ? 0 : i + 1;
+
+		sum += sx[i] * sy[j] - sx[j] * sy[i];
+	}
+	*area = 0.5f * fabsf(sum);
 	if (*area < 0.05f)
 		return 0; // no area: it draws nothing
-	if (!poly_density(v, cnt))
+	if (!ok || cnt < 3)
 	{
 		*s = 1.0e6f;
 		return 1;
 	}
-	*s = lod_su > lod_sv ? lod_su : lod_sv;
+	su = sqrtf(su);
+	sv = sqrtf(sv);
+	*s = su > sv ? su : sv;
 	return 1;
 }
 
@@ -279,7 +303,13 @@ void PS2HWD_PlanPolygon(GLMipmap_t *m, const void *vp, unsigned int n)
 	pi = plan_key(m);
 	if (!pi)
 		return;
-	cnt = plan_measure(m, (const FOutVector *)vp, n);
+	{
+		const u32 t0 = cyc();
+
+		cnt = plan_measure(m, (const FOutVector *)vp, n);
+		TX.plan_np++;
+		TX.plan_mcyc += cyc() - t0;
+	}
 	for (i = 0; i < cnt; i++)
 		plan_add(pi, pm_s[i], pm_a[i]);
 }
