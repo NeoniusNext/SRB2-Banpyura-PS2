@@ -3373,7 +3373,20 @@ static void P_CompactLineArgs(void)
 		lineargpool = NULL;
 	}
 	else
-		lineargpool = Z_Realloc(lineargpool, (size_t)(dst - lineargpool) * sizeof (INT32), PU_LEVEL, NULL); // shrinks in place: the tail is free again
+	{
+		// shrinks in place on the arena (the tail is free again), but Z_Realloc may copy: the host zone does (the ASan host run found the
+		// stale pointers: heap-use-after-free in line_SpawnViaLine) and so does the arena when the tail is too small to be a block of its own
+		INT32 *oldpool = lineargpool;
+		INT32 *newpool = Z_Realloc(oldpool, (size_t)(dst - oldpool) * sizeof (INT32), PU_LEVEL, NULL);
+
+		if (newpool != oldpool)
+		{
+			for (i = 0; i < numlines; i++)
+				if (lines[i].args != lineargs_zero)
+					lines[i].args = (INT32 *)((uintptr_t)newpool + ((uintptr_t)lines[i].args - (uintptr_t)oldpool));
+		}
+		lineargpool = newpool;
+	}
 }
 
 // a line that is about to get arguments of its own after the level was built (savegame reader)
