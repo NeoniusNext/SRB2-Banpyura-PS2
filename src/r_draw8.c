@@ -1057,6 +1057,39 @@ void R_DrawSpan_8 (void)
 	if (dest+8 > deststop)
 		return;
 
+#ifdef PS2_OPT_DRAW
+	// PS2-171: the shift amounts and the mask are loop invariants kept in locals (the byte stores to the screen may alias any global, so
+	// the compiler loaded the three globals again for every pixel), and the positions advance by plain sequential adds (the empty asm
+	// keeps the compiler from turning them into x + k*step with a register for every partial sum: that spilled).
+	{
+		const UINT32 ysh = nflatyshift, xsh = nflatxshift, msk = nflatmask;
+		UINT32 x = (UINT32)xposition, y = (UINT32)yposition;
+		const UINT32 xs = (UINT32)xstep, ys = (UINT32)ystep;
+
+#define PS2_SPANPIX(i) \
+		do { \
+			dest[i] = colormap[source[(((y >> ysh) & msk) | (x >> xsh))]]; \
+			x += xs; \
+			y += ys; \
+			__asm__("" : "+r"(x), "+r"(y)); \
+		} while (0)
+		while (count >= 8)
+		{
+			PS2_SPANPIX(0); PS2_SPANPIX(1); PS2_SPANPIX(2); PS2_SPANPIX(3);
+			PS2_SPANPIX(4); PS2_SPANPIX(5); PS2_SPANPIX(6); PS2_SPANPIX(7);
+			dest += 8;
+			count -= 8;
+		}
+		while (count-- && dest <= deststop)
+		{
+			*dest++ = colormap[source[(((y >> ysh) & msk) | (x >> xsh))]];
+			x += xs;
+			y += ys;
+		}
+#undef PS2_SPANPIX
+	}
+	return;
+#endif
 
 	while (count >= 8)
 	{
@@ -1165,6 +1198,80 @@ void R_DrawTiltedSpan_8(void)
 	//x1 = 0;
 	width++;
 
+#ifdef PS2_OPT_DRAW
+	// PS2-171: the light lookup tables, the colormap offset, the flat shifts and the column counter ds_x1 are locals (the byte stores to the
+	// screen may alias any global: each was loaded again, ds_x1 also stored again, for every pixel). ds_x1 is written back at the end.
+	{
+		lighttable_t **const pzl = planezlight;
+		const INT32 *const tlt = tiltlighting;
+		const ptrdiff_t cmofs = ds_colormap - colormaps;
+		const UINT32 ysh = nflatyshift, xsh = nflatxshift, msk = nflatmask;
+		INT32 lx = ds_x1;
+
+		while (width >= SPANSIZE)
+		{
+			iz += izstep;
+			uz += uzstep;
+			vz += vzstep;
+
+			endz = 1.f/iz;
+			endu = uz*endz;
+			endv = vz*endz;
+			stepu = SLOPE_U32((endu - startu) * INVSPAN);
+			stepv = SLOPE_U32((endv - startv) * INVSPAN);
+			u = SLOPE_U32(startu);
+			v = SLOPE_U32(startv);
+
+			for (i = SPANSIZE-1; i >= 0; i--)
+			{
+				colormap = pzl[tlt[lx++]] + cmofs;
+				*dest = colormap[source[((v >> ysh) & msk) | (u >> xsh)]];
+				dest++;
+				u += stepu;
+				v += stepv;
+			}
+			startu = endu;
+			startv = endv;
+			width -= SPANSIZE;
+		}
+		if (width > 0)
+		{
+			if (width == 1)
+			{
+				u = SLOPE_U32(startu);
+				v = SLOPE_U32(startv);
+				colormap = pzl[tlt[lx++]] + cmofs;
+				*dest = colormap[source[((v >> ysh) & msk) | (u >> xsh)]];
+			}
+			else
+			{
+				slopereal_t left = width;
+				iz += ds_sz.x * left;
+				uz += ds_su.x * left;
+				vz += ds_sv.x * left;
+
+				endz = 1.f/iz;
+				endu = uz*endz;
+				endv = vz*endz;
+				left = 1.f/left;
+				stepu = SLOPE_U32((endu - startu) * left);
+				stepv = SLOPE_U32((endv - startv) * left);
+				u = SLOPE_U32(startu);
+				v = SLOPE_U32(startv);
+
+				for (; width != 0; width--)
+				{
+					colormap = pzl[tlt[lx++]] + cmofs;
+					*dest = colormap[source[((v >> ysh) & msk) | (u >> xsh)]];
+					dest++;
+					u += stepu;
+					v += stepv;
+				}
+			}
+		}
+		ds_x1 = lx;
+	}
+#else
 	while (width >= SPANSIZE)
 	{
 		iz += izstep;
@@ -1226,6 +1333,7 @@ void R_DrawTiltedSpan_8(void)
 			}
 		}
 	}
+#endif
 #endif
 }
 
@@ -2421,6 +2529,40 @@ void R_DrawTranslucentSpan_8 (void)
 	colormap = ds_colormap;
 	dest = &topleft[ds_y*vid.width + ds_x1];
 
+#ifdef PS2_OPT_DRAW // PS2-171, as R_DrawSpan_8 (and ds_transmap in a local)
+	{
+		const UINT32 ysh = nflatyshift, xsh = nflatxshift, msk = nflatmask;
+		const UINT8 *const transmap = ds_transmap;
+		UINT32 x = (UINT32)xposition, y = (UINT32)yposition;
+		const UINT32 xs = (UINT32)xstep, ys = (UINT32)ystep;
+
+#define PS2_SPANPIX(i) \
+		do { \
+			dest[i] = *(transmap + (colormap[source[(((y >> ysh) & msk) | (x >> xsh))]] << 8) + dest[i]); \
+			x += xs; \
+			y += ys; \
+			__asm__("" : "+r"(x), "+r"(y)); \
+		} while (0)
+		while (count >= 8)
+		{
+			PS2_SPANPIX(0); PS2_SPANPIX(1); PS2_SPANPIX(2); PS2_SPANPIX(3);
+			PS2_SPANPIX(4); PS2_SPANPIX(5); PS2_SPANPIX(6); PS2_SPANPIX(7);
+			dest += 8;
+			count -= 8;
+		}
+		while (count-- && dest <= deststop)
+		{
+			val = (((y >> ysh) & msk) | (x >> xsh));
+			*dest = *(transmap + (colormap[source[val]] << 8) + *dest);
+			dest++;
+			x += xs;
+			y += ys;
+		}
+#undef PS2_SPANPIX
+	}
+	return;
+#endif
+
 	while (count >= 8)
 	{
 		// SoM: Why didn't I see this earlier? the spot variable is a waste now because we don't
@@ -2499,6 +2641,39 @@ void R_DrawWaterSpan_8(void)
 	dest = &topleft[ds_y*vid.width + ds_x1];
 	dsrc = screens[1] + (ds_y+ds_bgofs)*vid.width + ds_x1;
 	count = ds_x2 - ds_x1 + 1;
+
+#ifdef PS2_OPT_DRAW // PS2-171, as R_DrawSpan_8 (and ds_transmap in a local)
+	{
+		const UINT32 ysh = nflatyshift, xsh = nflatxshift, msk = nflatmask;
+		const UINT8 *const transmap = ds_transmap;
+		UINT32 x = xposition, y = yposition;
+		const UINT32 xs = xstep, ys = ystep;
+
+#define PS2_SPANPIX(i) \
+		do { \
+			dest[i] = colormap[*(transmap + (source[((y >> ysh) & msk) | (x >> xsh)] << 8) + dsrc[i])]; \
+			x += xs; \
+			y += ys; \
+			__asm__("" : "+r"(x), "+r"(y)); \
+		} while (0)
+		while (count >= 8)
+		{
+			PS2_SPANPIX(0); PS2_SPANPIX(1); PS2_SPANPIX(2); PS2_SPANPIX(3);
+			PS2_SPANPIX(4); PS2_SPANPIX(5); PS2_SPANPIX(6); PS2_SPANPIX(7);
+			dest += 8;
+			dsrc += 8;
+			count -= 8;
+		}
+		while (count--)
+		{
+			*dest++ = colormap[*(transmap + (source[((y >> ysh) & msk) | (x >> xsh)] << 8) + *dsrc++)];
+			x += xs;
+			y += ys;
+		}
+#undef PS2_SPANPIX
+	}
+	return;
+#endif
 
 	while (count >= 8)
 	{

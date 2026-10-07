@@ -215,7 +215,8 @@ if(SRB2_CONFIG_PS2PROFILE)
 	target_sources(SRB2SDL2 PRIVATE
 		netcode/d_clisrv.c netcode/server_connection.c netcode/client_connection.c
 		netcode/tic_command.c netcode/net_command.c netcode/gamestate.c
-		netcode/commands.c netcode/d_net.c netcode/d_netcmd.c)
+		netcode/commands.c netcode/d_net.c netcode/d_netcmd.c
+		netcode/d_netfil.c netcode/http-mserv.c netcode/i_tcp.c netcode/mserv.c) # OPT10-SW: the real file-transfer/master-server code (as in the EE build) so the host profile links
 	if(NOT "lua" IN_LIST SRB2_PS2_NO)
 		add_subdirectory(blua)
 	endif()

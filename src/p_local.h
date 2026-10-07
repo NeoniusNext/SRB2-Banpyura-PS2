@@ -308,8 +308,23 @@ FUNCINLINE static ATTRINLINE boolean P_MobjWasRemoved(mobj_t *mobj)
 	return mobj == NULL || mobj->thinker.function != (actionf_p1)P_MobjThinker;
 }
 
+#ifdef PS2_OPT_REND
+// PS2-162: a sector without a slope answers with its plain height (the first test of the original functions); that case is inline now, the
+// callers (P_CheckPosition and its FOF loops, P_MobjCheckWater, ... ~22000 calls per frame on busy maps) no longer pay a call with a full prologue
+fixed_t P_MobjFloorZSlope(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect);
+fixed_t P_MobjCeilingZSlope(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect);
+static inline fixed_t P_MobjFloorZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+{
+	return sector->f_slope ? P_MobjFloorZSlope(sector, boundsec, x, y, radius, line, lowest, perfect) : sector->floorheight;
+}
+static inline fixed_t P_MobjCeilingZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+{
+	return sector->c_slope ? P_MobjCeilingZSlope(sector, boundsec, x, y, radius, line, lowest, perfect) : sector->ceilingheight;
+}
+#else
 fixed_t P_MobjFloorZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect);
 fixed_t P_MobjCeilingZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect);
+#endif
 #define P_GetFloorZ(mobj, sector, x, y, line) P_MobjFloorZ(sector, NULL, x, y, mobj->radius, line, false, false)
 #define P_GetCeilingZ(mobj, sector, x, y, line) P_MobjCeilingZ(sector, NULL, x, y, mobj->radius, line, true, false)
 #define P_GetFOFTopZ(mobj, sector, fof, x, y, line) P_MobjCeilingZ(sectors + fof->secnum, sector, x, y, mobj->radius, line, false, false)

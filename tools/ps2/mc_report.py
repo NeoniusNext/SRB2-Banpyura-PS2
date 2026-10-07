@@ -9,8 +9,10 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
-BIN = Path('D:/ps2dev/ee/bin')
-ENVP = {'PATH': str(BIN) + ';C:/Windows/System32'}
+import os
+IS_WIN = os.name == 'nt'
+BIN = Path('D:/ps2dev/ee/bin' if IS_WIN else os.environ.get('PS2DEV', '/opt/ps2dev-x/ps2dev') + '/ee/bin')
+ENVP = {'PATH': str(BIN) + (';C:/Windows/System32' if IS_WIN else ':/usr/bin:/bin')}
 
 
 def main():
@@ -47,7 +49,7 @@ def main():
         print('%-8s calls/frame %8.1f  bytes/frame %10.0f' % (name, c / frames, b / frames))
     rows = sorted(acc.items(), key=lambda x: -x[1][1])[:a.top]
     addrs = ''.join('%x\n' % (ra - 8) for (ra, _), _ in rows)  # the call instruction is before the delay slot
-    out = subprocess.run([str(BIN / 'mips64r5900el-ps2-elf-addr2line.exe'), '-e', a.elf, '-f'], input=addrs, capture_output=True, text=True, env=ENVP).stdout.splitlines()
+    out = subprocess.run([str(BIN / ('mips64r5900el-ps2-elf-addr2line' + ('.exe' if IS_WIN else ''))), '-e', a.elf, '-f'], input=addrs, capture_output=True, text=True, env=ENVP).stdout.splitlines()
     print('\n%-6s %9s %10s %9s  %s' % ('kind', 'calls/frm', 'bytes/frm', 'avg', 'caller'))
     i = 0
     for (ra, kind), (c, b) in rows:
