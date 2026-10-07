@@ -1,4 +1,4 @@
-"""Writes the network test specs (for tools/ps2/net_session.py) into build/opt7-s/specs. python tools/ps2/net_specs.py [ELF]
+"""Writes the network test specs (for tools/ps2/net_session.py) into build/opt10-x/specs. python3 tools/ps2/net_specs.py [ELF]
 Names: ps2srv-pccli (PS2 server, PC client), pcsrv-ps2cli (PC server, PS2 client), ps2srv-ps2cli (two PCSX2), ps2host-mock (master server).
 PCSX2's Sockets mode passes inbound datagrams only from addresses the guest has sent to: a PS2 server is "punched" towards the client's fixed
 port (client: -clientport 5030) before the client joins (console command "punch", src/netcode/i_tcp.c)."""
@@ -9,14 +9,18 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-ELF = sys.argv[1] if len(sys.argv) > 1 else 'build/opt8-s/out/SRB2.ELF'
-BASE = os.environ.get('SRB2_NET_BASE', 'build/opt8-s')  # run/spec output; the PC build stays in build/opt7-s/pc
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import net_env  # noqa: E402  (Linux locations: emulator copies, PC engine, packs)
+ELF = sys.argv[1] if len(sys.argv) > 1 else 'build/out/SRB2.ELF'
+BASE = os.environ.get('SRB2_NET_BASE', net_env.BASE)  # run/spec output
 OUT = ROOT / BASE / 'specs'
 OUT.mkdir(parents=True, exist_ok=True)
 PY = Path(sys.executable).as_posix()
-PC = 'build/opt7-s/pc/srb2-s7pc.exe'
-EMU1 = 'D:/PCSX2-net1/pcsx2-qt.exe'
-EMU2 = 'D:/PCSX2-net2/pcsx2-qt.exe'
+PC = net_env.pc_exe()
+PCDIR = BASE + '/pc'
+(ROOT / PCDIR).mkdir(parents=True, exist_ok=True)
+EMU1 = net_env.EMU1
+EMU2 = net_env.EMU2
 
 
 def pad(port, a, b, seed=1):
@@ -30,7 +34,7 @@ def punches(port, start, end, step=60):
 
 def write(name, spec):
     spec.setdefault('out', BASE + '/run')
-    spec.setdefault('pak', 'build/opt6-s/pak')
+    spec.setdefault('pak', net_env.PAK)
     spec['name'] = name
     (OUT / f'{name}.json').write_text(json.dumps(spec, indent=1))
 
@@ -43,16 +47,16 @@ write('ps2srv-pccli', {
          'args': ['-server', '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'],
          'files': {'pad.txt': pad(1, 500, 3500), 'cmd.txt': punches(5030, 120, 2400)},
          'cfg': 'resynchattempts "0"\nblamecfail "On"\n'},
-        {'id': 'cli', 'kind': 'pc', 'exe': PC, 'cwd': 'build/opt7-s/pc', 'logfile': 'latest-log.txt',
-         'args': ['-connect', '{HOSTIP}', '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'],
+        {'id': 'cli', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR,
+         'args': ['-connect', '{HOSTIP}', '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', (ROOT / BASE / 'pc-home2').as_posix()],
          'start_when': {'node': 'srv', 'text': 'PS2 net: address', 'delay': 6}}],
     'until': [{'node': 'srv', 'text': f'NETSYNC gametic={GAMETICS}'}, {'node': 'cli', 'text': f'NETSYNC gametic={GAMETICS}'}], 'grace': 3})
 
 write('pcsrv-ps2cli', {
     'timeout': 900,
     'nodes': [
-        {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': 'build/opt7-s/pc', 'logfile': 'latest-log.txt',
-         'args': ['-dedicated', '-server', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home1', '-warp', 'MAP01'], 'start': 0},
+        {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR,
+         'args': ['-dedicated', '-server', '-nomusic', '-nosound', '-netsync', '-home', (ROOT / BASE / 'pc-home1').as_posix(), '-warp', 'MAP01'], 'start': 0},
         {'id': 'cli', 'kind': 'ps2', 'emu': EMU1, 'elf': ELF,
          'args': ['-skipintro', '-connect', '{HOSTIP}', '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
          'files': {'pad.txt': pad(1, 150, 3500, seed=2)}, 'start': 5}],

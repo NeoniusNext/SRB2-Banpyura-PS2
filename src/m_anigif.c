@@ -517,7 +517,13 @@ static size_t gifframe_size = 8192;
 // converts an RGB frame to a frame with a palette.
 //
 #ifdef HWRENDER
+#ifdef PS2_PROFILE
+// PS2-149 (OPT10-S): the 132 KB table was .bss for the whole run (the arena starts behind the image): taken from the zone when a GIF is recorded
+static colorlookup_t *gif_colorlookup_p;
+#define gif_colorlookup (*gif_colorlookup_p)
+#else
 static colorlookup_t gif_colorlookup;
+#endif
 
 static void GIF_rgbconvert(UINT8 *linear, UINT8 *scr)
 {
@@ -525,6 +531,10 @@ static void GIF_rgbconvert(UINT8 *linear, UINT8 *scr)
 	size_t src = 0, dest = 0;
 	size_t size = (vid.width * vid.height * 3);
 
+#ifdef PS2_PROFILE
+	if (!gif_colorlookup_p)
+		gif_colorlookup_p = Z_Calloc(sizeof (colorlookup_t), PU_STATIC, &gif_colorlookup_p);
+#endif
 	InitColorLUT(&gif_colorlookup, (gif_localcolortable) ? gif_framepalette : gif_headerpalette, true);
 
 	while (src < size)

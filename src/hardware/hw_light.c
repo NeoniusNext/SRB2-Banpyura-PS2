@@ -1294,9 +1294,14 @@ static inline void HWR_BuildWallLightmaps(FVector *p1, FVector *p2, int lighnum,
 	(void)lighnum;
 	(void)p1;
 	(void)p2;
+#ifndef PS2_PROFILE // PS2-149: seg_t has no lightmaps list here (this function is never called: STATICLIGHT is off)
 	lp = malloc(sizeof (*lp));
 	lp->next = line->lightmaps;
 	line->lightmaps = lp;
+#else
+	(void)lp;
+	(void)line;
+#endif
 
 	// (...) encore des b�calcul bien lourd et on stock tout sa dans la lightmap
 }

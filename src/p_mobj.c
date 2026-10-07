@@ -1141,7 +1141,11 @@ static fixed_t HighestOnLine(fixed_t radius, fixed_t x, fixed_t y, line_t *line,
 		);
 }
 
+#ifdef PS2_OPT_REND // PS2-162: the flat case is an inline in p_local.h, only slopes come here
+fixed_t P_MobjFloorZSlope(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#else
 fixed_t P_MobjFloorZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#endif
 {
 	I_Assert(sector != NULL);
 
@@ -1217,7 +1221,11 @@ fixed_t P_MobjFloorZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y,
 		return sector->floorheight;
 }
 
+#ifdef PS2_OPT_REND
+fixed_t P_MobjCeilingZSlope(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#else
 fixed_t P_MobjCeilingZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#endif
 {
 	I_Assert(sector != NULL);
 
@@ -2070,6 +2078,15 @@ void P_AdjustMobjFloorZ_FFloors(mobj_t *mo, sector_t *sector, UINT8 motype)
 		if (!(rover->fofflags & FOF_EXISTS))
 			continue;
 
+#ifdef PS2_OPT_REND
+		// PS2-173: the heights (pure functions) are only needed by the rovers the chain below does not skip: skip those first
+		if (!(mo->player && (P_CheckSolidLava(rover) || P_CanRunOnWater(mo->player, rover)))
+			&& ((motype != 0 && (rover->fofflags & FOF_SWIMMABLE))
+			 || (!(rover->fofflags & FOF_QUICKSAND)
+			  && !(((rover->fofflags & (FOF_BLOCKPLAYER|FOF_MARIO)) && mo->player) || ((rover->fofflags & FOF_BLOCKOTHERS) && !mo->player)))))
+			continue;
+#endif
+
 		topheight = P_GetFOFTopZ(mo, sector, rover, mo->x, mo->y, NULL);
 		bottomheight = P_GetFOFBottomZ(mo, sector, rover, mo->x, mo->y, NULL);
 
@@ -2224,6 +2241,12 @@ boolean P_CheckDeathPitCollide(mobj_t *mo)
 
 	if (mo->player && mo->player->pflags & PF_GODMODE)
 		return false;
+
+#ifdef PS2_OPT_PTICK
+	// PS2-175: the result needs a death pit sector (last term of the condition below); the two heights (pure functions) are not needed otherwise
+	if (mo->subsector->sector->damagetype != SD_DEATHPITTILT && mo->subsector->sector->damagetype != SD_DEATHPITNOTILT)
+		return false;
+#endif
 
 	fixed_t sectorFloor = P_GetSpecialBottomZ(mo, mo->subsector->sector, mo->subsector->sector);
 	fixed_t sectorCeiling = P_GetSpecialTopZ(mo, mo->subsector->sector, mo->subsector->sector);
@@ -3115,7 +3138,26 @@ boolean P_CanRunOnWater(player_t *player, ffloor_t *rover)
 //
 // Check for water, set stuff in mobj_t struct for movement code later.
 // This is called either by P_MobjThinker() or P_PlayerThink()
+#ifdef PS2_OPT_PTICK
+// PS2-175: an object that is not a player, in a sector without 3D floors (so without water), that was not under water: the loop finds no rover, the
+// underwater bit stays clear and the function returns at the "no change of state" test, after setting the two water heights and clearing the four
+// water bits. That is the case for most objects on most maps (1883 calls per tic on DEMO_003); it is done here, in a function with a short prologue.
+static void P_MobjCheckWaterFull(mobj_t *mobj);
 void P_MobjCheckWater(mobj_t *mobj)
+{
+	if (!mobj->player && !mobj->subsector->sector->ffloors && !(mobj->eflags & MFE_UNDERWATER))
+	{
+		mobj->watertop = mobj->waterbottom = mobj->z - 1000*FRACUNIT;
+		mobj->eflags &= ~(MFE_UNDERWATER|MFE_TOUCHWATER|MFE_GOOWATER|MFE_TOUCHLAVA);
+		return;
+	}
+	P_MobjCheckWaterFull(mobj);
+}
+
+static void P_MobjCheckWaterFull(mobj_t *mobj)
+#else
+void P_MobjCheckWater(mobj_t *mobj)
+#endif
 {
 	boolean waterwasnotset = (mobj->watertop == INT32_MAX);
 	boolean wasinwater = (mobj->eflags & MFE_UNDERWATER) == MFE_UNDERWATER;
@@ -7990,6 +8032,30 @@ static boolean P_MobjPushableThink(mobj_t *mobj)
 	return true;
 }
 
+#ifdef PS2
+// PS2-142: C leaves the order in which function arguments are evaluated unspecified. The PC builds (x86 GCC, MSVC) evaluate them right to left,
+// MIPS GCC left to right: the same three random numbers ended up in other coordinates (DEMO_003 state_hash from tic 45, A_LightBeamReset).
+// The RNG state is the same either way, but the position of these (cosmetic) mobjs and with it PC<->PS2 demos and netgames are not: the PS2 build
+// evaluates right to left, like the PC reference, wherever one call has several random arguments (tools/ps2/rng_order_scan.py lists them).
+static mobj_t *P_SpawnBossSmoke(mobj_t *mobj, fixed_t rad, fixed_t hei)
+{
+	const fixed_t zofs = P_RandomRange(hei/2, hei) << FRACBITS;
+	const fixed_t yofs = P_RandomRange(rad, -rad) << FRACBITS;
+	const fixed_t xofs = P_RandomRange(rad, -rad) << FRACBITS;
+
+	return P_SpawnMobjFromMobj(mobj, xofs, yofs, zofs, MT_SMOKE);
+}
+
+static mobj_t *P_SpawnPlayerExplosion(mobj_t *mobj, fixed_t r)
+{
+	const fixed_t zofs = P_RandomKey(mobj->height >> FRACBITS) << FRACBITS;
+	const fixed_t y = mobj->y + (P_RandomRange(r, -r) << FRACBITS);
+	const fixed_t x = mobj->x + (P_RandomRange(r, -r) << FRACBITS);
+
+	return P_SpawnMobj(x, y, mobj->z + zofs, MT_SONIC3KBOSSEXPLODE);
+}
+#endif
+
 static boolean P_MobjBossThink(mobj_t *mobj)
 {
 	if (LUA_HookMobj(mobj, MOBJ_HOOK(BossThinker)))
@@ -8007,11 +8073,15 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 			{
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
+#ifdef PS2
+				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
+#else
 				mobj_t *particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(hei / 2, hei) << FRACBITS,
 					MT_SMOKE);
+#endif
 				if (!P_MobjWasRemoved(particle))
 				{
 					P_SetObjectMomZ(particle, 2 << FRACBITS, false);
@@ -8039,11 +8109,15 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 			{
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
+#ifdef PS2
+				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
+#else
 				mobj_t *particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(hei/2, hei) << FRACBITS,
 					MT_SMOKE);
+#endif
 				if (!P_MobjWasRemoved(particle))
 				{
 					P_SetObjectMomZ(particle, 2 << FRACBITS, false);
@@ -8057,11 +8131,15 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 			{
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
+#ifdef PS2
+				mobj_t *particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
+#else
 				mobj_t *particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(hei/2, hei) << FRACBITS,
 					MT_SMOKE);
+#endif
 				if (!P_MobjWasRemoved(particle))
 				{
 					P_SetObjectMomZ(particle, 2 << FRACBITS, false);
@@ -8075,11 +8153,15 @@ static boolean P_MobjBossThink(mobj_t *mobj)
 			{
 				fixed_t rad = mobj->radius >> FRACBITS;
 				fixed_t hei = mobj->height >> FRACBITS;
+#ifdef PS2
+				mobj_t* particle = P_SpawnBossSmoke(mobj, rad, hei); // PS2-142
+#else
 				mobj_t* particle = P_SpawnMobjFromMobj(mobj,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(rad, -rad) << FRACBITS,
 					P_RandomRange(hei/2, hei) << FRACBITS,
 					MT_SMOKE);
+#endif
 				if (!P_MobjWasRemoved(particle))
 				{
 					P_SetObjectMomZ(particle, 2 << FRACBITS, false);
@@ -8259,11 +8341,15 @@ static boolean P_MobjDeadThink(mobj_t *mobj)
 			if (mobj->player && !(mobj->fuse % 8) && (mobj->player->charflags & SF_MACHINE))
 			{
 				fixed_t r = mobj->radius >> FRACBITS;
+#ifdef PS2
+				mobj_t *explosion = P_SpawnPlayerExplosion(mobj, r); // PS2-142
+#else
 				mobj_t *explosion = P_SpawnMobj(
 					mobj->x + (P_RandomRange(r, -r) << FRACBITS),
 					mobj->y + (P_RandomRange(r, -r) << FRACBITS),
 					mobj->z + (P_RandomKey(mobj->height >> FRACBITS) << FRACBITS),
 					MT_SONIC3KBOSSEXPLODE);
+#endif
 				if (!P_MobjWasRemoved(explosion))
 					S_StartSound(explosion, sfx_s3kb4);
 			}
@@ -8278,11 +8364,15 @@ static boolean P_MobjDeadThink(mobj_t *mobj)
 		if (!(mobj->fuse % 8))
 		{
 			fixed_t r = mobj->radius >> FRACBITS;
+#ifdef PS2
+			mobj_t *explosion = P_SpawnPlayerExplosion(mobj, r); // PS2-142
+#else
 			mobj_t *explosion = P_SpawnMobj(
 				mobj->x + (P_RandomRange(r, -r) << FRACBITS),
 				mobj->y + (P_RandomRange(r, -r) << FRACBITS),
 				mobj->z + (P_RandomKey(mobj->height >> FRACBITS) << FRACBITS),
 				MT_SONIC3KBOSSEXPLODE);
+#endif
 			if (!P_MobjWasRemoved(explosion))
 				S_StartSound(explosion, sfx_s3kb4);
 		}
@@ -9804,7 +9894,14 @@ static boolean P_MobjRegularThink(mobj_t *mobj)
 		break;
 	case MT_TRAINSTEAMSPAWNER:
 		if (leveltime % 5 == 0) {
+#ifdef PS2
+			// PS2-142: unspecified argument order, right to left as the PC builds
+			const fixed_t steamy = mobj->y + FRACUNIT*P_SignedRandom()/2;
+			const fixed_t steamx = mobj->x + FRACUNIT*P_SignedRandom()/2;
+			mobj_t *steam = P_SpawnMobj(steamx, steamy, mobj->z, MT_PARTICLE);
+#else
 			mobj_t *steam = P_SpawnMobj(mobj->x + FRACUNIT*P_SignedRandom()/2, mobj->y + FRACUNIT*P_SignedRandom()/2, mobj->z, MT_PARTICLE);
+#endif
 			if (P_MobjWasRemoved(steam))
 				break;
 			P_SetMobjState(steam, S_TRAINSTEAM);
@@ -10185,8 +10282,52 @@ static boolean P_FuseThink(mobj_t *mobj)
 //
 // P_MobjThinker
 //
+#ifdef PS2_TYPESTAT // diagnostics of tools/ps2/host_variant.sh (host only): which mobj types pay for P_CheckPosition every tic
+#include <stdio.h>
+static unsigned ps2_typestat[4][NUMMOBJTYPES];
+static void PS2_TypeStatDump(void)
+{
+	static const char *const what[4] = {"thinker: calls", "thinker: ZMovement+CheckPosition", "scenery: calls", "scenery: ZMovement+CheckPosition"};
+	int w, t, best;
+	for (w = 0; w < 4; w++)
+	{
+		unsigned total = 0, shown = 0;
+		unsigned char used[NUMMOBJTYPES];
+		memset(used, 0, sizeof used);
+		for (t = 0; t < NUMMOBJTYPES; t++)
+			total += ps2_typestat[w][t];
+		fprintf(stderr, "TYPESTAT %s: total %u\n", what[w], total);
+		for (; shown < 14; shown++)
+		{
+			best = -1;
+			for (t = 0; t < NUMMOBJTYPES; t++)
+				if (!used[t] && ps2_typestat[w][t] && (best < 0 || ps2_typestat[w][t] > ps2_typestat[w][best]))
+					best = t;
+			if (best < 0)
+				break;
+			used[best] = 1;
+			fprintf(stderr, "TYPESTAT   type %d: %u\n", best, ps2_typestat[w][best]);
+		}
+	}
+}
+static void PS2_TypeStat(int w, mobjtype_t type)
+{
+	static int reg;
+	if (!reg)
+	{
+		reg = 1;
+		atexit(PS2_TypeStatDump);
+	}
+	ps2_typestat[w][type]++;
+}
+#define PS2_TYPESTAT_N(w, mo) PS2_TypeStat(w, (mo)->type)
+#else
+#define PS2_TYPESTAT_N(w, mo) ((void)0)
+#endif
+
 void P_MobjThinker(mobj_t *mobj)
 {
+	PS2_TYPESTAT_N(0, mobj);
 	I_Assert(mobj != NULL);
 	I_Assert(!P_MobjWasRemoved(mobj));
 
@@ -10316,6 +10457,7 @@ void P_MobjThinker(mobj_t *mobj)
 		|| (!(mobj->eflags & MFE_VERTICALFLIP) && mobj->z != mobj->floorz)
 		|| P_IsObjectInGoop(mobj))
 	{
+		PS2_TYPESTAT_N(1, mobj);
 		if (!P_ZMovement(mobj))
 			return; // mobj was removed
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
@@ -10498,6 +10640,7 @@ void P_PushableThinker(mobj_t *mobj)
 // Quick, optimized function for scenery
 void P_SceneryThinker(mobj_t *mobj)
 {
+	PS2_TYPESTAT_N(2, mobj);
 	if (mobj->flags & MF_BOXICON)
 	{
 		if (!(mobj->eflags & MFE_VERTICALFLIP))
@@ -10532,6 +10675,7 @@ void P_SceneryThinker(mobj_t *mobj)
 		|| (!(mobj->eflags & MFE_VERTICALFLIP) && mobj->z != mobj->floorz)
 		|| P_IsObjectInGoop(mobj))
 	{
+		PS2_TYPESTAT_N(3, mobj);
 		if (!P_SceneryZMovement(mobj))
 			return; // mobj was removed
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!

@@ -389,6 +389,58 @@ static void R_WriteTexturePosts(post_t *posts, const UINT8 *mask, INT32 width, I
 }
 #endif
 
+#if defined(PS2) && defined(PS2_PROFILE)
+// PS2-148 (OPT10-S): a composite texture that does not fit in the arena must not end the game ("Out of memory allocating 524288 bytes" on MAP11 after
+// the levels before it, 4194304 bytes on MAPMG: 2048x2048 CLUDSSSS). The texture becomes a column of one colour: every column of the texture points at
+// the same single post and the same run of `height` pixels (width columns of 12 bytes and one post instead of width*height bytes). It is an ordinary
+// cache block with an owner: the zone may evict it, and the next use tries the real composite again.
+#define R_COMPOSITE_TRY_MIN (64u << 10)
+#define R_FALLBACK_PIXEL 15 // a grey of the palette ramp (0 white .. 31 black)
+static unsigned r_fallbacktextures;
+
+static UINT8 *R_FallbackTexture(size_t texnum)
+{
+	texture_t *texture = textures[texnum];
+	const size_t width = (size_t)texture->width, height = (size_t)texture->height;
+	size_t columnofs, postofs, blocksize;
+	UINT8 *block;
+	column_t *columns;
+	post_t *post;
+	size_t x;
+
+	blocksize = R_TextureCacheLayout(height, width, 1, &columnofs, &postofs);
+	block = Z_Calloc(blocksize, PU_CACHE, &texturecache[texnum]);
+	memset(block, R_FALLBACK_PIXEL, height);
+	columns = (column_t *)(block + columnofs);
+	post = (post_t *)(block + postofs);
+	post->topdelta = 0;
+	post->length = (unsigned)height;
+	post->data_offset = 0;
+	for (x = 0; x < width; x++)
+	{
+		columns[x].num_posts = 1;
+		columns[x].posts = post;
+		columns[x].pixels = block;
+	}
+	texture->transparency = false;
+	texturecolumns[texnum] = columns;
+	if (r_fallbacktextures++ < 8)
+		CONS_Alert(CONS_WARNING, "R_GenerateTexture: no room for texture %d (%dx%d): plain column instead\n", (int)texnum, (int)width, (int)height);
+	return block;
+}
+
+// W_CacheLumpNumPwad for the scratch copy of a lump (freed by the caller): NULL when there is no room instead of ending the run
+static UINT8 *R_TryReadLump(UINT16 wadnum, lumpnum_t lumpnum)
+{
+	const size_t len = W_LumpLengthPwad(wadnum, lumpnum);
+	UINT8 *p = Z_TryMallocAlign(len ? len : 1, R_TEXTURE_WORK_TAG, NULL, 2);
+
+	if (p)
+		W_ReadLumpHeaderPwad(wadnum, lumpnum, p, 0, 0);
+	return p;
+}
+#endif
+
 //
 // R_GenerateTexture
 //
@@ -455,7 +507,13 @@ UINT8 *R_GenerateTexture(size_t texnum)
 
 #ifdef PS2_PROFILE
 		// PU_STATIC while in use (a PU_CACHE block could be purged by the allocations below), freed on every path
+#if defined(PS2)
+		pdata = R_TryReadLump(wadnum, lumpnum);
+		if (!pdata)
+			return R_FallbackTexture(texnum);
+#else
 		pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
+#endif
 #else
 		pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
 #endif
@@ -503,7 +561,17 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #endif
 			texturememory += blocksize;
 
+#if defined(PS2)
+			block = Z_TryMallocAlign(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum], 2);
+			if (!block)
+			{
+				Z_Free(pdata);
+				return R_FallbackTexture(texnum);
+			}
+			memset(block, 0, blocksize);
+#else
 			block = Z_Calloc(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
+#endif
 			blocktex = block;
 
 #ifdef PS2_PROFILE
@@ -542,9 +610,32 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #ifdef PS2_PROFILE
 	// PS2-76: the biggest block first. The mask and the column array below are small, but they took the middle of the one hole
 	// that would have held WxH (MAP11, 1024x512: 498 KB hole split by a 64 KB mask, "Out of memory allocating 524288 bytes")
+#if defined(PS2)
+	if (total_pixels >= R_COMPOSITE_TRY_MIN)
+	{
+		temp_block = Z_TryMallocAlign(total_pixels, R_TEXTURE_WORK_TAG, NULL, 2);
+		if (!temp_block)
+			return R_FallbackTexture(texnum);
+		memset(temp_block, 0, total_pixels);
+	}
+	else
+#endif
 	temp_block = Z_Calloc(total_pixels, R_TEXTURE_WORK_TAG, NULL);
 #endif
 #ifdef R_OPAQUE_PACKED
+#if defined(PS2)
+	if ((size_t)texture->width * R_MASK_BYTES(texture->height) >= R_COMPOSITE_TRY_MIN)
+	{
+		opaque_pixels = Z_TryMallocAlign((size_t)texture->width * R_MASK_BYTES(texture->height), R_TEXTURE_WORK_TAG, NULL, 2);
+		if (!opaque_pixels)
+		{
+			Z_Free(temp_block);
+			return R_FallbackTexture(texnum);
+		}
+		memset(opaque_pixels, 0, (size_t)texture->width * R_MASK_BYTES(texture->height));
+	}
+	else
+#endif
 	opaque_pixels = Z_Calloc((size_t)texture->width * R_MASK_BYTES(texture->height), R_TEXTURE_WORK_TAG, NULL);
 #else
 	opaque_pixels = Z_Calloc(total_pixels * sizeof(UINT8), R_TEXTURE_WORK_TAG, NULL);
@@ -604,7 +695,20 @@ UINT8 *R_GenerateTexture(size_t texnum)
 		}
 #endif
 		if (rawlump)
+		{
+#if defined(PS2)
+			pdata = R_TryReadLump(wadnum, lumpnum);
+			if (!pdata)
+			{
+				Z_Free(temp_columns);
+				Z_Free(opaque_pixels);
+				Z_Free(temp_block);
+				return R_FallbackTexture(texnum);
+			}
+#else
 			pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
+#endif
+		}
 #endif
 
 #if defined(PS2_PROFILE) && !defined(PS2_NOOPT_texstream)
@@ -614,7 +718,18 @@ UINT8 *R_GenerateTexture(size_t texnum)
 			free_patch = false;
 			if (realpatch == NULL)
 			{
+#if defined(PS2)
+				pdata = R_TryReadLump(wadnum, lumpnum);
+				if (!pdata)
+				{
+					Z_Free(temp_columns);
+					Z_Free(opaque_pixels);
+					Z_Free(temp_block);
+					return R_FallbackTexture(texnum);
+				}
+#else
 				pdata = W_CacheLumpNumPwad(wadnum, lumpnum, R_TEXTURE_WORK_TAG);
+#endif
 				rawbytes = W_LumpLengthPwad(wadnum, lumpnum);
 				rawpatch = (softwarepatch_t *)pdata;
 #ifdef PS2_ZIPPNG
@@ -856,7 +971,26 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	// Release the adjacent scratch before extending pixels into their final self-contained cache.
 	Z_Free(temp_columns);
 	temp_columns = NULL;
+#if defined(PS2)
+	block = Z_TryReallocAlign(temp_block, blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum], 2);
+	if (!block)
+	{
+		// no room to stretch the pixels into their final block (the old and the new block would both have to exist): drop the scratch, plain column
+		Z_Free(temp_block);
+#ifdef R_COUNTED_POSTS
+		if (final_posts)
+			Z_Free(opaque_pixels);
+		else
+			Z_Free(temp_posts);
+#else
+		Z_Free(temp_posts);
+#endif
+		Z_Free(column_posts);
+		return R_FallbackTexture(texnum);
+	}
+#else
 	block = Z_Realloc(temp_block, blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
+#endif
 	temp_block = NULL;
 #else
 	block = Z_Calloc(blocksize, R_TEXTURE_WORK_TAG, &texturecache[texnum]);
@@ -1008,6 +1142,33 @@ UINT8 *R_GetFlatForTexture(size_t texnum)
 
 	return texture->flat;
 }
+
+#if defined(PS2) && defined(PS2_PROFILE)
+// PS2-140 (OPT10-S): R_GetFlatForTexture for the hardware renderer, which can do without a flat (the draws that need it are skipped for a frame, the
+// driver says so): a texture that is used as a flat and does not fit once converted (two 1 MiB blocks at a time on MAPMG: the composite and the flat)
+// is NULL here instead of the end of the run. Flats that are lumps take the original path (the driver reads those in bands from the lump).
+UINT8 *R_TryGetFlatForTexture(size_t texnum)
+{
+	texture_t *texture;
+	UINT8 *flat;
+
+	if (texnum >= (unsigned)numtextures)
+		return NULL;
+	texture = textures[texnum];
+	if (texture->flat != NULL || texture->type == TEXTURETYPE_FLAT)
+		return R_GetFlatForTexture(texnum);
+
+	flat = (UINT8 *)Picture_TryTextureToFlat(texnum);
+	if (!flat)
+		return NULL;
+	texture->flat = flat;
+	Z_SetUser(flat, (void **)&texture->flat);
+	Z_ChangeTag(flat, PU_CACHE);
+	R_ReleaseTextureCache((INT32)texnum);
+	flatmemory += texture->width * texture->height;
+	return flat;
+}
+#endif
 
 //
 // R_GetTextureNum

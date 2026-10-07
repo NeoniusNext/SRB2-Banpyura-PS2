@@ -90,6 +90,48 @@ static inline u32 phys(const void *p)
 	return (u32)(uintptr_t)p & 0x0FFFFFFFu;
 }
 
+// OPT10 (PS2-HW-53): floorf of newlib is a call of ~40 cycles; the integer conversion gives the same value for every float of int range
+// (above 2^24 a float is an integer already), and the EE has MIN.S / MAX.S instructions that gcc does not use for the ?: form (NaN rules).
+static inline float hw_floorf(float x)
+{
+	if (x > -2147483000.0f && x < 2147483000.0f)
+	{
+		const int i = (int)x;
+
+		return (float)(i - (x < (float)i));
+	}
+	return __builtin_floorf(x);
+}
+#define floorf hw_floorf
+
+#ifdef __mips__
+static inline float hw_minf(float a, float b)
+{
+	float r;
+
+	__asm__("min.s %0,%1,%2" : "=f"(r) : "f"(a), "f"(b));
+	return r;
+}
+
+static inline float hw_maxf(float a, float b)
+{
+	float r;
+
+	__asm__("max.s %0,%1,%2" : "=f"(r) : "f"(a), "f"(b));
+	return r;
+}
+#else
+static inline float hw_minf(float a, float b)
+{
+	return b < a ? b : a;
+}
+
+static inline float hw_maxf(float a, float b)
+{
+	return b > a ? b : a;
+}
+#endif
+
 #define HWGIF_TAG(nloop, eop, pre, prim, flg, nreg) \
 	((u64)(nloop) | ((u64)(eop) << 15) | ((u64)(pre) << 46) | ((u64)(prim) << 47) | ((u64)(flg) << 58) | ((u64)(nreg) << 60))
 #define GIF_REGS_AD 0xEull
@@ -178,6 +220,10 @@ typedef struct
 	u32 imgws; // owner: frame_no + 1 of the last frame in which a draw used the image (through any of its records)
 	u32 lodfr; // owner: frame_no + 1 of the frame lod belongs to
 	u8 lod; // owner: the finest mip level (0 = full size) a polygon of the frame needed (instrumentation, PS2-HW-34)
+	// OPT10 (PS2-HW-70): an image of more than 1024 rows (the GS limit) is stored as two images, the rows [0, 1024) and the rest, each with its own blocks
+	u8 psplit; // 0 = an ordinary image, 1 = the first piece (what the engine's texture is bound to), 2 = the second piece
+	int pnext, ppar; // first piece: the record of the second (NOREC = none); second piece: the first. One of them goes, the other goes with it
+	float pt0, pt1, ptk; // the piece holds the engine texture rows [pt0, pt1) of one repeat (fractions of the height); a polygon's t in the piece is (t - pt0) * ptk
 } texrec_t;
 
 #define NOREC (-1)
@@ -281,6 +327,11 @@ static struct
 	int cap_up_count; // frames in a row in which a larger cap would have fitted
 	int cap_down_count; // frames in a row in which the working set did not fit
 	u32 upg_blocks; // blocks of textures re-made at a larger size in this frame (budget)
+	u32 plan_reserve; // OPT10 (PS2-HW-37): blocks the frame plan leaves for the textures it does not plan (sprites, patches, small textures): measured on the previous frames
+	u32 unplanned_cur; // blocks of those textures drawn so far in this frame
+	u32 plan_last, plan_exact; // the last plan's working set (budget applied / exact levels), blocks
+	u32 plan_pct, plan_calm, thrash_n, thrash_blk; // PS2-HW-39: the budget of the plan in per cent of the pool (a controller: an image of the frame evicted in the frame lowers it, calm frames raise it)
+	GLMipmap_t *imm_tex; // PS2-HW-37: a big map texture selected outside the batches: made resident (at the level its polygon needs) when the polygon is drawn
 	int tex_filter; // HWD_SET_TEXTUREFILTER_*
 	u32 pal[256]; // GS CLUT entries, 0x00BBGGRR, no alpha, in index order
 	int pal_set;
@@ -313,6 +364,8 @@ static struct
 } H __attribute__((aligned(16)));
 
 int ps2hwd_dbg_flags;
+int ps2hwd_hash_on; // -hwhash (OPT10 HG): a 64 bit hash of every GIF packet buffer of a frame is printed (HWHASH lines): equal streams of two runs = equal pictures, bit for bit
+static u64 hash_frame;
 
 // -hwdbg flags of the texture manager (OPT9, HT); bits below 0x100000 belong to the other HW agents and the host tests
 #define HWDBG_TEX 0x100000 // HWTEX lines every 105 frames (texture statistics, instrumentation of the working set)
@@ -321,7 +374,10 @@ int ps2hwd_dbg_flags;
 #define HWDBG_NOGATE 0x800000 // the old frame start: wait for the flip of the previous frame before drawing the next one
 #define HWDBG_COMPOSE 0x1000000 // hw_cache.c: every composed P_8 texture is checked against the original column loops
 #define HWDBG_NOPLAN 0x2000000 // no frame plan: every texture is stored at full size
+#define HWDBG_IMMDBG 0x40000000 // HWIMM lines: every upload / re-make of a big map texture (frame, name, level asked for, level stored, action)
+#define HWDBG_LODDBG 0x40000000 // HWLOD lines: the polygons of the frame plan of frame % 105 == 60 (texture, size, vertices, texel size in pixels, level)
 
+#define BIG_IMAGE_BLOCKS 512u // PS2-HW-39: images of at least this many blocks are placed from the top of the pool (screen captures are there too), the others from the bottom
 #define PLAN_MIN_TEXELS 65536u // PS2-HW-34: smaller textures are always stored at full size: their share of the working set is small and the estimate costs cycles
 #define PLAN_FULL_KEEP 150 // frames a texture that was drawn unplanned keeps its full size in the plans
 
@@ -341,7 +397,9 @@ typedef struct
 	u32 lod_blk, lod_lvl[6]; // blocks of the working set if every image were stored at the level the frame needs; per level
 	u32 lvl_up[6]; // uploads of images stored at a mip level (1..5), PS2-HW-34
 	u32 upgrades; // images made again at a finer level than they were stored at
+	u32 downgrades; // images made again at a coarser level than they were stored at (PS2-HW-37)
 	u32 invisible; // textures not uploaded: no polygon of the frame can see them
+	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc, alloc_fail, alloc_frag, alloc_frag_blk, thrash_n, thrash_blk, lvl_cyc, plan_np, plan_mcyc, split_up, split_poly, split_sub; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
 } txstats_t;
 static txstats_t TX;
 

@@ -183,8 +183,21 @@ int LUA_HookCharacterHUD
 	INT32 ticker, boolean mode
 );
 
+#ifdef PS2_OPT_PTICK
+// PS2-174: nothing but add_mobj_hook (lua_hooklib.c) makes a mobj hook available, and until the first script registers one all three hooks below
+// that every thinker and every collision test calls (~8000 calls per tic on a crowded map, each with its own Hook_State and a prepare/init call
+// chain) return their default: 0. lua_mobjhooks_any only ever goes from false to true.
+extern boolean lua_mobjhooks_any;
+int  LUA_HookMobjSlow(mobj_t *, int hook);
+int  LUA_Hook2MobjSlow(mobj_t *, mobj_t *, int hook);
+int  LUA_HookMobjLineCollideSlow(mobj_t *, line_t *);
+static inline int LUA_HookMobj(mobj_t *mo, int hook) { return lua_mobjhooks_any ? LUA_HookMobjSlow(mo, hook) : 0; }
+static inline int LUA_Hook2Mobj(mobj_t *mo1, mobj_t *mo2, int hook) { return lua_mobjhooks_any ? LUA_Hook2MobjSlow(mo1, mo2, hook) : 0; }
+static inline int LUA_HookMobjLineCollide(mobj_t *mo, line_t *line) { return lua_mobjhooks_any ? LUA_HookMobjLineCollideSlow(mo, line) : 0; }
+#else
 int  LUA_HookMobj(mobj_t *, int hook);
 int  LUA_Hook2Mobj(mobj_t *, mobj_t *, int hook);
+#endif
 void LUA_HookInt(INT32 integer, int hook);
 void LUA_HookBool(boolean value, int hook);
 int  LUA_HookPlayer(player_t *, int hook);
@@ -194,7 +207,9 @@ int  LUA_HookKey(event_t *event, int hook); // Hooks for key events
 void LUA_HookPreThinkFrame(void);
 void LUA_HookThinkFrame(void);
 void LUA_HookPostThinkFrame(void);
+#ifndef PS2_OPT_PTICK
 int  LUA_HookMobjLineCollide(mobj_t *, line_t *);
+#endif
 int  LUA_HookTouchSpecial(mobj_t *special, mobj_t *toucher);
 int  LUA_HookShouldDamage(mobj_t *target, mobj_t *inflictor, mobj_t *source, INT32 damage, UINT8 damagetype);
 int  LUA_HookMobjDamage(mobj_t *target, mobj_t *inflictor, mobj_t *source, INT32 damage, UINT8 damagetype);

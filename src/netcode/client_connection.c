@@ -418,7 +418,8 @@ static void CL_DrawDownloadAddonList(void)
 	/* MSVC has no VLAs; capacity is the same as the source file list. */
 	fileneeded_t *filelist = _alloca(fileneedednum * sizeof(*filelist));
 #else
-	fileneeded_t filelist[fileneedednum];
+	/* alloca instead of a VLA: the SDL build compiles with -Werror=vla */
+	fileneeded_t *filelist = __builtin_alloca(fileneedednum * sizeof(*filelist));
 #endif
 	INT32 filelistsize = 0;
 	for (int j = 0; j < fileneedednum; j++)
@@ -1624,6 +1625,14 @@ static void HandleHTTPDownloadFail(void)
   * \sa CL_ConnectToServer
   *
   */
+#ifdef NETSYNC_DIAG
+// OPT10-X: a PC client built with -DNETSYNC_DIAG for the network test stand presses ENTER on the server-information and add-on confirmation screens
+// by itself when run with -netsync (headless Xvfb has nobody to press it). Not in any other build.
+#define NETSYNC_AUTOENTER (M_CheckParm("-netsync") != 0)
+#else
+#define NETSYNC_AUTOENTER 0
+#endif
+
 static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic_t *asksent)
 {
 	boolean waitmore;
@@ -1801,7 +1810,7 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 				if (fileneeded[i].status == FS_NOTFOUND || fileneeded[i].status == FS_MD5SUMBAD)
 					totalfiles++;
 
-			if (GAMEKEY(KEY_ENTER))
+			if (GAMEKEY(KEY_ENTER) || NETSYNC_AUTOENTER)
 			{
 				if (totalfiles > 0)
 				{
@@ -1849,7 +1858,7 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 		// key handler for server info
 		if (cl_mode == CL_VIEWSERVER)
 		{
-			if (GAMEKEY(KEY_ENTER))
+			if (GAMEKEY(KEY_ENTER) || NETSYNC_AUTOENTER)
 			{
 				cl_mode = CL_CHECKFILES;
 				S_StartSound(NULL, sfx_menu1);

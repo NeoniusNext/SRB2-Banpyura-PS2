@@ -7013,10 +7013,18 @@ static void P_DoNiGHTSCapsule(player_t *player)
 			// Spawn a 'pop' for every 2 tics
 			if (!((tictimer - firstpoptic) % 2))
 			{
+#ifdef PS2
+				// PS2-142: unspecified argument order, right to left as the PC builds
+				const fixed_t popz = player->capsule->z + (player->capsule->height/2) + ((P_SignedRandom()/2)<<FRACBITS);
+				const fixed_t popy = player->capsule->y + ((P_SignedRandom()/2)<<FRACBITS);
+				const fixed_t popx = player->capsule->x + ((P_SignedRandom()/2)<<FRACBITS);
+				mobj_t *explodemo = P_SpawnMobj(popx, popy, popz, MT_SONIC3KBOSSEXPLODE);
+#else
 				mobj_t *explodemo = P_SpawnMobj(player->capsule->x + ((P_SignedRandom()/2)<<FRACBITS),
 					player->capsule->y + ((P_SignedRandom()/2)<<FRACBITS),
 					player->capsule->z + (player->capsule->height/2) + ((P_SignedRandom()/2)<<FRACBITS),
 					MT_SONIC3KBOSSEXPLODE);
+#endif
 				if (!P_MobjWasRemoved(explodemo))
 					S_StartSound(explodemo,sfx_s3kb4);
 			}

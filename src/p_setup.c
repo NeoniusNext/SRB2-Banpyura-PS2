@@ -3327,6 +3327,79 @@ static void P_ProcessLinedefsAfterSidedefs(void)
 #define VRES_DROP(vlump) ((void)0)
 #endif
 
+#ifdef PS2_PROFILE
+// PS2-143 (OPT10-S): line_t.args (r_defs.h) points into a pool of NUMLINEARGS integers per line while the level loads (every loader and converter writes
+// to it as before), and P_CompactLineArgs, after the binary conversion, keeps only the blocks of the lines that ended up with a non-zero argument:
+// the others point at lineargs_zero. Nothing but the loaders and P_LineArgsW (savegame reader) writes line arguments (Lua reads only), so the shared
+// block stays zero. MAP11: 25 100 lines, 1 200 of them with arguments: -0.9 MB of the arena for the whole level.
+INT32 lineargs_zero[NUMLINEARGS];
+static INT32 *lineargpool;
+
+static void P_AllocLineArgs(void)
+{
+	size_t i;
+
+	lineargpool = Z_Calloc(numlines * NUMLINEARGS * sizeof (INT32), PU_LEVEL, NULL);
+	for (i = 0; i < numlines; i++)
+		lines[i].args = &lineargpool[i * NUMLINEARGS];
+}
+
+static void P_CompactLineArgs(void)
+{
+	INT32 *dst = lineargpool;
+	size_t i, j;
+
+	for (i = 0; i < numlines; i++)
+	{
+		INT32 *a = lines[i].args;
+
+		if (a == lineargs_zero)
+			continue;
+		for (j = 0; j < NUMLINEARGS && !a[j]; j++)
+			;
+		if (j == NUMLINEARGS)
+		{
+			lines[i].args = lineargs_zero;
+			continue;
+		}
+		if (a != dst)
+			memmove(dst, a, NUMLINEARGS * sizeof (INT32)); // dst <= a: the blocks above dst are still unread
+		lines[i].args = dst;
+		dst += NUMLINEARGS;
+	}
+	if (dst == lineargpool)
+	{
+		Z_Free(lineargpool);
+		lineargpool = NULL;
+	}
+	else
+	{
+		// shrinks in place on the arena (the tail is free again), but Z_Realloc may copy: the host zone does (the ASan host run found the
+		// stale pointers: heap-use-after-free in line_SpawnViaLine) and so does the arena when the tail is too small to be a block of its own
+		INT32 *oldpool = lineargpool;
+		INT32 *newpool = Z_Realloc(oldpool, (size_t)(dst - oldpool) * sizeof (INT32), PU_LEVEL, NULL);
+
+		if (newpool != oldpool)
+		{
+			for (i = 0; i < numlines; i++)
+				if (lines[i].args != lineargs_zero)
+					lines[i].args = (INT32 *)((uintptr_t)newpool + ((uintptr_t)lines[i].args - (uintptr_t)oldpool));
+		}
+		lineargpool = newpool;
+	}
+}
+
+// a line that is about to get arguments of its own after the level was built (savegame reader)
+INT32 *P_LineArgsW(line_t *line)
+{
+	if (line->args == lineargs_zero)
+	{
+		line->args = Z_Calloc(NUMLINEARGS * sizeof (INT32), PU_LEVEL, NULL);
+	}
+	return line->args;
+}
+#endif
+
 static boolean P_LoadMapData(const virtres_t *virt)
 {
 	virtlump_t *virtvertexes = NULL, *virtsectors = NULL, *virtsidedefs = NULL, *virtlinedefs = NULL, *virtthings = NULL;
@@ -3391,6 +3464,9 @@ static boolean P_LoadMapData(const virtres_t *virt)
 	sides     = Z_Calloc(numsides * sizeof (*sides), PU_LEVEL, NULL);
 	lines     = Z_Calloc(numlines * sizeof (*lines), PU_LEVEL, NULL);
 	mapthings = Z_Calloc(nummapthings * sizeof (*mapthings), PU_LEVEL, NULL);
+#ifdef PS2_PROFILE
+	P_AllocLineArgs(); // PS2-143
+#endif
 	ZCK("map-alloc");
 
 	// Allocate a big chunk of memory as big as our MAXLEVELFLATS limit.
@@ -3529,7 +3605,9 @@ static void P_InitializeSeg(seg_t *seg)
 	seg->pv1 = seg->pv2 = NULL;
 
 	//Hurdler: 04/12/2000: for now, only used in hardware mode
+#ifndef PS2_PROFILE
 	seg->lightmaps = NULL; // list of static lightmap for this seg
+#endif
 #endif
 
 	seg->polyseg = NULL;
@@ -7609,6 +7687,9 @@ static boolean P_LoadMapFromFile(void)
 
 	if (!udmf)
 		P_ConvertBinaryMap();
+#ifdef PS2_PROFILE
+	P_CompactLineArgs(); // PS2-143: the loaders and the conversion are done with the line arguments
+#endif
 
 	// Copy relevant map data for NetArchive purposes.
 #ifdef PS2_PROFILE
@@ -8482,6 +8563,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	Z_FlushCache(); // PS2-72: the level starts from an arena without the last level's caches between its blocks
 #endif
 	mobjcache = NULL;
+#ifdef PS2_OPT_REND
+	R_ResetSectorEdgeCache(); // PS2-164: the per-sector edge records lived in PU_LEVEL
+#endif
 	ZCK("level-free-after");
 
 	R_InitializeLevelInterpolators();

@@ -193,6 +193,7 @@ static INT32 hwtitleframes;
 static INT32 hwstats_every; // -hwstats N: memory line every N hardware frames
 static INT32 hwtoggle_every; // -hwtoggle N: switch software <-> hardware every N frames (test of the runtime switch)
 static INT32 hwexit_frames; // -hwexit N: quit after N frames (either renderer)
+static boolean hwtextest; // -hwtextest: PS2HWD_TextureTest() on the 12th level frame, then quit
 static boolean hwprof; // -ps2prof: HWPROF lines (the phase profiler of ps2_prof.c is on)
 static INT32 totalframes;
 
@@ -219,6 +220,8 @@ static boolean Impl_HWAcquire(void)
 		c.screen_w = vid.width;
 		c.screen_h = vid.height;
 		c.linear = M_CheckParm("-linear") ? 1 : 0;
+		if (M_CheckParm("-hwfbh") && M_IsNextParm())
+			c.fbh = atoi(M_GetNextParm()); // PS2-HW-68 (diagnostics): internal frame buffer height (200 = one pixel per engine pixel, no 200->224 stretch: pixel-exact comparison with the PC picture)
 		c.tex_adapt = 1; // PS2-HW-24: the footprint cap follows the working set ...
 		if (M_CheckParm("-hwtexcap") && M_IsNextParm())
 		{
@@ -233,6 +236,10 @@ static boolean Impl_HWAcquire(void)
 				trace = atoi(M_GetNextParm());
 			if (M_CheckParm("-hwdbg") && M_IsNextParm())
 				dbg = atoi(M_GetNextParm());
+			if (M_CheckParm("-hwhash"))
+				ps2hwd_hash_on = 1; // OPT10 HG: HWHASH lines (see ps2_hw_priv.inc)
+			if (M_CheckParm("-hwvu1"))
+				dbg |= 0x4000000; // PS2-HW-44/45 (OPT10 HG): the VU1 program transforms, clips and packs the polygons of a batch (HWDBG_VU1); validated on PCSX2 only, off by default
 			PS2HWD_SetTrace(trace, dbg);
 		}
 	}
@@ -250,6 +257,25 @@ static boolean Impl_HWAcquire(void)
 		HWD.pfnSetTexturePalette(video_palette);
 	HWR_Startup();
 	CONS_Printf("HWE acquired driver=ps2_hwd renderer=Hardware experimental=1 size=%dx%d\n", (int)vid.width, (int)vid.height);
+#ifdef PS2_PROFILE
+	if (M_CheckParm("-hwvu0bench")) // OPT10 HG: cycles per vertex of the scalar / VU0 / paired VU0 transform (PS2HWD_TestVU0) and whether the pair gives the single results
+	{
+		ps2hwd_vu0test_t r;
+		unsigned int seed, n = 0, cs = 0, cv = 0, cp = 0, pd = 0, od = 0;
+
+		for (seed = 1; seed <= 4; seed++)
+		{
+			PS2HWD_TestVU0(4096, seed, &r);
+			n += r.n;
+			cs += r.cyc_scalar;
+			cv += r.cyc_vu0;
+			cp += r.cyc_vu0p;
+			pd += r.pair_diff;
+			od += r.oc_diff;
+		}
+		CONS_Printf("HWVU0 n=%u have=%d cycles/vertex scalar=%u vu0=%u vu0_pair=%u pair_diff=%u oc_diff=%u\n", n, (int)r.have_vu0, n ? cs / n : 0, n ? cv / n : 0, n ? cp / n : 0, pd, od);
+	}
+#endif
 	return true;
 }
 
@@ -478,6 +504,7 @@ void I_StartupGraphics(void)
 		hwtoggle_every = atoi(M_GetNextParm());
 	if (M_CheckParm("-hwexit") && M_IsNextParm())
 		hwexit_frames = atoi(M_GetNextParm());
+	hwtextest = M_CheckParm("-hwtextest") != 0; // PS2-HW-69: texture conformance self-test (needs -hwfbh 200)
 	hwprof = M_CheckParm("-ps2prof") != 0;
 #else
 	// Software is the only renderer there is
@@ -906,6 +933,7 @@ static void Impl_HWProf(void)
 		(unsigned)(ps2hwp_cyc[HWP_PLANE] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames), (unsigned)(ps2hwp_cyc[HWP_SUBSEC] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
+	PS2HWD_ProfExtra((unsigned int)frames); // OPT10 HG
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);
 	wall = 0;
 	frames = 0;
@@ -949,6 +977,11 @@ static void Impl_FinishUpdateHW(void)
 		Impl_HWStats();
 	if (hwdump_frame && gamestate == GS_TITLESCREEN && !WipeInAction && hwtitleframes == hwdump_frame)
 		Impl_DumpHW();
+	if (hwtextest && gamestate == GS_LEVEL && !WipeInAction && leveltime >= 12)
+	{
+		PS2HWD_TextureTest();
+		I_Quit();
+	}
 	Impl_VidKeys(); // PS2-HW-17: -vidkeys / -vidshot also drive and photograph the hardware renderer (the frame just presented)
 	Impl_VidShot();
 }
@@ -1069,11 +1102,18 @@ static void Impl_VidKeys(void)
 // -vidshot t35,l70,f200: write the picture of the 35th title frame, the 70th level frame and the 200th frame of any kind to
 // <HOME>/vidshot-<W>x<H>-<tag>.ppm (RGB through the palette the engine set) and quit after the last one. For looking at a
 // video mode with your own eyes and for tests; costs nothing when the parameter is absent.
+void SplitScreen_OnChange(void);
+static void Command_HFSplit_f(void) // OPT10-HF: 'hf_split 1' = local splitscreen with a second player in a single player game (splitscreen viewports under -vidshot k20=hf_split~1,k300)
+{
+	splitscreen = COM_Argc() > 1 && atoi(COM_Argv(1)) != 0;
+	SplitScreen_OnChange();
+}
+
 static void Impl_VidShot(void)
 {
 	static boolean parsed;
 	static char spec[1536];
-	static INT32 titlen, leveln, anyn, wipen, left, done;
+	static INT32 titlen, leveln, anyn, wipen, intern, left, done;
 	static INT32 knext;
 	static boolean klow = true;
 	INT32 kord = 0;
@@ -1084,10 +1124,11 @@ static void Impl_VidShot(void)
 		parsed = true;
 		if (M_CheckParm("-vidshot") && M_IsNextParm())
 		{
+			COM_AddCommand("hf_split", Command_HFSplit_f, 0);
 			strlcpy(spec, M_GetNextParm(), sizeof spec);
 			for (p = spec; *p;) // one shot per item 't35' / 'l70' / 'f200' (an optional '=command' follows the number)
 			{
-				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w');
+				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w' || *p == 'i');
 				while (*p && *p != ',')
 					p++;
 				if (*p == ',')
@@ -1098,6 +1139,18 @@ static void Impl_VidShot(void)
 	if (!left)
 		return;
 	anyn++;
+	if (anyn == 3 && M_CheckParm("-vidcmd") && M_IsNextParm()) // OPT10-HF: -vidcmd 'con_hudlines~0;gr_filtermode~1': console commands ('~' = space, ';' = next command) on the third frame
+	{
+		char cmdline[160];
+		size_t ci;
+
+		strlcpy(cmdline, M_GetNextParm(), sizeof cmdline - 1);
+		for (ci = 0; cmdline[ci]; ci++)
+			cmdline[ci] = cmdline[ci] == '~' ? ' ' : cmdline[ci] == ';' ? '\n' : cmdline[ci];
+		cmdline[ci++] = '\n';
+		cmdline[ci] = '\0';
+		COM_BufAddText(cmdline);
+	}
 	if (gamestate == GS_LEVEL && leveltime < 20)
 		klow = true;
 	if (WipeInAction)
@@ -1106,6 +1159,8 @@ static void Impl_VidShot(void)
 		titlen++;
 	else if (gamestate == GS_LEVEL)
 		leveln++;
+	else if (gamestate == GS_INTERMISSION)
+		intern++; // OPT10-HF: i30 = the 30th intermission frame
 	for (p = spec; *p;)
 	{
 		const char kind = *p++;
@@ -1129,7 +1184,7 @@ static void Impl_VidShot(void)
 		if (*p == ',')
 			p++;
 		hit = (kind == 'w' && WipeInAction && n == wipen)
-			|| (!WipeInAction && ((kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn)))
+			|| (!WipeInAction && ((kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn) || (kind == 'i' && n == intern)))
 			|| (!WipeInAction && (kind == 'k' || kind == 'K') && kord++ == knext && gamestate == GS_LEVEL && (INT32)leveltime >= n && (klow || kind == 'k')); // PS2-HW-60: k300 = first frame with leveltime >= 300, K300 = the same but only in a level that started after the previous shot; k/K items fire in order (the same tic as the PC reference at any frame rate)
 		if (hit && (kind == 'k' || kind == 'K'))
 		{

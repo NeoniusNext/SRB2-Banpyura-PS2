@@ -9,10 +9,15 @@ static void poll_dma(void);
 static void tex_cap_control(void);
 static void tx_report(void);
 static void lod_frame_end(void);
+static void plan_frame_end(void); // ps2_hw_plan.inc
 static void ov_flush_all(void); // draws queued by the light overlay (ps2_hw_draw.inc); every frame boundary and read-back first
 static void rel_poll(void); // OPT9: engine data referenced by DMA is unlocked when the transfer is done (ps2_hw_tex.inc)
 static void rel_release_buf(int i);
 static void rel_release_all(void);
+static void val_init(void); // PS2-HW-74: GIF stream validator (ps2_hw_val.inc, -hwdbg 536870912)
+static void val_buffer(const qw_t *b, u32 wr);
+static void val_reset(void);
+static void val_shutdown(void);
 
 // DMA tags of a source chain (the GIF channel reads one tag per element: the tag itself is not sent to the GIF)
 #define DMAT_REFE 0ull // send qwc qwords from addr, then end
@@ -97,8 +102,8 @@ static void poll_dma(void)
 // OPT5 watchdog: what every stuck wait reports instead of freezing silently (PS2-HW-21)
 static void wd_diag(const char *why)
 {
-	printf("HWD WATCHDOG: %s | frame_no=%u frame_open=%d finish_pending=%d pend=%d pend_done=%d disp=%d target=%d | vbl=%u flips=%u flip_vbl=%u irq_seen=%d | dma: pending=%d busy=%d q_n=%d cur=%d wr=%u CHCR=%08x MADR=%08x QWC=%08x GIF_STAT=%08x CSR=%08x\n",
-		why, H.frame_no, H.frame_open, H.finish_pending, H.pend, H.pend_done, H.disp, H.target, (unsigned)H.vbl, (unsigned)H.flips,
+	I_OutputMsg("HWD WATCHDOG: %s | VIF1 STAT=%08x D1 CHCR=%08x MADR=%08x QWC=%08x TADR=%08x V.on=%d | frame_no=%u frame_open=%d finish_pending=%d pend=%d pend_done=%d disp=%d target=%d | vbl=%u flips=%u flip_vbl=%u irq_seen=%d | dma: pending=%d busy=%d q_n=%d cur=%d wr=%u CHCR=%08x MADR=%08x QWC=%08x GIF_STAT=%08x CSR=%08x\n",
+		why, (unsigned)*VIF1_STAT, (unsigned)*D1_CHCR, (unsigned)*D1_MADR, (unsigned)*D1_QWC, (unsigned)*D1_TADR, V.on, H.frame_no, H.frame_open, H.finish_pending, H.pend, H.pend_done, H.disp, H.target, (unsigned)H.vbl, (unsigned)H.flips,
 		(unsigned)H.flip_vbl, H.irq_seen, H.pending, H.dma_busy, H.q_n, H.cur, H.wr, (unsigned)*D2_CHCR, (unsigned)*D2_MADR, (unsigned)*D2_QWC,
 		(unsigned)*GIF_STAT_REG, (unsigned)*GS_CSR);
 	fflush(stdout);
@@ -130,6 +135,7 @@ static void wd_recover(const char *why)
 	H.gsr.valid = 0;
 	H.clut_loaded = 0;
 	H.finish_pending = 0;
+	val_reset();
 	if (H.pend)
 		H.pend_done = 1; // show what there is
 	*GS_CSR = 2;
@@ -180,11 +186,29 @@ static void pk_flush(void)
 		if (V.on)
 			b[H.run].d[1] = vif_gif_codes(qwc); // PS2-HW-44
 	}
+	else if (V.on)
+	{
+		// OPT10 (HG): the element in front of the empty run may be a CNT tag with data behind it (VU1 constants, an UNPACK chunk): turning it into a
+		// REFE tag made the DMA read its data from address 0 (a stuck chain after a hundred frames). The run's own tag ends the chain instead.
+		b[H.run].d[0] = dma_tag(0, DMAT_END, 0);
+		b[H.run].d[1] = 0; // VIF NOP, NOP
+	}
 	else
 	{
 		// the chain ends with the reference in front of the empty run
 		b[H.run - 1].d[0] = (b[H.run - 1].d[0] & ~(7ull << 28)) | (DMAT_REFE << 28);
 		H.wr--;
+	}
+	val_buffer(b, H.wr);
+	if (ps2hwd_hash_on)
+	{
+		const u64 *hw = (const u64 *)b;
+		u64 h = hash_frame;
+		u32 hi;
+
+		for (hi = 0; hi < H.wr * 2; hi++)
+			h = (h ^ hw[hi]) * 0x100000001B3ull;
+		hash_frame = h;
 	}
 	SyncDCache(b, b + H.wr);
 	irq = DIntr();
@@ -252,7 +276,7 @@ static void pk_ref(const void *data, u32 qwc)
 		t = b + H.run; // an empty run: its tag becomes the reference
 	}
 	t->d[0] = dma_tag(qwc, DMAT_REF, phys(data));
-	t->d[1] = V.on ? vif_gif_codes(qwc) : 0;
+	t->d[1] = V.on ? ((u64)VIF_NOP | ((u64)VIF_DIRECT(qwc) << 32)) : 0; // OPT10 (HG): no FLUSH here: the referenced data continue a GIF packet (the IMAGE data of an upload) that FLUSH would wait for forever
 	H.run = H.wr++;
 }
 
@@ -518,9 +542,31 @@ static void frame_end(void)
 	H.last_drawn = H.target;
 	H.have_drawn = 1;
 	H.frame_open = 0;
+	H.imm_tex = NULL;
+	plan_frame_end();
 	tex_cap_control();
+	{
+		// PS2-HW-37: the room the frame plan leaves for the textures it does not plan: what this frame drew of them (+15 %), falling slowly
+		u32 cur = H.unplanned_cur + H.unplanned_cur / 7u, dec = H.plan_reserve - (H.plan_reserve >> 4);
+
+		H.plan_reserve = cur > dec ? cur : dec;
+		if (H.plan_reserve < 512u)
+			H.plan_reserve = 512u;
+		if (H.plan_reserve > H.pool_blocks / 3u)
+			H.plan_reserve = H.pool_blocks / 3u;
+		TX.unplanned += H.unplanned_cur;
+		TX.plan_blk += H.plan_last;
+		TX.plan_exact += H.plan_exact;
+		H.unplanned_cur = 0;
+		H.plan_last = H.plan_exact = 0;
+	}
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_frame_end();
+	if (ps2hwd_hash_on)
+	{
+		I_OutputMsg("HWHASH f=%u h=%016llx\n", (unsigned)H.frame_no, (unsigned long long)hash_frame);
+		hash_frame = 0;
+	}
 	H.frame_no++;
 	if ((ps2hwd_dbg_flags & HWDBG_TEX) && ++TX.frames >= 105)
 		tx_report();
@@ -631,11 +677,18 @@ static int gs_setup(void)
 	H.outid = H.mode == PS2HWD_VIDEO_480P ? 2 : (H.mode == PS2HWD_VIDEO_PAL ? (field_frame ? 4 : 1) : (field_frame ? 3 : 0));
 
 	V.on = (ps2hwd_dbg_flags & HWDBG_VU1) != 0; // PS2-HW-44: -hwdbg 0x4000000: the stream goes through VIF1, the VU1 program draws the polygons
-	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, (1 << DMA_CHANNEL_GIF) | (V.on ? 1 << DMA_CHANNEL_VIF1 : 0));
+	val_init();
+	// OPT10 (HG): dmaKit does not take the VIF1 channel (with it in the mask gsKit_init_screen hangs in PCSX2): the channel is reset by hand below
+	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
 	dmaKit_chan_init(DMA_CHANNEL_GIF);
 	if (V.on)
-		dmaKit_chan_init(DMA_CHANNEL_VIF1);
+	{
+		*D1_CHCR = 0;
+		*D1_QWC = 0;
+		__asm__ volatile("sync.l");
+	}
 
+	CONS_Printf("HWD init: gsKit_init_global\n");
 	gs = gsKit_init_global_custom(8 * 1024, 8 * 1024); // gsKit's own draw queues are never used
 	if (!gs)
 		return -1;
@@ -665,6 +718,7 @@ static int gs_setup(void)
 	gs->DoubleBuffering = GS_SETTING_ON;
 	gs->ZBuffering = GS_SETTING_ON;
 	gs->Dithering = GS_SETTING_OFF;
+	CONS_Printf("HWD init: gsKit_init_screen\n");
 	gsKit_init_screen(gs); // video mode, CRTC and magnification; gsKit's own VRAM addresses are not used (it rounds buffer sizes by bytes, not pages)
 	{
 		// gsKit magnifies to the widest area its table allows (NTSC: 2880 clocks); the picture is shown over the same area as
@@ -682,7 +736,9 @@ static int gs_setup(void)
 		gs->MagH = mh - 1;
 		gs->DW = ndw;
 	}
+	CONS_Printf("HWD init: mode_switch\n");
 	gsKit_mode_switch(gs, GS_ONESHOT);
+	CONS_Printf("HWD init: mode switched\n");
 	H.magh = gs->MagH + 1;
 	H.magv = gs->MagV + 1;
 
@@ -723,18 +779,21 @@ static int gs_setup(void)
 	if (H.sema_vbl < 0 || H.sema_dma < 0)
 		return -4;
 
+	CONS_Printf("HWD init: rings ready\n");
 	*GS_IMR = 0xFF00; // no GS interrupts, only vblank is used
 	H.dmac = AddDmacHandler(DMAC_GIF, dmac_gif_handler, 0);
 	if (H.dmac >= 0)
 		EnableDmac(DMAC_GIF);
 	if (V.on)
 	{
+		CONS_Printf("HWD VU1: adding the VIF1 handler\n");
 		V.dmac = AddDmacHandler(DMAC_VIF1, dmac_gif_handler, 0);
 		if (V.dmac >= 0)
 		{
 			EnableDmac(DMAC_VIF1);
 			V.dmac_set = 1;
 		}
+		CONS_Printf("HWD VU1: handler %d, booting the microcode\n", V.dmac);
 		if (V.dmac < 0 || !vu1_boot())
 		{
 			CONS_Printf("HWD VU1: VIF1 interrupt or microcode upload failed, the GIF ring is used\n");

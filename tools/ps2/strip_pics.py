@@ -137,11 +137,43 @@ def write_stub_sources(work):
     (work / 'strip_patch.inc').write_text(_slice(rp, 'patch_t *Patch_Create(INT16 width, INT16 height)', '//\n// Frees a patch from memory.'), encoding='utf-8')
 
 
+def _build_tool_posix(work, name, defines, sources, libs):
+    """Linux/macOS host tool: gcc + the system libpng/zlib (the same engine code as the MSVC build)."""
+    import os
+    exe = work / name
+    gen = Path(os.environ.get('SRB2_PS2_HOST_GEN', str(ROOT / 'build/host-gen')))
+    gen.mkdir(parents=True, exist_ok=True)
+    if not (gen / 'config.h').exists():  # generated config.h (cmake/Comptime.cmake equivalent), same text the PS2 build uses
+        text = (ROOT / 'src/config.h.in').read_text()
+        for k, v in {'${SRB2_COMP_REVISION}': 'host', '${SRB2_COMP_BRANCH}': 'host', '${SRB2_COMP_NOTE}': 'host', '${CMAKE_BUILD_TYPE}': 'Release'}.items():
+            text = text.replace(k, v)
+        text = text.replace('#cmakedefine SRB2_COMP_UNCOMMITTED', '/* clean */').replace('#cmakedefine01 SRB2_COMP_OPTIMIZED', '#define SRB2_COMP_OPTIMIZED 1')
+        (gen / 'config.h').write_text(text)
+    inc = [str(ROOT / 'src'), str(gen), str(ROOT / 'tools/ps2'), str(work)]
+    compat = work / 'strip_posix_compat.c'  # MSVC CRT functions the engine uses (strupr/strlwr are not in glibc)
+    compat.write_text('#include <ctype.h>\nchar *strupr(char *s){char *p=s;for(;*p;p++)*p=toupper((unsigned char)*p);return s;}\n'
+                      'char *strlwr(char *s){char *p=s;for(;*p;p++)*p=tolower((unsigned char)*p);return s;}\n')
+    sources = list(sources) + [compat]
+    cmd = ['gcc', '-O2', '-w', '-std=gnu17', '-fwrapv', '-DNDEBUG', '-DNOHW', '-DNOMD5', '-DCMAKECONFIG', '-DUNIXCOMMON', '-DNOEXECINFO'] \
+          + [f'-D{d}' for d in defines] + [f'-I{i}' for i in inc] + [str(x) for x in sources] + ['-o', str(exe), '-lm']
+    if any('png' in l for l in libs):
+        cmd += ['-lpng', '-lz']
+    cmd += ['-lm']
+    pr = subprocess.run(cmd, cwd=work, capture_output=True, text=True)
+    (work / (name + '.build.log')).write_text(pr.stdout + pr.stderr, encoding='utf-8')
+    if pr.returncode or not exe.exists():
+        raise RuntimeError(f'host tool build failed ({name}): see {work / (name + ".build.log")}\n{(pr.stdout + pr.stderr)[-2000:]}')
+    return exe
+
+
 def build_tool(work, name, defines, sources, libs=()):
     """cl the host tool; returns the exe path. Raises with the compiler output on failure."""
     work = Path(work).resolve()
     work.mkdir(parents=True, exist_ok=True)
     write_stub_sources(work)
+    import os
+    if os.name != 'nt':
+        return _build_tool_posix(work, name, defines, sources, libs)
     exe = work / (name + '.exe')
     inc = [str(ROOT / 'src'), str(ROOT / 'build/pc-golden/src'), str(ROOT / 'tools/ps2'), str(work), str(DEPS / 'include')]
     cmd = ['cl', '/nologo', '/O2', '/W3', '/wd4244', '/wd4267', '/wd4018', '/wd4146', '/wd4996', '/wd4005', '/wd4101', '/wd4133', '/wd4047',
@@ -173,7 +205,7 @@ def run_tool(exe, playpal, outdir, inputs):
     env = None
     # libpng16.dll / zlib1.dll of the vcpkg tree must be found by the oracle
     import os
-    env = dict(os.environ, PATH=str(DEPS / 'bin') + ';' + os.environ.get('PATH', ''))
+    env = dict(os.environ, PATH=str(DEPS / 'bin') + ';' + os.environ.get('PATH', '')) if os.name == 'nt' else None
     p = subprocess.run([str(exe), str(playpal), str(outdir)] + [str(Path(i).resolve()) for i in inputs], capture_output=True, text=True, env=env)
     if p.returncode:
         raise RuntimeError(f'{exe.name} failed ({p.returncode}): {p.stderr}{p.stdout}')

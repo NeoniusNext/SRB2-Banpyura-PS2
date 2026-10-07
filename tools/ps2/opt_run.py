@@ -20,13 +20,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-PCSX2 = {32: 'D:/PCSX2-test/pcsx2-qt.exe', 128: 'D:/PCSX2-test128/pcsx2-qt.exe'}
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import run_pcsx2  # noqa: E402  (platform-aware emulator locations)
+PCSX2 = {32: run_pcsx2.BASE, 128: ('D:/PCSX2-test128/pcsx2-qt.exe' if os.name == 'nt' else str(run_pcsx2.PCSX2_ROOT / 'slot128/AppRun'))}
 
 
 def stage(run, elf, pak, demo, cfg_extra=''):
     run.mkdir(parents=True, exist_ok=True)
     shutil.copy2(elf, run / 'SRB2.ELF')
-    for p in pak.glob('*.PAK'):
+    for p in list(pak.glob('*.PAK')) + list(pak.glob('FINEACON.DAT')):  # OPT10-X: FINEACON.DAT (tools/ps2/gen_fineacon.py) lives next to the packs
         dst = run / p.name
         if dst.exists() and dst.stat().st_size == p.stat().st_size and dst.stat().st_mtime >= p.stat().st_mtime:
             continue
@@ -76,18 +78,20 @@ def main():
     ap.add_argument('--map', default='')
     ap.add_argument('--demo', default='')
     ap.add_argument('--no-ref', action='store_true')
+    ap.add_argument('--playdemo', action='store_true', help='-playdemo (real time, frame interpolation possible) instead of -timedemo')
+    ap.add_argument('--cfg', action='append', default=[], help='extra line of the staged reference.cfg (e.g. fpscap "Match refresh rate"); repeatable')
     ap.add_argument('--emu', default='', help='pcsx2-qt.exe of another private copy (e.g. D:/PCSX2-net1/pcsx2-qt.exe: DEV9 Ethernet in Sockets mode for the network tests)')
     ap.add_argument('--golden', action='store_true', help='compare the PS2REF dump of --demo with golden/phase0-v2/run1/<demo> (tics.csv, frames.csv, frame-*.idx)')
     ap.add_argument('--compare-to', default='', help='run directory (under --out) whose refout must be byte-identical: tics.csv, frames.csv, frame-*.idx')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     run = Path(a.out).resolve() / a.name
-    refout = stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None)
+    refout = stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None, ''.join(l + '\n' for l in a.cfg))
     args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt']
     if a.demo and not a.no_ref:
         args += ['-ps2ref', 'host:/refout']
     if a.demo:
-        args += ['-timedemo', a.demo + '.lmp']
+        args += ['-playdemo' if a.playdemo else '-timedemo', a.demo + '.lmp']
     if a.map:
         args += ['-skipintro', '-warp', a.map]
     args += a.extra

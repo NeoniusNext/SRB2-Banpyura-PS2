@@ -39,6 +39,13 @@
 #include "p_slopes.h"
 #include "netcode/d_netfil.h" // blargh. for nameonly().
 #include "m_cheat.h" // objectplace
+#ifdef PS2_OPT_NODES
+#define PS2NS_ALLOC(n) Z_Malloc((n), PU_STATIC, NULL)
+#define PS2NS_FREE(p) Z_Free(p)
+#define PS2NS_OOM() I_Error("R_CreateDrawNodes: out of memory")
+#define PS2NS_MISMATCH() I_Error("PS2NS_NextGroup: the vector scan differs from the scalar reference")
+#include "ps2/ps2_nodescan.h"
+#endif
 #ifdef HWRENDER
 #include "hardware/hw_md2.h"
 #include "hardware/hw_glob.h"
@@ -879,9 +886,16 @@ void R_InitSprites(void)
 // R_ClearSprites
 // Called at frame start.
 //
+#if defined(PS2) && defined(PS2_PROFILE)
+static UINT32 vissprite_limit = MAXVISSPRITES; // lowered for the rest of the frame when a chunk could not be allocated
+#endif
+
 void R_ClearSprites(void)
 {
 	visspritecount = numvisiblesprites = clippedvissprites = 0;
+#if defined(PS2) && defined(PS2_PROFILE)
+	vissprite_limit = MAXVISSPRITES;
+#endif
 }
 
 //
@@ -892,7 +906,7 @@ static vissprite_t overflowsprite;
 #ifdef PS2_PROFILE
 // PS2-87: a chunk is 64 vissprite_t followed by their clip arrays (2 x vid.width INT16 each); the screen width a chunk was made for is
 // remembered, R_ResetVisSprites (from R_ExecuteSetViewSize, between two frames) drops the chunks when it changes.
-static INT16 overflowclip[2 * MAXVIDWIDTH];
+static INT16 overflowclip[2 * (MAXVIDWIDTH + 1)];
 
 void R_ResetVisSprites(void)
 {
@@ -910,10 +924,25 @@ static vissprite_t *R_GetVisSprite(UINT32 num)
 		// Allocate chunk if necessary
 		if (!visspritechunks[chunk])
 		{
-			const size_t w = (size_t)vid.width; // R_ProjectSprite/R_ClipVisSprite only touch the columns of the view: x < viewwidth <= vid.width
+			// PS2-148 (OPT10-S): one column more than the view has: the clip loops of a floor sprite (SC_SPLAT, R_ClipSprites: x2 = viewwidth, and
+			// R_CheckSpriteVisible, <= x2) run to x == viewwidth. With exactly vid.width columns the last sprite of a chunk wrote two bytes behind its block:
+			// the first bytes of the next block header of the zone (flags: "prev-free flag 1 but previous block is used" after the Tutorial map,
+			// found by the soak; with ZDEBUG red zones: "red zone overwritten", owner r_things.c:914). The arrays of the original are MAXVIDWIDTH wide.
+			const size_t w = (size_t)vid.width + 1;
+#if defined(PS2)
+			// and a chunk is 95 KB: when the arena has no room for one (MAP11 in play: 13 chunks = 1.2 MB of PU_LEVEL) the sprites beyond it are not drawn
+			vissprite_t *vs = Z_TryMallocAlign(sizeof(vissprite_t) * VISSPRITESPERCHUNK + 2 * w * sizeof (INT16) * VISSPRITESPERCHUNK, PU_LEVEL, &visspritechunks[chunk], 2);
+#else
 			vissprite_t *vs = Z_Malloc(sizeof(vissprite_t) * VISSPRITESPERCHUNK + 2 * w * sizeof (INT16) * VISSPRITESPERCHUNK, PU_LEVEL, &visspritechunks[chunk]);
-			INT16 *clip = (INT16 *)(vs + VISSPRITESPERCHUNK);
+#endif
+			INT16 *clip;
 			UINT32 i;
+
+#if defined(PS2)
+			if (!vs)
+				return NULL;
+#endif
+			clip = (INT16 *)(vs + VISSPRITESPERCHUNK);
 
 			for (i = 0; i < VISSPRITESPERCHUNK; i++, clip += 2 * w)
 			{
@@ -939,16 +968,38 @@ static vissprite_t *R_GetVisSprite(UINT32 num)
 
 static vissprite_t *R_NewVisSprite(void)
 {
+#if defined(PS2) && defined(PS2_PROFILE)
+	if (visspritecount >= vissprite_limit)
+#else
 	if (visspritecount == MAXVISSPRITES)
+#endif
 	{
 #ifdef PS2_PROFILE
 		overflowsprite.clipbot = overflowclip; // PS2-87
-		overflowsprite.cliptop = overflowclip + MAXVIDWIDTH;
+		overflowsprite.cliptop = overflowclip + MAXVIDWIDTH + 1;
 #endif
 		return &overflowsprite;
 	}
 
+#ifdef PS2_PROFILE
+	{
+		vissprite_t *vs = R_GetVisSprite(visspritecount);
+
+		if (!vs)
+		{
+#if defined(PS2)
+			vissprite_limit = visspritecount; // no more attempts this frame
+#endif
+			overflowsprite.clipbot = overflowclip; // no room for another chunk: PS2-148
+			overflowsprite.cliptop = overflowclip + MAXVIDWIDTH + 1;
+			return &overflowsprite;
+		}
+		visspritecount++;
+		return vs;
+	}
+#else
 	return R_GetVisSprite(visspritecount++);
+#endif
 }
 
 //
@@ -2972,6 +3023,7 @@ static boolean R_SortVisSpriteFunc(vissprite_t *ds, fixed_t bestscale, INT32 bes
 	return false;
 }
 
+
 //
 // R_SortVisSprites
 //
@@ -3103,6 +3155,55 @@ static void R_SortVisSprites(vissprite_t* vsprsortedhead, UINT32 start, UINT32 e
 
 	// pull the vissprites out by scale
 	vsprsortedhead->next = vsprsortedhead->prev = vsprsortedhead;
+#ifdef PS2_OPT_NODES
+	// PS2-161: the loop below is a selection sort (every round scans what is left for the first minimum of (sortscale, dispoffset), O(n^2)).
+	// A stable sort by the same key links the sprites in the same order. The original relinks the last sprite for the rounds that find
+	// nothing (the list holds fewer sprites than rounds when sprites were dropped as invisible), which changes nothing; a sprite with
+	// sortscale INT32_MAX can never be selected by the original, such a frame takes the original loop.
+	{
+		static ps2_vsortitem_t *sitems = NULL, *stmp = NULL;
+		static size_t scap = 0;
+		size_t n = 0, rounds = end - linkedvissprites > start ? (size_t)(end - linkedvissprites - start) : 0, k;
+		boolean fast = true;
+
+		for (ds = unsorted.next; ds != &unsorted; ds = ds->next)
+		{
+			if (ds->sortscale == INT32_MAX)
+				fast = false;
+			n++;
+		}
+		if (fast)
+		{
+			if (n > scap)
+			{
+				size_t cap = n + n / 2 + 16;
+				if (sitems) Z_Free(sitems);
+				if (stmp) Z_Free(stmp);
+				sitems = Z_Malloc(cap * sizeof (*sitems), PU_STATIC, NULL);
+				stmp = Z_Malloc(cap * sizeof (*stmp), PU_STATIC, NULL);
+				scap = cap;
+			}
+			for (k = 0, ds = unsorted.next; ds != &unsorted; ds = ds->next, k++)
+			{
+				sitems[k].s = ds->sortscale;
+				sitems[k].d = ds->dispoffset;
+				sitems[k].p = ds;
+			}
+			PS2_StableSortVis(sitems, stmp, n);
+			for (k = 0; k < n && k < rounds; k++)
+			{
+				best = sitems[k].p;
+				best->next->prev = best->prev;
+				best->prev->next = best->next;
+				best->next = vsprsortedhead;
+				best->prev = vsprsortedhead->prev;
+				vsprsortedhead->prev->next = best;
+				vsprsortedhead->prev = best;
+			}
+			return;
+		}
+	}
+#endif
 	for (i = start; i < end-linkedvissprites; i++)
 	{
 		bestscale = bestdispoffset = INT32_MAX;
@@ -3139,18 +3240,224 @@ static drawnode_t *R_CreateDrawNode(drawnode_t *link);
 
 static drawnode_t nodebankhead;
 
+#ifdef PS2_OPT_NODES
+// PS2-161: the ordering test of the sprite pass of R_CreateDrawNodes for one node r2, statement for statement the body of the original loop
+// (the `continue`s are `return false`, the insertion before r2 is done by the caller on `return true`).
+static boolean R_DrawNodeClaims(drawnode_t *r2, vissprite_t *rover, INT32 sintersect)
+{
+	INT32 i, x1, x2;
+	fixed_t scale;
+
+	if (r2->plane)
+	{
+		fixed_t planeobjectz, planecameraz;
+		if (r2->plane->minx > rover->x2 || r2->plane->maxx < rover->x1)
+			return false;
+		if (rover->szt > r2->plane->low || rover->sz < r2->plane->high)
+			return false;
+
+		// Effective height may be different for each comparison in the case of slopes
+		planeobjectz = P_GetZAt(r2->plane->slope, rover->gx, rover->gy, r2->plane->height);
+		planecameraz = P_GetZAt(r2->plane->slope,     viewx,     viewy, r2->plane->height);
+
+		if (rover->mobjflags & MF_NOCLIPHEIGHT)
+		{
+			//Objects with NOCLIPHEIGHT can appear halfway in.
+			if (planecameraz < viewz && rover->pz+(rover->thingheight/2) >= planeobjectz)
+				return false;
+			if (planecameraz > viewz && rover->pzt-(rover->thingheight/2) <= planeobjectz)
+				return false;
+		}
+		else
+		{
+			if (planecameraz < viewz && rover->pz >= planeobjectz)
+				return false;
+			if (planecameraz > viewz && rover->pzt <= planeobjectz)
+				return false;
+		}
+
+		// SoM: NOTE: Because a visplane's shape and scale is not directly
+		// bound to any single linedef, a simple poll of it's frontscale is
+		// not adequate. We must check the entire frontscale array for any
+		// part that is in front of the sprite.
+
+		x1 = rover->x1;
+		x2 = rover->x2;
+		if (x1 < r2->plane->minx) x1 = r2->plane->minx;
+		if (x2 > r2->plane->maxx) x2 = r2->plane->maxx;
+
+		if (r2->seg) // if no seg set, assume the whole thing is in front or something stupid
+		{
+			for (i = x1; i <= x2; i++)
+			{
+				if (r2->seg->frontscale[i] > rover->sortscale)
+					break;
+			}
+			if (i > x2)
+				return false;
+		}
+
+		return true;
+	}
+	else if (r2->thickseg)
+	{
+		fixed_t topplaneobjectz, topplanecameraz, botplaneobjectz, botplanecameraz;
+		if (rover->x1 > r2->thickseg->x2 || rover->x2 < r2->thickseg->x1)
+			return false;
+
+		scale = r2->thickseg->scale1 > r2->thickseg->scale2 ? r2->thickseg->scale1 : r2->thickseg->scale2;
+		if (scale <= rover->sortscale)
+			return false;
+		scale = r2->thickseg->scale1 + (r2->thickseg->scalestep * (sintersect - r2->thickseg->x1));
+		if (scale <= rover->sortscale)
+			return false;
+
+		topplaneobjectz = P_GetFFloorTopZAt   (r2->ffloor, rover->gx, rover->gy);
+		topplanecameraz = P_GetFFloorTopZAt   (r2->ffloor,     viewx,     viewy);
+		botplaneobjectz = P_GetFFloorBottomZAt(r2->ffloor, rover->gx, rover->gy);
+		botplanecameraz = P_GetFFloorBottomZAt(r2->ffloor,     viewx,     viewy);
+
+		if ((topplanecameraz > viewz && botplanecameraz < viewz) ||
+		    (topplanecameraz < viewz && rover->gzt < topplaneobjectz) ||
+		    (botplanecameraz > viewz && rover->gz > botplaneobjectz))
+		{
+			return true;
+		}
+	}
+	else if (r2->seg)
+	{
+		if (rover->x1 > r2->seg->x2 || rover->x2 < r2->seg->x1)
+			return false;
+
+		scale = r2->seg->scale1 > r2->seg->scale2 ? r2->seg->scale1 : r2->seg->scale2;
+		if (scale <= rover->sortscale)
+			return false;
+		scale = r2->seg->scale1 + (r2->seg->scalestep * (sintersect - r2->seg->x1));
+
+		if (rover->sortscale < scale)
+		{
+			return true;
+		}
+	}
+	else if (r2->sprite)
+	{
+		boolean infront = (r2->sprite->sortscale > rover->sortscale
+						|| (r2->sprite->sortscale == rover->sortscale && r2->sprite->dispoffset > rover->dispoffset));
+
+		if (rover->cut & SC_SPLAT || r2->sprite->cut & SC_SPLAT)
+		{
+			fixed_t scale1 = (rover->cut & SC_SPLAT ? rover->sortsplat : rover->sortscale);
+			fixed_t scale2 = (r2->sprite->cut & SC_SPLAT ? r2->sprite->sortsplat : r2->sprite->sortscale);
+			boolean behind = (scale2 > scale1 || (scale2 == scale1 && r2->sprite->dispoffset > rover->dispoffset));
+
+			if (!behind)
+			{
+				fixed_t z1 = 0, z2 = 0;
+
+				if (rover->mobj->z - viewz > 0)
+				{
+					z1 = rover->pz;
+					z2 = r2->sprite->pz;
+				}
+				else
+				{
+					z1 = r2->sprite->pz;
+					z2 = rover->pz;
+				}
+
+				z1 -= viewz;
+				z2 -= viewz;
+
+				infront = (z1 >= z2);
+			}
+		}
+		else
+		{
+			if (r2->sprite->x1 > rover->x2 || r2->sprite->x2 < rover->x1)
+				return false;
+			if (r2->sprite->szt > rover->sz || r2->sprite->sz < rover->szt)
+				return false;
+		}
+
+		if (infront)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+// the rejection rectangle of a node (ps2_nodescan.h): false if a coordinate is beyond what the 16-bit table can hold
+static boolean R_DrawNodeRect(const drawnode_t *r2, INT32 *x1, INT32 *x2, INT32 *y1, INT32 *y2)
+{
+	*x1 = PS2NS_NONE_X1;
+	*x2 = PS2NS_NONE_X2;
+	*y1 = PS2NS_NONE_X1;
+	*y2 = PS2NS_NONE_X2;
+	if (r2->plane)
+	{
+		*x1 = r2->plane->minx;
+		*x2 = r2->plane->maxx;
+		*y1 = r2->plane->high;
+		*y2 = r2->plane->low;
+	}
+	else if (r2->thickseg)
+	{
+		*x1 = r2->thickseg->x1;
+		*x2 = r2->thickseg->x2;
+		*y1 = -32768;
+		*y2 = 32767;
+	}
+	else if (r2->seg)
+	{
+		*x1 = r2->seg->x1;
+		*x2 = r2->seg->x2;
+		*y1 = -32768;
+		*y2 = 32767;
+	}
+	else if (r2->sprite)
+	{
+		if (r2->sprite->cut & SC_SPLAT) // no rejection by position in the original
+		{
+			*x1 = -32768;
+			*x2 = 32767;
+			*y1 = -32768;
+			*y2 = 32767;
+			return true;
+		}
+		*x1 = r2->sprite->x1;
+		*x2 = r2->sprite->x2;
+		*y1 = r2->sprite->szt;
+		*y2 = r2->sprite->sz;
+	}
+	else
+		return true;
+	return *x1 >= -PS2NS_LIM && *x1 <= PS2NS_LIM && *x2 >= -PS2NS_LIM && *x2 <= PS2NS_LIM
+		&& *y1 >= -32768 && *y1 <= 32767 && *y2 >= -32768 && *y2 <= 32767;
+}
+
+static ps2_nodescan_t r_nodescan;
+#ifndef PS2_NODE_ORDER_MAX // (the host stress variant sets a small value: constant relabelling)
+#define PS2_NODE_ORDER_MAX 0x3FFFFFFF
+#endif
+#endif
+
 static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean tempskip)
 {
 	drawnode_t *entry;
 	drawseg_t *ds;
-	INT32 i, p, best, x1, x2;
+	INT32 i, p, best;
+#ifndef PS2_OPT_NODES // (used by the original draw node scan only: -Werror of the hardware configuration)
+	INT32 x1, x2;
+	fixed_t scale = 0;
+#endif
 	fixed_t bestdelta, delta;
 	vissprite_t *rover;
 	static vissprite_t vsprsortedhead;
 	drawnode_t *r2;
 	visplane_t *plane;
 	INT32 sintersect;
-	fixed_t scale = 0;
 
 	// Add the 3D floors, thicksides, and masked textures...
 	for (ds = drawsegs + mask->drawsegs[1]; ds-- > drawsegs + mask->drawsegs[0];)
@@ -3263,20 +3570,142 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 	R_SortVisSprites(&vsprsortedhead, mask->vissprites[0], mask->vissprites[1]);
 	PS2SUB_E(24);
 
+#ifdef PS2_OPT_NODES
+	{
+		ps2_nodescan_t *const ns = &r_nodescan;
+		boolean fastok = true; // the table holds every node of the list (every rectangle fitted)
+		INT32 nx1, nx2, ny1, ny2, step = 1, lab;
+
+		PS2NS_Reset(ns);
+		{
+			INT32 count = 0;
+			for (r2 = head->next; r2 != head; r2 = r2->next)
+				count++;
+			step = PS2_NODE_ORDER_MAX / (count + 2);
+			if (step < 1)
+				step = 1;
+		}
+		lab = 0;
+		for (r2 = head->next; r2 != head; r2 = r2->next)
+		{
+			lab += step;
+			r2->order = lab;
+			if (fastok)
+			{
+				if (R_DrawNodeRect(r2, &nx1, &nx2, &ny1, &ny2))
+					PS2NS_Append(ns, r2, nx1, nx2, ny1, ny2);
+				else
+					fastok = false;
+			}
+		}
+
+		for (rover = vsprsortedhead.prev; rover != &vsprsortedhead; rover = rover->prev)
+		{
+			drawnode_t *claim = NULL;
+
+			if (rover->szt > vid.height || rover->sz < 0)
+				continue;
+
+			sintersect = (rover->x1 + rover->x2) / 2;
+			PS2SUB_N(90);
+
+			if (fastok && !(rover->cut & SC_SPLAT) && rover->x1 >= -PS2NS_LIM && rover->x1 <= PS2NS_LIM && rover->x2 >= -PS2NS_LIM && rover->x2 <= PS2NS_LIM)
+			{
+				// Only the nodes the rectangle test does not reject can claim the sprite. The sprite goes before the claiming node
+				// that comes first in the list (labels in list order), which is the node the original loop stops at.
+				INT32 bestorder = INT32_MAX, grp = 0;
+				const INT32 groups = PS2NS_GROUPS(ns);
+				for (;;)
+				{
+					UINT64 lanes = PS2NS_NextGroup(ns, &grp, groups, rover->x1, rover->x2, rover->szt, rover->sz);
+					if (grp >= groups)
+						break;
+					do
+					{
+						drawnode_t *const n = (drawnode_t *)ns->node[grp * 8 + PS2NS_PopLane(&lanes)];
+						PS2SUB_N(91);
+						if (n->order < bestorder && R_DrawNodeClaims(n, rover, sintersect))
+						{
+							claim = n;
+							bestorder = n->order;
+						}
+					} while (lanes);
+					grp++;
+				}
+			}
+			else
+			{
+				for (r2 = head->next; r2 != head; r2 = r2->next)
+				{
+					if (R_DrawNodeClaims(r2, rover, sintersect))
+					{
+						claim = r2;
+						break;
+					}
+				}
+			}
+
+			if (claim)
+			{
+				entry = R_CreateDrawNode(NULL);
+				(entry->prev = claim->prev)->next = entry;
+				(entry->next = claim)->prev = entry;
+				entry->sprite = rover;
+			}
+			else
+			{
+				entry = R_CreateDrawNode(head);
+				entry->sprite = rover;
+			}
+			if (fastok)
+			{
+				// label between the neighbours (or after the last node); relabel the whole list when the gap is used up
+				const drawnode_t *const prevn = entry->prev, *const nextn = entry->next;
+				const INT32 lo = prevn == head ? 0 : prevn->order;
+				const INT32 hi = nextn == head ? PS2_NODE_ORDER_MAX : nextn->order;
+				if (nextn == head && lo <= PS2_NODE_ORDER_MAX - step)
+					entry->order = lo + step;
+				else if (hi - lo >= 2 && nextn != head)
+					entry->order = lo + (hi - lo) / 2;
+				else
+				{
+					INT32 count = 0, l;
+					drawnode_t *r;
+					for (r = head->next; r != head; r = r->next)
+						count++;
+					step = PS2_NODE_ORDER_MAX / (count + 2);
+					if (step < 1)
+						step = 1;
+					for (l = 0, r = head->next; r != head; r = r->next)
+						r->order = (l += step);
+				}
+				if (R_DrawNodeRect(entry, &nx1, &nx2, &ny1, &ny2))
+					PS2NS_Append(ns, entry, nx1, nx2, ny1, ny2);
+				else
+					fastok = false;
+			}
+		}
+	}
+}
+#else
 	for (rover = vsprsortedhead.prev; rover != &vsprsortedhead; rover = rover->prev)
 	{
 		if (rover->szt > vid.height || rover->sz < 0)
 			continue;
 
 		sintersect = (rover->x1 + rover->x2) / 2;
+		PS2SUB_N(90);
 
 		for (r2 = head->next; r2 != head; r2 = r2->next)
 		{
+			PS2SUB_N(91);
 			if (r2->plane)
 			{
 				fixed_t planeobjectz, planecameraz;
+				PS2SUB_N(92);
 				if (r2->plane->minx > rover->x2 || r2->plane->maxx < rover->x1)
 					continue;
+				PS2SUB_N(96);
 				if (rover->szt > r2->plane->low || rover->sz < r2->plane->high)
 					continue;
 
@@ -3330,8 +3759,10 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 			else if (r2->thickseg)
 			{
 				fixed_t topplaneobjectz, topplanecameraz, botplaneobjectz, botplanecameraz;
+				PS2SUB_N(93);
 				if (rover->x1 > r2->thickseg->x2 || rover->x2 < r2->thickseg->x1)
 					continue;
+				PS2SUB_N(96);
 
 				scale = r2->thickseg->scale1 > r2->thickseg->scale2 ? r2->thickseg->scale1 : r2->thickseg->scale2;
 				if (scale <= rover->sortscale)
@@ -3358,8 +3789,10 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 			}
 			else if (r2->seg)
 			{
+				PS2SUB_N(94);
 				if (rover->x1 > r2->seg->x2 || rover->x2 < r2->seg->x1)
 					continue;
+				PS2SUB_N(96);
 
 				scale = r2->seg->scale1 > r2->seg->scale2 ? r2->seg->scale1 : r2->seg->scale2;
 				if (scale <= rover->sortscale)
@@ -3377,6 +3810,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 			}
 			else if (r2->sprite)
 			{
+				PS2SUB_N(95);
 				boolean infront = (r2->sprite->sortscale > rover->sortscale
 								|| (r2->sprite->sortscale == rover->sortscale && r2->sprite->dispoffset > rover->dispoffset));
 
@@ -3432,6 +3866,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 		}
 	}
 }
+#endif
 
 static drawnode_t *R_CreateDrawNode(drawnode_t *link)
 {
@@ -3613,7 +4048,9 @@ static boolean R_CheckSpriteVisible(vissprite_t *spr, INT32 x1, INT32 x2)
 
 #ifdef PS2_OPT_SPR
 // The body of the original scan for one draw segment that touches the sprite's columns (same statements, same order).
-static void R_ClipVisSpriteSeg(vissprite_t *spr, const drawseg_xrange_item_t *curr, INT32 x1, INT32 x2)
+// PS2-170: *unsetbot/*unsettop count the columns of the sprite whose clipbot/cliptop still hold -2 (nothing but a draw segment
+// writes them in this scan, and only over -2).
+static void R_ClipVisSpriteSeg(vissprite_t *spr, const drawseg_xrange_item_t *curr, INT32 x1, INT32 x2, INT32 *unsetbot, INT32 *unsettop)
 {
 	drawseg_t *ds = curr->user;
 	INT32 x, r1, r2, silhouette;
@@ -3658,27 +4095,50 @@ static void R_ClipVisSpriteSeg(vissprite_t *spr, const drawseg_xrange_item_t *cu
 	if (silhouette == SIL_BOTTOM)
 	{
 		// bottom sil
+		INT32 nb = 0;
 		for (x = r1; x <= r2; x++)
 			if (spr->clipbot[x] == -2)
-				spr->clipbot[x] = ds->sprbottomclip[x];
+			{
+				const INT16 v = ds->sprbottomclip[x];
+				spr->clipbot[x] = v;
+				nb += (v != -2);
+			}
+		*unsetbot -= nb;
 	}
 	else if (silhouette == SIL_TOP)
 	{
 		// top sil
+		INT32 nt = 0;
 		for (x = r1; x <= r2; x++)
 			if (spr->cliptop[x] == -2)
-				spr->cliptop[x] = ds->sprtopclip[x];
+			{
+				const INT16 v = ds->sprtopclip[x];
+				spr->cliptop[x] = v;
+				nt += (v != -2);
+			}
+		*unsettop -= nt;
 	}
 	else if (silhouette == (SIL_TOP|SIL_BOTTOM))
 	{
 		// both
+		INT32 nb = 0, nt = 0;
 		for (x = r1; x <= r2; x++)
 		{
 			if (spr->clipbot[x] == -2)
-				spr->clipbot[x] = ds->sprbottomclip[x];
+			{
+				const INT16 v = ds->sprbottomclip[x];
+				spr->clipbot[x] = v;
+				nb += (v != -2);
+			}
 			if (spr->cliptop[x] == -2)
-				spr->cliptop[x] = ds->sprtopclip[x];
+			{
+				const INT16 v = ds->sprtopclip[x];
+				spr->cliptop[x] = v;
+				nt += (v != -2);
+			}
 		}
+		*unsetbot -= nb;
+		*unsettop -= nt;
 	}
 }
 #endif
@@ -3715,9 +4175,11 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 		const INT32 words = drawsegs_bin_words;
 		const INT32 nbm1 = drawsegs_bin_count - 1;
 		INT32 b1 = (x1 < 0 ? 0 : x1) >> DSBIN_SHIFT, b2 = (x2 < 0 ? 0 : x2) >> DSBIN_SHIFT, w;
+		// PS2-170: the draw segments only fill columns that still hold -2; once none is left the rest of the scan cannot change anything
+		INT32 unsetbot = x2 >= x1 ? x2 - x1 + 1 : 0, unsettop = unsetbot;
 		if (b1 > nbm1) b1 = nbm1;
 		if (b2 > nbm1) b2 = nbm1;
-		for (w = 0; w < words; w++)
+		for (w = 0; w < words && (unsetbot | unsettop); w++)
 		{
 			const UINT32 *row = drawsegs_bins + (size_t)b1 * words + w;
 			UINT32 m = *row;
@@ -3735,7 +4197,13 @@ static void R_ClipVisSprite(vissprite_t *spr, INT32 x1, INT32 x2, portal_t* port
 				PS2SUB_N(61);
 				if (curr->x1 > x2 || curr->x2 < x1)
 					continue; // does not cover sprite
-				R_ClipVisSpriteSeg(spr, curr, x1, x2);
+				R_ClipVisSpriteSeg(spr, curr, x1, x2, &unsetbot, &unsettop);
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 11 // negative control of the host A/B: the scan stops one column early
+				if (unsetbot + unsettop <= 1)
+#else
+				if (!(unsetbot | unsettop))
+#endif
+					break;
 			}
 		}
 	}

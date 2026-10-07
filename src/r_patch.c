@@ -70,6 +70,46 @@ patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
 	return patch;
 }
 
+#ifdef PS2
+// PS2-140 (OPT10-S): Patch_CreateFromDoomPatch for a caller that can do without the picture: NULL (nothing allocated) when the zone has no room
+// instead of ending the run (the hardware renderer builds a texture from a patch of up to 1 MB; the sweep of all 84 maps died there on two maps)
+patch_t *Patch_TryCreateFromDoomPatch(softwarepatch_t *source)
+{
+	size_t total_pixels = 0, total_posts = 0, coloff, postoff, pixoff;
+	patch_t *patch;
+	UINT8 *base;
+	INT16 width;
+
+	if (!source)
+		return NULL;
+
+	width = SHORT(source->width);
+	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
+
+	coloff = PATCH_ALIGN(sizeof (patch_t));
+	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
+	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
+
+	patch = Z_TryMallocAlign(pixoff + total_pixels, PU_PATCH, NULL, sizeof (void *));
+	if (!patch)
+		return NULL;
+	memset(patch, 0, pixoff + total_pixels);
+	base = (UINT8 *)patch;
+	patch->width      = width;
+	patch->height     = SHORT(source->height);
+	patch->leftoffset = SHORT(source->leftoffset);
+	patch->topoffset  = SHORT(source->topoffset);
+	patch->columns = (column_t *)(base + coloff);
+	patch->posts = (post_t *)(base + postoff);
+	patch->pixels = base + pixoff;
+	patch->embedded = 1;
+
+	Patch_MakeColumns(source, patch->width, patch->width, patch->pixels, patch->columns, patch->posts, false);
+
+	return patch;
+}
+#endif
+
 // The zone may drop an embedded patch that nothing hangs off: no flats, no rotated copies, no hardware texture.
 boolean Patch_IsEvictable(const void *p)
 {
@@ -265,6 +305,9 @@ void *Patch_AllocateHardwarePatch(patch_t *patch)
 		GLPatch_t *grPatch = Z_Calloc(sizeof(GLPatch_t), PU_HWRPATCHINFO, &patch->hardware);
 		grPatch->mipmap = Z_Calloc(sizeof(GLMipmap_t), PU_HWRPATCHINFO, &grPatch->mipmap);
 	}
+#ifdef PS2
+	Z_PinCachePatch(patch); // PS2-140: not a cache entry any more (the zone would drop the patch and leave the GLPatch pointing into freed memory)
+#endif
 	return (void *)(patch->hardware);
 }
 

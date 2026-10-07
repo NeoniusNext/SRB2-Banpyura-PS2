@@ -32,6 +32,9 @@ extern UINT8 levelfadecol;
 extern lumpnum_t lastloadedmaplumpnum; // for comparative savegame
 #ifdef PS2_PROFILE
 extern UINT16 *ps2_blockmaplists;
+// PS2-143: line_t.args is a pointer; lines without arguments share lineargs_zero (never write through it: P_LineArgsW gives the line its own block)
+extern INT32 lineargs_zero[NUMLINEARGS];
+INT32 *P_LineArgsW(line_t *line);
 #endif
 
 /* for levelflat type */

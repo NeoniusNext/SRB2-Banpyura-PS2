@@ -244,10 +244,13 @@ static inline int outcode(const cv_t *v, float gx, float gy)
 }
 
 // Sutherland-Hodgman against the planes in `mask`; returns the vertex count (0 = nothing left); the result is in *res
+// (PS2-HW-54: the distance of every vertex to the plane is computed once per plane, not twice, and without the switch of plane_dist
+// in the loop; the values and the order of the operations are those of the reference: clip_poly_ref in tools/ps2/hg_hosttest.c)
 static int clip_poly(cv_t *a, cv_t *b, int n, int na, int mask, cv_t **res)
 {
 	cv_t *in = a, *out = b, *t;
-	float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
+	const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
+	float dd[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA + 1];
 	int p, i, k;
 
 	for (p = 0; p < 6 && n > 0; p++)
@@ -256,16 +259,45 @@ static int clip_poly(cv_t *a, cv_t *b, int n, int na, int mask, cv_t **res)
 
 		if (!(mask & (1 << p)))
 			continue;
+		switch (p)
+		{
+			case 0:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].x + gx * in[i].w;
+				break;
+			case 1:
+				for (i = 0; i < n; i++)
+					dd[i] = gx * in[i].w - in[i].x;
+				break;
+			case 2:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].y + gy * in[i].w;
+				break;
+			case 3:
+				for (i = 0; i < n; i++)
+					dd[i] = gy * in[i].w - in[i].y;
+				break;
+			case 4:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].z + in[i].w;
+				break;
+			default:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].w - in[i].z;
+				break;
+		}
 		for (i = 0; i < n; i++)
 		{
-			const cv_t *v0 = &in[i], *v1 = &in[i + 1 == n ? 0 : i + 1];
-			float d0 = plane_dist(v0, p, gx, gy), d1 = plane_dist(v1, p, gx, gy);
+			const int j = i + 1 == n ? 0 : i + 1;
+			const float d0 = dd[i], d1 = dd[j];
+			const int in0 = d0 >= 0.0f;
 
-			if (d0 >= 0.0f)
-				out[m++] = *v0;
-			if ((d0 >= 0.0f) != (d1 >= 0.0f))
+			if (in0)
+				out[m++] = in[i];
+			if (in0 != (d1 >= 0.0f))
 			{
-				float tt = d0 / (d0 - d1);
+				const cv_t *v0 = &in[i], *v1 = &in[j];
+				const float tt = d0 / (d0 - d1);
 				cv_t *o = &out[m++];
 
 				o->x = v0->x + (v1->x - v0->x) * tt;

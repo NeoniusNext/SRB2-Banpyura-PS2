@@ -19,18 +19,23 @@ import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DEV = Path('D:/ps2dev')
+IS_WIN = os.name == 'nt'
+EXE = '.exe' if IS_WIN else ''
+DEV = Path(os.environ.get('PS2DEV') or ('D:/ps2dev' if IS_WIN else '/opt/ps2dev-x/ps2dev'))  # Linux: ps2dev release tarball (docs/TOOLCHAIN.md)
 SDK = DEV / 'ps2sdk'
 OUT = Path(os.environ.get('SRB2_PS2_OUT', ROOT / 'build/ps2'))  # per-agent builds: set SRB2_PS2_OUT
 OBJ = OUT / 'obj'
 GEN = OUT / 'gen'
-CC = DEV / 'ee/bin/mips64r5900el-ps2-elf-gcc.exe'
+CC = DEV / ('ee/bin/mips64r5900el-ps2-elf-gcc' + EXE)
 
 ENV = dict(os.environ, PS2DEV=str(DEV), PS2SDK=str(SDK))
-ENV['PATH'] = ';'.join(str(p) for p in [DEV/'ee/bin', DEV/'iop/bin', DEV/'bin',
-                                         Path('C:/Windows/System32'), Path('C:/Windows')])
+if IS_WIN:
+    ENV['PATH'] = ';'.join(str(p) for p in [DEV/'ee/bin', DEV/'iop/bin', DEV/'bin',
+                                             Path('C:/Windows/System32'), Path('C:/Windows')])
+else:
+    ENV['PATH'] = ':'.join([str(DEV/'ee/bin'), str(DEV/'iop/bin'), str(DEV/'bin'), str(DEV/'dvp/bin'), '/usr/bin', '/bin'])
 
-DEFS = ['-D_EE', '-DPS2', '-DPS2_PROFILE', '-DNOHW', '-DNOMD5',  # no HAVE_PNG / HAVE_ZLIB: PS2-20 (cooked packs only)
+DEFS = ['-D_EE', '-DPS2', '-DPS2_PROFILE', '-DNOHW',  # no HAVE_PNG / HAVE_ZLIB: PS2-20 (cooked packs only)
         '-DPS2_AUDIO_VORBIS', '-DPS2_AUDIO_MP3',
         '-DNOMUMBLE', '-DNO_IPV6', '-DNOUPNP', '-DCMAKECONFIG', '-D_LARGEFILE64_SOURCE',
         '-DNOEXECINFO', '-DUNIXCOMMON']
@@ -47,10 +52,13 @@ LIBS = ['-lps2_drivers', '-llz4', '-lgskit', '-ldmakit', '-laudsrv', '-lpad', '-
 
 
 # OPT6-F: content systems the profile used to cut out (src/doomtype.h: PS2_ZIPPNG, PS2_LUA, PS2_UDMF, PS2_ADDONS, PS2_LIMITS).
-# SRB2_PS2_NO=lua,udmf,... builds with those switched off (A/B measurements); the default list shrinks as the stages are done.
-NO_FEATURES = [x for x in os.environ.get('SRB2_PS2_NO', 'lua,udmf,addons,limits').lower().split(',') if x]
+# SRB2_PS2_NO=lua,udmf,... builds with those switched off (A/B measurements). OPT10-X: the default list is EMPTY (everything is in: Lua, UDMF, add-ons, limits,
+# network): every system was run in the emulator in the full configuration (docs/GATES/g1/opt10-X.md); the old cut-down profile is SRB2_PS2_NO=lua,udmf,addons,limits.
+NO_FEATURES = [x for x in os.environ.get('SRB2_PS2_NO', '').lower().split(',') if x]
 for _f in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DPS2_NO_' + _f.upper()]
+if 'addons' in NO_FEATURES:
+    CFLAGS = CFLAGS + ['-DNOMD5']  # PS2-111: MD5 (demo file lists, net file lists, map digests, remote admin) comes with the add-ons; the cut-down profile keeps it off
 if 'zippng' not in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DHAVE_ZLIB', '-DHAVE_PNG']  # PS2-100: pk3 (ZIP) and PNG pictures of add-ons; cooked packs stay the fast path
     LIBS = [l for l in LIBS if l != '-lm'] + ['-lpng16', '-lz', '-lm']
@@ -254,6 +262,12 @@ def main():
         CFLAGS.append('-DPS2_MEMPROF')
         for fn in ('memcpy', 'memset', 'memmove'):
             LDFLAGS.append('-Wl,--wrap=' + fn)
+    elif os.environ.get('SRB2_PS2_FASTMEM', '1') != '0':
+        # PS2-163: 128-bit bulk memcpy/memset (src/ps2/ps2_memops.c), newlib's code for everything else
+        for fn in ('memcpy', 'memset'):
+            LDFLAGS.append('-Wl,--wrap=' + fn)
+    else:
+        CFLAGS.append('-DPS2_NO_FASTMEM')
     if a.sample:
         CFLAGS.append('-DPS2_SAMPLE')
         CFLAGS.append('-g1')  # line tables for tools/ps2/sample_report.py (no code change)
@@ -305,7 +319,7 @@ def main():
         if vsm.is_file():
             vobj = OBJ/'ps2_hw_vu1_vsm.o'
             if not vobj.exists() or vobj.stat().st_mtime < vsm.stat().st_mtime:
-                pv = subprocess.run([str(DEV/'dvp/bin/dvp-as.exe'), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
+                pv = subprocess.run([str(DEV/('dvp/bin/dvp-as' + EXE)), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
                 if pv.returncode or pv.stdout.strip() or pv.stderr.strip():
                     print('FAIL dvp-as', vsm, (pv.stdout + pv.stderr)[-3000:])
                     return 1
@@ -343,7 +357,7 @@ def main():
                 if path.is_file():
                     inputs.add(path.resolve())
     compiler = subprocess.run([str(CC), '--version'], env=ENV, capture_output=True, text=True)
-    size = subprocess.run([str(CC.with_name('mips64r5900el-ps2-elf-size.exe')), str(elf)], env=ENV, capture_output=True, text=True)
+    size = subprocess.run([str(CC.with_name('mips64r5900el-ps2-elf-size' + EXE)), str(elf)], env=ENV, capture_output=True, text=True)
     (OUT/'size.log').write_text(size.stdout + size.stderr, encoding='utf-8')
     report = {
         'command': [sys.executable, *sys.argv], 'sources': srcs, 'compiled': len(todo),

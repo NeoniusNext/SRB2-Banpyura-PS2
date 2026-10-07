@@ -12,12 +12,14 @@ import subprocess
 from collections import defaultdict
 from pathlib import Path
 
-BIN = Path('D:/ps2dev/ee/bin')
-ENVP = {'PATH': str(BIN) + ';C:/Windows/System32'}
+import os
+IS_WIN = os.name == 'nt'
+BIN = Path('D:/ps2dev/ee/bin' if IS_WIN else os.environ.get('PS2DEV', '/opt/ps2dev-x/ps2dev') + '/ee/bin')
+ENVP = {'PATH': str(BIN) + (';C:/Windows/System32' if IS_WIN else ':/usr/bin:/bin')}
 
 
 def run(tool, *args, inp=None):
-    return subprocess.run([str(BIN / ('mips64r5900el-ps2-elf-' + tool + '.exe')), *args], capture_output=True, text=True, env=ENVP, input=inp).stdout
+    return subprocess.run([str(BIN / ('mips64r5900el-ps2-elf-' + tool + ('.exe' if IS_WIN else ''))), *args], capture_output=True, text=True, env=ENVP, input=inp).stdout
 
 
 def symbols(elf):
@@ -53,7 +55,7 @@ def main():
     a = ap.parse_args()
     pcs = {}
     total = 0
-    cyc = frames = 0
+    cyc = frames = hwcyc = hwframes = 0
     for line in Path(a.log).read_text(errors='replace').splitlines():
         line = re.sub(r'^(?:\[[^\]\r\n]*\]\s*)?', '', line)
         if line.startswith('SM '):
@@ -64,9 +66,16 @@ def main():
             if int(kv['win']) >= 1:
                 cyc += int(kv['total'])
                 frames += int(kv['frames'])
+        elif line.startswith('HWPROF win='):  # hardware renderer: wall = EE cycles per frame of the window (PROF totals are not kept in HW mode)
+            kv = dict(x.split('=', 1) for x in line.split() if '=' in x)
+            if int(kv['win']) >= 1:
+                hwcyc += int(kv['wall']) * int(kv['frames'])
+                hwframes += int(kv['frames'])
         elif line.startswith('SMTOTAL'):
             total = int(line.split()[1])
     s = sum(pcs.values())
+    if hwframes:  # PROF totals wrap the 32-bit COP0 count in long (hardware renderer) windows
+        cyc, frames = hwcyc, hwframes
     if frames and s:
         a.frames = frames
         a.period_cycles = cyc / s  # whole measured time (including the sampler's own interrupt cost) spread over the samples
@@ -99,6 +108,39 @@ def main():
         lines[loc] += pcs[addr]
         where[addr] = (func, loc)
         i += 3
+    # --group view: samples by source file category (path based; libgcc soft-float cannot be attributed to its caller)
+    cats = defaultdict(int)
+    for addr, (func, loc) in where.items():
+        f = loc.split(':')[0]
+        b = f.rsplit('/', 1)[-1]
+        if 'libgcc' in f or 'fp-bit' in f or 'libgcc2' in f:
+            c = 'libgcc (soft double / 64-bit helpers)'
+        elif 'newlib' in f:
+            c = 'newlib (memcpy/memset/libc)'
+        elif 'vorbis' in f or 'ogg' in f or 'mpg123' in f:
+            c = 'audio decoders (vorbis/mp3)'
+        elif f.startswith('src/ps2/ps2_a') or f.startswith('src/ps2/i_sound') or f.startswith('src/s_sound') or f.startswith('src/ps2/ps2_music') or f.startswith('src/ps2/ps2_midi'):
+            c = 'audio engine (mixer, music, s_sound)'
+        elif b.startswith(('r_draw', 'r_plane', 'r_splats')):
+            c = 'render: drawers/planes'
+        elif b.startswith(('r_segs', 'r_bsp')):
+            c = 'render: walls/bsp'
+        elif b.startswith(('r_things', 'r_portal')):
+            c = 'render: sprites/masked'
+        elif b.startswith(('r_main', 'r_fps', 'r_data', 'r_textures', 'r_picformats', 'r_patch')):
+            c = 'render: main/data/textures'
+        elif b.startswith(('p_', 'g_game', 'g_demo')) or f.startswith('src/p_'):
+            c = 'tick: p_*/g_*'
+        elif b.startswith(('v_video', 'st_', 'hu_', 'm_menu', 'console', 'screen')):
+            c = 'hud/video'
+        elif f.startswith('src/ps2/'):
+            c = 'ps2 platform'
+        else:
+            c = 'other:' + (f if len(f) < 40 else b)
+        cats[c] += pcs[addr]
+    print('\n%-44s %8s %10s %6s' % ('category (by source file)', 'samples', 'kcyc/frame', '%'))
+    for k, n in sorted(cats.items(), key=lambda x: -x[1])[:25]:
+        print('%-44s %8d %10.1f %6.2f' % (k, n, n * per / 1e3, 100.0 * n / s))
     print('\n%-50s %8s %10s %6s' % ('source line (blocks starting there)', 'samples', 'kcyc/frame', '%'))
     shown = 0
     for k, n in sorted(lines.items(), key=lambda x: -x[1]):

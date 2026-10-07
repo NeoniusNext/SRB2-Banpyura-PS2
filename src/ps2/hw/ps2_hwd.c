@@ -33,6 +33,7 @@
 #include "../../console.h"
 #include "../../hardware/hw_drv.h"
 #include "../../hardware/hw_main.h"
+#include "../../m_argv.h" // -hwnosplit
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
@@ -44,17 +45,21 @@
 #define CONS_Alert(level, ...) I_OutputMsg(__VA_ARGS__)
 
 #include "ps2_hw_priv.inc"
+#include "ps2_hw_hg.inc" // OPT10 HG: geometry-path counters (HWPROF3)
 #include "ps2_hw_vif.inc" // PS2-HW-44: VIF1 as the transport of the GIF stream (-hwdbg 0x4000000)
 #include "ps2_hw_regs.inc"
 #include "ps2_hw_gs.inc"
+#include "ps2_hw_val.inc" // PS2-HW-74: -hwdbg 536870912 validates the GIF stream
 #include "ps2_hw_xform.inc"
 #include "ps2_hw_vu0.inc"
 #include "ps2_hw_light.inc"
+#include "ps2_hw_pal.inc" // PS2-HW-71: palette rendering (light tables as CLUT rows)
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
+#include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
 
 static FOutVector *sky_vertices;
 static float *sky_colors;
@@ -248,6 +253,15 @@ boolean PS2HWD_Init(void)
 	if (H.up)
 		return true;
 	memset(&H, 0, sizeof H);
+	tex_nosplit = M_CheckParm("-hwnosplit") != 0; // PS2-HW-70 off: images over 1024 rows are decimated
+	tex_split_rows = 1024;
+	if (M_CheckParm("-hwsplitrows") && M_IsNextParm())
+	{
+		const int rows = atoi(M_GetNextParm());
+
+		if (rows >= 64 && rows <= 1024 && !(rows & 63))
+			tex_split_rows = (u32)rows; // test: the split is exercised on ordinary textures
+	}
 	H.dmac = -1;
 	H.sema_vbl = H.sema_dma = -1;
 	H.shader = -1;
@@ -305,6 +319,9 @@ void PS2HWD_Shutdown(void)
 		ring_wait(0);
 		gs_wait_finished();
 	}
+	// PS2-HW-71: the light tables stay (the engine keeps their ids in its colormaps until it clears them: ClearLightTables); the screen palette is set again
+	spal_set = 0;
+	pal_last_mode = -1;
 	if (H.vbl_installed)
 	{
 		DisableIntc(INTC_VBLANK_S);
@@ -321,6 +338,7 @@ void PS2HWD_Shutdown(void)
 		RemoveDmacHandler(DMAC_VIF1, V.dmac);
 		V.dmac_set = 0;
 	}
+	val_shutdown();
 	vu1_shutdown();
 	V.on = 0;
 	if (H.sema_vbl >= 0)
@@ -331,6 +349,8 @@ void PS2HWD_Shutdown(void)
 	rel_release_all();
 	dc_flush();
 	tex_free_all();
+	H.imm_tex = NULL;
+	plan_reset();
 	ramp_tex = NOREC;
 	OV.n = 0;
 	for (i = 0; i < NBUF; i++)
@@ -544,6 +564,30 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 			for (i = 0; i < n; i++)
 				sink += vu0_xform(&pts[i], &d, &pv) + pv.xi;
 			out->cyc_vu0 = cyc() - c0;
+			c0 = cyc();
+			for (i = 0; i + 1 < n; i += 2)
+			{
+				cv_t d2[2];
+				pv_t p2[2];
+				int oc2[2];
+
+				vu0_xform2(&pts[i], &pts[i + 1], &d2[0], &d2[1], &p2[0], &p2[1], &oc2[0], &oc2[1]);
+				sink += oc2[0] + oc2[1] + p2[0].xi + p2[1].xi;
+			}
+			out->cyc_vu0p = (cyc() - c0) * n / (n & ~1u);
+			for (i = 0; i + 1 < n; i += 2)
+			{
+				cv_t d1[2], d2[2];
+				pv_t p1[2], p2[2];
+				int oc1[2], oc2[2];
+
+				oc1[0] = vu0_xform(&pts[i], &d1[0], &p1[0]);
+				oc1[1] = vu0_xform(&pts[i + 1], &d1[1], &p1[1]);
+				vu0_xform2(&pts[i], &pts[i + 1], &d2[0], &d2[1], &p2[0], &p2[1], &oc2[0], &oc2[1]);
+				if (oc1[0] != oc2[0] || oc1[1] != oc2[1] || memcmp(&d1[0], &d2[0], sizeof(float) * 6) || memcmp(&d1[1], &d2[1], sizeof(float) * 6) || memcmp(&p1[0], &p2[0], sizeof p1[0])
+					|| memcmp(&p1[1], &p2[1], sizeof p1[1]))
+					out->pair_diff++;
+			}
 			(void)sink;
 		}
 		for (i = 0; i < n; i++)
@@ -603,7 +647,9 @@ void PS2HWD_GetStats(ps2hwd_stats_t *out, int reset)
 static void hw_SetTexturePalette(RGBA_t *ppal)
 {
 	if (H.up && ppal)
+	{
 		palette_set(ppal);
+	}
 }
 
 static void hw_FinishUpdate(INT32 waitvbl)
@@ -655,6 +701,113 @@ static void hw_Draw2DLine(F2DCoord *v1, F2DCoord *v2, RGBA_t Color)
 	screen_mode_end(&sv);
 }
 
+// ---- images of more than 1024 rows (PS2-HW-70) ----
+// The GS takes 1024 rows of texture at most. A P_8 map texture of 1025..2048 rows (the pipes of THZ: 64 x 1536) is stored as two images, the rows
+// [0, 1024) and the rest (tex_upload), and a polygon that has such a texture is cut along t at the boundary between the pieces (and at the whole
+// repeats when the texture repeats); every part is drawn with its piece, t made the piece's own. The cut is made on the engine's polygon, in world
+// space where the texture mapping is affine, so the two parts get the very same vertices on the cut (no crack). Without wrap the texture is clamped
+// at its edges: the part with t below the boundary belongs to the first piece (clamped at its top), the one above it to the second (clamped at the end).
+#define SPLIT_VERT FOutVector
+#include "ps2_hw_split.h"
+
+#define SPLIT_MAXV (PS2HWD_MAXPOLY + 8)
+static FOutVector split_buf[2][SPLIT_MAXV];
+
+static inline int split_active(u32 flags)
+{
+	return H.cur_tex != NOREC && H.rec[H.cur_tex].psplit == 1 && !(flags & PF_NoTexture);
+}
+
+// the record to draw the second piece with: the variant (CLUT, wrap, filter) of the record the engine selected (cur) on the image of the second piece
+static int split_piece_rec(int bi, int cur)
+{
+	int w;
+	u8 clut, wrapx, wrapy, nearest_only, notcc;
+
+	if (cur == img_of(cur))
+		return bi; // the first piece's own record: the second piece was made with the same variant
+	clut = H.rec[cur].clut;
+	wrapx = H.rec[cur].wrapx;
+	wrapy = H.rec[cur].wrapy;
+	nearest_only = H.rec[cur].nearest_only;
+	notcc = H.rec[cur].notcc;
+	for (w = H.rec[bi].sec; w != NOREC; w = H.rec[w].sec_next)
+		if (H.rec[w].clut == clut && H.rec[w].wrapx == wrapx && H.rec[w].wrapy == wrapy && H.rec[w].nearest_only == nearest_only && H.rec[w].notcc == notcc)
+			return w;
+	w = rec_new(); // may move the table
+	if (w == NOREC)
+		return NOREC;
+	H.rec[w] = H.rec[bi];
+	H.rec[w].prev = H.rec[w].next = NOREC;
+	H.rec[w].pnext = H.rec[w].ppar = NOREC;
+	H.rec[w].owner = NULL; // a view of the second piece belongs to no engine texture: it goes with its image
+	H.rec[w].share = bi;
+	H.rec[w].sec = NOREC;
+	H.rec[w].sec_next = H.rec[bi].sec;
+	H.rec[bi].sec = w;
+	H.rec[w].used = 1;
+	H.rec[w].pin = 0;
+	H.rec[w].clut = clut;
+	H.rec[w].wrapx = wrapx;
+	H.rec[w].wrapy = wrapy;
+	H.rec[w].nearest_only = nearest_only;
+	H.rec[w].notcc = notcc;
+	H.rec[w].stamp = H.frame_no;
+	H.rec[w].done = 0;
+	H.rec[w].ws = 0;
+	return w;
+}
+
+typedef struct
+{
+	const FSurfaceInfo *surf;
+	u32 fl;
+	int bi, cur;
+} split_ctx_t;
+
+static void split_emit(void *vctx, int piece, int cell, const FOutVector *v, int n)
+{
+	const split_ctx_t *c = vctx;
+	const int rec = piece ? split_piece_rec(c->bi, c->cur) : c->cur;
+
+	(void)cell;
+	if (rec == NOREC)
+		return;
+	TX.split_sub++;
+	H.cur_tex = rec;
+	if (begin_draw(c->fl, c->surf))
+		emit_fan(v, NULL, n, NULL);
+	H.cur_tex = c->cur;
+}
+
+static void split_draw(const FSurfaceInfo *surf, u32 flags, const FOutVector *v, int n)
+{
+	split_ctx_t c;
+	const int ai = img_of(H.cur_tex), bi = H.rec[ai].pnext;
+	float lo_t[2], hi_t[2], tk[2];
+
+	if (n < 3)
+		return;
+	if (bi == NOREC)
+	{
+		if (begin_draw(flags, surf))
+			emit_fan(v, NULL, n, NULL);
+		return;
+	}
+	TX.split_poly++;
+	c.surf = surf;
+	c.fl = (flags | PF_RemoveYWrap) & ~(u32)PF_ForceWrapY; // a part is inside one piece: it clamps (the repeats are made by the cuts)
+	c.bi = bi;
+	c.cur = H.cur_tex;
+	lo_t[0] = H.rec[ai].pt0;
+	hi_t[0] = H.rec[ai].pt1;
+	tk[0] = H.rec[ai].ptk;
+	lo_t[1] = H.rec[bi].pt0;
+	hi_t[1] = H.rec[bi].pt1;
+	tk[1] = H.rec[bi].ptk;
+	split_polygon(v, n, (H.rec[c.cur].wrapy || (flags & PF_ForceWrapY)) && !(flags & PF_RemoveYWrap), lo_t, hi_t, tk, split_buf[0], split_buf[1], split_emit, &c);
+}
+
 static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
 {
 	if (!H.up)
@@ -666,8 +819,21 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		CONS_Printf("HWT poly n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u\n", (unsigned)iNumPts, (unsigned)PolyFlags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u);
 	}
-	if (begin_draw((u32)PolyFlags, pSurf))
-		emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
+	{
+		const u32 gt0 = cyc();
+		const int gk = ((PolyFlags & PF_NoTexture) ? 1 : 0) | ((PolyFlags & PF_NoDepthTest) ? 2 : 0) | ((PolyFlags & PF_Occlude) ? 4 : 0);
+
+		G.single++;
+		G.sk_single += ps2hwp_skyview;
+		G.sing_by[gk]++;
+		if (H.imm_tex && !(PolyFlags & PF_NoTexture))
+			imm_prepare(pOutVerts, (unsigned int)iNumPts); // PS2-HW-37: the texture is made resident at the level this polygon needs
+		if (split_active((u32)PolyFlags))
+			split_draw(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts); // PS2-HW-70: a texture of two images
+		else if (begin_draw((u32)PolyFlags, pSurf))
+			emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
+		G.sing_cyc[gk] += cyc() - gt0;
+	}
 }
 
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc)
@@ -682,6 +848,16 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 
 		CONS_Printf("HWT fans n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u psm=%d clut=%d\n", nfans, flags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u, tr ? (int)tr->psm : -1, tr ? (int)tr->clut : -1);
+	}
+	G.batches++;
+	G.fans += nfans;
+	G.sk_batches += ps2hwp_skyview;
+	G.sk_fans += ps2hwp_skyview ? nfans : 0;
+	if (split_active(flags))
+	{
+		for (i = 0; i < nfans; i++) // PS2-HW-70: a texture of two images: every polygon is cut along its pieces
+			split_draw((const FSurfaceInfo *)surf, flags, (const FOutVector *)base + desc[2 * i], (int)desc[2 * i + 1]);
+		return;
 	}
 	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
 		return;
@@ -703,6 +879,21 @@ static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, 
 {
 	if (!H.up)
 		return;
+	if (split_active((u32)PolyFlags))
+	{
+		u32 i;
+
+		for (i = 0; i + 2 < (u32)iNumPts; i += 3) // PS2-HW-70
+		{
+			FOutVector tri[3];
+
+			tri[0] = pOutVerts[IndexArray[i]];
+			tri[1] = pOutVerts[IndexArray[i + 1]];
+			tri[2] = pOutVerts[IndexArray[i + 2]];
+			split_draw(pSurf, (u32)PolyFlags, tri, 3);
+		}
+		return;
+	}
 	if (begin_draw((u32)PolyFlags, pSurf))
 		emit_tris(pOutVerts, IndexArray, (u32)iNumPts, NULL);
 }
@@ -857,7 +1048,7 @@ static texrec_t *twin_rec(GLMipmap_t *m)
 
 // Select a texture. While the engine collects batched polygons nothing is uploaded: the texture is made resident when its batch is
 // drawn (the GS pool cannot hold all the textures of a frame), asking the engine for the data again when the zone dropped it.
-static void hw_SetTexture(GLMipmap_t *TexInfo)
+static void settex_now(GLMipmap_t *TexInfo)
 {
 	texrec_t *r;
 	int ri;
@@ -869,6 +1060,33 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 	{
 		H.cur_tex = NOREC;
 		H.cur_missing = 0;
+		return;
+	}
+	if (ps2hwd_dbg_flags & HWDBG_NOUP) // OPT10 HG measurement: one dummy image for every texture
+	{
+		static GLMipmap_t noup_mip;
+		static u8 noup_data[256 * 256] __attribute__((aligned(64)));
+		texrec_t *d = rec_of(&noup_mip);
+
+		if (!d)
+		{
+			int x, y;
+
+			for (y = 0; y < 256; y++)
+				for (x = 0; x < 256; x++)
+					noup_data[y * 256 + x] = (u8)((x ^ y) & 127);
+			memset(&noup_mip, 0, sizeof noup_mip);
+			noup_mip.format = GL_TEXFMT_P_8;
+			noup_mip.width = noup_mip.height = 256;
+			noup_mip.flags = TF_WRAPXY;
+			noup_mip.data = noup_data;
+			ri = tex_upload(&noup_mip);
+			if (ri != NOREC)
+				H.rec[ri].pin = 1;
+			d = ri != NOREC ? &H.rec[ri] : NULL;
+		}
+		H.cur_tex = d ? (int)(d - H.rec) : NOREC;
+		H.cur_missing = d == NULL;
 		return;
 	}
 	r = rec_of(TexInfo);
@@ -890,9 +1108,9 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		int vis = 1;
 
 		want = tex_want(TexInfo, &vis);
-		if (batch_phase == 0 || pk->ps2_planfr != H.frame_no + 1)
+		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != H.frame_no + 1)
 			pk->ps2_full_fr = H.frame_no + 1;
-		if (!vis && !r)
+		if (!vis && !r && !TT.on) // PS2-HW-69: the conformance test draws textures no frame plan sees
 		{
 			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
 			H.cur_tex = NOREC;
@@ -900,13 +1118,25 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 			TX.invisible++;
 			return;
 		}
-		if (r && !r->screen && (u32)r->dx > want)
+		if (r && !r->screen && plan_too_coarse(TexInfo, (u32)r->dx, want))
 		{
-			// stored at a coarser level than this draw needs: the image is made again (every variant of it)
+			// stored at a coarser level than this draw needs (beyond the tolerance of the plan): the image is made again (every variant of it)
+			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
+				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d UPGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
 			ov_flush_all();
 			tex_drop(img_of((int)(r - H.rec)), 0);
 			r = NULL;
 			TX.upgrades++;
+		}
+		else if (r && (batch_phase == 2 || imm_level >= 0) && plan_too_fine(TexInfo, r, want))
+		{
+			// stored finer than the plan needs and the difference is worth the blocks: made again at the planned level (PS2-HW-37)
+			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
+				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d DOWNGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
+			ov_flush_all();
+			tex_drop(img_of((int)(r - H.rec)), 0);
+			r = NULL;
+			TX.downgrades++;
 		}
 	}
 	if (r && H.cap_adapt && r->capi != H.cap_idx && !r->screen && !r->pin && batch_phase != 1 && r->sw)
@@ -914,7 +1144,7 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		// stored under another cap: re-make it when its size would differ (smaller at once; larger within the per-frame budget)
 		u32 dx, dy;
 
-		if (tex_plan(r->psm, r->sw, r->sh, H.tex_cap_blocks, &dx, &dy) && (dx != r->dx || dy != r->dy))
+		if (tex_plan(r->psm, r->sw, r->sh, H.tex_cap_blocks, r->shareable, &dx, &dy) && (dx != r->dx || dy != r->dy))
 		{
 			u32 nb = tex_plan_blocks(r->psm, r->sw, r->sh, dx, dy);
 
@@ -953,7 +1183,8 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		return;
 	}
 	if (!TexInfo->data && !(TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= 2048
-		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want)))))
+		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want))
+			|| (want && TexInfo->regen_kind == 2) || (want > 1 && dc_find_finer(dc_key(TexInfo), TexInfo->width, TexInfo->height, want, &(u32){0}))))) // PS2-HW-38/39: a level of a flat needs no copy of the flat (tex_upload pins the engine's)
 	{
 		u32 c0 = cyc();
 
@@ -962,7 +1193,16 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		TX.regen_n++;
 		H.st.tex_regen++;
 	}
+	if (TT.on)
+		tt_capture(TexInfo); // PS2-HW-69: the texels as the engine hands them over
+	if ((ps2hwd_dbg_flags & HWDBG_IMMDBG) && (u32)TexInfo->width * TexInfo->height >= PLAN_MIN_TEXELS)
+		CONS_Printf("HWIMM f=%u %s %ux%u want=%u UPLOAD imm=%d phase=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, imm_level, batch_phase);
 	ri = tex_upload(TexInfo);
+	if (tex_flatpin)
+	{
+		HWR_PS2_FlatUnpin(tex_flatpin, (size_t)TexInfo->width * TexInfo->height);
+		tex_flatpin = NULL;
+	}
 	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
 		HWR_PS2_ReleaseMipmapData(TexInfo);
 	if (ri == NOREC)
@@ -983,6 +1223,22 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 	H.cur_missing = 0;
 	if (batch_phase == 2)
 		H.rec[ri].done = H.frame_no + 1;
+}
+
+// hwdriver SetTexture: a big map texture selected outside the batches waits for its polygon (imm_prepare, PS2-HW-37), the rest is made resident now
+static void hw_SetTexture(GLMipmap_t *TexInfo)
+{
+	if (!H.up)
+		return;
+	H.imm_tex = NULL;
+	if (TexInfo && batch_phase == 0 && plan_wants(TexInfo) && !(ps2hwd_dbg_flags & HWDBG_NOPLAN))
+	{
+		H.imm_tex = TexInfo;
+		H.cur_tex = NOREC;
+		H.cur_missing = 0;
+		return;
+	}
+	settex_now(TexInfo);
 }
 
 // The batched polygon of this texture is drawn later in the frame: the texture (or the image of its other variant) must stay in VRAM until then.
@@ -1013,7 +1269,7 @@ static void hw_UpdateTexture(GLMipmap_t *TexInfo)
 		dma_fence(); // the engine has changed the texels: no queued reference may still read the old ones
 		tex_drop((int)(r - H.rec), 0);
 	}
-	hw_SetTexture(TexInfo);
+	settex_now(TexInfo);
 }
 
 static void hw_DeleteTexture(GLMipmap_t *TexInfo)
@@ -1024,6 +1280,10 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		return;
 	if (H.up)
 		dma_fence(); // the engine frees the texels after this call: no queued DMA may read them (also when the image was evicted meanwhile)
+	if (H.imm_tex == TexInfo)
+		H.imm_tex = NULL;
+	if (H.up)
+		plan_forget(TexInfo);
 	if (H.up && (r = rec_of(TexInfo)) != NULL)
 	{
 		ov_flush_all();
@@ -1048,6 +1308,8 @@ static void hw_ClearMipMapCache(void)
 		return;
 	ov_flush_all();
 	dma_fence();
+	H.imm_tex = NULL;
+	plan_reset();
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)
@@ -1152,34 +1414,51 @@ static void hw_SetShaderInfo(hwdshaderinfo_t info, INT32 value)
 		H.leveltime = value;
 }
 
-// palette rendering (an RGB-to-palette 3D lookup of every pixel) has no GS equivalent; the PS2 profile never enables it
+// PS2-HW-71: palette rendering (gr_paletterendering): the colour of a texel is lighttable[index][row]. The GS does it with CLUTs (ps2_hw_pal.inc): the
+// RGB-to-index lookup is not needed (the textures are indexed), the light tables are kept as indices, the screen palette is applied in the CLUTs.
 static void hw_SetPaletteLookup(UINT8 *lut)
 {
 	(void)lut;
-	hw_limit(HW_PALETTE_SHADER, "RGB-to-index palette lookup shader unavailable");
 }
 
 static UINT32 hw_CreateLightTable(RGBA_t *hw_lighttable)
 {
-	(void)hw_lighttable;
-	hw_limit(HW_LIGHT_TABLE, "per-fragment light tables unavailable; handle 0 returned");
-	return 0;
+	if (!H.up)
+		return 0;
+	return lt_store(0, hw_lighttable);
 }
 
 static void hw_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
 {
-	(void)id; (void)hw_lighttable;
-	hw_limit(HW_LIGHT_TABLE, "per-fragment light table update unavailable");
+	if (H.up && id && id < LT_MAX && lt_idx[id])
+	{
+		ov_flush_all(); // queued draws use the old rows
+		lt_store(id, hw_lighttable);
+	}
 }
 
 static void hw_ClearLightTables(void)
 {
+	if (H.up)
+		ov_flush_all();
+	lt_clear();
 }
 
 static void hw_SetScreenPalette(RGBA_t *palette)
 {
-	(void)palette;
-	hw_limit(HW_PALETTE_SHADER, "screen palette postprocessing unavailable");
+	u32 np[256];
+	int i;
+
+	if (!H.up || !palette)
+		return;
+	for (i = 0; i < 256; i++)
+		np[i] = (u32)palette[i].s.red | ((u32)palette[i].s.green << 8) | ((u32)palette[i].s.blue << 16);
+	if (spal_set && !memcmp(np, spal, sizeof np))
+		return;
+	ov_flush_all(); // pending draws must consume the previous screen palette before the CLUTs change
+	memcpy(spal, np, sizeof np);
+	spal_set = 1;
+	H.pal_gen++; // every CLUT made from the palette is rebuilt when it is next used
 }
 
 void PS2HWD_FillDriver(struct hwdriver_s *drv)

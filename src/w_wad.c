@@ -31,6 +31,9 @@
 
 #ifdef __GNUC__
 #include <unistd.h>
+#ifdef PS2_PROFILE
+#include <strings.h> // strcasecmp (PS2-111)
+#endif
 #endif
 
 #define ZWAD
@@ -953,7 +956,20 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	// Let's not add a wad file if the MD5 matches
 	// an MD5 of an already added WAD file!
 	//
+#ifdef PS2_PROFILE
+	// PS2-111: MD5 of add-on files only (pk3/wad/soc/lua: demos, net file lists and the duplicate check need it); a cooked pack (100 MB of MUSIC.PAK) is never
+	// hashed, its digest stays zero. Without this every demo recorded with add-ons failed to play ("loaded out of order": all digests were zero, so every
+	// demo entry matched the first important file) and the file list a PS2 server sent carried zero digests.
+	memset(md5sum, 0, sizeof md5sum);
+	{
+		const char *ext = strrchr(filename, '.');
+
+		if (!ext || strcasecmp(ext, ".pak"))
+			W_MakeFileMD5(filename, md5sum);
+	}
+#else
 	W_MakeFileMD5(filename, md5sum);
+#endif
 
 #ifndef LIFT_FILE_RESTRICTIONS
 	for (size_t i = 0; i < numwadfiles; i++)
@@ -961,7 +977,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 		if (wadfiles[i]->type == RET_FOLDER)
 			continue;
 
-		if (!memcmp(wadfiles[i]->md5sum, md5sum, 16))
+		if (!memcmp(wadfiles[i]->md5sum, md5sum, 16)
+#ifdef PS2_PROFILE
+			&& (md5sum[0] | md5sum[1] | md5sum[2] | md5sum[3]) // PS2-111: a zero digest (cooked pack) identifies nothing
+#endif
+			)
 		{
 			CONS_Alert(CONS_ERROR, M_GetText("%s is already loaded\n"), filename);
 			if (handle)
@@ -2687,6 +2707,59 @@ void *W_CachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
 	return (void *)patch;
 }
 
+#ifdef PS2
+//
+// PS2-140 (OPT10-S): W_CachePatchNumPwad for a caller that can do without the picture (the composite of a hardware texture): NULL, with nothing left
+// allocated, when the zone has no room for the lump or for the patch. A patch that is cached already is returned as before.
+//
+void *W_TryCachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
+{
+	lumpcache_t *lumpcache;
+	size_t len;
+	void *lumpdata;
+	patch_t *patch = NULL;
+
+	if (!TestValidLump(wad, lump))
+		return NULL;
+
+	lumpcache = wadfiles[wad]->patchcache;
+	if (lumpcache[lump])
+		return W_CachePatchNumPwad(wad, lump, tag);
+
+	len = W_LumpLengthPwad(wad, lump);
+	lumpdata = Z_TryMallocAlign(len ? len : 1, PU_RENDERWORK, NULL, sizeof (void *));
+	if (!lumpdata)
+		return NULL;
+	W_ReadLumpHeaderPwad(wad, lump, lumpdata, 0, 0);
+
+#ifdef PS2_PROFILE
+	if (Picture_IsLumpCooked((UINT8 *)lumpdata, len))
+		patch = Picture_TryCookedPatch((UINT8 *)lumpdata, len);
+	else
+#endif
+	if (Picture_IsLumpPNG((UINT8 *)lumpdata, len))
+	{
+		// a real PNG: the converter of the engine has no way out
+		Z_Free(lumpdata);
+		return W_CachePatchNumPwad(wad, lump, tag);
+	}
+	else
+		patch = Patch_TryCreateFromDoomPatch((softwarepatch_t *)lumpdata);
+	Z_Free(lumpdata);
+
+	if (!patch)
+		return NULL;
+	Z_ChangeTag(patch, tag);
+	Z_SetUser(patch, &lumpcache[lump]);
+
+#ifdef HWRENDER
+	if (rendermode == render_opengl)
+		Patch_CreateGL(patch);
+#endif
+	return (void *)patch;
+}
+#endif
+
 void *W_CachePatchNum(lumpnum_t lumpnum, INT32 tag)
 {
 	return W_CachePatchNumPwad(WADFILENUM(lumpnum),LUMPNUM(lumpnum),tag);
@@ -2833,6 +2906,15 @@ void W_VerifyFileMD5(UINT16 wadfilenum, const char *matchmd5)
 #else
 	UINT8 realmd5[MD5_LEN];
 	INT32 ix;
+
+#ifdef PS2_PROFILE
+	{
+		static const UINT8 zero[MD5_LEN]; // PS2-111: a cooked pack is not hashed (its digest is zero) and is not the pk3 the expected digest belongs to
+
+		if (!memcmp(wadfiles[wadfilenum]->md5sum, zero, MD5_LEN))
+			return;
+	}
+#endif
 
 	I_Assert(strlen(matchmd5) == 2*MD5_LEN);
 	I_Assert(wadfilenum < numwadfiles);

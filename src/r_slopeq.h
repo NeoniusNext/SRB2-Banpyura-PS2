@@ -420,7 +420,25 @@ RQ_INLINE UINT64 RQ_Div128(UINT64 hi, UINT64 lo, UINT64 d)
 	if (hi == 0)
 		return lo / d;
 	rem = hi;
-	for (i = 63; i >= 0; i--)
+	i = 63;
+	{
+		// PS2-172: while the partial remainder (hi << j | the top j bits of lo) stays below d the loop below shifts and subtracts nothing
+		// (quotient bit 0). With k = the largest shift for which (hi + 1) << k <= d the first k remainders are below d (each is at most
+		// ((hi + 1) << j) - 1), so the loop starts k bits in: rem = hi << k | lo >> (64 - k), next quotient bit 63 - k. The slope-wall
+		// ray hits divide a ~82-bit numerator by a ~50-bit denominator: about half of the 64 iterations are skipped.
+		int k = (int)RQ_Clz64(hi + 1) - (int)RQ_Clz64(d);
+		if (((hi + 1) << k) > d)
+			k--;
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 12 // negative control of tools/ps2/sw_hosttest.py: one iteration too many skipped
+		k++;
+#endif
+		if (k > 0)
+		{
+			rem = (hi << k) | (lo >> (64 - k));
+			i = 63 - k;
+		}
+	}
+	for (; i >= 0; i--)
 	{
 		const UINT64 top = rem >> 63;
 		rem = (rem << 1) | ((lo >> i) & 1);

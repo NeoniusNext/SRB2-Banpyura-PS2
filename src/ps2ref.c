@@ -16,6 +16,10 @@
 #include "z_zone.h"
 #include "i_system.h"
 #include "i_time.h"
+#include "f_finale.h"
+#include "command.h"
+#include "d_event.h"
+#include "keys.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -207,9 +211,94 @@ static void idle_frame(void)
     }
     if(seconds>=duration) PS2Ref_End();
 }
+#ifndef PS2
+/* OPT10-HF (PC only): picture reference for the PS2 hardware renderer. -ps2ref-shot SPEC takes the engine screenshot (OpenGL: glReadPixels of the
+ * frame just drawn, <home>/screenshots) at the same frames as the PS2 -vidshot: items t35 (35th title frame), l70 (70th level frame), f200 (200th frame),
+ * k300 (first frame with leveltime >= 300; K300 only in a level started after the previous shot), w5 (5th frame of a wipe), each with an optional
+ * =command after the shot ('~' is a space: k300=map~2). -ps2ref-keys 120:enter,130:down,...: key presses by frame number (the keys of -vidkeys).
+ * The game quits after the last shot (line "PS2SHOT COMPLETE"). Every shot prints "PS2SHOT <tag> leveltime=<n> n=<ordinal>". */
+extern boolean takescreenshot;
+static void shot_keys(INT32 framen)
+{
+    INT32 q=M_CheckParm("-ps2ref-keys"); const char *p;
+    if(!q || q+1>=myargc) return;
+    for(p=myargv[q+1];*p;) {
+        INT32 n=0, key=0; char name[12]; const char *kn=name; size_t len=0; boolean down=true, up=true; event_t ev;
+        while(*p>='0' && *p<='9') n=n*10+(*p++-'0');
+        if(*p==':') p++;
+        while(*p && *p!=',' && len<sizeof name-1) name[len++]=*p++;
+        name[len]='\0';
+        while(*p && *p!=',') p++;
+        if(*p==',') p++;
+        if(n!=framen) continue;
+        if(*kn=='+') up=false, kn++; else if(*kn=='-') down=false, kn++;
+        if(!strcmp(kn,"enter")) key=KEY_ENTER; else if(!strcmp(kn,"esc")) key=KEY_ESCAPE; else if(!strcmp(kn,"up")) key=KEY_UPARROW;
+        else if(!strcmp(kn,"down")) key=KEY_DOWNARROW; else if(!strcmp(kn,"left")) key=KEY_LEFTARROW; else if(!strcmp(kn,"right")) key=KEY_RIGHTARROW;
+        else if(!strcmp(kn,"bs")) key=KEY_BACKSPACE; else if(!strcmp(kn,"space")) key=KEY_SPACE; else if(!strcmp(kn,"tab")) key=KEY_TAB;
+        else if(!strcmp(kn,"console")) key='`'; else if(!strcmp(kn,"f1")) key=KEY_F1; else if(!strcmp(kn,"f2")) key=KEY_F2;
+        else if(!strcmp(kn,"f10")) key=KEY_F10; else if(!strcmp(kn,"f11")) key=KEY_F11;
+        else if(kn[0]>='a' && kn[0]<='z' && !kn[1]) key=kn[0];
+        else I_Error("-ps2ref-keys: unknown key '%s'",kn);
+        memset(&ev,0,sizeof ev); ev.key=key;
+        if(down) { ev.type=ev_keydown; D_PostEvent(&ev); }
+        if(up) { ev.type=ev_keyup; D_PostEvent(&ev); }
+    }
+}
+void SplitScreen_OnChange(void);
+static void Command_HFSplit_f(void) /* 'hf_split 1': local splitscreen with a second player in a single player game (the same command exists on the PS2) */
+{
+    splitscreen = COM_Argc()>1 && atoi(COM_Argv(1))!=0;
+    SplitScreen_OnChange();
+}
+static void shot_frame(void)
+{
+    static boolean parsed, quitnext; static INT32 titlen, leveln, anyn, wipen, intern, left, done, knext; static boolean klow=true; static char spec[1536];
+    INT32 kord=0; const char *p;
+    if(quitnext) { CONS_Printf("PS2SHOT COMPLETE %d\n",(int)done); I_Quit(); }
+    if(!parsed) {
+        parsed=true;
+        if(M_CheckParm("-ps2ref-shot") && M_IsNextParm()) {
+            COM_AddCommand("hf_split",Command_HFSplit_f,0);
+            snprintf(spec,sizeof spec,"%s",M_GetNextParm());
+            for(p=spec;*p;) { left+=(*p=='t'||*p=='l'||*p=='f'||*p=='k'||*p=='K'||*p=='w'||*p=='i'); while(*p && *p!=',') p++; if(*p==',') p++; }
+        }
+    }
+    anyn++;
+    if(anyn==3 && M_CheckParm("-ps2ref-cmd") && M_IsNextParm()) { /* console commands on the third frame ('~' = space, ';' = next command), like -vidcmd on the PS2 */
+        char cmdline[160]; size_t ci; snprintf(cmdline,sizeof cmdline-1,"%s",M_GetNextParm());
+        for(ci=0;cmdline[ci];ci++) cmdline[ci]=cmdline[ci]=='~'?' ':cmdline[ci]==';'?'\n':cmdline[ci];
+        cmdline[ci++]='\n'; cmdline[ci]='\0';
+        COM_BufAddText(cmdline);
+    }
+    shot_keys(anyn);
+    if(!left) return;
+    if(gamestate==GS_LEVEL && leveltime<20) klow=true;
+    if(WipeInAction) wipen++; else if(gamestate==GS_TITLESCREEN) titlen++; else if(gamestate==GS_LEVEL) leveln++; else if(gamestate==GS_INTERMISSION) intern++;
+    for(p=spec;*p;) {
+        const char kind=*p++; INT32 n=0, hit; char cmd[64]; size_t cl=0;
+        while(*p>='0' && *p<='9') n=n*10+(*p++-'0');
+        cmd[0]='\0';
+        if(*p=='=') { for(p++;*p && *p!=',' && cl<sizeof cmd-2;p++) cmd[cl++]=*p=='~'?' ':*p; cmd[cl++]='\n'; cmd[cl]='\0'; }
+        while(*p && *p!=',') p++;
+        if(*p==',') p++;
+        hit=(kind=='w' && WipeInAction && n==wipen)
+            || (!WipeInAction && ((kind=='t' && n==titlen) || (kind=='l' && n==leveln) || (kind=='f' && n==anyn) || (kind=='i' && n==intern)))
+            || (!WipeInAction && (kind=='k' || kind=='K') && kord++==knext && gamestate==GS_LEVEL && (INT32)leveltime>=n && (klow || kind=='k'));
+        if(hit && (kind=='k' || kind=='K')) { knext++; klow=false; }
+        if(!hit) continue;
+        takescreenshot=true;
+        CONS_Printf("PS2SHOT %c%d leveltime=%d n=%d gamestate=%d\n",kind,(int)n,(int)leveltime,(int)++done,(int)gamestate);
+        if(cmd[0]) COM_BufAddText(cmd);
+        if(done>=left) quitnext=true;
+    }
+}
+#endif
 void PS2Ref_Frame(void)
 {
     UINT32 h; char name[64]; FILE *f; size_t size;
+#ifndef PS2
+    shot_frame();
+#endif
     if(frames && M_CheckParm("-ps2ref-idle")) { idle_frame(); return; }
     if(frames && M_CheckParm("-ps2ref-title") && M_IsNextParm()) { title_frame(); return; }
     if(frames && seq && seq!=lastall && demoplayback && gamestate==GS_LEVEL && M_CheckParm("-ps2ref-hashall"))

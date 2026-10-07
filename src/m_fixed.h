@@ -46,6 +46,9 @@
 #if !defined(PS2_NOOPT_ANIM) && !defined(PS2_OPT_ANIM)
 #define PS2_OPT_ANIM // PS2-99: animated texture bookkeeping and the mobj trigger pre-check, bit-identical
 #endif
+#if !defined(PS2_NOOPT_NODES) && !defined(PS2_OPT_NODES)
+#define PS2_OPT_NODES // PS2-161: R_SortVisSprites O(n log n) and the draw node scan of R_CreateDrawNodes on compact rectangles, bit-identical
+#endif
 #if !defined(PS2_NOOPT_SLOPE) && !defined(PS2_OPT_SLOPE)
 #define PS2_OPT_SLOPE // PS2-81: slope planes/spans without soft-double (single precision + 64-bit integers), <= 1-2 px per frame
 #endif
@@ -64,6 +67,9 @@
 #endif
 #if defined(PS2_NOOPT) || defined(PS2_NOOPT_SPR)
 #undef PS2_OPT_SPR
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_NODES)
+#undef PS2_OPT_NODES
 #endif
 #if defined(PS2_NOOPT) || defined(PS2_NOOPT_PTICK)
 #undef PS2_OPT_PTICK
@@ -87,6 +93,7 @@
 #undef PS2_OPT_DRAW
 #undef PS2_OPT_REND
 #undef PS2_OPT_SPR
+#undef PS2_OPT_NODES
 #undef PS2_OPT_PTICK
 #undef PS2_OPT_BSPC
 #undef PS2_OPT_ANIM
