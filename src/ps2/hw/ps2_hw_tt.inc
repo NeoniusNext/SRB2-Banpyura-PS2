@@ -24,6 +24,7 @@ static struct
 	size_t cap;
 	u32 w, h, bpp;
 	int fmt, flags, have;
+	int rpsm; // PS2-HW-71: the GS format the texture was stored in (palette rendering: the CLUT shows the screen palette, a baked CT32 image the texture palette)
 } TT;
 
 // called by hw_SetTexture before anything is done with the texture: the texels the engine hands over (the driver may take the data over)
@@ -68,13 +69,14 @@ static void tt_capture(const GLMipmap_t *m)
 static int tt_expect(u32 x, u32 y, u32 *rgb)
 {
 	const u8 *p = TT.buf + ((size_t)y * TT.w + x) * TT.bpp;
+	const u32 *op = out_pal();
 
 	switch (TT.fmt)
 	{
 		case GL_TEXFMT_P_8:
 			if ((TT.flags & TF_CHROMAKEYED) && p[0] == 255)
 				return 0;
-			*rgb = H.pal[p[0]] & 0x00FFFFFFu;
+			*rgb = op[p[0]] & 0x00FFFFFFu;
 			return 1;
 		case GL_TEXFMT_AP_88:
 			if (TT.flags & TF_CHROMAKEYED)
@@ -86,13 +88,24 @@ static int tt_expect(u32 x, u32 y, u32 *rgb)
 			{
 				return 0;
 			}
-			*rgb = H.pal[p[0]] & 0x00FFFFFFu;
+			*rgb = (TT.rpsm == PSM_CT32 ? H.pal[p[0]] : op[p[0]]) & 0x00FFFFFFu;
 			return 1;
 		default:
+		{
+			u32 c = (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16);
+
 			if (p[3] != 255)
 				return 0;
-			*rgb = (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16);
+			if (TT.rpsm == PSM_T8)
+			{
+				int k = pal_lookup(c);
+
+				if (k >= 0)
+					c = op[k] & 0x00FFFFFFu;
+			}
+			*rgb = c;
 			return 1;
+		}
 	}
 }
 
@@ -231,6 +244,7 @@ static void tt_one(const char *label, int *n_tested, int *n_failA, int *n_failB,
 		(*n_skipped)++; // the capture belongs to another texture
 		return;
 	}
+	TT.rpsm = r->psm;
 	if (r->owner)
 		TT.flags = (int)r->owner->flags; // the variant (chroma keyed or not) shares the captured texels
 	(*n_tested)++;
