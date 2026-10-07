@@ -63,6 +63,10 @@ enum
 	HWP_KB_PLAN,
 	HWP_KB_DRAW,
 	HWP_KB_END,
+	HWP_B_DB, // HWR_DrawBatch (PS2HWD_DrawFans)
+	HWP_B_TEX, // HWD.pfnSetTexture between the batches
+	HWP_KB_DB,
+	HWP_KB_TEX,
 	HWP_NUM
 };
 

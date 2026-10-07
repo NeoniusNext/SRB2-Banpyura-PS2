@@ -134,7 +134,9 @@ static int HWR_BatchCapacity(int old, int required, size_t element)
 static void HWR_DrawBatch(FSurfaceInfo *surf, int count, FBITFIELD polyFlags)
 {
 #ifdef PS2
+	HWP_SPAN_BEGIN(tdb);
 	PS2HWD_DrawFans(surf, HWR_BATCH_VERTICES, (unsigned int)count / 2, polyFlags, finalVertexIndexArray);
+	HWP_SPAN_END2(tdb, HWP_B_DB, HWP_KB_DB);
 #else
 	HWD.pfnDrawIndexedTriangles(surf, HWR_BATCH_VERTICES, count, polyFlags, finalVertexIndexArray);
 #endif
@@ -453,7 +455,11 @@ void HWR_RenderBatches(void)
 	if (currentPolyFlags & PF_NoTexture)
 		currentTexture = NULL;
     else
-	    HWD.pfnSetTexture(currentTexture);
+	{
+		HWP_SPAN_BEGIN(tst);
+		HWD.pfnSetTexture(currentTexture);
+		HWP_SPAN_END2(tst, HWP_B_TEX, HWP_KB_TEX);
+	}
 
 	while (1)// note: remember handling notexture polyflag as having texture number 0 (also in comparePolygons)
 	{
@@ -625,7 +631,11 @@ void HWR_RenderBatches(void)
 			if (changeTexture)
 			{
 				// texture should be already ready for use from calls to SetTexture during batch collection
-			    HWD.pfnSetTexture(nextTexture);
+				{
+					HWP_SPAN_BEGIN(tst);
+					HWD.pfnSetTexture(nextTexture);
+					HWP_SPAN_END2(tst, HWP_B_TEX, HWP_KB_TEX);
+				}
 				currentTexture = nextTexture;
 				changeTexture = false;
 

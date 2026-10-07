@@ -130,6 +130,7 @@ int PS2HWD_ReadFrame(unsigned int *dst);
 // Z buffer of the last completely drawn frame, normalised to 0..0xFFFFFF.
 int PS2HWD_ReadDepth(unsigned int *dst);
 // Negative controls: bit 0 = ignore Z test, bit 1 = ignore alpha test, bit 2 = ignore blending, bit 3 = never write Z.
+extern int ps2hwd_hash_on; // -hwhash: HWHASH lines (a hash of the GIF stream of every frame)
 extern int ps2hwd_dbg_flags;
 
 #endif

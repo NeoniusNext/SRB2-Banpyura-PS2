@@ -52,6 +52,8 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		(unsigned)(ps2hwp_cyc[HWP_BATCHSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_B_PLAN] / frames), (unsigned)(ps2hwp_cyc[HWP_BATCHDRAW] / frames), (unsigned)(ps2hwp_cyc[HWP_B_END] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_KB_INIT] / frames), (unsigned)(ps2hwp_cyc[HWP_KB_SORT] / frames), (unsigned)(ps2hwp_cyc[HWP_KB_PLAN] / frames), (unsigned)(ps2hwp_cyc[HWP_KB_DRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_KB_END] / frames));
+	I_OutputMsg("HWPROF22 RenderBatches loop: DrawBatch=%u SetTexture=%u | skybox view: DrawBatch=%u SetTexture=%u\n", (unsigned)(ps2hwp_cyc[HWP_B_DB] / frames), (unsigned)(ps2hwp_cyc[HWP_B_TEX] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_KB_DB] / frames), (unsigned)(ps2hwp_cyc[HWP_KB_TEX] / frames));
 	I_OutputMsg("HWPROF20 cut_and_emit by reason n/cyc: pow2=%u/%u plan=%u/%u big=%u/%u vcol=%u/%u clipped=%u/%u classes=%u/%u other=%u/%u\n", G.cw_n[0] / frames, G.cw_c[0] / frames, G.cw_n[1] / frames, G.cw_c[1] / frames,
 		G.cw_n[2] / frames, G.cw_c[2] / frames, G.cw_n[3] / frames, G.cw_c[3] / frames, G.cw_n[4] / frames, G.cw_c[4] / frames, G.cw_n[5] / frames, G.cw_c[5] / frames, G.cw_n[6] / frames, G.cw_c[6] / frames);
 	I_OutputMsg("HWPROF18 plane cache key misses: height=%u light=%u flags=%u texture=%u offsets=%u epoch=%u poly=%u\n", ps2hwp_cnt[HWC_PKM_H] / frames, ps2hwp_cnt[HWC_PKM_L] / frames, ps2hwp_cnt[HWC_PKM_F] / frames,

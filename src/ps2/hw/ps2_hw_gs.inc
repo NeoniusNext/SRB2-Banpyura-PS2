@@ -194,6 +194,16 @@ static void pk_flush(void)
 		b[H.run - 1].d[0] = (b[H.run - 1].d[0] & ~(7ull << 28)) | (DMAT_REFE << 28);
 		H.wr--;
 	}
+	if (ps2hwd_hash_on)
+	{
+		const u64 *hw = (const u64 *)b;
+		u64 h = hash_frame;
+		u32 hi;
+
+		for (hi = 0; hi < H.wr * 2; hi++)
+			h = (h ^ hw[hi]) * 0x100000001B3ull;
+		hash_frame = h;
+	}
 	SyncDCache(b, b + H.wr);
 	irq = DIntr();
 	slot = (H.q_head + H.q_n) % NBUF;
@@ -546,6 +556,11 @@ static void frame_end(void)
 	}
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_frame_end();
+	if (ps2hwd_hash_on)
+	{
+		I_OutputMsg("HWHASH f=%u h=%016llx\n", (unsigned)H.frame_no, (unsigned long long)hash_frame);
+		hash_frame = 0;
+	}
 	H.frame_no++;
 	if ((ps2hwd_dbg_flags & HWDBG_TEX) && ++TX.frames >= 105)
 		tx_report();
