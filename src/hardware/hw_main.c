@@ -5779,13 +5779,16 @@ static void HWR_SetupView(player_t *player, INT32 viewnumber, float fpov, boolea
 void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 {
 	const float fpov = FixedToFloat(R_GetPlayerFov(player));
+	HWP_SPAN_BEGIN(tk0);
 
 	HWR_SetupView(player, viewnumber, fpov, true);
+	HWP_SPAN_END(tk0, HWP_K_SET);
 
 	// check for new console commands.
 	NetUpdate();
 
 	//------------------------------------------------------------------------
+	HWP_SPAN_BEGIN(tk1);
 	HWR_ClearView();
 
 	if (drawsky)
@@ -5819,14 +5822,23 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 		HWD.pfnSetSpecialState(HWD_SET_WIREFRAME, 1);
 
 	validcount++;
+	HWP_SPAN_END(tk1, HWP_K_BG);
 
+	{
+	HWP_SPAN_BEGIN(tk2);
 	if (cv_glbatching.value)
 		HWR_StartBatching();
 
 	HWR_RenderBSPNode((INT32)numnodes-1);
+	HWP_SPAN_END(tk2, HWP_K_BSP);
+	}
 
+	{
+	HWP_SPAN_BEGIN(tk3);
 	if (cv_glbatching.value)
 		HWR_RenderBatches();
+	HWP_SPAN_END(tk3, HWP_K_BAT);
+	}
 
 	// Check for new console commands.
 	NetUpdate();
@@ -5838,8 +5850,12 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 #endif
 
 	// Draw MD2 and sprites
+	{
+	HWP_SPAN_BEGIN(tk4);
 	HWR_SortVisSprites();
 	HWR_DrawSprites();
+	HWP_SPAN_END(tk4, HWP_K_SPR);
+	}
 
 #ifdef NEWCORONAS
 	//Hurdler: they must be drawn before translucent planes, what about gl fog?
@@ -5848,7 +5864,9 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 
 	if (numplanes || numpolyplanes || numwalls) //Hurdler: render 3D water and transparent walls after everything
 	{
+		HWP_SPAN_BEGIN(tk5);
 		HWR_CreateDrawNodes();
+		HWP_SPAN_END(tk5, HWP_K_NODE);
 	}
 
 	if (HWR_IsWireframeMode())

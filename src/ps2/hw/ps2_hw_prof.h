@@ -36,6 +36,13 @@ enum
 	HWP_S_NET, // NetUpdate
 	HWP_S_CLR2, // HWR_ClearView
 	HWP_S_SETSH, // SetTransform / shader state / PS_ perf timing
+	// parts of the skybox view (HWR_RenderSkyboxView; HWPROF10)
+	HWP_K_SET, // HWR_SetupView
+	HWP_K_BG, // HWR_ClearView, HWR_DrawSkyBackground, clipper
+	HWP_K_BSP, // HWR_RenderBSPNode
+	HWP_K_BAT, // HWR_RenderBatches
+	HWP_K_SPR, // sprites
+	HWP_K_NODE, // HWR_CreateDrawNodes
 	HWP_NUM
 };
 

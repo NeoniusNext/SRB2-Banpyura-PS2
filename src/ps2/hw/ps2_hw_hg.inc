@@ -38,6 +38,8 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		G.sing_by[4] / frames, G.sing_by[5] / frames, G.sing_by[6] / frames, G.sing_by[7] / frames);
 	I_OutputMsg("HWPROF6 pal=%u frame=%u clr1=%u net=%u clr2=%u\n", (unsigned)(ps2hwp_cyc[HWP_S_PAL] / frames), (unsigned)(ps2hwp_cyc[HWP_S_FRAME] / frames), (unsigned)(ps2hwp_cyc[HWP_S_CLR1] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_S_NET] / frames), (unsigned)(ps2hwp_cyc[HWP_S_CLR2] / frames));
+	I_OutputMsg("HWPROF10 skybox view: set=%u bg=%u bsp=%u batch=%u sprites=%u nodes=%u\n", (unsigned)(ps2hwp_cyc[HWP_K_SET] / frames), (unsigned)(ps2hwp_cyc[HWP_K_BG] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_K_BSP] / frames), (unsigned)(ps2hwp_cyc[HWP_K_BAT] / frames), (unsigned)(ps2hwp_cyc[HWP_K_SPR] / frames), (unsigned)(ps2hwp_cyc[HWP_K_NODE] / frames));
 	memset(ps2hwp_cnt, 0, sizeof ps2hwp_cnt);
 	memset(&G, 0, sizeof G);
 }
