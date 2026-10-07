@@ -353,7 +353,7 @@ int main(void)
 	});
 	FAULT("vertex outside the guard band", VE_VTXRANGE, fan3(PRIM_TRIFAN, 1.0f, 0x8000 + 16 * 2030, 5000));
 	FAULT("Z above Z24", VE_VTXZ, fan3(PRIM_TRIFAN, 1.0f, 0x8000 + 16 * 60, 0x1000000u));
-	FAULT("texel coordinate beyond 4096", VE_STRANGE, fan3(PRIM_TRIFAN | PRIM_TME, 40.0f, 0x8000 + 16 * 60, 5000));
+	FAULT("primitive spans over 4096 texels", VE_STRANGE, fan3(PRIM_TRIFAN | PRIM_TME, 40.0f, 0x8000 + 16 * 60, 5000));
 	FAULT("negative Q", VE_STQ, {
 		qw_t *p = alloc(1);
 

@@ -33,6 +33,8 @@ static struct
 	int on;
 	u32 err[VE_NERR];
 	u32 maxu_seen; // largest |u| or |v| (texels) of any textured vertex
+	u32 maxspan; // largest span of u or v (texels) inside one primitive
+	float hu[2], hv[2], fu, fv; // texel coordinates of the last two vertices and of the first one since PRIM
 	u32 packets, qwords, verts, prims, images, image_qw, tflush, tex0s, ad;
 	u32 summary_frame;
 	// GIF parser, carried from buffer to buffer
@@ -80,8 +82,8 @@ static void val_summary(const char *why)
 	int i, n;
 	u32 tot = 0;
 
-	n = snprintf(buf, sizeof buf, "HWVAL SUMMARY %s f=%u: packets=%u qwords=%u verts=%u prims=%u images=%u image_qw=%u ad=%u texflush=%u tex0=%u max_texel=%u |", why, H.frame_no,
-		VAL.packets, VAL.qwords, VAL.verts, VAL.prims, VAL.images, VAL.image_qw, VAL.ad, VAL.tflush, VAL.tex0s, VAL.maxu_seen);
+	n = snprintf(buf, sizeof buf, "HWVAL SUMMARY %s f=%u: packets=%u qwords=%u verts=%u prims=%u images=%u image_qw=%u ad=%u texflush=%u tex0=%u max_texel=%u max_span=%u |", why, H.frame_no,
+		VAL.packets, VAL.qwords, VAL.verts, VAL.prims, VAL.images, VAL.image_qw, VAL.ad, VAL.tflush, VAL.tex0s, VAL.maxu_seen, VAL.maxspan);
 	for (i = 0; i < VE_NERR && n < (int)sizeof buf - 40; i++)
 		if (VAL.err[i])
 		{
@@ -372,8 +374,56 @@ static void val_vertex(u32 x, u32 y, u32 z, int kick)
 					VAL.maxu_seen = (u32)au;
 				if (av > (float)VAL.maxu_seen)
 					VAL.maxu_seen = (u32)av;
-				if (au > VAL_STRANGE_LIMIT || av > VAL_STRANGE_LIMIT)
-					val_err(VE_STRANGE, "texel coordinate (%g, %g) beyond +-%d (TW=%u TH=%u S=%g T=%g Q=%g)", u, v, 4096, tw, th, s.f, tt.f, q.f);
+				// the span of one primitive (the driver cuts at whole repeats so that it stays below UV_EXTENT); the absolute value is only counted:
+				// REPEAT of a power of two texture takes the low bits, a 14-bit wrap of U / V is the same picture
+				{
+					const u32 k = VAL.vcount;
+					float mnu = u, mxu = u, mnv = v, mxv = v, a, b, c, d;
+					int have = 0;
+
+					if (k == 1)
+					{
+						VAL.fu = u;
+						VAL.fv = v;
+					}
+					switch (VAL.ptype)
+					{
+						case PRIM_TRI: case PRIM_TRISTRIP:
+							have = (VAL.ptype == PRIM_TRI) ? (k % 3 == 0) : (k >= 3);
+							a = VAL.hu[0]; b = VAL.hv[0]; c = VAL.hu[1]; d = VAL.hv[1];
+							break;
+						case PRIM_TRIFAN:
+							have = k >= 3;
+							a = VAL.fu; b = VAL.fv; c = VAL.hu[1]; d = VAL.hv[1];
+							break;
+						default: // sprites and lines: two vertices
+							have = (k % 2 == 0);
+							a = c = VAL.hu[1];
+							b = d = VAL.hv[1];
+							break;
+					}
+					if (have)
+					{
+						if (a < mnu) mnu = a;
+						if (a > mxu) mxu = a;
+						if (c < mnu) mnu = c;
+						if (c > mxu) mxu = c;
+						if (b < mnv) mnv = b;
+						if (b > mxv) mxv = b;
+						if (d < mnv) mnv = d;
+						if (d > mxv) mxv = d;
+						if (mxu - mnu > (float)VAL.maxspan)
+							VAL.maxspan = (u32)(mxu - mnu);
+						if (mxv - mnv > (float)VAL.maxspan)
+							VAL.maxspan = (u32)(mxv - mnv);
+						if (mxu - mnu > VAL_STRANGE_LIMIT || mxv - mnv > VAL_STRANGE_LIMIT)
+							val_err(VE_STRANGE, "one primitive spans %g x %g texels (limit %d; TW=%u TH=%u at vertex %04x,%04x)", mxu - mnu, mxv - mnv, 4096, tw, th, x, y);
+					}
+					VAL.hu[0] = VAL.hu[1];
+					VAL.hv[0] = VAL.hv[1];
+					VAL.hu[1] = u;
+					VAL.hv[1] = v;
+				}
 			}
 		}
 		if (!VAL.tf_reported)
