@@ -28,7 +28,7 @@ PCSX2 = {32: run_pcsx2.BASE, 128: ('D:/PCSX2-test128/pcsx2-qt.exe' if os.name ==
 def stage(run, elf, pak, demo, cfg_extra=''):
     run.mkdir(parents=True, exist_ok=True)
     shutil.copy2(elf, run / 'SRB2.ELF')
-    for p in pak.glob('*.PAK'):
+    for p in list(pak.glob('*.PAK')) + list(pak.glob('FINEACON.DAT')):  # OPT10-X: FINEACON.DAT (tools/ps2/gen_fineacon.py) lives next to the packs
         dst = run / p.name
         if dst.exists() and dst.stat().st_size == p.stat().st_size and dst.stat().st_mtime >= p.stat().st_mtime:
             continue

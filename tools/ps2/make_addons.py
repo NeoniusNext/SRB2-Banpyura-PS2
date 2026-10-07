@@ -388,6 +388,11 @@ addHook("ThinkFrame", function()
 end)
 """
 
+def make_nsk(out):
+    """NSK.pk3: the skin add-on of ZS.pk3 without the Lua line that makes the server quit (a network add-on: served to joiners, OPT9-N / OPT10-X)."""
+    make_skin(out, name='NSK.pk3', lua=SKIN_LUA.replace('\t\tCOM_BufInsertText(server, "quit")\n', '\t\tout("nsk running")\n'))
+
+
 SKIN_SOC = """# OPT8-F add-on test: a sprite, a sound, an object
 Freeslot
 SPR_ZTSP
@@ -422,10 +427,13 @@ def wav_bytes(freq=11025, ms=300):
     return b.getvalue()
 
 
-def make_skin(out, assets='D:/Ai-Project3/SRB2-PS2-Port/srb2-assets'):
+ASSETS = os.environ.get('SRB2WADDIR', '/opt/srb2-assets')
+
+
+def make_skin(out, assets=ASSETS, name='ZS.pk3', lua=None):
     """ZS.pk3: skin "ztest" = Tails' sprites under the folder 9_ZTest, a new sprite (PNG), a sound lump (WAV) and an OGG music lump (a small one of music.pk3)."""
     from PIL import Image
-    path = out / 'ZS.pk3'
+    path = out / name
     skin_def = '\n'.join(['name = ztest', 'realname = ZTest', 'hudname = ZTEST', 'startcolor = 96', 'prefcolor = Red', 'supercolor = Red', 'ability = CA_FLY',
                           'actionspd = 100', 'normalspeed = 40', 'thrustfactor = 5', 'accelstart = 96', 'acceleration = 40', 'sfx_jump = ZTJMP', ''])
     with zipfile.ZipFile(Path(assets) / 'characters.pk3') as zc, zipfile.ZipFile(Path(assets) / 'music.pk3') as zm, zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -444,7 +452,7 @@ def make_skin(out, assets='D:/Ai-Project3/SRB2-PS2-Port/srb2-assets'):
         ogg = sorted((i for i in zm.infolist() if i.filename.split('/')[-1].startswith('O_') and i.file_size > 0), key=lambda i: i.file_size)[0]
         z.writestr('Music/O_ZTMUS', zm.read(ogg.filename))
         z.writestr('SOC/ZTSOC.soc', SKIN_SOC.replace('\n', '\r\n'))
-        z.writestr('Lua/ZTSKIN.lua', SKIN_LUA.replace('\n', '\r\n'))
+        z.writestr('Lua/ZTSKIN.lua', (lua or SKIN_LUA).replace('\n', '\r\n'))
     print('wrote', path, path.stat().st_size, 'bytes, music from', ogg.filename, ogg.file_size)
 
 
@@ -571,6 +579,59 @@ end)
 """
 
 
+HUD_LUA = r"""
+-- OPT10-X Lua HUD add-on (PS2-101): fill, strings, a scaled sprite, numbers and an on-screen counter, drawn through the game HUD hook; the same
+-- pictures in software and in the hardware renderer (tools/ps2/net_specs9 / docs/GATES/g1/opt10-X.md).
+local function out(s) print("FTLUA "..s) end
+out("hud loaded")
+local ring, calls = nil, 0
+hud.add(function(v, p, c)
+	calls = calls + 1
+	if calls == 1 then out("hud first call "..tostring(v.width()).."x"..tostring(v.height()).." "..tostring(p ~= nil)) end
+	if not ring then ring = v.cachePatch("RINGA0") end
+	local f = V_SNAPTOLEFT|V_SNAPTOBOTTOM
+	v.drawFill(4, 140, 128, 56, 35|f)
+	v.drawFill(6, 142, 124, 52, 31|f)
+	v.drawString(10, 145, "LUA HUD", f, "left")
+	v.drawString(10, 156, "rings "..(p and p.rings or 0), f|V_YELLOWMAP, "thin")
+	v.drawString(10, 166, "calls "..calls, f|V_GREENMAP, "small")
+	v.drawScaled(116*FRACUNIT, 176*FRACUNIT, FRACUNIT*3/2, ring, f)
+	v.drawNum(100, 186, calls % 1000, f)
+	v.drawString(160, 100, "centre", V_ALLOWLOWERCASE, "center")
+	if calls == 40 then out("hud calls 40") end
+end, "game")
+"""
+
+
+def make_hud(out):
+    path = out / 'ZH.pk3'
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('Lua/ZHUD.lua', HUD_LUA.replace(chr(10), chr(13) + chr(10)))
+    print('wrote', path, path.stat().st_size, 'bytes')
+
+
+POS_LUA = r"""
+-- OPT10-X demo/save test (PS2-110): prints the first player's state every 35 level tics through the Lua API; the recording run and the playback run of the
+-- same demo (same add-ons) must print the same lines (tools/ps2/demo_addon_test.py).
+local function out(s) print("FTLUA "..s) end
+out("pos loaded")
+addHook("ThinkFrame", function()
+	if gamestate ~= GS_LEVEL or leveltime == 0 or leveltime % 35 ~= 0 then return end
+	local p = players[0]
+	local mo = p and p.mo
+	if not mo then return end
+	out(string.format("pos %d %d %d %d rings %d score %d skin %s rnd %d", leveltime, mo.x, mo.y, mo.z, p.rings, p.score, mo.skin, P_RandomKey(1000)))
+end)
+"""
+
+
+def make_pos(out):
+    path = out / 'ZP.pk3'
+    with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
+        z.writestr('Lua/ZPOS.lua', POS_LUA.replace(chr(10), chr(13) + chr(10)))
+    print('wrote', path, path.stat().st_size, 'bytes')
+
+
 def make_demo(out):
     path = out / 'ZD.pk3'
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -614,10 +675,16 @@ def main():
         make_lim(out)
     if 'skin' in which:
         make_skin(out)
+    if 'nsk' in which:
+        make_nsk(out)
     if 'sum' in which:
         make_sum(out)
     if 'demo' in which:
         make_demo(out)
+    if 'hud' in which:
+        make_hud(out)
+    if 'pos' in which:
+        make_pos(out)
 
 
 if __name__ == '__main__':

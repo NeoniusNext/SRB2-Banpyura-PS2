@@ -1,8 +1,8 @@
-"""OPT9 network scenarios for tools/ps2/net_session.py (agent N, docs/GATES/g1/opt9-N.md).
+"""OPT9/OPT10 network scenarios for tools/ps2/net_session.py (agent N, docs/GATES/g1/opt9-N.md; ported to Linux by X: docs/GATES/g1/opt10-X.md).
 
-usage: python tools/ps2/net_specs9.py [--elf ELF] [--base build/opt9-n] [name ...]
+usage: python3 tools/ps2/net_specs9.py [--elf ELF] [--base build/opt10-x] [name ...]
 Writes <base>/specs/<name>.json for the scenarios below (all of them without names). Run: python tools/ps2/net_session.py <base>/specs/<name>.json
-(build/opt9-n/netrun.sh repeats a session whose emulator died at its start).
+(net_session.py --retries N repeats a session whose emulator died at its start).
 
 The menu scenarios drive the console with a pad script (-padscript, src/ps2/i_joy.c): the numbers are poll counts (displayed frames). Buttons act as
 the PS2 port maps them: start = open the menu / Enter on the title, cross = Enter, circle = Escape, d-pad = arrows. Screenshots: -vidshot fN.
@@ -12,20 +12,26 @@ import json
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import net_env  # noqa: E402  (Linux locations: emulator copies, PC engine, packs)
+
 ROOT = Path(__file__).resolve().parents[2]
 ap = argparse.ArgumentParser()
-ap.add_argument('--elf', default='build/opt9-n/full4.ELF')
-ap.add_argument('--base', default='build/opt9-n')
+ap.add_argument('--elf', default='build/out/SRB2.ELF')
+ap.add_argument('--base', default=net_env.BASE)
 ap.add_argument('names', nargs='*')
 ARGS = ap.parse_args()
 ELF, BASE = ARGS.elf, ARGS.base
 OUT = ROOT / BASE / 'specs'
 OUT.mkdir(parents=True, exist_ok=True)
 PY = Path(sys.executable).as_posix()
-PC = BASE + '/pc/srb2-s7pc.exe'  # hard links of build/opt7-s/pc (agent F runs the same exe: its latest-log.txt in that folder must not be ours)
+PC = net_env.pc_exe()  # build/pc-net: this tree with -DNETSYNC_DIAG (-netsync prints NETSYNC lines and presses ENTER on the join screens)
 PCDIR = BASE + '/pc'
-EMU1 = 'D:/PCSX2-net1/pcsx2-qt.exe'
-EMU2 = 'D:/PCSX2-net2/pcsx2-qt.exe'
+(ROOT / PCDIR).mkdir(parents=True, exist_ok=True)
+HOME1 = (ROOT / BASE / 'pc-home1').as_posix()  # -home DIR: the engine's data folder is DIR/.srb2
+HOME2 = (ROOT / BASE / 'pc-home2').as_posix()
+EMU1 = net_env.EMU1
+EMU2 = net_env.EMU2
 H = '{HOSTIP}'
 MSURL = f'http://{H}:8090/MS/0'
 SPECS = {}
@@ -59,11 +65,14 @@ def mock(name, extra=None):
                      (ROOT / BASE / f'run/{name}/mock.jsonl').as_posix()] + (extra or []), 'start': 0}
 
 
-def pcsrv(extra=None, home='../pc-home1', start=0, ms=False, warp='MAP01', **kw):
+def pcsrv(extra=None, home=HOME1, start=0, ms=False, warp='MAP01', longto=True, **kw):
     a = ['-dedicated', '-server', '-nomusic', '-nosound', '-netsync', '-home', home, '-warp', warp]
-    if ms:
-        a += ['-room', '1', '+masterserver', MSURL, '+servername', 'PC test server']
-    d = {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR, 'logfile': 'latest-log.txt', 'args': a + (extra or []), 'start': start}
+    if longto:  # see CFG_SYNC: a slow PS2 client must not be dropped while its level loads (the timeout scenarios pass longto=False)
+        a += ['+nettimeout', '2100', '+jointimeout', '2100']
+    d = {'id': 'srv', 'kind': 'pc', 'exe': PC, 'cwd': PCDIR, 'args': a + (extra or []), 'start': start}
+    if ms:  # registration on the MOCK master server: the URL, the room and the name go into config.cfg (net_session.py), read before the server starts
+        d['masterserver'] = MSURL
+        d['cfg'] = 'masterserver_room_id "1"\nservername "PC test server"\n'
     d.update(kw)
     return d
 
@@ -76,7 +85,7 @@ def ps2(nid, emu, args, files=None, cfg='', **kw):
 
 def write(name, spec):
     spec.setdefault('out', BASE + '/run')
-    spec.setdefault('pak', 'build/opt6-s/pak')
+    spec.setdefault('pak', net_env.PAK)
     spec['name'] = name
     SPECS[name] = spec
 
@@ -93,13 +102,21 @@ write('menu-browse', {
                   cfg=f'masterserver "{MSURL}"\n', start=10, may_exit=True)],
     'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
 
-# 2. the REAL master server, read only (HTTP GET: versions, rooms, servers): DNS through the emulator's network, the Room menu of the server browser
-# (nothing is chosen there, so no listed server is contacted) and "listserv" (the raw list in the console). Nothing is registered.
+# 2. the REAL master server, READ ONLY (HTTP GET: versions, rooms, servers). The container reaches ds.ms.srb2.org only over HTTPS through its egress proxy and the
+# PS2 speaks plain HTTP, so the PS2 asks tools/ps2/ms_relay.py (own port 8092) which forwards nothing but GET of rooms/servers/versions to the real server and
+# refuses everything else (no registration can reach it). The Room menu of the server browser is opened (nothing is chosen there, so no listed server is
+# contacted) and "listserv" prints the raw list in the console. Nothing is registered; no server of the real list is contacted.
+def relay(name):
+    return {'id': 'relay', 'kind': 'pc', 'exe': PY, 'cwd': BASE,
+            'args': ['-u', (ROOT / 'tools/ps2/ms_relay.py').as_posix(), '--port', '8092', '--bind', '0.0.0.0', '--log', (ROOT / BASE / f'run/{name}/relay.jsonl').as_posix()], 'start': 0}
+
+
 write('real-ms-read', {
-    'timeout': 400,
-    'nodes': [ps2('cli', EMU1, ['-skipintro', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt', '-vidshot', 'f800,f1000'],
+    'timeout': 500,
+    'nodes': [relay('real-ms-read'),
+              ps2('cli', EMU1, ['-skipintro', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt', '-vidshot', 'f800,f1000'],
                   files={'pad.txt': pad((250, 'start'), (330, 'down'), (400, 'cross'), (540, 'cross')), 'cmd.txt': '900:listserv'},
-                  cfg='masterserver_debug "On"\n', may_exit=True)],
+                  cfg=f'masterserver "http://{H}:8092/MS/0"\nmasterserver_debug "On"\n', may_exit=True, start=2)],
     'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
 
 # 3. add-ons from a PC server: the client has none, the server loads -file ... (the file list reaches the joiner with the server info); the join
@@ -187,32 +204,40 @@ write('osk-shot', osk_spec(True))
 write('osk-connect', osk_spec(False))
 
 # 5. life of a connection: leave and join again, a server that disappears, a client that disappears.
+# The pad presses Cross only while a join screen is up (server info, file list): a Cross on the title screen after "exitgame" opens the main menu, and the
+# next one starts "1 Player" (m_menu.c -> G_DeferedInitNew -> SV_StartSinglePlayerServer) UNDER the connection that "connect" has just made: the game then
+# stops being a netgame while node 1 is still "ingame" and the server loop times it out -> I_Error "Tried to transmit to another node" (found by OPT10-X
+# with the PS2 net diagnostics; unreachable for a person: the main menu cannot be reached while a netgame runs). Success = the player left (exitgame) and
+# came back ("rejoined the game" on the server) and played on for `grace` seconds.
 write('reconnect', {
     'timeout': 1200,
-    'nodes': [pcsrv(start=0),
+    'nodes': [pcsrv(start=0, longto=False),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'],
-                  files={'pad.txt': pad(*crosses(200, 5000)), 'cmd.txt': f'1500:exitgame|1760:connect {H}'}, start=8)],
-    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=3000'}, {'node': 'srv', 'text': 'NETSYNC gametic=3000'}], 'grace': 3})
+                  files={'pad.txt': pad(*crosses(200, 1100), *crosses(1780, 4400)), 'cmd.txt': f'1500:exitgame|1760:connect {H}'}, start=8)],
+    'until': [{'node': 'srv', 'text': 'rejoined the game'}], 'grace': 100})
 
 write('server-kill', {
     'timeout': 900,
-    'nodes': [dict(pcsrv(start=0), stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0}),
+    'nodes': [dict(pcsrv(start=0, longto=False), stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0}),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
-                  files={'pad.txt': pad(*crosses(200, 5000))}, start=8)],
+                  files={'pad.txt': pad(*crosses(200, 1100))}, start=8)],
     'until': [{'node': 'cli', 'text': 'PS2 net: server timeout'}], 'grace': 3})
 
 write('client-kill', {
     'timeout': 900,
     'nodes': [ps2('srv', EMU1, ['-server', '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'], map='MAP01',
                   files={'pad.txt': walk(1, 500, 3500), 'cmd.txt': punches(5030, 120, 3600)}),
-              dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt',
-                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'],
+              dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
+                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2],
                    start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6}, stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0})],
-    'until': [{'node': 'srv', 'text': 'has left the game'}], 'grace': 3})
+    'until': [{'node': 'srv', 'text': 'left the game (Connection timeout)'}], 'grace': 3})
 
 # 6. soaks: every pairing for N game tics, both sides walking and jumping (pad scripts / the PC player stands still), the state hash of both
 # sides compared with tools/ps2/netsync_compare.py afterwards. extra = console commands/args of the server (gametype, map...).
-CFG_SYNC = 'resynchattempts "0"\nblamecfail "On"\n'  # a desync is a failure, not something to repair quietly
+# OPT10-X: nettimeout/jointimeout 2100 tics (the cvar maximum) (the default is 350 = 10 s): in the Linux container six agents share four cores and a PS2 client that loads the
+# level after the join can stay silent for longer than 10 s of wall time, then the server drops it ("Connection timeout") - not what these runs measure.
+# The timeout scenarios (server-kill, client-kill, reconnect) keep the defaults.
+CFG_SYNC = 'resynchattempts "0"\nblamecfail "On"\nnettimeout "2100"\njointimeout "2100"\n'  # a desync is a failure, not something to repair quietly
 
 
 def pair(name, srv, cli, tics, pollsrv=None, pollcli=None, srv_args=None, srv_cmds='', timeout=2400, cli_args=None, cli_extra_cfg=''):
@@ -238,14 +263,14 @@ def pair(name, srv, cli, tics, pollsrv=None, pollcli=None, srv_args=None, srv_cm
                          files={'pad.txt': pad(*crosses(150, 600, 60)) + ',' + walk(1, 700, pollcli or n, seed=2)}, cfg=CFG_SYNC + cli_extra_cfg,
                          **({'start_when': {'node': 'srv', 'text': 'PS2 net: address', 'delay': 2}} if srv == 'ps2' else {'start': 8})))
     else:
-        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt',
-                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'] + (cli_args or []),
+        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
+                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2] + (cli_args or []),
                           start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6}))
-    write(name, {'timeout': timeout, 'nodes': nodes,
-                 'until': [{'node': 'srv', 'text': f'NETSYNC gametic={tics}'}, {'node': 'cli', 'text': f'NETSYNC gametic={tics}'}], 'grace': 3})
+    write(name, {'timeout': timeout, 'nodes': nodes, 'abort_on': [{'node': 'srv', 'text': 'left the game (Connection timeout)'}],
+                 'until': [{'node': 'srv', 'text': 'NETSYNC gametic=', 'min': tics}, {'node': 'cli', 'text': 'NETSYNC gametic=', 'min': tics}], 'grace': 3})
 
 
-SOAK = 5250
+SOAK = 6545  # a multiple of 35: NETSYNC lines are printed at gametic % TICRATE == 0
 pair('soak-ps2srv-ps2cli', 'ps2', 'ps2', SOAK)
 pair('soak-pcsrv-ps2cli', 'pc', 'ps2', SOAK)
 pair('soak-ps2srv-pccli', 'ps2', 'pc', SOAK)
@@ -264,14 +289,14 @@ for cname, ckind in (('pccli', 'pc'), ('ps2cli', 'ps2')):
               files={'pad.txt': walk(1, 500, 6000), 'cmd.txt': punches(5030, 120, 3000)}, cfg=CFG_SYNC,
               copy={'NSK.pk3': (BASE + '/addons/NSK.pk3'), 'ZT.pk3': (BASE + '/addons/ZT.pk3')})
     if ckind == 'pc':
-        cli = dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt', wipe=[BASE + '/pc-home2/srb2/DOWNLOAD'],
-                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'],
+        cli = dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, wipe=[BASE + '/pc-home2/.srb2/DOWNLOAD'],
+                   args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2],
                    start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6})
     else:
         cli = ps2('cli', EMU2, ['-skipintro', '-connect', H, '-clientport', '5030', '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
                   files={'pad.txt': pad(*crosses(150, 3000, 60))}, cfg=CFG_SYNC, start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 2})
     write(f'addons-ps2srv-{cname}', {'timeout': 1500, 'nodes': [srv, cli],
-                                    'until': [{'node': 'srv', 'text': 'NETSYNC gametic=2100'}, {'node': 'cli', 'text': 'NETSYNC gametic=2100'}], 'grace': 3})
+                                    'until': [{'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 2100}, {'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 2100}], 'grace': 3})
 
 # 9. a PS2 host started from the menu (Multiplayer > Internet/LAN > Room > Start) registers on the mock master server; a PC client joins it.
 HOSTPAD = [(250, 'start'), (330, 'down'), (400, 'cross'),                       # title > main menu > Multiplayer
@@ -286,8 +311,8 @@ def host_spec(shot):
     nodes = [mock('ps2host-menu' + ('-shot' if shot else '')),
              ps2('srv', EMU1, args, files={'pad.txt': pad(*HOSTPAD), 'cmd.txt': punches(5030, 1300, 4300)}, cfg=f'masterserver "{MSURL}"\n', may_exit=shot, start=2)]
     if not shot:
-        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR, logfile='latest-log.txt',
-                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', '../pc-home2'],
+        nodes.append(dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
+                          args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2],
                           start_when={'node': 'srv', 'text': 'Master server registration successful', 'delay': 8}))
     return {'timeout': 900, 'nodes': nodes,
             'until': [{'node': 'srv', 'text': 'VIDSHOT COMPLETE'}] if shot else [{'node': 'srv', 'text': 'NETSYNC gametic=1400'}, {'node': 'cli', 'text': 'NETSYNC gametic=1400'}],
@@ -334,6 +359,16 @@ def hw_net(name, srv, cli_renderer='Hardware', mode='coop', mmap='MAP01'):
 hw_net('hw-net-coop', 'pc')
 hw_net('sw-net-coop', 'pc', 'Software')
 hw_net('hw-net-match', 'pc', mode='match', mmap='MAPM0')
+
+# 13. split screen and the network together: the original engine REFUSES it (SplitScreen_OnChange: "Splitscreen not supported in netplay, sorry!" unless cv_debug), so
+# there is nothing to play with two local players over the network. The scenario checks that the refused command ("splitscreen 1" given on a joined client at
+# displayed frame 800) leaves the connection and the simulation alone: both ends keep the same state and the server never sees a second player.
+write('split-net', {
+    'timeout': 900,
+    'nodes': [pcsrv(start=0),
+              ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] , cfg=CFG_SYNC,
+                  files={'pad.txt': pad(*crosses(150, 700, 60)) + ',' + walk(1, 900, 9000, seed=3) + ',' + walk(2, 900, 9000, seed=4), 'cmd.txt': '800:splitscreen 1'}, start=8)],
+    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 2800}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 2800}], 'grace': 3})
 
 if __name__ == '__main__':
     for n, s in SPECS.items():

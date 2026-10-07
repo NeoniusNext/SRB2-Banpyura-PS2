@@ -1,10 +1,10 @@
 """Load the same add-ons in the PC build of this source tree and in the PS2 port (PCSX2) and compare what the game looks like afterwards (OPT9-F).
 
 usage: addon_compare.py --name NAME --files a.pk3,b.wad,... [--elf ELF] [--warp 1] [--timeout 400] [--ps2-args "..."] [--pak ...]
-The add-on tools/ps2/make_addons.py `sum` makes (ZSUM.pk3, build/opt9-f/addons) is appended as the LAST file: it prints FTLUA lines (skins, object types, states,
+The add-on tools/ps2/make_addons.py `sum` makes (ZSUM.pk3, build/opt10-x/addons) is appended as the LAST file: it prints FTLUA lines (skins, object types, states,
 colours, sounds, level) through the Lua API, the same on both. Compared: those lines, and the WARNING/ERROR/Lua error lines the add-ons cause (what the
 base game prints alone is subtracted; paths are cut to the file name).
-Output: build/opt9-f/cmp/NAME.txt; exit code 0 when everything agrees.
+Output: build/opt10-x/cmp/NAME.txt; exit code 0 when everything agrees.
 """
 import argparse
 import re
@@ -14,7 +14,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PY = sys.executable
-SUM = ROOT / 'build/opt9-f/addons/ZSUM.pk3'
+SUM = ROOT / 'build/opt10-x/addons/ZSUM.pk3'
+PAK = str(ROOT / 'build/pakx')  # links of the cooked packs + FINEACON.DAT (python3 tools/ps2/net_env.py)
 
 
 def norm(line):
@@ -34,8 +35,8 @@ def alerts(text):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--name', required=True)
-    ap.add_argument('--files', required=True)
-    ap.add_argument('--elf', default=str(ROOT / 'build/opt9-f/out-full/SRB2.ELF'))
+    ap.add_argument('--files', required=True, help='comma separated; empty = only ZSUM (the baseline of the base game: name it sum-base)')
+    ap.add_argument('--elf', default=str(ROOT / 'build/out/SRB2.ELF'))
     ap.add_argument('--warp', default='1')
     ap.add_argument('--timeout', type=float, default=400)
     ap.add_argument('--ps2-args', default='')
@@ -46,24 +47,25 @@ def main():
     files = [str(Path(f) if Path(f).is_absolute() else ROOT / f) for f in a.files.split(',') if f]
     names = [Path(f).name for f in files] + ['ZSUM.pk3']
     allfiles = files + [str(SUM)]
-    out = ROOT / 'build/opt9-f/cmp'
+    out = ROOT / 'build/opt10-x/cmp'
     out.mkdir(parents=True, exist_ok=True)
-    pcdir = ROOT / 'build/opt9-f/pc' / ('x-' + a.name)
+    pcdir = ROOT / 'build/opt10-x/pc' / ('x-' + a.name)
     if not a.no_pc:
         subprocess.run([PY, str(ROOT / 'tools/ps2/pc_run.py'), '--name', 'x-' + a.name, '--files', ','.join(allfiles), '--warp', a.warp, '--timeout', '240', '--until', a.until]
                        + (['--'] + a.pc_args.split() if a.pc_args else []), check=False)
     ps2args = ['-skipintro', '-warp', a.warp] + sum([['-file', n] for n in names], []) + ['-zquit', '200'] + a.ps2_args.split()
-    cmd = [PY, str(ROOT / 'tools/ps2/ftest_run.py'), '--name', 'x-' + a.name, '--out', str(ROOT / 'build/opt9-f/run'), '--elf', a.elf, '--files', ','.join(allfiles),
+    cmd = [PY, str(ROOT / 'tools/ps2/ftest_run.py'), '--name', 'x-' + a.name, '--out', str(ROOT / 'build/opt10-x/run-ft'), '--pak', PAK, '--elf', a.elf, '--files', ','.join(allfiles),
            '--until', a.until, '--timeout', str(a.timeout), '--'] + ps2args
     pr = subprocess.run(cmd, check=False, capture_output=True, text=True)
     (out / (a.name + '.ps2.out')).write_text(pr.stdout + pr.stderr, encoding='utf-8')
-    ps2log = ROOT / 'build/opt9-f/run' / ('x-' + a.name) / 'boot.txt'
-    basepc = ROOT / 'build/opt9-f/pc/sum-base7/pc.out'
-    baseps2 = ROOT / 'build/opt9-f/run/sum-base/boot.txt'
+    ps2log = ROOT / 'build/opt10-x/run-ft' / ('x-' + a.name) / 'boot.txt'
+    basepc = ROOT / 'build/opt10-x/pc/x-sum-base/pc.out'
+    baseps2 = ROOT / 'build/opt10-x/run-ft/x-sum-base/boot.txt'
     rep = []
     ps2t = ps2log.read_text(errors='replace') if ps2log.exists() else ''
     pct = (pcdir / 'pc.out').read_text(errors='replace') if (pcdir / 'pc.out').exists() else ''
-    ft = lambda t: [l.strip() for l in t.splitlines() if l.startswith('FTLUA ')]
+    # a 64-bit PC build prints a negative 32-bit hash as ffffffffXXXXXXXX (sign-extended %x of a Lua integer); the PS2 and a 32-bit PC print XXXXXXXX
+    ft = lambda t: [re.sub(r'\bffffffff([0-9a-f]{8})\b', r'\1', l.strip()) for l in t.splitlines() if l.startswith('FTLUA ')]
     p2, pc = ft(ps2t), ft(pct)
     bad = 0
     for n in range(max(len(p2), len(pc))):
