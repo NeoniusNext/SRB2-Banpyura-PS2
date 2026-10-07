@@ -31,6 +31,13 @@
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
+unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
+static inline unsigned int ps2hwt_now(void)
+{
+	unsigned int v;
+	__asm__ volatile("mfc0 %0,$9" : "=r"(v));
+	return v;
+}
 #endif
 
 INT32 patchformat = GL_TEXFMT_AP_88; // use alpha for holes
@@ -309,6 +316,68 @@ static void HWR_DrawPatchInCache(GLMipmap_t *mipmap,
 
 	// NOTE: should this actually be pblockwidth*bpp?
 	blockmodulo = pblockwidth*bpp;
+
+#ifdef PS2_PROFILE
+	// PS2-HW-38: as the composition of map textures (PS2-HW-36): the block is row-major and the posts are columns, written column by column every
+	// texel lands in another cache line of the 8 KiB data cache (about 25 cycles per texel: 0.4 M cycles for a 128x128 sprite). The same bytes
+	// (alpha 0xFF for every texel of a post, the transparent rest of the block stays as MakeBlock filled it) are written in bands of 64 rows.
+	if (!ps2_slow_composite && (bpp == 1 || bpp == 2) && !(mipmap->flags & TF_CHROMAKEYED))
+	{
+		const UINT8 *cm = mipmap->colormap ? mipmap->colormap->data : NULL;
+		INT32 y0, j;
+
+		for (y0 = 0; y0 < pblockheight; y0 += 64)
+		{
+			const INT32 y1 = y0 + 64 > pblockheight ? pblockheight : y0 + 64;
+
+			for (j = 0; j < pwidth; j++)
+			{
+				const column_t *pc = &realpatch->columns[j];
+				UINT8 *dcol = block + (size_t)j * bpp;
+				unsigned i;
+
+				for (i = 0; i < pc->num_posts; i++)
+				{
+					const post_t *post = &pc->posts[i];
+					INT32 position = (INT32)post->topdelta, end = position + (INT32)post->length, ys, y;
+					const UINT8 *src;
+					UINT8 *d;
+
+					if (position < 0)
+						position = 0; // the original starts the source at -position: handled by the offset below
+					ys = position > y0 ? position : y0;
+					if (end > pblockheight)
+						end = pblockheight;
+					if (end > y1)
+						end = y1;
+					if (ys >= end)
+						continue;
+					src = pc->pixels + post->data_offset + (ys - (INT32)post->topdelta);
+					d = dcol + (size_t)ys * (size_t)blockmodulo;
+					if (bpp == 2)
+					{
+						for (y = ys; y < end; y++, d += blockmodulo)
+						{
+							const UINT8 t = *src++;
+
+							*(UINT16 *)(void *)d = (UINT16)(0xFF00u | (cm ? cm[t] : t));
+						}
+					}
+					else
+					{
+						for (y = ys; y < end; y++, d += blockmodulo)
+						{
+							const UINT8 t = *src++;
+
+							*d = cm ? cm[t] : t;
+						}
+					}
+				}
+			}
+		}
+		return;
+	}
+#endif
 
 	// Draw each column to the block cache
 	for (; ncols--; block += bpp, xfrac += xfracstep)
@@ -609,12 +678,44 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 
 	if (makebitmap)
 	{
+#ifdef PS2_PROFILE
+		unsigned int t0 = ps2hwt_now();
+#endif
 		MakeBlock(grMipmap);
 
 		HWR_DrawPatchInCache(grMipmap,
 			grMipmap->width, grMipmap->height,
 			patch->width, patch->height,
 			patch);
+#ifdef PS2_PROFILE
+		ps2hwt_mkpatch_n++;
+		ps2hwt_mkpatch_cyc += ps2hwt_now() - t0;
+		if ((ps2hwd_dbg_flags & 0x1000000) /* HWDBG_COMPOSE */ && !ps2_slow_composite && format2bpp(grMipmap->format) <= 2)
+		{
+			// the same patch by the original column loops: the bytes must be the same
+			static unsigned checked, bad;
+			GLMipmap_t chk = *grMipmap;
+			size_t bytes = (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format);
+
+			chk.data = NULL;
+			ps2_slow_composite = true;
+			MakeBlock(&chk);
+			HWR_DrawPatchInCache(&chk, chk.width, chk.height, patch->width, patch->height, patch);
+			ps2_slow_composite = false;
+			checked++;
+			if (!chk.data || memcmp(chk.data, grMipmap->data, bytes))
+			{
+				bad++;
+				CONS_Printf("HWC patch composite MISMATCH %dx%d (patch %dx%d) colormap %d (%u of %u checked differ)\n", (int)grMipmap->width, (int)grMipmap->height, (int)patch->width, (int)patch->height,
+					grMipmap->colormap != NULL, bad, checked);
+			}
+			else if (!(checked & 31))
+			{
+				CONS_Printf("HWC patch composite check: %u patches identical, %u differ\n", checked - bad, bad);
+			}
+			Z_Free(chk.data);
+		}
+#endif
 	}
 }
 

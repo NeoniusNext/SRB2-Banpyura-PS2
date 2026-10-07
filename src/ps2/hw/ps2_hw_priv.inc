@@ -348,7 +348,7 @@ typedef struct
 	u32 upgrades; // images made again at a finer level than they were stored at
 	u32 downgrades; // images made again at a coarser level than they were stored at (PS2-HW-37)
 	u32 invisible; // textures not uploaded: no polygon of the frame can see them
-	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
+	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
 } txstats_t;
 static txstats_t TX;
 

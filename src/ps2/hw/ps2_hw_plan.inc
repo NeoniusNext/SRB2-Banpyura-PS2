@@ -50,8 +50,11 @@ static void plan_sync(void)
 	}
 }
 
+static u32 plan_t0;
+
 void PS2HWD_PlanBegin(void)
 {
+	plan_t0 = cyc();
 	plan_active = H.up && !(ps2hwd_dbg_flags & HWDBG_NOPLAN);
 	if (plan_active)
 	{
@@ -363,6 +366,7 @@ void PS2HWD_PlanEnd(void)
 	if (!plan_active)
 		return;
 	plan_active = 0;
+	TX.plan_cyc += cyc() - plan_t0; // the measuring of the polygons (PlanPolygon) is the time between Begin and End
 	budget = H.pool_blocks / PLAN_BUDGET_DEN * PLAN_BUDGET_NUM;
 	if (budget > H.plan_reserve)
 		budget -= H.plan_reserve;
@@ -531,6 +535,8 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 	planinfo_t *pi;
 	int lv, lm;
 
+	u32 t0 = cyc();
+
 	if (!m)
 		return;
 	k = m->ps2_twin ? m->ps2_twin : m;
@@ -574,4 +580,5 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 		imm_level = 0;
 	settex_now(m);
 	imm_level = -1;
+	TX.imm_cyc += cyc() - t0;
 }
