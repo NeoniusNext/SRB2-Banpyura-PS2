@@ -2707,6 +2707,59 @@ void *W_CachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
 	return (void *)patch;
 }
 
+#ifdef PS2
+//
+// PS2-140 (OPT10-S): W_CachePatchNumPwad for a caller that can do without the picture (the composite of a hardware texture): NULL, with nothing left
+// allocated, when the zone has no room for the lump or for the patch. A patch that is cached already is returned as before.
+//
+void *W_TryCachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
+{
+	lumpcache_t *lumpcache;
+	size_t len;
+	void *lumpdata;
+	patch_t *patch = NULL;
+
+	if (!TestValidLump(wad, lump))
+		return NULL;
+
+	lumpcache = wadfiles[wad]->patchcache;
+	if (lumpcache[lump])
+		return W_CachePatchNumPwad(wad, lump, tag);
+
+	len = W_LumpLengthPwad(wad, lump);
+	lumpdata = Z_TryMallocAlign(len ? len : 1, PU_RENDERWORK, NULL, sizeof (void *));
+	if (!lumpdata)
+		return NULL;
+	W_ReadLumpHeaderPwad(wad, lump, lumpdata, 0, 0);
+
+#ifdef PS2_PROFILE
+	if (Picture_IsLumpCooked((UINT8 *)lumpdata, len))
+		patch = Picture_TryCookedPatch((UINT8 *)lumpdata, len);
+	else
+#endif
+	if (Picture_IsLumpPNG((UINT8 *)lumpdata, len))
+	{
+		// a real PNG: the converter of the engine has no way out
+		Z_Free(lumpdata);
+		return W_CachePatchNumPwad(wad, lump, tag);
+	}
+	else
+		patch = Patch_TryCreateFromDoomPatch((softwarepatch_t *)lumpdata);
+	Z_Free(lumpdata);
+
+	if (!patch)
+		return NULL;
+	Z_ChangeTag(patch, tag);
+	Z_SetUser(patch, &lumpcache[lump]);
+
+#ifdef HWRENDER
+	if (rendermode == render_opengl)
+		Patch_CreateGL(patch);
+#endif
+	return (void *)patch;
+}
+#endif
+
 void *W_CachePatchNum(lumpnum_t lumpnum, INT32 tag)
 {
 	return W_CachePatchNumPwad(WADFILENUM(lumpnum),LUMPNUM(lumpnum),tag);

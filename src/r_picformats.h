@@ -159,6 +159,9 @@ void *Picture_CookedConvert(
 	size_t insize, size_t *outsize,
 	pictureflags_t flags);
 boolean Picture_CookedDimensions(UINT8 *cooked, INT32 *width, INT32 *height, INT16 *topoffset, INT16 *leftoffset, size_t size);
+#ifdef PS2
+void *Picture_TryCookedPatch(const UINT8 *cooked, size_t insize); // PS2-140: a patch_t, NULL when not cooked or no room
+#endif
 #endif
 #endif
 

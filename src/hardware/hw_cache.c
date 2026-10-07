@@ -574,6 +574,56 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
 	return block;
 }
 
+#ifdef PS2
+// PS2-140 (OPT10-S): the picture of one entry of a composite texture, built as HWR_GenerateTexture below builds it but for lumps of this size
+// and more, and NULL when the zone has no room for the lump or the patch (the texture is then made without that patch: a patch of 585 KB..1 MB
+// ended the run on the Match maps M3 and MG when the rest of the arena was taken). The raw lump is a scratch copy, freed before the patch is
+// used, and only its first bytes are read to find the format; *dispose: the caller frees the patch after drawing it (else it stays cached).
+#define HWR_TRYPATCH_MIN (64u<<10)
+
+static patch_t *HWR_TryTexturePatch(const texture_t *texture, UINT16 wadnum, lumpnum_t lumpnum, boolean *dispose)
+{
+	const size_t lumplength = W_LumpLengthPwad(wadnum, lumpnum);
+	UINT8 head[PNG_HEADER_SIZE + 8];
+	UINT8 *pdata;
+	patch_t *realpatch = NULL;
+
+	*dispose = true;
+	memset(head, 0, sizeof head);
+	W_ReadLumpHeaderPwad(wadnum, lumpnum, head, lumplength < sizeof head ? lumplength : sizeof head, 0);
+
+	if (texture->type != TEXTURETYPE_FLAT && !Picture_IsLumpPNG(head, lumplength))
+	{
+		// a Doom patch: used from the patch cache when it is there, else loaded and not kept (see PS2-146 below)
+		realpatch = W_GetCachedPatchNumPwad(wadnum, lumpnum);
+		if (realpatch)
+		{
+			*dispose = false;
+			return realpatch;
+		}
+		return W_TryCachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
+	}
+
+	pdata = Z_TryMallocAlign(lumplength ? lumplength : 1, PU_RENDERWORK, NULL, sizeof (void *));
+	if (!pdata)
+		return NULL;
+	W_ReadLumpHeaderPwad(wadnum, lumpnum, pdata, 0, 0);
+	if (Picture_IsLumpPNG(pdata, lumplength))
+	{
+#ifdef PS2_PROFILE
+		if (Picture_IsLumpCooked(pdata, lumplength))
+			realpatch = (patch_t *)Picture_TryCookedPatch(pdata, lumplength);
+		else
+#endif
+			realpatch = (patch_t *)Picture_PNGConvert(pdata, PICFMT_PATCH, NULL, NULL, NULL, NULL, lumplength, NULL, 0);
+	}
+	else
+		realpatch = (patch_t *)Picture_Convert(PICFMT_FLAT, pdata, PICFMT_PATCH, 0, NULL, texture->width, texture->height, 0, 0, 0);
+	Z_Free(pdata);
+	return realpatch;
+}
+#endif
+
 //
 // Create a composite texture from patches, adapt the texture size to a power of 2
 // height and width for the hardware texture cache.
@@ -584,6 +634,9 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 	texture_t *texture;
 	texpatch_t *patch;
 	INT32 blockwidth, blockheight, blocksize;
+#ifdef PS2
+	INT32 missing; // PS2-140: patches that could not be read for lack of memory
+#endif
 
 	INT32 i;
 
@@ -593,12 +646,32 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 	blockheight = texture->height;
 	blocksize = blockwidth * blockheight;
 	block = MakeBlock(mipmap);
+#ifdef PS2
+	missing = 0;
+#endif
 
 	// Composite the columns together.
 	for (i = 0, patch = texture->patches; i < texture->patchcount; i++, patch++)
 	{
 		UINT16 wadnum = patch->wad;
 		lumpnum_t lumpnum = patch->lump;
+#ifdef PS2
+		if (W_LumpLengthPwad(wadnum, lumpnum) >= HWR_TRYPATCH_MIN)
+		{
+			boolean dispose;
+			patch_t *tp = HWR_TryTexturePatch(texture, wadnum, lumpnum, &dispose);
+
+			if (tp)
+			{
+				HWR_DrawTexturePatchInCache(mipmap, blockwidth, blockheight, texture, patch, tp);
+				if (dispose)
+					Patch_Free(tp);
+			}
+			else
+				missing++;
+			continue;
+		}
+#endif
 		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
 		patch_t *realpatch = NULL;
 		boolean free_patch = true;
@@ -642,6 +715,19 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 			Patch_Free(realpatch);
 #endif
 	}
+#ifdef PS2
+	if (missing)
+	{
+		// the texture is made of what could be read; with nothing read it is a flat grey (the palette ramp: 0 white .. 31 black), never the
+		// chroma key (a wall that is not there) and never a stale block. The zone may drop the block; the next request tries again.
+		static unsigned ps2_missing_reports;
+
+		if (missing == texture->patchcount && format2bpp(mipmap->format) == 1)
+			memset(block, 15, (size_t)blocksize);
+		if (ps2_missing_reports++ < 16)
+			CONS_Alert(CONS_WARNING, "no room for %d of %d patch(es) of texture %.8s (%dx%d)\n", (int)missing, (int)texture->patchcount, texture->name, (int)texture->width, (int)texture->height);
+	}
+#endif
 	//Hurdler: not efficient at all but I don't remember exactly how HWR_DrawPatchInCache works :(
 	if (format2bpp(mipmap->format)==4)
 	{

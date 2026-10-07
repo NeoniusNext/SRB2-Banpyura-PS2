@@ -1584,6 +1584,7 @@ void PS2Mem_Frame(void)
 	static unsigned chain_title_frames;
 	static unsigned chain_base, chain_count, chain_issued, chain_cycles;
 	static tic_t chain_prev_time;
+	static unsigned zheap_every;
 
 	if (!init)
 	{
@@ -1605,12 +1606,16 @@ void PS2Mem_Frame(void)
 			PS2Mem_NullGuard(1);
 			nullguard_on = 1;
 		}
+		if (M_CheckParm("-zheap"))
+			zheap_every = M_IsNextParm() ? (unsigned)atoi(M_GetNextParm()) : 1; // PS2-147: heap check (structure, red zones, every owner pointer) every N frames
 		if (M_CheckParm("-zsingle"))
 			singletics = true; // PS2-141: one game tic per displayed frame, no waiting for the clock (soak runs at the speed of the emulator, scripted pads)
 	}
 	allframes++;
 	if (nullguard_on)
 		PS2Mem_NullGuard(0);
+	if (zheap_every && !(allframes % zheap_every))
+		Z_CheckHeap(-1000 - (INT32)allframes); // I_Error with the owner (ZDEBUG) of the first block whose owner pointer does not point at it; the number is -1000 - frame
 	PS2Mem_NoteBrk();
 	PS2Net_Frame(); // PS2-132: -netcmd
 	if (gamestate == GS_LEVEL)

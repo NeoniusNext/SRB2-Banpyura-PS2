@@ -1584,6 +1584,17 @@ boolean Picture_CookedDimensions(UINT8 *cooked, INT32 *width, INT32 *height, INT
 		*topoffset = SHORT(patch->topoffset);
 	return true;
 }
+
+#ifdef PS2
+/** PS2-140 (OPT10-S): Picture_CookedConvert(PICFMT_PATCH, no flags) for a caller that can do without the picture:
+  * NULL when the lump is not a cooked picture or the zone has no room (nothing is left allocated). */
+void *Picture_TryCookedPatch(const UINT8 *cooked, size_t insize)
+{
+	if (cooked == NULL || !Picture_IsLumpCooked(cooked, insize))
+		return NULL;
+	return Patch_TryCreateFromDoomPatch((softwarepatch_t *)(cooked + COOKEDPIC_MARKER_SIZE));
+}
+#endif
 #endif
 //
 // R_ParseSpriteInfoFrame
