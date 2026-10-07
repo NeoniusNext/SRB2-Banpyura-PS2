@@ -520,7 +520,7 @@ static void test_bands(void)
 		}
 		for (pass = 0; pass < 2; pass++)
 		{
-			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDCUT : 0;
+			ps2hwd_dbg_flags = pass == 0 ? 0 : HWDBG_BANDSWEEP;
 			if (pass == 1 && neg == 3)
 				ps2hwd_dbg_flags |= 0; /* (negative control 3 mutates the expected class below) */
 			cap_reset();

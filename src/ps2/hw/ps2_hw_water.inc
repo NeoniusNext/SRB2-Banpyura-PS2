@@ -13,7 +13,8 @@
 // z = 640 and about 0.5 pixel at z = 320 (320 pixel wide view, 90 degree field of view): the far bands moved the picture by less than half a pixel.
 
 #define HWDBG_OLDWATER 0x10000000 // -hwdbg 268435456: the old band by band water polygon (A/B)
-#define HWDBG_OLDCUT 0x40000000 // -hwdbg 1073741824: cut_and_emit makes the light staircase pieces (A/B of band_sweep)
+#define HWDBG_BANDSWEEP 512 // -hwdbg 512: band_sweep (not cut_and_emit) makes the light staircase pieces of ordinary polygons. OFF by default: no gain (6 % of the cut polygons' cost,
+// 0.01 M of 11 M) and its pieces differ from cut_and_emit by up to 1/16 pixel, which flips texels along the texel edges of a sharp texture: 2 % of the pixels of a GFZ1 frame
 #define HWDBG_WATERPOL 0x20000000 // -hwdbg 536870912: the sweep with the old ripple bands (16 units up to 640): equivalence test against HWDBG_OLDWATER
 #define WF_MAXV 24 // vertices of a polygon the sweep takes (more: the old code)
 #define WF_NPLANE 80 // planes (ripple bands + darkness steps) per polygon
@@ -106,7 +107,7 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 	int icl[WF_NPLANE + 1], ib[WF_NPLANE + 1], cls[WF_NPLANE], bidxa[WF_NPLANE], bidxb[WF_NPLANE];
 	int i, imin = 0, imax = 0, m = 0, nr = 0, nc = 0, na_, nb_, f = 0, j, cls0 = -1;
 
-	if ((ps2hwd_dbg_flags & (ripple ? HWDBG_OLDWATER : HWDBG_OLDCUT)) || cnt < 3 || cnt > WF_MAXV || P.cutx || P.cuty || P.lmode != LM_BANDS)
+	if ((ripple ? (ps2hwd_dbg_flags & HWDBG_OLDWATER) != 0 : !(ps2hwd_dbg_flags & HWDBG_BANDSWEEP)) || cnt < 3 || cnt > WF_MAXV || P.cutx || P.cuty || P.lmode != LM_BANDS)
 		return 0;
 	if (ripple_pol_old != ((ps2hwd_dbg_flags & HWDBG_WATERPOL) != 0))
 		ripple_policy((ps2hwd_dbg_flags & HWDBG_WATERPOL) != 0);

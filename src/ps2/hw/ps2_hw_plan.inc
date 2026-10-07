@@ -37,6 +37,8 @@ void PS2HWD_PlanPolygon(GLMipmap_t *m, const void *vp, unsigned int n)
 		k->ps2_want = 255;
 		k->ps2_vis = 0;
 	}
+	if (k->ps2_vis && !k->ps2_want)
+		return; // PS2-HW-59: a polygon of this texture already needs the full size: the level only goes down to 0 and nothing a later polygon says changes that
 	for (i = 0; i < (int)n; i++)
 	{
 		int oc;
