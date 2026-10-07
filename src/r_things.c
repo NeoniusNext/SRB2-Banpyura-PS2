@@ -3411,6 +3411,9 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 	visplane_t *plane;
 	INT32 sintersect;
 	fixed_t scale = 0;
+#ifdef PS2_OPT_NODES
+	(void)x1; (void)x2; (void)scale; // only the original node loop (the #else branch below) uses them: the HW configuration builds with -Werror
+#endif
 
 	// Add the 3D floors, thicksides, and masked textures...
 	for (ds = drawsegs + mask->drawsegs[1]; ds-- > drawsegs + mask->drawsegs[0];)

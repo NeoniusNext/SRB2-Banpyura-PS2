@@ -143,6 +143,7 @@ static void sky_tri_clipped(int ia, int ib, int ic, int or_)
 	vbuf_a[1] = SKY.c[ib];
 	vbuf_a[2] = SKY.c[ic];
 	cnt = clip_poly(vbuf_a, vbuf_b, 3, 6, or_, &cl);
+	G.dome_tris++;
 	H.st.clipped++;
 	if (cnt < 3)
 		return;
@@ -187,15 +188,23 @@ static int sky_dome_fast(gl_sky_t *sky)
 {
 	float saved_mv[16];
 	int i, j, ok = 1;
+	u32 dome_t1 = 0;
 
 	if ((ps2hwd_dbg_flags & 4096) || !sky_fast_prepare(sky))
 		return 0;
+	G.dome_n++;
 	memcpy(saved_mv, H.mv, sizeof saved_mv);
 	m_scale(H.mv, 1.0f, (float)sky->height / 200.0f, 1.0f);
 	m_rotate(H.mv, 270.0f, 0.0f, 1.0f, 0.0f);
 	H.mat_dirty = 1;
-	if (!begin_draw(H.cur_flags, NULL))
-		goto done;
+	{
+		const u32 tb = cyc();
+		const int okb = begin_draw(H.cur_flags, NULL);
+
+		G.dome_begin += cyc() - tb;
+		if (!okb)
+			goto done;
+	}
 	if (!(P.vu0 && P.npass == 1 && P.lmode == LM_NONE && !P.cutx && !P.cuty && !P.water && P.pass[0].tex == (u8)P.textured))
 	{
 		ok = 0; // a plan the shortcut does not cover: the old path draws it
@@ -207,6 +216,8 @@ static int sky_dome_fast(gl_sky_t *sky)
 		}
 		goto done;
 	}
+	if (!(ps2hwd_dbg_flags & 1024)) // -hwdbg 1024: the old guard band outcodes
+		vu0_batch_load(H.mvp, 1.0f, 1.0f, P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax); // PS2-HW-56: outcodes against the SCREEN frustum (no guard band) ...
 	{
 		const int n = sky->vertex_count;
 		u32 t0 = cyc();
@@ -215,107 +226,142 @@ static int sky_dome_fast(gl_sky_t *sky)
 			SKY.oc[i] = (u8)vu0_xform(&SKY.v[i], &SKY.c[i], &SKY.p[i]);
 		H.st.verts_in += (u32)n;
 		H.st.cyc_draw += cyc() - t0;
+		G.dome_xf += cyc() - t0;
 	}
+	dome_t1 = cyc();
 	pass_setup(0, 0);
-	for (j = 0; j < 2; j++) // untextured caps first, then the textured bands
 	{
-		for (i = 0; i < sky->loopcount; i++)
+		// ... a triangle or quad entirely outside one side of the screen draws nothing (the GS scissors it away) and is dropped here without
+		// clipping; what crosses the screen edge is clipped only when it also leaves the guard band (the old rule), using the guard band outcodes
+		// computed here for those few vertices. The old rule clipped (about 3 400 cycles each) the 144 triangles of a frame that straddle the
+		// guard band 78 degrees to the side of the view, where nothing is visible.
+		const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
+#define SKY_GOC(ix) (SKY.c[ix].w <= 0.0f ? 0x3F : outcode(&SKY.c[ix], gx, gy))
+
+		for (j = 0; j < 2; j++) // untextured caps first, then the textured bands
 		{
-			const gl_skyloopdef_t *loop = &sky->loops[i];
-			const int first = loop->vertexindex, cnt = loop->vertexcount;
-			const u8 *oc = &SKY.oc[first];
-			int k;
-
-			if (j == 0 ? loop->use_texture : !loop->use_texture)
-				continue;
-			if (loop->mode == HWD_SKYLOOP_FAN)
+			for (i = 0; i < sky->loopcount; i++)
 			{
-				int all = 0x3F;
+				const gl_skyloopdef_t *loop = &sky->loops[i];
+				const int first = loop->vertexindex, cnt = loop->vertexcount;
+				const u8 *oc = &SKY.oc[first];
+				int k;
 
-				for (k = 0; k < cnt; k++)
-					all &= oc[k];
-				if (all)
-					continue; // the whole cap is outside one plane
-				for (k = 1; k + 1 < cnt; k++)
+				if (j == 0 ? loop->use_texture : !loop->use_texture)
+					continue;
+				if (loop->mode == HWD_SKYLOOP_FAN)
 				{
-					const int and_ = oc[0] & oc[k] & oc[k + 1], or_ = oc[0] | oc[k] | oc[k + 1];
+					int all = 0x3F;
 
-					H.st.polys++;
-					if (and_)
+					for (k = 0; k < cnt; k++)
+						all &= oc[k];
+					if (all)
+						continue; // the whole cap is outside one plane
+					for (k = 1; k + 1 < cnt; k++)
 					{
-						H.st.rejected++;
-						continue;
-					}
-					if (or_)
-					{
-						sky_tri_clipped(first, first + k, first + k + 1, or_);
-					}
-					else
-					{
-						qw_t *o = pk_alloc(1 + 9);
+						const int and_ = oc[0] & oc[k] & oc[k + 1], or_ = oc[0] | oc[k] | oc[k + 1];
 
-						o[0].d[0] = HWGIF_TAG(3, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, 3);
-						o[0].d[1] = GIF_REGS_STQ_RGBA_XYZ;
-						o++;
-						o = sky_put(o, &SKY.c[first], &SKY.p[first], SKY.rgba[first]);
-						o = sky_put(o, &SKY.c[first + k], &SKY.p[first + k], SKY.rgba[first + k]);
-						sky_put(o, &SKY.c[first + k + 1], &SKY.p[first + k + 1], SKY.rgba[first + k + 1]);
-						H.gsr.valid &= ~(u32)RV_RGBAQ;
-						H.st.verts_out += 3;
+						H.st.polys++;
+						if (and_)
+						{
+							H.st.rejected++;
+							continue;
+						}
+						if (or_)
+						{
+							const int gor = SKY_GOC(first) | SKY_GOC(first + k) | SKY_GOC(first + k + 1);
+
+							if (gor)
+							{
+								sky_tri_clipped(first, first + k, first + k + 1, gor);
+								continue;
+							}
+						}
+						{
+							qw_t *o = pk_alloc(1 + 9);
+
+							o[0].d[0] = HWGIF_TAG(3, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, 3);
+							o[0].d[1] = GIF_REGS_STQ_RGBA_XYZ;
+							o++;
+							o = sky_put(o, &SKY.c[first], &SKY.p[first], SKY.rgba[first]);
+							o = sky_put(o, &SKY.c[first + k], &SKY.p[first + k], SKY.rgba[first + k]);
+							sky_put(o, &SKY.c[first + k + 1], &SKY.p[first + k + 1], SKY.rgba[first + k + 1]);
+							H.gsr.valid &= ~(u32)RV_RGBAQ;
+							H.st.verts_out += 3;
+						}
 					}
 				}
-			}
-			else
-			{
-				int run = -1; // first vertex of the open run of clean quads
-
-				for (k = 0; k + 3 < cnt; k += 2)
+				else
 				{
-					const int o0 = oc[k], o1 = oc[k + 1], o2 = oc[k + 2], o3 = oc[k + 3];
-					const int and_ = o0 & o1 & o2 & o3, or_ = o0 | o1 | o2 | o3;
+					int run = -1; // first vertex of the open run of clean quads
 
-					H.st.polys += 2;
-					if (!or_)
+					for (k = 0; k + 3 < cnt; k += 2)
 					{
-						if (run < 0)
-							run = k;
-						continue;
+						const int o0 = oc[k], o1 = oc[k + 1], o2 = oc[k + 2], o3 = oc[k + 3];
+						const int and_ = o0 & o1 & o2 & o3, or_ = o0 | o1 | o2 | o3;
+						int g0 = 0, g1 = 0, g2 = 0, g3 = 0;
+
+						H.st.polys += 2;
+						if (and_)
+						{
+							if (run >= 0)
+							{
+								sky_strip(first + run, first + k + 1);
+								run = -1;
+							}
+							H.st.rejected += 2;
+							continue;
+						}
+						if (or_)
+						{
+							g0 = SKY_GOC(first + k);
+							g1 = SKY_GOC(first + k + 1);
+							g2 = SKY_GOC(first + k + 2);
+							g3 = SKY_GOC(first + k + 3);
+						}
+						if (!(g0 | g1 | g2 | g3))
+						{
+							if (run < 0)
+								run = k;
+							continue;
+						}
+						if (run >= 0)
+						{
+							sky_strip(first + run, first + k + 1);
+							run = -1;
+						}
+						// the triangles of this quad, as the old index lists had them: (k, k + 1, k + 2) and (k + 1, k + 3, k + 2)
+						{
+							const int t0a = o0 & o1 & o2, t0o = g0 | g1 | g2, t1a = o1 & o3 & o2, t1o = g1 | g3 | g2;
+
+							if (!t0a)
+							{
+								if (t0o)
+									sky_tri_clipped(first + k, first + k + 1, first + k + 2, t0o);
+								else
+									sky_strip(first + k, first + k + 2);
+							}
+							else
+								H.st.rejected++;
+							if (!t1a)
+							{
+								if (t1o)
+									sky_tri_clipped(first + k + 1, first + k + 3, first + k + 2, t1o);
+								else
+									sky_strip(first + k + 1, first + k + 3);
+							}
+							else
+								H.st.rejected++;
+						}
 					}
 					if (run >= 0)
-					{
-						sky_strip(first + run, first + k + 1);
-						run = -1;
-					}
-					if (and_)
-					{
-						H.st.rejected += 2;
-						continue;
-					}
-					// the triangles of this quad, as the old index lists had them: (k, k + 1, k + 2) and (k + 1, k + 3, k + 2)
-					{
-						const int t0a = o0 & o1 & o2, t0o = o0 | o1 | o2, t1a = o1 & o3 & o2, t1o = o1 | o3 | o2;
-
-						if (!t0a)
-						{
-							if (t0o)
-								sky_tri_clipped(first + k, first + k + 1, first + k + 2, t0o);
-							else
-								sky_strip(first + k, first + k + 2);
-						}
-						if (!t1a)
-						{
-							if (t1o)
-								sky_tri_clipped(first + k + 1, first + k + 3, first + k + 2, t1o);
-							else
-								sky_strip(first + k + 1, first + k + 3);
-						}
-					}
+						sky_strip(first + run, first + cnt - 1);
 				}
-				if (run >= 0)
-					sky_strip(first + run, first + cnt - 1);
 			}
 		}
+#undef SKY_GOC
 	}
+	G.dome_emit += cyc() - dome_t1;
 done:
 	memcpy(H.mv, saved_mv, sizeof H.mv);
 	H.mat_dirty = 1;

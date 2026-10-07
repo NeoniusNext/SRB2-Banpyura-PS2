@@ -55,7 +55,7 @@ def main():
     a = ap.parse_args()
     pcs = {}
     total = 0
-    cyc = frames = 0
+    cyc = frames = hwcyc = hwframes = 0
     for line in Path(a.log).read_text(errors='replace').splitlines():
         line = re.sub(r'^(?:\[[^\]\r\n]*\]\s*)?', '', line)
         if line.startswith('SM '):
@@ -66,9 +66,16 @@ def main():
             if int(kv['win']) >= 1:
                 cyc += int(kv['total'])
                 frames += int(kv['frames'])
+        elif line.startswith('HWPROF win='):  # hardware renderer: wall = EE cycles per frame of the window (PROF totals are not kept in HW mode)
+            kv = dict(x.split('=', 1) for x in line.split() if '=' in x)
+            if int(kv['win']) >= 1:
+                hwcyc += int(kv['wall']) * int(kv['frames'])
+                hwframes += int(kv['frames'])
         elif line.startswith('SMTOTAL'):
             total = int(line.split()[1])
     s = sum(pcs.values())
+    if hwframes:  # PROF totals wrap the 32-bit COP0 count in long (hardware renderer) windows
+        cyc, frames = hwcyc, hwframes
     if frames and s:
         a.frames = frames
         a.period_cycles = cyc / s  # whole measured time (including the sampler's own interrupt cost) spread over the samples

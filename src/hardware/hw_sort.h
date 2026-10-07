@@ -65,4 +65,84 @@ static inline int HWR_RadixSort32(unsigned int *keys, unsigned int *idx, unsigne
 	return in_src;
 }
 
+// PS2-HW-59: the same stable order for keys with few distinct values (the batches of a frame: ~250 distinct keys among ~3000 polygons, 70 in the skybox
+// view). The polygons are counted per distinct key through a small hash table, only the distinct keys are sorted (8 bit digits), and one scatter puts every
+// polygon at its place: no 2048-entry histograms to clear and sum (three of them cost 75 000 cycles even for a view of 70 polygons), one pass instead of three.
+// Only the order of idx is made: it ends in ti and the function returns 0; keys / tk are scratch (tk holds the group of every polygon). Returns -1 (nothing
+// done) when there are more than HWR_GS_MAX distinct keys: the caller takes HWR_RadixSort32.
+#define HWR_GS_SLOTS 2048u
+#define HWR_GS_MAX 700u
+
+static inline int HWR_GroupSort32(const unsigned int *keys, const unsigned int *idx, unsigned int *tk, unsigned int *ti, unsigned int n)
+{
+	unsigned int hk[HWR_GS_SLOTS]; // 23 KB of stack, as much as the histograms of HWR_RadixSort32: no static memory (the zone is tight)
+	unsigned short hv[HWR_GS_SLOTS]; // distinct key number + 1 of the slot, 0 = free
+	unsigned int dk[HWR_GS_MAX], cnt[HWR_GS_MAX], off[HWR_GS_MAX];
+	unsigned short ord[2][HWR_GS_MAX];
+	unsigned short *grp = (unsigned short *)(void *)tk;
+	unsigned int i, m = 0, pass, run = 0;
+	unsigned int c8[256];
+	int cur = 0;
+
+	memset(hv, 0, sizeof hv);
+	for (i = 0; i < n; i++)
+	{
+		const unsigned int k = keys[i];
+		unsigned int h = (k * 2654435761u) >> 21;
+
+		while (hv[h] && hk[h] != k)
+			h = (h + 1) & (HWR_GS_SLOTS - 1);
+		if (!hv[h])
+		{
+			if (m == HWR_GS_MAX)
+				return -1;
+			hk[h] = k;
+			hv[h] = (unsigned short)(m + 1);
+			dk[m] = k;
+			cnt[m] = 0;
+			m++;
+		}
+		grp[i] = (unsigned short)(hv[h] - 1);
+		cnt[hv[h] - 1]++;
+	}
+	// the distinct keys in ascending order: LSD radix, 8 bit digits, a digit that is the same for all of them is skipped
+	for (i = 0; i < m; i++)
+		ord[0][i] = (unsigned short)i;
+	for (pass = 0; pass < 4; pass++)
+	{
+		const unsigned int shift = pass * 8;
+		unsigned int d, sum = 0;
+
+		memset(c8, 0, sizeof c8);
+		for (i = 0; i < m; i++)
+			c8[(dk[ord[cur][i]] >> shift) & 255]++;
+		if (c8[(dk[ord[cur][0]] >> shift) & 255] == m)
+			continue;
+		for (d = 0; d < 256; d++)
+		{
+			const unsigned int t = c8[d];
+
+			c8[d] = sum;
+			sum += t;
+		}
+		for (i = 0; i < m; i++)
+		{
+			const unsigned short id = ord[cur][i];
+
+			ord[cur ^ 1][c8[(dk[id] >> shift) & 255]++] = id;
+		}
+		cur ^= 1;
+	}
+	for (i = 0; i < m; i++)
+	{
+		const unsigned short id = ord[cur][i];
+
+		off[id] = run;
+		run += cnt[id];
+	}
+	for (i = 0; i < n; i++)
+		ti[off[grp[i]]++] = idx[i];
+	return 0;
+}
+
 #endif
