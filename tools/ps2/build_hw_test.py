@@ -33,6 +33,14 @@ def main():
         if p.returncode or out:
             bad = True
         objs.append(str(obj))
+    vsm = B.ROOT / 'src/ps2/hw/vu1/ps2_hw_vu1.vsm'  # the VU1 microcode of the polygon program (the driver refers to its symbols)
+    if vsm.is_file():
+        vobj = OUTDIR / 'ps2_hw_vu1_vsm.o'
+        pv = subprocess.run([str(B.DEV / ('dvp/bin/dvp-as' + B.EXE)), str(vsm), '-o', str(vobj)], env=B.ENV, capture_output=True, text=True, cwd=B.ROOT)
+        if pv.returncode:
+            print('FAIL dvp-as', (pv.stdout + pv.stderr)[-3000:])
+            return 1
+        objs.append(str(vobj))
     (OUTDIR / 'build.log').write_text('\n'.join(log), encoding='utf-8')
     if bad:
         print('\n'.join(log))
@@ -42,7 +50,8 @@ def main():
     commands.append(cmd)
     p = subprocess.run(cmd, env=B.ENV, capture_output=True, text=True, cwd=B.ROOT)
     (OUTDIR / 'link.log').write_text(p.stdout + p.stderr, encoding='utf-8')
-    if p.returncode or (p.stdout + p.stderr).strip():
+    rest = [l for l in (p.stdout + p.stderr).splitlines() if l.strip() and 'linking abicalls files with non-abicalls files' not in l]  # (dvp-as objects)
+    if p.returncode or rest:
         print(p.stdout + p.stderr)
         return 1
     inputs = [B.ROOT / s for s in SOURCES] + list((B.ROOT / 'src/ps2/hw').glob('*.inc'))

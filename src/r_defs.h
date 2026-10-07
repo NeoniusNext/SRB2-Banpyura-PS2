@@ -591,7 +591,14 @@ typedef struct line_s
 	INT16 flags;
 	INT16 special;
 	taglist_t tags;
+#ifdef PS2_PROFILE
+	// PS2-143 (OPT10-S): 40 bytes per line only for the lines that have a non-zero argument (about 5% of them); the others share one zero block
+	// (lineargs_zero, p_setup.c). Written only while the level loads (private pool, P_CompactLineArgs) and by the savegame reader through
+	// P_LineArgsW; Lua can only read them. MAP11 (25 100 lines): -0.9 MB of the arena.
+	INT32 *args;
+#else
 	INT32 args[NUMLINEARGS];
+#endif
 	char *stringargs[NUMLINESTRINGARGS];
 
 	// Visual appearance: sidedefs.
@@ -918,7 +925,9 @@ typedef struct seg_s
 	void *pv2; // polyvertex_t
 	float flength; // length of the seg, used by hardware renderer
 
+#ifndef PS2_PROFILE // PS2-149 (OPT10-S): the static lightmaps (STATICLIGHT) are not built in this port: 4 bytes of every seg (49 592 on MAP11)
 	lightmap_t *lightmaps; // for static lightmap
+#endif
 #endif
 
 	polyobj_t *polyseg;

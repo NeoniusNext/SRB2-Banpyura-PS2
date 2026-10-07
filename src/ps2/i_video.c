@@ -236,6 +236,10 @@ static boolean Impl_HWAcquire(void)
 				trace = atoi(M_GetNextParm());
 			if (M_CheckParm("-hwdbg") && M_IsNextParm())
 				dbg = atoi(M_GetNextParm());
+			if (M_CheckParm("-hwhash"))
+				ps2hwd_hash_on = 1; // OPT10 HG: HWHASH lines (see ps2_hw_priv.inc)
+			if (M_CheckParm("-hwvu1"))
+				dbg |= 0x4000000; // PS2-HW-44/45 (OPT10 HG): the VU1 program transforms, clips and packs the polygons of a batch (HWDBG_VU1); validated on PCSX2 only, off by default
 			PS2HWD_SetTrace(trace, dbg);
 		}
 	}
@@ -253,6 +257,25 @@ static boolean Impl_HWAcquire(void)
 		HWD.pfnSetTexturePalette(video_palette);
 	HWR_Startup();
 	CONS_Printf("HWE acquired driver=ps2_hwd renderer=Hardware experimental=1 size=%dx%d\n", (int)vid.width, (int)vid.height);
+#ifdef PS2_PROFILE
+	if (M_CheckParm("-hwvu0bench")) // OPT10 HG: cycles per vertex of the scalar / VU0 / paired VU0 transform (PS2HWD_TestVU0) and whether the pair gives the single results
+	{
+		ps2hwd_vu0test_t r;
+		unsigned int seed, n = 0, cs = 0, cv = 0, cp = 0, pd = 0, od = 0;
+
+		for (seed = 1; seed <= 4; seed++)
+		{
+			PS2HWD_TestVU0(4096, seed, &r);
+			n += r.n;
+			cs += r.cyc_scalar;
+			cv += r.cyc_vu0;
+			cp += r.cyc_vu0p;
+			pd += r.pair_diff;
+			od += r.oc_diff;
+		}
+		CONS_Printf("HWVU0 n=%u have=%d cycles/vertex scalar=%u vu0=%u vu0_pair=%u pair_diff=%u oc_diff=%u\n", n, (int)r.have_vu0, n ? cs / n : 0, n ? cv / n : 0, n ? cp / n : 0, pd, od);
+	}
+#endif
 	return true;
 }
 
@@ -910,6 +933,7 @@ static void Impl_HWProf(void)
 		(unsigned)(ps2hwp_cyc[HWP_PLANE] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames), (unsigned)(ps2hwp_cyc[HWP_SUBSEC] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
+	PS2HWD_ProfExtra((unsigned int)frames); // OPT10 HG
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);
 	wall = 0;
 	frames = 0;

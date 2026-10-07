@@ -77,6 +77,9 @@ void *Picture_GetPatchPixel(
 	pictureflags_t flags);
 
 void *Picture_TextureToFlat(size_t texnum);
+#ifdef PS2
+void *Picture_TryTextureToFlat(size_t texnum); // PS2-140: NULL when there is no room
+#endif
 
 INT32 Picture_FormatBPP(pictureformat_t format);
 boolean Picture_IsPatchFormat(pictureformat_t format);
@@ -159,6 +162,9 @@ void *Picture_CookedConvert(
 	size_t insize, size_t *outsize,
 	pictureflags_t flags);
 boolean Picture_CookedDimensions(UINT8 *cooked, INT32 *width, INT32 *height, INT16 *topoffset, INT16 *leftoffset, size_t size);
+#ifdef PS2
+void *Picture_TryCookedPatch(const UINT8 *cooked, size_t insize); // PS2-140: a patch_t, NULL when not cooked or no room
+#endif
 #endif
 #endif
 

@@ -78,18 +78,20 @@ def main():
     ap.add_argument('--map', default='')
     ap.add_argument('--demo', default='')
     ap.add_argument('--no-ref', action='store_true')
+    ap.add_argument('--playdemo', action='store_true', help='-playdemo (real time, frame interpolation possible) instead of -timedemo')
+    ap.add_argument('--cfg', action='append', default=[], help='extra line of the staged reference.cfg (e.g. fpscap "Match refresh rate"); repeatable')
     ap.add_argument('--emu', default='', help='pcsx2-qt.exe of another private copy (e.g. D:/PCSX2-net1/pcsx2-qt.exe: DEV9 Ethernet in Sockets mode for the network tests)')
     ap.add_argument('--golden', action='store_true', help='compare the PS2REF dump of --demo with golden/phase0-v2/run1/<demo> (tics.csv, frames.csv, frame-*.idx)')
     ap.add_argument('--compare-to', default='', help='run directory (under --out) whose refout must be byte-identical: tics.csv, frames.csv, frame-*.idx')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     run = Path(a.out).resolve() / a.name
-    refout = stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None)
+    refout = stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None, ''.join(l + '\n' for l in a.cfg))
     args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt']
     if a.demo and not a.no_ref:
         args += ['-ps2ref', 'host:/refout']
     if a.demo:
-        args += ['-timedemo', a.demo + '.lmp']
+        args += ['-playdemo' if a.playdemo else '-timedemo', a.demo + '.lmp']
     if a.map:
         args += ['-skipintro', '-warp', a.map]
     args += a.extra

@@ -7,6 +7,7 @@
 // between the two. V.on is chosen at start (-hwvu1); without it the ring is exactly what it was.
 
 #define HWDBG_VU1 0x4000000 // VIF1 transport + VU1 polygon program (PS2-HW-44/45)
+#define HWDBG_NOUP 0x80000000u // -hwdbg -2147483648 (bit 31: the bits 0x8000000 and 0x10000000 are HT's LODDBG and IMMDBG). MEASUREMENT ONLY (OPT10 HG): every texture is one resident 256x256 dummy, nothing is uploaded: the CPU cost of the geometry without the texture traffic. The picture is wrong.
 
 #define D1_CHCR ((volatile u32 *)0x10009000)
 #define D1_MADR ((volatile u32 *)0x10009010)

@@ -255,6 +255,7 @@ static void vu_chunk_end(void)
 	vu_next_run();
 	VU.open = 0;
 	VU.stat_chunks++;
+	G.vu_chunks++;
 }
 
 // Everything that goes into the ring in another way ends the chunk first (the order of the stream is the order of the draws).
@@ -280,18 +281,12 @@ static int vu_poly(const FOutVector *base, int n)
 	{
 		const float w = m[3] * base[i].x + m[7] * base[i].y + m[11] * base[i].z + m[15];
 
-		if (w < wlo)
-			wlo = w;
-		if (w > whi)
-			whi = w;
-		if (base[i].s < smin)
-			smin = base[i].s;
-		if (base[i].s > smax)
-			smax = base[i].s;
-		if (base[i].t < tmin)
-			tmin = base[i].t;
-		if (base[i].t > tmax)
-			tmax = base[i].t;
+		wlo = hw_minf(wlo, w);
+		whi = hw_maxf(whi, w);
+		smin = hw_minf(smin, base[i].s);
+		smax = hw_maxf(smax, base[i].s);
+		tmin = hw_minf(tmin, base[i].t);
+		tmax = hw_maxf(tmax, base[i].t);
 	}
 	if (P.textured && (P.wrapx || P.wrapy))
 	{
@@ -307,8 +302,8 @@ static int vu_poly(const FOutVector *base, int n)
 
 		if (lo < H.near_plane)
 			lo = H.near_plane; // what the near plane leaves is not nearer
-		c0 = lf_class(zfrag_of_w(lo));
-		if (c0 != lf_class(zfrag_of_w(whi)))
+		c0 = lf_class_w(lo);
+		if (c0 != lf_class_w(whi))
 			return 0; // two darkness classes: cut_and_emit makes the pieces
 		if (!((LF.have >> c0) & 1))
 		{

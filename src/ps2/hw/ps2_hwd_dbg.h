@@ -115,7 +115,8 @@ typedef struct
 	int max_dx, max_dy, max_dz; // largest integer difference (X, Y in 1/16 pixel, Z in Z24 LSB)
 	float max_q_rel; // largest relative difference of 1/w
 	int have_vu0; // 0 when the driver was built without the VU0 path
-	unsigned int cyc_scalar, cyc_vu0; // EE cycles of the two paths over the same n vertices (n <= 4096)
+	unsigned int cyc_scalar, cyc_vu0, cyc_vu0p; // EE cycles of the two paths over the same n vertices (n <= 4096); cyc_vu0p: the paired transform (PS2-HW-59)
+	unsigned int pair_diff; // vertices whose pair results differ from the single ones (must be 0)
 } ps2hwd_vu0test_t;
 void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out);
 
@@ -131,6 +132,7 @@ int PS2HWD_ReadDepth(unsigned int *dst);
 // PS2-HW-69 (-hwtextest): every map texture and level flat is drawn 1:1 and repeated, read back and compared with the engine texels (TTFAIL lines).
 void PS2HWD_TextureTest(void);
 // Negative controls: bit 0 = ignore Z test, bit 1 = ignore alpha test, bit 2 = ignore blending, bit 3 = never write Z.
+extern int ps2hwd_hash_on; // -hwhash: HWHASH lines (a hash of the GIF stream of every frame)
 extern int ps2hwd_dbg_flags;
 
 #endif

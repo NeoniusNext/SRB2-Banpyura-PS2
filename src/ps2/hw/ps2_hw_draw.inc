@@ -36,6 +36,9 @@ enum
 
 #define MAXPASS 4
 static void lit_fast_plan(void); // ps2_hw_fast.inc (PS2-HW-43)
+static inline int lf_class_w(float w); // ps2_hw_fast.inc
+static int lf_thresholds(int c0, int c1, float z0, float z1, float *th, int *cls, int max); // ps2_hw_fast.inc (PS2-HW-59)
+static u32 lf_fog(int cls, int *on); // ps2_hw_fast.inc (PS2-HW-59)
 #define PRIM_IIP (1u << 3)
 #define PRIM_TME (1u << 4)
 #define PRIM_FGE (1u << 5)
@@ -102,6 +105,7 @@ static struct
 	int pal_row; // the row whose CLUT the GS state holds (-1 = none)
 	u32 pal_tbl; // light table id of the polygon
 	int fast; // one plain pass, no cuts: polygons take emit_fast_fan (state set up once per plan, see serial)
+	int oldpath; // -hwdbg 8192: the general path only (no lit fast path, doom_thresholds, the clip chain of clip_attr, fog_of_class): A/B of PS2-HW-43 / 62
 	int litfast; // as fast, but with the light staircase (LM_BANDS): polygons of one darkness class take lit_fast_poly (ps2_hw_fast.inc, PS2-HW-43)
 	int vuok, vu; // the plan can be drawn by the VU1 program (vuok); PS2HWD_DrawFans turns vu on for the polygons of a batch (ps2_hw_vu1.inc, PS2-HW-45)
 	int vu0; // the plan's constants are in VU0 (vu0_batch_load): emit_poly transforms on VU0
@@ -482,10 +486,66 @@ static void fx_report(void)
 	fx_seen = 0;
 }
 
+// What every draw with a texture does to the texture manager's books (begin_draw_inner and the plan cache hit path, PS2-HW-46)
+static void plan_tex_touch(texrec_t *r)
+{
+	lru_touch(H.cur_tex);
+	{
+		texrec_t *im = &H.rec[img_of(H.cur_tex)];
+
+		if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set
+		{
+			im->imgws = H.frame_no + 1;
+			TX.need_blk += im->nblk;
+			TX.need_n++;
+			if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+			{
+				H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
+				if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60 && im->owner)
+					CONS_Printf("HWUP %s %ux%u psm=%d clut=%d blk=%u lvl=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->w, (unsigned)im->h, (int)im->psm, (int)im->clut, (unsigned)im->nblk, (int)im->dx);
+			}
+			else
+			{
+				const GLMipmap_t *pk = im->owner->ps2_twin ? im->owner->ps2_twin : im->owner;
+
+				if (pk->ps2_planfr == H.frame_no + 1)
+				{
+					TX.need_in_plan += im->nblk;
+				}
+				else
+				{
+					TX.need_out_plan += im->nblk; // a big map texture drawn without the plan (sky dome, translucent walls, ...): stored at full size
+					if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)
+						CONS_Printf("HWNP %s %ux%u lvl=%d blk=%u phase=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->sw, (unsigned)im->sh, (int)im->dx, (unsigned)im->nblk, batch_phase);
+				}
+			}
+		}
+	}
+	if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame
+	{
+		int k;
+
+		r->ws = H.frame_no + 1;
+		H.st.ws_blocks += r->nblk;
+		H.st.ws_tex++;
+		if (H.pred_frame != H.frame_no + 1)
+		{
+			memset(H.pred, 0, sizeof H.pred);
+			H.pred_frame = H.frame_no + 1;
+		}
+		for (k = 0; k < NCAPS; k++)
+			H.pred[k] += r->fp[k];
+	}
+}
+
 // Prepare everything for a polygon with these engine flags. Returns 0 when the polygon must not be drawn.
 static void imm_prepare(const FOutVector *verts, unsigned int n); // ps2_hw_plan.inc
 
-static int begin_draw(u32 flags, const FSurfaceInfo *surf)
+// begin_draw (below, behind ps2_hw_fast.inc) is the plan cache (PS2-HW-46) in front of begin_draw_inner, which makes the plan.
+static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf);
+static int begin_draw(u32 flags, const FSurfaceInfo *surf);
+
+static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 {
 	u32 blend;
 	int textured, dbg = ps2hwd_dbg_flags, lit = 0, wall = 0, partial_tex = 0, i;
@@ -640,53 +700,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		P.linear = linear;
 		// a non power of two axis is clamped to the texture's own region; its repeat was turned into cuts
 		P.clamp = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34);
-		lru_touch(H.cur_tex);
-		{
-			texrec_t *im = &H.rec[img_of(H.cur_tex)];
-
-			if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set
-			{
-				im->imgws = H.frame_no + 1;
-				TX.need_blk += im->nblk;
-				TX.need_n++;
-				if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
-				{
-					H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
-					if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60 && im->owner)
-						CONS_Printf("HWUP %s %ux%u psm=%d clut=%d blk=%u lvl=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->w, (unsigned)im->h, (int)im->psm, (int)im->clut, (unsigned)im->nblk, (int)im->dx);
-				}
-				else
-				{
-					const GLMipmap_t *pk = im->owner->ps2_twin ? im->owner->ps2_twin : im->owner;
-
-					if (pk->ps2_planfr == H.frame_no + 1)
-					{
-						TX.need_in_plan += im->nblk;
-					}
-					else
-					{
-						TX.need_out_plan += im->nblk; // a big map texture drawn without the plan (sky dome, translucent walls, ...): stored at full size
-						if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)
-							CONS_Printf("HWNP %s %ux%u lvl=%d blk=%u phase=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->sw, (unsigned)im->sh, (int)im->dx, (unsigned)im->nblk, batch_phase);
-					}
-				}
-			}
-		}
-		if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame
-		{
-			int k;
-
-			r->ws = H.frame_no + 1;
-			H.st.ws_blocks += r->nblk;
-			H.st.ws_tex++;
-			if (H.pred_frame != H.frame_no + 1)
-			{
-				memset(H.pred, 0, sizeof H.pred);
-				H.pred_frame = H.frame_no + 1;
-			}
-			for (k = 0; k < NCAPS; k++)
-				H.pred[k] += r->fp[k];
-		}
+		plan_tex_touch(r); // LRU order, the working set and the plan statistics of the texture drawn (the body is above)
 	}
 
 	// ---- blend / pass plan ----
@@ -957,8 +971,9 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		&& P.pass[0].tex == (u8)textured && !(ps2hwd_dbg_flags & 64);
 	P.litfast = P.npass == 1 && P.lmode == LM_BANDS && !P.cutx && !P.cuty && !P.water && !P.pass[0].ramp && !(flags & PF_Ripple)
 		&& P.pass[0].tex == (u8)textured && !(ps2hwd_dbg_flags & 64);
-	if (P.litfast)
-		lit_fast_plan(); // PS2-HW-43
+	P.oldpath = (ps2hwd_dbg_flags & 8192) != 0;
+	if (P.lmode == LM_BANDS)
+		lit_fast_plan(); // PS2-HW-43 (PS2-HW-59: also for the plans that take cut_and_emit: the class memory, the fog and the step depths are per plan)
 	P.vu = 0;
 	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible) && !P.pal; // PS2-HW-71: the CLUT changes with the row of every polygon
 	P.serial = H.serial - 1; // the first polygon sets the state up
@@ -1096,7 +1111,7 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 	u32 zi;
 
 	zf = clampf(zf, 0.0f, P.zmax);
-	zi = (u32)zf;
+	zi = (u32)(int)zf; // 0 <= zf <= Z24: the signed conversion is one instruction, the unsigned one a compare and a branch (PS2-HW-59)
 	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4 || pk->fmt == 5)
 	{
 		if (pk->ramp)
@@ -1196,7 +1211,7 @@ static void emit_reglist_fan(const cv_t *v, int cnt, const pack_t *pk, u32 prim)
 		u32 zi;
 
 		zf = clampf(zf, 0.0f, P.zmax);
-		zi = (u32)zf;
+		zi = (u32)(int)zf; // (PS2-HW-59)
 		if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 5)
 		{
 			qw_t st;
@@ -1304,6 +1319,51 @@ static int clip_attr(const cv_t *in, int n, cv_t *out, int which, float cut, int
 	return m;
 }
 
+// clip_attr(side 0) and clip_attr(side 1) of the same cut in one walk over the edges (PS2-HW-59): the same vertices in the same order (the point on
+// an edge is computed once, from the end with the smaller value, and goes to both parts), half the loads, compares and interpolations.
+static void clip_attr2(const cv_t *in, int n, cv_t *outlo, int *nlo, cv_t *outhi, int *nhi, int which, float cut, int na)
+{
+	const int ai = which - 3; // cv_t: x y z w a[0..]; 6 = w, 7 = a[0], 8 = a[1]
+	int i, k, ml = 0, mh = 0;
+
+	for (i = 0; i < n; i++)
+	{
+		const cv_t *v0 = &in[i], *v1 = &in[i + 1 == n ? 0 : i + 1];
+		const float f0 = ((const float *)v0)[ai], f1 = ((const float *)v1)[ai];
+		const int l0 = f0 < cut, l1 = f1 < cut, h0 = f0 >= cut, h1 = f1 >= cut;
+
+		if (l0)
+			outlo[ml++] = *v0;
+		if (h0)
+			outhi[mh++] = *v0;
+		if (l0 != l1 || h0 != h1)
+		{
+			const cv_t *lo = f0 < f1 ? v0 : v1, *hi = f0 < f1 ? v1 : v0;
+			float flo = f0 < f1 ? f0 : f1, fhi = f0 < f1 ? f1 : f0, t = (cut - flo) / (fhi - flo);
+			cv_t o;
+
+			o.x = lo->x + (hi->x - lo->x) * t;
+			o.y = lo->y + (hi->y - lo->y) * t;
+			o.z = lo->z + (hi->z - lo->z) * t;
+			o.w = lo->w + (hi->w - lo->w) * t;
+			for (k = 0; k < na; k++)
+				o.a[k] = lo->a[k] + (hi->a[k] - lo->a[k]) * t;
+			if (which == 6)
+				o.w = cut;
+			else if (which == 7)
+				o.a[0] = cut;
+			else
+				o.a[1] = cut;
+			if (l0 != l1)
+				outlo[ml++] = o;
+			if (h0 != h1)
+				outhi[mh++] = o;
+		}
+	}
+	*nlo = ml;
+	*nhi = mh;
+}
+
 #define CUTBUF (PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA + 16)
 static cv_t cutbuf[3][3][CUTBUF];
 #define MAXCUTS 40
@@ -1356,7 +1416,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 	if (cnt < 3)
 		return;
 	if (pc->cls >= 0)
-		fogF = fog_of_class(&P.rs, pc->cls, &fog_on);
+		fogF = (P.lmode == LM_BANDS && !P.oldpath) ? lf_fog(pc->cls, &fog_on) : fog_of_class(&P.rs, pc->cls, &fog_on);
 	for (k = 0; k < P.npass; k++)
 	{
 		const pass_t *ps = &P.pass[k];
@@ -1505,9 +1565,13 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 	{
 		for (k = 0; k < cl->n; k++)
 		{
-			int np = clip_attr(rem, nrem, piece, cl->which, cl->cuts[k], 0, na);
 			cv_t *rb = cutbuf[stage][1 + which];
+			int np, nr2 = 0;
 
+			if (P.oldpath)
+				np = clip_attr(rem, nrem, piece, cl->which, cl->cuts[k], 0, na);
+			else
+				clip_attr2(rem, nrem, piece, &np, rb, &nr2, cl->which, cl->cuts[k], na); // PS2-HW-59: both parts at once (the recursion below does not touch this stage's buffers)
 			if (np >= 3)
 			{
 				piece_t p2 = *pc;
@@ -1520,7 +1584,7 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 					p2.cls = cl->cls[k];
 				cut_and_emit(piece, np, next_stage, p2, na);
 			}
-			nrem = clip_attr(rem, nrem, rb, cl->which, cl->cuts[k], 1, na);
+			nrem = P.oldpath ? clip_attr(rem, nrem, rb, cl->which, cl->cuts[k], 1, na) : nr2;
 			rem = rb;
 			which ^= 1;
 			if (nrem < 3)
@@ -1688,9 +1752,27 @@ static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na)
 			if (v[i].w > whi)
 				whi = v[i].w;
 		}
-		z0 = zfrag_of_w(wlo);
-		z1 = zfrag_of_w(whi);
-		n = doom_thresholds(&P.rs.lp, z0, z1, th, cls, MAXCUTS, &cls0);
+		if (P.oldpath)
+		{
+			z0 = zfrag_of_w(wlo);
+			z1 = zfrag_of_w(whi);
+			n = doom_thresholds(&P.rs.lp, z0, z1, th, cls, MAXCUTS, &cls0);
+		}
+		else
+		{
+			// PS2-HW-59: the classes of the ends from the plan's memory of depth ranges; one class = no step (doom_thresholds finds none either), no divisions
+			cls0 = lf_class_w(wlo);
+			if (cls0 == lf_class_w(whi))
+			{
+				n = 0;
+			}
+			else
+			{
+				z0 = zfrag_of_w(wlo);
+				z1 = zfrag_of_w(whi);
+				n = lf_thresholds(cls0, lf_class_w(whi), z0, z1, th, cls, MAXCUTS);
+			}
+		}
 		if (n)
 		{
 			for (i = 0; i < n; i++)
@@ -1840,10 +1922,14 @@ static void ripple_offset(float zc, float *ds, float *dt)
 	*dt = ripple_sinf(a + 1.57079633f) * RIPPLE_AMP; // cos
 }
 
+#include "ps2_hw_water.inc" // PS2-HW-47: water_fast, the one sweep water polygon
+
 static cv_t wpiece[CUTBUF], wrem[2][CUTBUF];
 
 static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
 {
+	if (water_fast(v, cnt, pc))
+		return;
 	float wlo = v[0].w, whi = v[0].w, z0, z1, ds, dt, step = RIPPLE_STEP;
 	const cv_t *rem = v;
 	int nrem = cnt, i, k, which = 0;
@@ -1926,6 +2012,186 @@ static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
 #include "ps2_hw_fast.inc" // PS2-HW-43: lit_fast_poly / lit_fast_plan
 #include "ps2_hw_vu1.inc" // PS2-HW-45: vu_poly / vu_sync (the VU1 program draws the polygons of a batch)
 
+// ---- PS2-HW-46: plan cache ----
+// begin_draw_inner makes the plan of a draw (blend passes, light, texture parameters, GS state values) in about 1000 cycles, and the
+// engine's sprite loop, the HUD and the translucent walls/planes call it for every polygon (1300 draw calls per frame on GFZ1). The plan
+// is a pure function of the polygon flags, the colour/light of the surface, the view/shader state of the driver and a handful of
+// properties of the texture record, so the plans of the last draws are kept (direct mapped, NPLANC entries) and a draw with a known
+// key restores its plan instead (everything that belongs to the texture itself is refreshed from the record).
+// -hwdbg 16384 (= 0x4000): plan cache ON (A/B; measured as a loss: a hit costs more than making the plan, so it is off by default).
+typedef __typeof__(P) plan_t;
+typedef __typeof__(LF) lfstate_t;
+
+typedef struct
+{
+	u32 flags, pcol, tint, fade, light, fs, fe; // the surface
+	u32 vp[4], near, guard_x, guard_y, xfv, shader, shaders_on, filter; // the view and shader state
+	u32 tex; // the texture record's properties that the plan reads
+} plankey_t;
+
+typedef struct
+{
+	plankey_t k;
+	int used;
+	plan_t P;
+	lfstate_t lf;
+} planent_t;
+
+#define NPLANC 16
+#define HWDBG_PLANC 0x4000 // opt-in: the cache cost more than it saved (see docs/GATES/g1/opt10-HG.md)
+static planent_t planc[NPLANC];
+static planent_t *planc_active; // the entry whose plan P / LF belong to (LF collects its light classes while the plan is in use)
+
+static inline u32 f2u(float f)
+{
+	union
+	{
+		float f;
+		u32 u;
+	} c;
+
+	c.f = f;
+	return c.u;
+}
+
+#ifndef PLAN_KEY_PCOL
+#define PLAN_KEY_PCOL(c) (c) // (the host test mutates it: tools/ps2/hg_hosttest.c, negative control 2)
+#endif
+
+static inline void pcache_make_key(plankey_t *k, u32 flags, const FSurfaceInfo *surf, const texrec_t *r)
+{
+	u32 t = surf ? 1u << 31 : 0;
+
+	k->flags = flags;
+	if (surf)
+	{
+		k->pcol = PLAN_KEY_PCOL(surf->PolyColor.rgba);
+		k->tint = surf->TintColor.rgba;
+		k->fade = surf->FadeColor.rgba;
+		k->light = (u32)surf->LightInfo.light_level;
+		k->fs = (u32)surf->LightInfo.fade_start;
+		k->fe = (u32)surf->LightInfo.fade_end;
+	}
+	else
+	{
+		k->pcol = k->tint = k->fade = k->light = k->fs = k->fe = 0;
+	}
+	k->vp[0] = f2u(H.vpx);
+	k->vp[1] = f2u(H.vpy);
+	k->vp[2] = f2u(H.vpw);
+	k->vp[3] = f2u(H.vph);
+	k->near = f2u(H.near_plane);
+	k->guard_x = (u32)H.guard_x;
+	k->guard_y = (u32)H.guard_y;
+	k->xfv = xf_ver;
+	k->shader = (u32)H.shader;
+	k->shaders_on = (u32)H.shaders_on;
+	k->filter = (u32)H.tex_filter;
+	if (r)
+		t |= (u32)r->psm | ((u32)r->clut << 6) | ((u32)(r->notcc != 0) << 8) | ((u32)(r->screen != 0) << 9) | ((u32)(r->wrapx != 0) << 10) | ((u32)(r->wrapy != 0) << 11)
+			| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17);
+	k->tex = t;
+}
+
+static inline u32 plan_slot(const plankey_t *k)
+{
+	u32 h = k->flags * 0x9E3779B1u;
+
+	h ^= (k->pcol + (k->light << 8) + (k->tint << 1) + (k->fade << 3) + k->fs * 31u + k->fe * 17u + k->tex * 0x85EBCA6Bu) * 0xC2B2AE35u;
+	return (h >> 12) & (NPLANC - 1);
+}
+
+static inline int plan_key_eq(const plankey_t *a, const plankey_t *b)
+{
+	const u32 *x = (const u32 *)(const void *)a, *y = (const u32 *)(const void *)b;
+	u32 d = 0;
+	size_t i;
+
+	for (i = 0; i < sizeof(plankey_t) / 4; i++)
+		d |= x[i] ^ y[i];
+	return d == 0;
+}
+
+static int begin_draw(u32 flags, const FSurfaceInfo *surf)
+{
+	u32 t0 = cyc();
+	plankey_t k;
+	planent_t *e;
+	const texrec_t *r;
+	int ok;
+
+	if (planc_active) // the light classes the last plan collected stay with it
+		planc_active->lf = LF;
+	if (!(ps2hwd_dbg_flags & HWDBG_PLANC) || (flags & PF_Corona) || (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing) || H.frame_no % 300 == 299) // (the frame of the HWFX census makes every plan)
+	{
+		planc_active = NULL;
+		ok = begin_draw_inner(flags, surf);
+		G.begin_n++, G.sk_begin += ps2hwp_skyview;
+		G.begin_cyc += cyc() - t0;
+		return ok;
+	}
+	frame_prepare(0);
+	xf_update();
+	r = (!(flags & PF_NoTexture) && H.cur_tex != NOREC) ? &H.rec[H.cur_tex] : NULL;
+	pcache_make_key(&k, flags, surf, r);
+	e = &planc[plan_slot(&k)];
+	if (e->used && plan_key_eq(&e->k, &k))
+	{
+		texrec_t *tr = (texrec_t *)r;
+		u32 c1 = cyc(), c2, c3;
+
+		G.pc_key += c1 - t0;
+		P = e->P;
+		LF = e->lf;
+		planc_active = e;
+		c2 = cyc();
+		G.pc_copy += c2 - c1;
+		if (tr)
+		{
+			const int wms = P.wrapx ? 0 : 1, wmt = P.wrapy ? 0 : 1;
+
+			P.r = tr;
+			P.tsx = tr->sxs;
+			P.tsy = tr->sys;
+			P.clamp = (u64)((tr->region & 1) ? 2 : wms) | ((u64)((tr->region & 2) ? 2 : wmt) << 2) | ((u64)(tr->uw - 1) << 14) | ((u64)(tr->vh - 1) << 34);
+			plan_tex_touch(tr);
+		}
+		c3 = cyc();
+		G.pc_touch += c3 - c2;
+		P.serial = H.serial - 1; // the first polygon sets the GS state up
+		if (OV.n)
+			ov_flush(); // anything but a ramp plan sees the picture with the queued light applied
+#ifdef HW_VU0
+		if (P.vu0)
+			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+#endif
+		H.cur_flags = flags;
+		G.plan_hit++;
+		G.begin_n++, G.sk_begin += ps2hwp_skyview;
+		G.pc_misc += cyc() - c3;
+		G.begin_cyc += cyc() - t0;
+		return 1;
+	}
+	ok = begin_draw_inner(flags, surf);
+	if (ok && P.lmode != LM_RAMP)
+	{
+		e->k = k;
+		e->used = 1;
+		e->P = P;
+		e->lf = LF;
+		planc_active = e;
+	}
+	else
+	{
+		planc_active = NULL;
+	}
+	G.plan_miss++;
+	G.begin_n++, G.sk_begin += ps2hwp_skyview;
+	G.pc_miss += cyc() - t0;
+	G.begin_cyc += cyc() - t0;
+	return ok;
+}
+
 // Transform, clip and pack one convex polygon.
 // Vertices: base[idx[i]] (or base[i] when idx is NULL); with `vcol` (4 floats per vertex index) they carry colours.
 static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float *vcol)
@@ -1933,7 +2199,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
 	int i, cnt, and_ = 0x3F, or_ = 0, na = P.vcol ? 6 : 2, big = 0;
 	cv_t *v;
-	u32 t0 = cyc();
+	u32 t0 = cyc(), gt1;
 	piece_t pc;
 #ifdef HW_VU0
 	const int vu0 = P.vu0 && !vcol && !P.vcol;
@@ -1944,10 +2210,29 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	if (P.vu)
 	{
 		if (!idx && !vcol && vu_poly(base, n))
+		{
+			G.p_vu++;
+			HG_SKY(0, 0);
 			return; // PS2-HW-45: the VU1 program transforms, clips and packs it
+		}
 		vu_sync();
 	}
-	for (i = 0; i < n; i++)
+	i = 0;
+#ifdef HW_VU0
+	if (vu0 && !P.oldpath)
+	{
+		// PS2-HW-59: two vertices per VU0 sequence (the divide of one hides behind the multiplies of the other)
+		for (; i + 1 < n; i += 2)
+		{
+			int oc0, oc1;
+
+			vu0_xform2(&base[idx ? idx[i] : (u32)i], &base[idx ? idx[i + 1] : (u32)(i + 1)], &vbuf_a[i], &vbuf_a[i + 1], &pvbuf[i], &pvbuf[i + 1], &oc0, &oc1);
+			and_ &= oc0 & oc1;
+			or_ |= oc0 | oc1;
+		}
+	}
+#endif
+	for (; i < n; i++)
 	{
 		u32 vi = idx ? idx[i] : (u32)i;
 		int oc;
@@ -1996,14 +2281,10 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 
 		for (i = 0; i < cnt; i++)
 		{
-			if (v[i].a[0] < smin)
-				smin = v[i].a[0];
-			if (v[i].a[1] < tmin)
-				tmin = v[i].a[1];
-			if (v[i].a[0] > smax)
-				smax = v[i].a[0];
-			if (v[i].a[1] > tmax)
-				tmax = v[i].a[1];
+			smin = hw_minf(smin, v[i].a[0]);
+			tmin = hw_minf(tmin, v[i].a[1]);
+			smax = hw_maxf(smax, v[i].a[0]);
+			tmax = hw_maxf(tmax, v[i].a[1]);
 		}
 		pc.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
 		pc.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
@@ -2017,18 +2298,47 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	pc.ripple = 0;
 	if ((ps2hwd_dbg_flags & HWDBG_TEX) && P.textured && H.cur_tex != NOREC && H.rec[H.cur_tex].sw && !vcol && !P.vcol)
 		lod_note(v, cnt); // OPT9 instrumentation: the mip level this polygon needs
+	gt1 = cyc();
 	if (P.fast && !P.vcol && !vcol && !big)
+	{
 #ifdef HW_VU0
-		emit_fast_fan(v, (vu0 && !or_) ? (const void *)pvbuf : NULL, cnt, pc.sb, pc.tb);
+		G.p_fast++, emit_fast_fan(v, (vu0 && !or_) ? (const void *)pvbuf : NULL, cnt, pc.sb, pc.tb);
 #else
 		emit_fast_fan(v, NULL, cnt, pc.sb, pc.tb);
 #endif
+		G.c_fast += cyc() - gt1;
+		HG_SKY(1, cyc() - gt1);
+	}
 	else if (P.litfast && !big && !vcol && !P.vcol && !(ps2hwd_dbg_flags & 8192) && lit_fast_poly(v, LF_PV(vu0, or_), cnt, pc.sb, pc.tb))
-		; // PS2-HW-43: drawn
+	{
+		G.p_lit++; // PS2-HW-43: drawn
+		G.c_lit += cyc() - gt1;
+		HG_SKY(2, cyc() - gt1);
+	}
 	else if (P.water && P.textured && !P.vcol && !vcol && !big)
-		emit_water_poly(v, cnt, pc, na);
+	{
+		G.p_water++, emit_water_poly(v, cnt, pc, na);
+		G.c_water += cyc() - gt1;
+		HG_SKY(4, cyc() - gt1);
+	}
+	else if (P.lmode == LM_BANDS && !P.water && !big && !vcol && !P.vcol && band_sweep(v, cnt, pc, 0))
+	{
+		G.p_cut++; // PS2-HW-48: the polygon cut at the steps of the light staircase in one sweep
+		G.c_cut += cyc() - gt1;
+		HG_SKY(3, cyc() - gt1);
+	}
 	else
-		cut_and_emit(v, cnt, 0, pc, na);
+	{
+		// why the polygon takes the general path (HWPROF20): 0 texture size not a power of two, 1 other plan (passes, ramp, ...), 2 many texels, 3 vertex colours,
+		// 4 clipped (litfast), 5 spans light classes (litfast), 6 other
+		const int why = (P.cutx || P.cuty) ? 0 : (!P.fast && !P.litfast) ? 1 : big ? 2 : (vcol || P.vcol) ? 3 : (P.litfast && or_) ? 4 : P.litfast ? 5 : 6;
+		u32 gt2;
+
+		G.p_cutold++, cut_and_emit(v, cnt, 0, pc, na);
+		gt2 = cyc() - gt1;
+		G.c_cutold += gt2;
+		G.cw_n[why]++, G.cw_c[why] += gt2;
+	}
 	H.st.cyc_draw += cyc() - t0;
 }
 
