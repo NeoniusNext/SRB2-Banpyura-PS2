@@ -202,7 +202,9 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 
 		if (!opaque && !hwr_sprite_shadow)
 		{
+			HWP_SPAN_BEGIN(tflush);
 			HWR_RenderBatches();
+			HWP_SPAN_END(tflush, HWP_SP_FLUSH);
 			hwr_sprite_batch = false;
 			if (!(PolyFlags & PF_NoTexture) && current_texture)
 				HWD.pfnSetTexture(current_texture); // what the polygon selected while batching only noted it

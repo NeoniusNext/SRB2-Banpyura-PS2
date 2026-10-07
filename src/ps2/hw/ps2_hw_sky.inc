@@ -143,6 +143,7 @@ static void sky_tri_clipped(int ia, int ib, int ic, int or_)
 	vbuf_a[1] = SKY.c[ib];
 	vbuf_a[2] = SKY.c[ic];
 	cnt = clip_poly(vbuf_a, vbuf_b, 3, 6, or_, &cl);
+	G.dome_tris++;
 	H.st.clipped++;
 	if (cnt < 3)
 		return;
@@ -187,15 +188,23 @@ static int sky_dome_fast(gl_sky_t *sky)
 {
 	float saved_mv[16];
 	int i, j, ok = 1;
+	u32 dome_t1 = 0;
 
 	if ((ps2hwd_dbg_flags & 4096) || !sky_fast_prepare(sky))
 		return 0;
+	G.dome_n++;
 	memcpy(saved_mv, H.mv, sizeof saved_mv);
 	m_scale(H.mv, 1.0f, (float)sky->height / 200.0f, 1.0f);
 	m_rotate(H.mv, 270.0f, 0.0f, 1.0f, 0.0f);
 	H.mat_dirty = 1;
-	if (!begin_draw(H.cur_flags, NULL))
-		goto done;
+	{
+		const u32 tb = cyc();
+		const int okb = begin_draw(H.cur_flags, NULL);
+
+		G.dome_begin += cyc() - tb;
+		if (!okb)
+			goto done;
+	}
 	if (!(P.vu0 && P.npass == 1 && P.lmode == LM_NONE && !P.cutx && !P.cuty && !P.water && P.pass[0].tex == (u8)P.textured))
 	{
 		ok = 0; // a plan the shortcut does not cover: the old path draws it
@@ -215,7 +224,9 @@ static int sky_dome_fast(gl_sky_t *sky)
 			SKY.oc[i] = (u8)vu0_xform(&SKY.v[i], &SKY.c[i], &SKY.p[i]);
 		H.st.verts_in += (u32)n;
 		H.st.cyc_draw += cyc() - t0;
+		G.dome_xf += cyc() - t0;
 	}
+	dome_t1 = cyc();
 	pass_setup(0, 0);
 	for (j = 0; j < 2; j++) // untextured caps first, then the textured bands
 	{
@@ -316,6 +327,7 @@ static int sky_dome_fast(gl_sky_t *sky)
 			}
 		}
 	}
+	G.dome_emit += cyc() - dome_t1;
 done:
 	memcpy(H.mv, saved_mv, sizeof H.mv);
 	H.mat_dirty = 1;

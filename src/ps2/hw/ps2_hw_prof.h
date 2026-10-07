@@ -57,7 +57,7 @@ enum
 extern unsigned long long ps2hwp_cyc[HWP_NUM];
 
 // OPT10 (HG): event counters of the engine side (HWPROF3 line, per frame)
-enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_SPR_ON, HWC_SPR_FLUSH, HWC_SPR_SOLO, HWC_SPR_SHADOW, HWC_NUM };
+enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_SPR_ON, HWC_SPR_FLUSH, HWC_SPR_SOLO, HWC_SPR_SHADOW, HWC_PLANE_HIT, HWC_PLANE_MISS, HWC_PLANE_BYPASS, HWC_PLANE_BAD, HWC_NUM };
 extern unsigned int ps2hwp_cnt[HWC_NUM];
 extern int ps2hwp_skyview; // 1 while HWR_RenderSkyboxView runs (the counters of the driver are split by view)
 #define HWC_ADD(i) (ps2hwp_cnt[i]++)

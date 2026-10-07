@@ -432,6 +432,144 @@ static UINT8 HWR_CeilingLightLevel(sector_t *sector, INT16 base_lightlevel)
 //                                   FLOOR/CEILING GENERATION FROM SUBSECTORS
 // ==========================================================================
 
+#ifdef PS2_PROFILE
+// PS2-HW-55: cache of the polygons HWR_RenderPlane makes.
+// A floor or ceiling polygon is a function of the subsector's convex polygon (fixed for the level), the height, the flags, the light level, the
+// flat (its size), the colormap, the sector's flat offset / scale / angle and the lighting settings: nothing of the view. For a flat that is not
+// sloped and a subsector without a horizon line the previous result is kept and handed to HWR_ProcessPolygon again when all of those are the
+// same (about 3 000 cycles for the vertices with their texture coordinates and the lighting, against a few hundred for the compare). The key
+// holds every input, so a moving platform, a scrolling flat or a light change simply misses.
+// -hwdbg 65536: off; -hwdbg 32768: every hit is also calculated and compared (HWPLANECHECK lines: the number of differences must be 0).
+extern boolean Cubeapply;
+extern float Cubepal[2][2][2][3];
+
+typedef struct
+{
+	const sector_t *fof; // the tag (with xsub and isceiling)
+	const extracolormap_t *colormap; // the inputs
+	const poly_t *poly;
+	fixed_t fixedheight, xscale, yscale, xoff, yoff;
+	angle_t angle;
+	FBITFIELD flags_in, flags_out;
+	FOutVector *verts; // the polygon: vertices in parena, the surface
+	FSurfaceInfo surf;
+	UINT16 xsub, epoch, used;
+	INT16 lightlevel, texnum;
+	UINT8 isceiling, alpha, shader, nverts, cap, valid;
+} planecache_t;
+
+#define PCACHE_SETS 512
+#define PCACHE_ARENA_VERTS 6144
+static planecache_t *pcache; // PCACHE_SETS sets of two ways, PU_LEVEL
+static FOutVector *parena; // the vertices of the entries: bumped, PU_LEVEL
+static size_t parena_used;
+static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
+static UINT32 plane_epoch, plane_epoch_sig, plane_reports;
+static boolean pcache_on; // set per view by HWR_PlaneCacheFrame
+
+// the lighting settings of the frame the cached surfaces were made with (called once per view); false: no cache (memory)
+static boolean HWR_PlaneCacheFrame(void)
+{
+	UINT32 sig = (UINT32)cv_secbright.value * 2654435761u;
+	const float *cp = &Cubepal[0][0][0][0];
+	int i;
+
+	if (ps2hwd_dbg_flags & 0x10000)
+		return false;
+	if (!pcache)
+	{
+		if (Z_ArenaFree() < 2 * 1024 * 1024)
+			return false; // a tight level: no room for it
+		Z_Calloc(PCACHE_SETS * 2 * sizeof(planecache_t), PU_LEVEL, &pcache);
+		Z_Malloc(PCACHE_ARENA_VERTS * sizeof(FOutVector), PU_LEVEL, &parena);
+		parena_used = 0;
+		plane_epoch_sig = 0;
+	}
+	sig ^= (UINT32)cv_glshaders.value << 3;
+	sig ^= (UINT32)gl_shadersavailable << 5;
+	sig ^= (UINT32)HWR_ShouldUsePaletteRendering() << 7;
+	sig ^= (UINT32)Cubeapply << 9;
+	if (Cubeapply)
+		for (i = 0; i < 24; i++)
+		{
+			union { float f; UINT32 u; } c;
+
+			c.f = cp[i];
+			sig = (sig << 5) + sig + c.u;
+		}
+	if (sig != plane_epoch_sig)
+	{
+		plane_epoch_sig = sig;
+		plane_epoch++;
+	}
+	return true;
+}
+
+static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
+{
+	const size_t n = (size_t)(sub - subsectors);
+	const seg_t *line;
+	INT32 i;
+
+	if (n >= numsubsectors)
+		return true;
+	if (!subhoriz)
+		Z_Calloc(numsubsectors, PU_LEVEL, &subhoriz);
+	if (!subhoriz[n])
+	{
+		subhoriz[n] = 1;
+		line = &segs[sub->firstline];
+		for (i = 0; i < sub->numlines; i++, line++)
+			if (!line->glseg && line->linedef->special == SPECIAL_HORIZON_LINE)
+				subhoriz[n] = 2;
+	}
+	return subhoriz[n] == 2;
+}
+
+// the entry of this plane (*hit: its tag matches) or the one to fill
+static planecache_t *HWR_PlaneCacheFind(UINT16 xsub, const sector_t *fof, UINT8 isceiling, boolean *hit)
+{
+	UINT32 h = (UINT32)xsub * 2u + isceiling;
+	planecache_t *set;
+
+	h ^= (UINT32)(uintptr_t)fof >> 4;
+	h = (h * 2654435761u) >> 23; // 9 bits
+	set = &pcache[(h & (PCACHE_SETS - 1)) * 2];
+	*hit = true;
+	if (set[0].valid && set[0].xsub == xsub && set[0].fof == fof && set[0].isceiling == isceiling)
+		return &set[0];
+	if (set[1].valid && set[1].xsub == xsub && set[1].fof == fof && set[1].isceiling == isceiling)
+		return &set[1];
+	*hit = false;
+	if (!set[0].valid)
+		return &set[0];
+	if (!set[1].valid)
+		return &set[1];
+	return (INT16)(set[0].used - set[1].used) <= 0 ? &set[0] : &set[1];
+}
+
+static void HWR_PlaneCacheStore(planecache_t *e, const FSurfaceInfo *surf, const FOutVector *verts, UINT32 nverts, FBITFIELD flags, INT32 shader)
+{
+	if (!e->verts || e->cap < nverts)
+	{
+		if (parena_used + nverts > PCACHE_ARENA_VERTS)
+		{
+			e->valid = 0; // the arena is full: this plane is not cached
+			return;
+		}
+		e->verts = &parena[parena_used];
+		parena_used += nverts;
+		e->cap = (UINT8)nverts;
+	}
+	memcpy(e->verts, verts, nverts * sizeof(FOutVector));
+	e->surf = *surf;
+	e->flags_out = flags;
+	e->shader = (UINT8)shader;
+	e->nverts = (UINT8)nverts;
+	e->valid = 1;
+}
+#endif
+
 // -----------------+
 // HWR_RenderPlane  : Render a floor or ceiling convex polygon
 // -----------------+
@@ -445,6 +583,11 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 	size_t nrPlaneVerts;
 	INT32 i;
+#ifdef PS2_PROFILE
+	planecache_t *pce = NULL; // PS2-HW-55
+	boolean pc_hit = false;
+	UINT8 pc_xs = 0;
+#endif
 
 	float height; // constant y for all points on the convex flat polygon
 	float anglef = 0.0f;
@@ -486,6 +629,83 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		else if (gl_frontsector->c_slope && isceiling)
 			slope = gl_frontsector->c_slope;
 	}
+
+#ifdef PS2_PROFILE
+	if (!slope && pcache_on && (!subsector || !HWR_PlaneHasHorizon(subsector)) && nrPlaneVerts < 250 && lightlevel >= -32768 && lightlevel < 32768)
+	{
+		const sector_t *ss = FOFsector ? FOFsector : gl_frontsector;
+		const INT32 texnum = levelflat ? R_GetTextureNumForFlat(levelflat) : -1;
+		fixed_t kxs = FRACUNIT, kys = FRACUNIT, kxo = 0, kyo = 0;
+		angle_t kang = 0;
+
+		if (ss)
+		{
+			if (!isceiling)
+			{
+				kxs = ss->floorxscale;
+				kys = ss->flooryscale;
+				kxo = ss->floorxoffset;
+				kyo = ss->flooryoffset;
+				kang = ss->floorangle;
+			}
+			else
+			{
+				kxs = ss->ceilingxscale;
+				kys = ss->ceilingyscale;
+				kxo = ss->ceilingxoffset;
+				kyo = ss->ceilingyoffset;
+				kang = ss->ceilingangle;
+			}
+		}
+		if (texnum < 32000)
+		{
+			boolean tag;
+
+			pce = HWR_PlaneCacheFind((UINT16)(xsub - extrasubsectors), FOFsector, (UINT8)isceiling, &tag);
+			if (tag && pce->fixedheight == fixedheight && pce->flags_in == PolyFlags && pce->lightlevel == (INT16)lightlevel && pce->texnum == (INT16)texnum
+				&& pce->colormap == planecolormap && pce->alpha == alpha && pce->xscale == kxs && pce->yscale == kys && pce->xoff == kxo && pce->yoff == kyo
+				&& pce->angle == kang && pce->epoch == (UINT16)plane_epoch && pce->poly == xsub->planepoly)
+			{
+				pce->used = (UINT16)validcount;
+				if (!(ps2hwd_dbg_flags & 32768))
+				{
+					HWC_ADD(HWC_PLANE_HIT);
+					if (!levelflat)
+						HWR_SetCurrentTexture(NULL);
+					HWR_ProcessPolygon(&pce->surf, pce->verts, pce->nverts, pce->flags_out, pce->shader, false);
+					return;
+				}
+				pc_hit = true; // check mode: calculated below and compared with the entry
+			}
+			else
+			{
+				HWC_ADD(HWC_PLANE_MISS);
+				pc_hit = false;
+				pce->fof = FOFsector;
+				pce->xsub = (UINT16)(xsub - extrasubsectors);
+				pce->isceiling = (UINT8)isceiling;
+				pce->fixedheight = fixedheight;
+				pce->flags_in = PolyFlags;
+				pce->lightlevel = (INT16)lightlevel;
+				pce->texnum = (INT16)texnum;
+				pce->colormap = planecolormap;
+				pce->alpha = alpha;
+				pce->xscale = kxs;
+				pce->yscale = kys;
+				pce->xoff = kxo;
+				pce->yoff = kyo;
+				pce->angle = kang;
+				pce->epoch = (UINT16)plane_epoch;
+				pce->poly = xsub->planepoly;
+				pce->used = (UINT16)validcount;
+				pce->valid = 0; // set by the store
+			}
+			pc_xs = 1;
+		}
+	}
+	else
+		HWC_ADD(HWC_PLANE_BYPASS);
+#endif
 
 	height = FixedToFloat(fixedheight);
 
@@ -608,6 +828,30 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 		PolyFlags |= PF_ColorMapped;
 	}
+
+#ifdef PS2_PROFILE
+	if (pc_xs)
+	{
+		if (pc_hit)
+		{
+			// check mode: the entry against what was just calculated
+			if (pce->nverts != (UINT8)nrPlaneVerts || memcmp(pce->verts, planeVerts, nrPlaneVerts * sizeof(FOutVector)) || pce->surf.PolyColor.rgba != Surf.PolyColor.rgba
+				|| pce->surf.TintColor.rgba != Surf.TintColor.rgba || pce->surf.FadeColor.rgba != Surf.FadeColor.rgba || pce->surf.LightTableId != Surf.LightTableId
+				|| pce->surf.LightInfo.light_level != Surf.LightInfo.light_level || pce->surf.LightInfo.fade_start != Surf.LightInfo.fade_start
+				|| pce->surf.LightInfo.fade_end != Surf.LightInfo.fade_end || pce->flags_out != PolyFlags || pce->shader != (UINT8)shader)
+			{
+				HWC_ADD(HWC_PLANE_BAD);
+				if (plane_reports++ < 8)
+					I_OutputMsg("HWPLANECHECK mismatch: xsub %u ceiling %d fof %p height %d light %d tex %d nverts %u/%u flags %lx/%lx shader %u/%d\n", (unsigned)pce->xsub, (int)isceiling, (const void *)FOFsector,
+						(int)fixedheight, (int)lightlevel, (int)pce->texnum, (unsigned)pce->nverts, (unsigned)nrPlaneVerts, (unsigned long)pce->flags_out, (unsigned long)PolyFlags, (unsigned)pce->shader, (int)shader);
+			}
+			else
+				HWC_ADD(HWC_PLANE_HIT);
+		}
+		else
+			HWR_PlaneCacheStore(pce, &Surf, planeVerts, (UINT32)nrPlaneVerts, PolyFlags, shader);
+	}
+#endif
 
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
 
@@ -5800,6 +6044,7 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 
 #ifdef PS2_PROFILE
 	ps2hwp_skyview = 1;
+	pcache_on = HWR_PlaneCacheFrame();
 #endif
 	HWR_SetupView(player, viewnumber, fpov, true);
 	HWP_SPAN_END(tk0, HWP_K_SET);
@@ -5948,6 +6193,9 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 
 	{
 	HWP_SPAN_BEGIN(tms);
+#ifdef PS2_PROFILE
+	pcache_on = HWR_PlaneCacheFrame();
+#endif
 	HWR_SetupView(player, viewnumber, fpov, false);
 	HWP_SPAN_END(tms, HWP_M_SETUP);
 	}
