@@ -77,6 +77,9 @@ void *Picture_GetPatchPixel(
 	pictureflags_t flags);
 
 void *Picture_TextureToFlat(size_t texnum);
+#ifdef PS2
+void *Picture_TryTextureToFlat(size_t texnum); // PS2-140: NULL when there is no room
+#endif
 
 INT32 Picture_FormatBPP(pictureformat_t format);
 boolean Picture_IsPatchFormat(pictureformat_t format);

@@ -853,6 +853,10 @@ boolean Picture_CheckIfDoomPatch(softwarepatch_t *patch, size_t size)
   * \param texnum The texture number.
   * \return The converted flat.
   */
+#ifdef PS2
+static boolean picture_tryflat; // PS2-140: Picture_TryTextureToFlat is running: no room for the flat is a NULL, not the end of the run
+#endif
+
 void *Picture_TextureToFlat(size_t texnum)
 {
 	texture_t *texture;
@@ -873,6 +877,15 @@ void *Picture_TextureToFlat(size_t texnum)
 	// Allocate the flat
 	flatsize = texture->width * texture->height;
 #if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXPLACE)
+#ifdef PS2
+	if (picture_tryflat)
+	{
+		converted = Z_TryMallocAlign(flatsize, PU_RENDERWORK, NULL, sizeof (void *));
+		if (!converted)
+			return NULL;
+	}
+	else
+#endif
 	converted = Z_Malloc(flatsize, PU_RENDERWORK, NULL);
 #else
 	converted = Z_Malloc(flatsize, PU_STATIC, NULL);
@@ -902,6 +915,19 @@ void *Picture_TextureToFlat(size_t texnum)
 
 	return converted;
 }
+
+#ifdef PS2
+/** PS2-140 (OPT10-S): Picture_TextureToFlat for a caller that can do without the flat: NULL when the zone has no room for it. */
+void *Picture_TryTextureToFlat(size_t texnum)
+{
+	void *flat;
+
+	picture_tryflat = true;
+	flat = Picture_TextureToFlat(texnum);
+	picture_tryflat = false;
+	return flat;
+}
+#endif
 
 #if !defined(PS2_PROFILE) || defined(PS2_ZIPPNG) // PS2-20: without PS2_ZIPPNG the profile has no PNG decoder (cooked pictures below)
 /** Returns true if the lump is a valid PNG.

@@ -534,7 +534,8 @@ static void HWR_DrawTexturePatchInCache(GLMipmap_t *mipmap,
 	}
 }
 
-static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
+// PS2-140: try: NULL (and no data) when the zone has no room for the block, instead of the end of the run
+static UINT8 *MakeBlockEx(GLMipmap_t *grMipmap, boolean try)
 {
 	UINT8 *block;
 	INT32 bpp, i;
@@ -542,6 +543,17 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
 	INT32 blocksize = (grMipmap->width * grMipmap->height);
 
 	bpp =  format2bpp(grMipmap->format);
+#ifdef PS2
+	if (try)
+	{
+		block = Z_TryMallocAlign((size_t)blocksize*bpp, PU_HWRCACHE, &(grMipmap->data), sizeof (void *));
+		if (!block)
+			return NULL;
+	}
+	else
+#else
+	(void)try;
+#endif
 	block = Z_Malloc(blocksize*bpp, PU_HWRCACHE, &(grMipmap->data));
 
 	switch (bpp)
@@ -572,6 +584,11 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
 	}
 
 	return block;
+}
+
+static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
+{
+	return MakeBlockEx(grMipmap, false);
 }
 
 #ifdef PS2
@@ -645,9 +662,22 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 	blockwidth = texture->width;
 	blockheight = texture->height;
 	blocksize = blockwidth * blockheight;
-	block = MakeBlock(mipmap);
 #ifdef PS2
+	// PS2-140: a texture of 64 KB and more that does not fit has no data: the driver skips the draws that need it for a frame and the engine asks again
+	block = MakeBlockEx(mipmap, (size_t)blocksize * format2bpp(mipmap->format) >= HWR_TRYPATCH_MIN);
 	missing = 0;
+	if (!block)
+	{
+		static unsigned ps2_noblock_reports;
+
+		if (ps2_noblock_reports++ < 16)
+			CONS_Alert(CONS_WARNING, "no room for texture %.8s (%dx%d)\n", texture->name, (int)texture->width, (int)texture->height);
+		grtex->scaleX = 1.0f/(texture->width*FRACUNIT);
+		grtex->scaleY = 1.0f/(texture->height*FRACUNIT);
+		return;
+	}
+#else
+	block = MakeBlock(mipmap);
 #endif
 
 	// Composite the columns together.
@@ -801,7 +831,19 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 #ifdef PS2_PROFILE
 		unsigned int t0 = ps2hwt_now();
 #endif
+#ifdef PS2
+		// PS2-140: a patch of 64 KB and more as a texture (a 1024x512 one is 1 MB) that does not fit has no data: the driver skips the draws that need it
+		if (!MakeBlockEx(grMipmap, (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format) >= HWR_TRYPATCH_MIN))
+		{
+			static unsigned ps2_nopatch_reports;
+
+			if (ps2_nopatch_reports++ < 16)
+				CONS_Alert(CONS_WARNING, "no room for a patch texture of %dx%d\n", (int)grMipmap->width, (int)grMipmap->height);
+			return;
+		}
+#else
 		MakeBlock(grMipmap);
+#endif
 
 		HWR_DrawPatchInCache(grMipmap,
 			grMipmap->width, grMipmap->height,
@@ -1266,8 +1308,17 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 	{
 		if (m->regen_id >= 0 && (size_t)m->regen_id < gl_numtextures)
 		{
+			// PS2-140: no room for the engine's flat or for this copy of it: no data, the driver skips the draws that need the texture
 			size_t size = (size_t)m->width * m->height;
-			memcpy(Z_Malloc(size, PU_HWRCACHE, &m->data), R_GetFlatForTexture(m->regen_id), size);
+			const UINT8 *src = R_TryGetFlatForTexture((size_t)m->regen_id);
+			void *dst;
+
+			if (!src)
+				return;
+			dst = Z_TryMallocAlign(size, PU_HWRCACHE, &m->data, sizeof (void *));
+			if (!dst)
+				return;
+			memcpy(dst, src, size);
 		}
 	}
 }
@@ -1304,7 +1355,7 @@ const UINT8 *HWR_PS2_FlatPin(const GLMipmap_t *m)
 
 	if (m->regen_kind != 2 || m->regen_id < 0 || (size_t)m->regen_id >= gl_numtextures)
 		return NULL;
-	p = R_GetFlatForTexture((size_t)m->regen_id);
+	p = R_TryGetFlatForTexture((size_t)m->regen_id); // PS2-140: NULL when a texture used as a flat does not fit (the draws are skipped)
 	if (p)
 		Z_ChangeTag(p, PU_STATIC);
 	return p;

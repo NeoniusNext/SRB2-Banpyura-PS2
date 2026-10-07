@@ -1143,6 +1143,33 @@ UINT8 *R_GetFlatForTexture(size_t texnum)
 	return texture->flat;
 }
 
+#if defined(PS2) && defined(PS2_PROFILE)
+// PS2-140 (OPT10-S): R_GetFlatForTexture for the hardware renderer, which can do without a flat (the draws that need it are skipped for a frame, the
+// driver says so): a texture that is used as a flat and does not fit once converted (two 1 MiB blocks at a time on MAPMG: the composite and the flat)
+// is NULL here instead of the end of the run. Flats that are lumps take the original path (the driver reads those in bands from the lump).
+UINT8 *R_TryGetFlatForTexture(size_t texnum)
+{
+	texture_t *texture;
+	UINT8 *flat;
+
+	if (texnum >= (unsigned)numtextures)
+		return NULL;
+	texture = textures[texnum];
+	if (texture->flat != NULL || texture->type == TEXTURETYPE_FLAT)
+		return R_GetFlatForTexture(texnum);
+
+	flat = (UINT8 *)Picture_TryTextureToFlat(texnum);
+	if (!flat)
+		return NULL;
+	texture->flat = flat;
+	Z_SetUser(flat, (void **)&texture->flat);
+	Z_ChangeTag(flat, PU_CACHE);
+	R_ReleaseTextureCache((INT32)texnum);
+	flatmemory += texture->width * texture->height;
+	return flat;
+}
+#endif
+
 //
 // R_GetTextureNum
 //
