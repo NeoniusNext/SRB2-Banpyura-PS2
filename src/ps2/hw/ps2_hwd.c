@@ -33,6 +33,7 @@
 #include "../../console.h"
 #include "../../hardware/hw_drv.h"
 #include "../../hardware/hw_main.h"
+#include "../../m_argv.h" // -hwnosplit
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
@@ -249,6 +250,7 @@ boolean PS2HWD_Init(void)
 	if (H.up)
 		return true;
 	memset(&H, 0, sizeof H);
+	tex_nosplit = M_CheckParm("-hwnosplit") != 0; // PS2-HW-70 off: images over 1024 rows are decimated
 	H.dmac = -1;
 	H.sema_vbl = H.sema_dma = -1;
 	H.shader = -1;
@@ -658,6 +660,113 @@ static void hw_Draw2DLine(F2DCoord *v1, F2DCoord *v2, RGBA_t Color)
 	screen_mode_end(&sv);
 }
 
+// ---- images of more than 1024 rows (PS2-HW-70) ----
+// The GS takes 1024 rows of texture at most. A P_8 map texture of 1025..2048 rows (the pipes of THZ: 64 x 1536) is stored as two images, the rows
+// [0, 1024) and the rest (tex_upload), and a polygon that has such a texture is cut along t at the boundary between the pieces (and at the whole
+// repeats when the texture repeats); every part is drawn with its piece, t made the piece's own. The cut is made on the engine's polygon, in world
+// space where the texture mapping is affine, so the two parts get the very same vertices on the cut (no crack). Without wrap the texture is clamped
+// at its edges: the part with t below the boundary belongs to the first piece (clamped at its top), the one above it to the second (clamped at the end).
+#define SPLIT_VERT FOutVector
+#include "ps2_hw_split.h"
+
+#define SPLIT_MAXV (PS2HWD_MAXPOLY + 8)
+static FOutVector split_buf[2][SPLIT_MAXV];
+
+static inline int split_active(u32 flags)
+{
+	return H.cur_tex != NOREC && H.rec[H.cur_tex].psplit == 1 && !(flags & PF_NoTexture);
+}
+
+// the record to draw the second piece with: the variant (CLUT, wrap, filter) of the record the engine selected (cur) on the image of the second piece
+static int split_piece_rec(int bi, int cur)
+{
+	int w;
+	u8 clut, wrapx, wrapy, nearest_only, notcc;
+
+	if (cur == img_of(cur))
+		return bi; // the first piece's own record: the second piece was made with the same variant
+	clut = H.rec[cur].clut;
+	wrapx = H.rec[cur].wrapx;
+	wrapy = H.rec[cur].wrapy;
+	nearest_only = H.rec[cur].nearest_only;
+	notcc = H.rec[cur].notcc;
+	for (w = H.rec[bi].sec; w != NOREC; w = H.rec[w].sec_next)
+		if (H.rec[w].clut == clut && H.rec[w].wrapx == wrapx && H.rec[w].wrapy == wrapy && H.rec[w].nearest_only == nearest_only && H.rec[w].notcc == notcc)
+			return w;
+	w = rec_new(); // may move the table
+	if (w == NOREC)
+		return NOREC;
+	H.rec[w] = H.rec[bi];
+	H.rec[w].prev = H.rec[w].next = NOREC;
+	H.rec[w].pnext = H.rec[w].ppar = NOREC;
+	H.rec[w].owner = NULL; // a view of the second piece belongs to no engine texture: it goes with its image
+	H.rec[w].share = bi;
+	H.rec[w].sec = NOREC;
+	H.rec[w].sec_next = H.rec[bi].sec;
+	H.rec[bi].sec = w;
+	H.rec[w].used = 1;
+	H.rec[w].pin = 0;
+	H.rec[w].clut = clut;
+	H.rec[w].wrapx = wrapx;
+	H.rec[w].wrapy = wrapy;
+	H.rec[w].nearest_only = nearest_only;
+	H.rec[w].notcc = notcc;
+	H.rec[w].stamp = H.frame_no;
+	H.rec[w].done = 0;
+	H.rec[w].ws = 0;
+	return w;
+}
+
+typedef struct
+{
+	const FSurfaceInfo *surf;
+	u32 fl;
+	int bi, cur;
+} split_ctx_t;
+
+static void split_emit(void *vctx, int piece, int cell, const FOutVector *v, int n)
+{
+	const split_ctx_t *c = vctx;
+	const int rec = piece ? split_piece_rec(c->bi, c->cur) : c->cur;
+
+	(void)cell;
+	if (rec == NOREC)
+		return;
+	TX.split_sub++;
+	H.cur_tex = rec;
+	if (begin_draw(c->fl, c->surf))
+		emit_fan(v, NULL, n, NULL);
+	H.cur_tex = c->cur;
+}
+
+static void split_draw(const FSurfaceInfo *surf, u32 flags, const FOutVector *v, int n)
+{
+	split_ctx_t c;
+	const int ai = img_of(H.cur_tex), bi = H.rec[ai].pnext;
+	float lo_t[2], hi_t[2], tk[2];
+
+	if (n < 3)
+		return;
+	if (bi == NOREC)
+	{
+		if (begin_draw(flags, surf))
+			emit_fan(v, NULL, n, NULL);
+		return;
+	}
+	TX.split_poly++;
+	c.surf = surf;
+	c.fl = (flags | PF_RemoveYWrap) & ~(u32)PF_ForceWrapY; // a part is inside one piece: it clamps (the repeats are made by the cuts)
+	c.bi = bi;
+	c.cur = H.cur_tex;
+	lo_t[0] = H.rec[ai].pt0;
+	hi_t[0] = H.rec[ai].pt1;
+	tk[0] = H.rec[ai].ptk;
+	lo_t[1] = H.rec[bi].pt0;
+	hi_t[1] = H.rec[bi].pt1;
+	tk[1] = H.rec[bi].ptk;
+	split_polygon(v, n, (H.rec[c.cur].wrapy || (flags & PF_ForceWrapY)) && !(flags & PF_RemoveYWrap), lo_t, hi_t, tk, split_buf[0], split_buf[1], split_emit, &c);
+}
+
 static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
 {
 	if (!H.up)
@@ -678,7 +787,9 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		G.sing_by[gk]++;
 		if (H.imm_tex && !(PolyFlags & PF_NoTexture))
 			imm_prepare(pOutVerts, (unsigned int)iNumPts); // PS2-HW-37: the texture is made resident at the level this polygon needs
-		if (begin_draw((u32)PolyFlags, pSurf))
+		if (split_active((u32)PolyFlags))
+			split_draw(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts); // PS2-HW-70: a texture of two images
+		else if (begin_draw((u32)PolyFlags, pSurf))
 			emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
 		G.sing_cyc[gk] += cyc() - gt0;
 	}
@@ -701,6 +812,12 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	G.fans += nfans;
 	G.sk_batches += ps2hwp_skyview;
 	G.sk_fans += ps2hwp_skyview ? nfans : 0;
+	if (split_active(flags))
+	{
+		for (i = 0; i < nfans; i++) // PS2-HW-70: a texture of two images: every polygon is cut along its pieces
+			split_draw((const FSurfaceInfo *)surf, flags, (const FOutVector *)base + desc[2 * i], (int)desc[2 * i + 1]);
+		return;
+	}
 	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
 		return;
 	if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
@@ -721,6 +838,21 @@ static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, 
 {
 	if (!H.up)
 		return;
+	if (split_active((u32)PolyFlags))
+	{
+		u32 i;
+
+		for (i = 0; i + 2 < (u32)iNumPts; i += 3) // PS2-HW-70
+		{
+			FOutVector tri[3];
+
+			tri[0] = pOutVerts[IndexArray[i]];
+			tri[1] = pOutVerts[IndexArray[i + 1]];
+			tri[2] = pOutVerts[IndexArray[i + 2]];
+			split_draw(pSurf, (u32)PolyFlags, tri, 3);
+		}
+		return;
+	}
 	if (begin_draw((u32)PolyFlags, pSurf))
 		emit_tris(pOutVerts, IndexArray, (u32)iNumPts, NULL);
 }
@@ -971,7 +1103,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 		// stored under another cap: re-make it when its size would differ (smaller at once; larger within the per-frame budget)
 		u32 dx, dy;
 
-		if (tex_plan(r->psm, r->sw, r->sh, H.tex_cap_blocks, &dx, &dy) && (dx != r->dx || dy != r->dy))
+		if (tex_plan(r->psm, r->sw, r->sh, H.tex_cap_blocks, r->shareable, &dx, &dy) && (dx != r->dx || dy != r->dy))
 		{
 			u32 nb = tex_plan_blocks(r->psm, r->sw, r->sh, dx, dy);
 

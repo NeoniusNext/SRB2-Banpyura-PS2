@@ -570,8 +570,8 @@ static int plan_too_fine(const GLMipmap_t *m, const texrec_t *r, u32 want)
 
 	if (r->screen || want < (u32)r->dx + 2u || !r->sw)
 		return 0;
-	saved = r->nblk - tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want);
-	if (r->nblk < tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want) || saved < PLAN_DOWN_BLOCKS)
+	saved = rec_blocks(r) - tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want);
+	if (rec_blocks(r) < tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want) || saved < PLAN_DOWN_BLOCKS)
 		return 0;
 	return saved >= 4u * PLAN_DOWN_BLOCKS || dc_find(dc_key(m), r->sw, r->sh, 0) != NULL;
 }
@@ -637,4 +637,61 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 	settex_now(m);
 	imm_level = -1;
 	TX.imm_cyc += cyc() - t0;
+}
+
+// ---- sprites that draw nothing (PS2-HW-72) ----
+// The GS puts a pixel on the screen only when the centre of the pixel is inside the primitive (in this driver's coordinates: the integer points, see P.ox:
+// the -0.5 shift). A sprite quad that lies between pixel centres, or outside the view, draws nothing, and everything the engine and the driver do for it
+// (vissprite, sort, patch lookup, polygon set-up, packing) is wasted: 4000+ EE cycles. The engine asks here for the quad it would draw (the four vertices
+// as HWR_DrawSprite hands them to HWR_ProcessPolygon); true = it cannot show a pixel: all four vertices lie outside one side of the view volume, or the
+// screen box of the quad (widened by 0.1 pixel: the GS snaps vertices to 1/16 pixel) contains no pixel centre. A quad that reaches the near plane is
+// never called hidden (it is clipped by the driver).
+int PS2HWD_QuadHidden(const void *vp)
+{
+	const FOutVector *v = (const FOutVector *)vp;
+	float x0 = 1.0e30f, x1 = -1.0e30f, y0 = 1.0e30f, y1 = -1.0e30f, hx, hy, cx, cy;
+	int i, and_ = 0x3F;
+
+	if (!H.up || H.vpw < 1.0f || H.vph < 1.0f || (ps2hwd_dbg_flags & HWDBG_NOPLAN))
+		return 0;
+	xf_update();
+	hx = H.vpw * 0.5f;
+	hy = H.vph * 0.5f;
+	cx = H.vpx + hx - 0.5f;
+	cy = H.vpy + hy - 0.5f;
+	spr_hid_test++;
+	for (i = 0; i < 4; i++)
+	{
+		cv_t c;
+		float iw, sx, sy;
+
+		xform_vertex(&v[i], NULL, &c);
+		if (c.w < 2.0f * H.near_plane)
+			return 0; // near the eye (or behind it): the clipper decides
+		and_ &= outcode(&c, 1.0f, 1.0f);
+		iw = 1.0f / c.w;
+		sx = cx + c.x * iw * hx;
+		sy = cy - c.y * iw * hy;
+		if (sx < x0)
+			x0 = sx;
+		if (sx > x1)
+			x1 = sx;
+		if (sy < y0)
+			y0 = sy;
+		if (sy > y1)
+			y1 = sy;
+	}
+	if (and_)
+	{
+		spr_hid_yes++;
+		return 1; // wholly outside the view volume
+	}
+	if (x1 - x0 > 8.0f || y1 - y0 > 8.0f)
+		return 0; // big: it covers a centre for sure
+	if (ceilf(x0 - 0.1f) > floorf(x1 + 0.1f) || ceilf(y0 - 0.1f) > floorf(y1 + 0.1f))
+	{
+		spr_hid_yes++;
+		return 1; // no pixel centre in the box
+	}
+	return 0;
 }

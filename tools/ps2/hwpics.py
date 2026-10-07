@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """HW pictures of many maps in two modes (A/B), one emulator run per map and mode, N runs in parallel.
 
-usage: hwpics.py [--elf ELF] [--b-elf ELF2] [--par N] [--tag T] [--shots k100,k300] [--b-args "-hwdbg 33554432"] MAP ...
+usage: hwpics.py [--elf ELF] [--b-elf ELF2] [--par N] [--tag T] [--shots k100,k300] [--a-args "..."] [--b-args "-hwdbg 33554432"] MAP ...
 Runs build/runs/pic_<tag>_a_<MAP> (default arguments) and pic_<tag>_b_<MAP> (with --b-args), each a static view of the map
 ('-skipintro -warp MAP -vidshot SHOTS'), then compares the pictures with shotcmp.py semantics and prints the differing share.
 """
@@ -37,6 +37,7 @@ def main():
     tag = 'x'
     shots = 'k100,k250'
     bargs = ['-hwdbg', '33554432']
+    aargs = []
     belf = None
     maps = []
     i = 0
@@ -53,11 +54,13 @@ def main():
             belf = args[i + 1]; i += 2
         elif args[i] == '--b-args':
             bargs = args[i + 1].split(); i += 2
+        elif args[i] == '--a-args':
+            aargs = args[i + 1].split(); i += 2
         else:
             maps.append(args[i]); i += 1
     jobs = []
     for m in maps:
-        jobs.append((f'pic_{tag}_a_{m}', m, [], elf))
+        jobs.append((f'pic_{tag}_a_{m}', m, aargs, elf))
         jobs.append((f'pic_{tag}_b_{m}', m, bargs, belf or elf))
     with ThreadPoolExecutor(max_workers=par) as ex:
         futs = [ex.submit(run, n, m, el, shots, e, 900) for n, m, e, el in jobs]

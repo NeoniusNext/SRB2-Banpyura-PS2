@@ -19,6 +19,10 @@
 #include "hw_light.h"
 #include "hw_drv.h"
 #include "hw_batching.h"
+#ifdef PS2_PROFILE
+#include "hw_sort.h" // HWR_RadixSort32 (the sprite sort)
+#include "../m_argv.h" // -hwnocull
+#endif
 #include "hw_md2.h"
 #include "hw_clip.h"
 
@@ -51,6 +55,7 @@ unsigned long long ps2hwp_cyc[HWP_NUM];
 unsigned int ps2hwp_cnt[HWC_NUM];
 int ps2hwp_skyview;
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
+extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
@@ -3362,7 +3367,27 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	if (alpha >= 255) return;
 	alpha = 255 - alpha;
 
+#ifdef PS2_PROFILE
+	if (cv_shadow.value != 2)
+	{
+		static lumpnum_t dshadow_lump = LUMPERROR; // the lump of the shadow picture is looked up by name once per set of loaded files (a lookup per shadow was 1000+ cycles)
+		static UINT16 dshadow_wads;
+
+		if (dshadow_lump == LUMPERROR || dshadow_wads != numwadfiles)
+		{
+			dshadow_lump = W_CheckNumForPatchName("DSHADOW");
+			dshadow_wads = numwadfiles;
+		}
+		if (dshadow_lump == LUMPERROR)
+			gpatch = (patch_t *)W_CachePatchName("DSHADOW", PU_SPRITE); // as before: the "missing" picture
+		else
+			gpatch = (patch_t *)W_CachePatchNum(dshadow_lump, PU_SPRITE);
+	}
+	else
+		gpatch = spr->gpatch;
+#else
 	gpatch = (cv_shadow.value == 2) ? spr->gpatch : (patch_t *)W_CachePatchName("DSHADOW", PU_SPRITE);
+#endif
 	if (!(gpatch && gpatch->hardware && ((GLPatch_t *)gpatch->hardware)->mipmap->format)) return;
 	HWR_GetPatch(gpatch);
 
@@ -4464,58 +4489,115 @@ static void HWR_SortVisSprites(void)
 	// Without bounding boxes and linkdraw pairs (the comparator's special cases) the order is a plain key: transparent last, then eye depth
 	// far to near, then display offset; a stable merge sort of the keys gives the same order (equal keys keep the traversal order).
 	{
-		static UINT64 skey[MAXVISSPRITES];
-		static UINT16 oa[MAXVISSPRITES], ob[MAXVISSPRITES];
-		boolean plain = true;
-		UINT32 width, lo;
+		// PS2-HW-50 (HG) made the order a plain key; PS2-HW-71 (HT): a stable LSD radix sort of the 32-bit depth key (HWR_RadixSort32, three passes of 11
+		// bits) instead of the merge sort of 64-bit keys through an index array: 0.37 M cycles for 530 sprites. The order is the one of the comparator: the
+		// display offset is the lowest key (a stable sort by it first, and only when some sprite has one), then the depth far to near, then the
+		// transparent sprites are moved behind the opaque ones (a stable partition).
+		static UINT32 dkey[MAXVISSPRITES], dix[MAXVISSPRITES], tk[MAXVISSPRITES], ti[MAXVISSPRITES], k2[MAXVISSPRITES];
+		static UINT8 trn[MAXVISSPRITES];
+		boolean plain = true, anydisp = false;
+		UINT32 n = gl_visspritecount;
 
-		for (i = 0; i < gl_visspritecount && plain; i++)
+		for (i = 0; i < n && plain; i++)
 		{
 			gl_vissprite_t *spr = gl_vsprorder[i];
 			union { float f; UINT32 u; } tz;
 			UINT32 s;
-			int transparency;
 
 			if (spr->bbox || (!spr->precip && (spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer))
 			{
 				plain = false;
 				break;
 			}
-			transparency = (!spr->precip && (spr->mobj->flags2 & MF2_SHADOW)) || (spr->mobj->frame & FF_TRANSMASK);
+			trn[i] = ((!spr->precip && (spr->mobj->flags2 & MF2_SHADOW)) || (spr->mobj->frame & FF_TRANSMASK)) != 0;
 			tz.f = spr->tz;
 			s = tz.u ^ ((tz.u & 0x80000000u) ? 0xFFFFFFFFu : 0x80000000u); // ascending with the float
-			skey[i] = ((UINT64)(transparency != 0) << 63) | ((UINT64)(~s) << 31) | (UINT64)((UINT32)(spr->dispoffset + 0x4000) & 0x7FFFu);
-			oa[i] = (UINT16)i;
+			dkey[i] = ~s; // far to near
+			dix[i] = i;
+			if (spr->dispoffset)
+				anydisp = true;
+		}
+		if (ps2hwd_dbg_flags & 0x40000000) // -hwdbg 1073741824: what the sprites of a frame are (HWSPR lines, one frame in 105)
+		{
+			static unsigned frn;
+
+			if (++frn % 105 == 60)
+			{
+				static UINT16 cnt[1024];
+				UINT32 pc = 0, tr = 0, k, top;
+				int rep;
+
+				memset(cnt, 0, sizeof cnt);
+				for (k = 0; k < n; k++)
+				{
+					const gl_vissprite_t *sp = gl_vsprorder[k];
+
+					if (sp->precip)
+						pc++;
+					else if (sp->mobj && (UINT32)sp->mobj->sprite < 1024)
+					{
+						cnt[sp->mobj->sprite]++;
+						tr += ((sp->mobj->frame & FF_TRANSMASK) || (sp->mobj->flags2 & MF2_SHADOW)) ? 1 : 0;
+					}
+				}
+				CONS_Printf("HWSPR frame %u: %u vissprites, %u precipitation, %u translucent\n", frn, (unsigned)n, (unsigned)pc, (unsigned)tr);
+				{
+					// the height of the sprites on the screen (about 120 pixels per world unit at depth 1): < 1, < 2, < 4, < 8, < 16, more
+					UINT32 hist[6] = {0, 0, 0, 0, 0, 0};
+
+					for (k = 0; k < n; k++)
+					{
+						const gl_vissprite_t *sp = gl_vsprorder[k];
+						float ph = sp->tz > 1.0f ? 120.0f * (sp->gzt - sp->gz) / sp->tz : 1000.0f;
+
+						hist[ph < 1.0f ? 0 : ph < 2.0f ? 1 : ph < 4.0f ? 2 : ph < 8.0f ? 3 : ph < 16.0f ? 4 : 5]++;
+					}
+					CONS_Printf("HWSPR   height in pixels <1:%u <2:%u <4:%u <8:%u <16:%u more:%u\n", (unsigned)hist[0], (unsigned)hist[1], (unsigned)hist[2], (unsigned)hist[3], (unsigned)hist[4], (unsigned)hist[5]);
+				}
+				for (rep = 0; rep < 12; rep++)
+				{
+					top = 0;
+					for (k = 1; k < 1024; k++)
+						if (cnt[k] > cnt[top])
+							top = k;
+					if (!cnt[top])
+						break;
+					CONS_Printf("HWSPR   %s x%u\n", top < NUMSPRITES ? sprnames[top] : "?", (unsigned)cnt[top]);
+					cnt[top] = 0;
+				}
+			}
 		}
 		if (plain)
 		{
-			UINT16 *src = oa, *dst = ob, *t;
+			UINT32 *res; // the sprites (indices of the traversal order) from far to near
 
-			for (width = 1; width < gl_visspritecount; width *= 2)
+			if (anydisp)
 			{
-				for (lo = 0; lo < gl_visspritecount; lo += 2 * width)
-				{
-					UINT32 mid = lo + width < gl_visspritecount ? lo + width : gl_visspritecount;
-					UINT32 hi = lo + 2 * width < gl_visspritecount ? lo + 2 * width : gl_visspritecount;
-					UINT32 x = lo, y = mid, o = lo;
+				UINT32 *p1, *sc;
 
-					while (x < mid && y < hi)
-						dst[o++] = (skey[src[y]] < skey[src[x]]) ? src[y++] : src[x++];
-					while (x < mid)
-						dst[o++] = src[x++];
-					while (y < hi)
-						dst[o++] = src[y++];
-				}
-				t = src;
-				src = dst;
-				dst = t;
+				for (i = 0; i < n; i++)
+					k2[i] = (UINT32)((INT32)gl_vsprorder[i]->dispoffset + 0x4000) & 0x7FFFu;
+				p1 = HWR_RadixSort32(k2, dix, tk, ti, n) ? dix : ti; // the indices in the order of the display offsets
+				sc = p1 == dix ? ti : dix; // the arrays the next sort may use as scratch
+				for (i = 0; i < n; i++)
+					tk[i] = dkey[p1[i]]; // the depth keys in that order
+				res = HWR_RadixSort32(tk, p1, k2, sc, n) ? p1 : sc;
+			}
+			else
+			{
+				res = HWR_RadixSort32(dkey, dix, tk, ti, n) ? dix : ti;
 			}
 			{
 				static gl_vissprite_t *copy[MAXVISSPRITES]; // gl_vsprorder is rewritten from a copy of itself
+				UINT32 o = 0;
 
-				memcpy(copy, gl_vsprorder, gl_visspritecount * sizeof copy[0]);
-				for (i = 0; i < gl_visspritecount; i++)
-					gl_vsprorder[i] = copy[src[i]];
+				memcpy(copy, gl_vsprorder, n * sizeof copy[0]);
+				for (i = 0; i < n; i++) // opaque sprites first, transparent ones behind them, each group in the depth order
+					if (!trn[res[i]])
+						gl_vsprorder[o++] = copy[res[i]];
+				for (i = 0; i < n; i++)
+					if (trn[res[i]])
+						gl_vsprorder[o++] = copy[res[i]];
 				if (ps2hwd_dbg_flags & 0x20000) // -hwdbg 131072: the old qsort of the same sprites; every position where the two orders disagree (ties aside) is reported
 				{
 					UINT32 bad = 0;
@@ -5069,6 +5151,44 @@ static void HWR_AddSprites(sector_t *sec)
 	}
 }
 
+#ifdef PS2_PROFILE
+// PS2-HW-72: a sprite whose quad cannot put a pixel on the screen is not made (the quad is the one HWR_DrawSprite builds; see PS2HWD_QuadHidden)
+static boolean HWR_PS2_NoCull(void) // -hwnocull: every sprite is made (A/B of PS2-HW-72)
+{
+	static int nocull = -1;
+
+	if (nocull < 0)
+		nocull = M_CheckParm("-hwnocull") != 0;
+	return nocull;
+}
+
+static boolean HWR_PS2_SpriteHidden(const gl_vissprite_t *spr)
+{
+	FOutVector wv[4];
+
+	wv[0].x = wv[3].x = spr->x1;
+	wv[2].x = wv[1].x = spr->x2;
+	wv[2].y = wv[3].y = spr->gzt;
+	wv[0].y = wv[1].y = spr->gz;
+	wv[0].z = wv[3].z = spr->z1;
+	wv[1].z = wv[2].z = spr->z2;
+	wv[0].s = wv[1].s = wv[2].s = wv[3].s = 0.0f;
+	wv[0].t = wv[1].t = wv[2].t = wv[3].t = 0.0f;
+	if (spr->dispoffset)
+	{
+		float co = -gl_viewcos*(0.05f*spr->dispoffset);
+		float si = -gl_viewsin*(0.05f*spr->dispoffset);
+		wv[0].z = wv[3].z = wv[0].z+si;
+		wv[1].z = wv[2].z = wv[1].z+si;
+		wv[0].x = wv[3].x = wv[0].x+co;
+		wv[1].x = wv[2].x = wv[1].x+co;
+	}
+	if (fabsf(gl_viewludcos) > 1.0e-6f) // a view that looks up or down: the quad is turned around its foot (HWR_RotateSpritePolyToAim)
+		HWR_RotateSpritePolyToAim((gl_vissprite_t *)spr, wv, false);
+	return PS2HWD_QuadHidden(wv) != 0;
+}
+#endif
+
 // --------------------------------------------------------------------------
 // HWR_ProjectSprite
 //  Generates a vissprite for a thing if it might be visible.
@@ -5251,6 +5371,12 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	{
 		ang = R_PointToAngle2(0, viewz, 0, interp.z);
 	}
+#ifdef PS2_PROFILE
+	else if (!papersprite && sprframe->rotate == SRF_SINGLE)
+	{
+		ang = 0; // one picture for every view: the angle to the viewer is not used (R_PointToAngle64 is 0.2 M cycles for 1300 sprites)
+	}
+#endif
 	else
 	{
 		ang = R_PointToAngle (interp.x, interp.y) - interp.angle;
@@ -5578,6 +5704,14 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	vis->bbox = false;
 
 	vis->angle = interp.angle;
+
+#ifdef PS2_PROFILE
+	// PS2-HW-72: no pixel centre inside the quad (or the quad outside the view): nothing would be drawn, nothing is made of it. Not for the sprites that have
+	// more to draw than the quad (the drop shadow, the model, the link draw hack), nor the floor sprites.
+	if (vis != &gl_overflowsprite && !splat && !cv_glmodels.value && !((thing->flags2 & MF2_LINKDRAW) && thing->tracer) && !(cv_shadow.value && thing->shadowscale)
+		&& !HWR_PS2_NoCull() && HWR_PS2_SpriteHidden(vis))
+		gl_visspritecount--;
+#endif
 }
 
 // Precipitation projector for hardware mode
