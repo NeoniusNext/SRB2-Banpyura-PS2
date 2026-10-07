@@ -62,6 +62,7 @@ extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 F
 #define HWP_LAP(idx) ((void)0)
 #define HWP_SPAN_BEGIN(name) ((void)0)
 #define HWP_SPAN_END(name, idx) ((void)0)
+#define HWC_ADD(i) ((void)0)
 #endif
 
 // ==========================================================================

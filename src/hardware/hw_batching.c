@@ -20,6 +20,8 @@
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
+#else
+#include "../ps2/hw/ps2_hw_prof.h" // no-op profiling macros for the PC build
 #endif
 
 // The texture for the next polygon given to HWR_ProcessPolygon.
