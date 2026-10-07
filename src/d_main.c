@@ -874,7 +874,11 @@ static void D_RunFrame(void)
 		{
 			// don't skip more than 10 frames at a time
 			// (fadein / fadeout cause massive frame skip!)
+#ifdef PS2_OPT_CORE
+			if (realtics > (netgame ? 8 : TICRATE/2)) // PS2-202: local play runs off a lag of up to half a second (see TryRunTics)
+#else
 			if (realtics > 8)
+#endif
 				realtics = 1;
 
 			// process tics (but maybe not if realtic == 0)
@@ -995,6 +999,27 @@ static void D_RunFrame(void)
 		LUA_HTTPProcessCallbacks();
 #ifdef PS2_PROF_DIRECT
 		ps2prof_c_snd += PS2Prof_Cyc() - pcs0;
+#endif
+
+#ifdef PS2_PROF_DIRECT
+		{
+			// -ps2stall MS EVERY (tests of the profile build only): a stall of MS milliseconds after every EVERY-th frame (a texture burst, a file read), to see how
+			// the tic clock runs off a lag (TryRunTics, PS2-202)
+			static INT32 stallms = -1, stallevery;
+			static UINT32 stallframe;
+
+			if (stallms < 0)
+			{
+				stallms = stallevery = 0;
+				if (M_CheckParm("-ps2stall") && M_IsNextParm())
+				{
+					stallms = atoi(M_GetNextParm());
+					stallevery = M_IsNextParm() ? atoi(M_GetNextParm()) : 100;
+				}
+			}
+			if (stallms > 0 && stallevery > 0 && ++stallframe % (UINT32)stallevery == 0)
+				I_SleepDuration((precise_t)stallms * I_GetPrecisePrecision() / 1000);
+		}
 #endif
 
 		// Fully completed frame made.
