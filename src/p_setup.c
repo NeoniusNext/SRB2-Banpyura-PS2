@@ -3605,7 +3605,9 @@ static void P_InitializeSeg(seg_t *seg)
 	seg->pv1 = seg->pv2 = NULL;
 
 	//Hurdler: 04/12/2000: for now, only used in hardware mode
+#ifndef PS2_PROFILE
 	seg->lightmaps = NULL; // list of static lightmap for this seg
+#endif
 #endif
 
 	seg->polyseg = NULL;

@@ -925,7 +925,9 @@ typedef struct seg_s
 	void *pv2; // polyvertex_t
 	float flength; // length of the seg, used by hardware renderer
 
+#ifndef PS2_PROFILE // PS2-149 (OPT10-S): the static lightmaps (STATICLIGHT) are not built in this port: 4 bytes of every seg (49 592 on MAP11)
 	lightmap_t *lightmaps; // for static lightmap
+#endif
 #endif
 
 	polyobj_t *polyseg;

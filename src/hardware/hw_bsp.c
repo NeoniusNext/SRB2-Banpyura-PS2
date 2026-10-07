@@ -66,12 +66,48 @@ static UINT8 *gl_ppcurrent;
 static size_t gl_ppfree;
 #endif
 
+#if defined(ZPLANALLOC) && defined(PS2_PROFILE)
+// PS2-149 (OPT10-S): the plane polygons were one zone block each (MAP11: 15 940 of them, 59 bytes of payload in an 86-byte block on average; MAPM3: 1.6 MB
+// of them between the freed texture blocks). They now come from 32 KB zone chunks (PU_HWRPLANE: freed with the level like the blocks were), carved to the
+// exact size (4 + 12 * points, a multiple of 4: the points are floats), and a freed polygon goes onto the list of its size for the next one. Polygons of
+// 64 points and more (none seen) stay zone blocks.
+#define PP_CHUNK (32u << 10)
+#define PP_CLASSES 64
+static UINT8 *pp_cur;
+static size_t pp_left;
+static void *pp_free[PP_CLASSES]; // by number of points; class 0 = a single polyvertex_t
+
+static void *PP_Alloc(size_t size, unsigned cls)
+{
+	void *p = pp_free[cls];
+
+	if (p)
+	{
+		pp_free[cls] = *(void **)p;
+		return p;
+	}
+	if (pp_left < size)
+	{
+		pp_cur = Z_Malloc(PP_CHUNK, PU_HWRPLANE, NULL);
+		pp_left = PP_CHUNK;
+	}
+	p = pp_cur;
+	pp_cur += size;
+	pp_left -= size;
+	return p;
+}
+#endif
+
 // only between levels, clear poly pool
 static void HWR_ClearPolys(void)
 {
 #ifndef ZPLANALLOC
 	gl_ppcurrent = gl_polypool;
 	gl_ppfree = POLYPOOLSIZE;
+#elif defined(PS2_PROFILE)
+	pp_cur = NULL; // the chunks of the previous level went with its tag
+	pp_left = 0;
+	memset(pp_free, 0, sizeof pp_free);
 #endif
 }
 
@@ -106,7 +142,9 @@ static poly_t *HWR_AllocPoly(INT32 numpts)
 {
 	poly_t *p;
 	size_t size = sizeof (poly_t) + sizeof (polyvertex_t) * numpts;
-#ifdef ZPLANALLOC
+#if defined(ZPLANALLOC) && defined(PS2_PROFILE)
+	p = numpts > 0 && numpts < PP_CLASSES ? PP_Alloc(size, (unsigned)numpts) : Z_Malloc(size, PU_HWRPLANE, NULL);
+#elif defined(ZPLANALLOC)
 	p = Z_Malloc(size, PU_HWRPLANE, NULL);
 #else
 #ifdef PARANOIA
@@ -132,7 +170,9 @@ static polyvertex_t *HWR_AllocVertex(void)
 {
 	polyvertex_t *p;
 	size_t size = sizeof (polyvertex_t);
-#ifdef ZPLANALLOC
+#if defined(ZPLANALLOC) && defined(PS2_PROFILE)
+	p = PP_Alloc(size, 0);
+#elif defined(ZPLANALLOC)
 	p = Z_Malloc(size, PU_HWRPLANE, NULL);
 #else
 	if (gl_ppfree < size)
@@ -150,7 +190,15 @@ static polyvertex_t *HWR_AllocVertex(void)
 /// for now don't free because it doesn't free in reverse order
 static void HWR_FreePoly(poly_t *poly)
 {
-#ifdef ZPLANALLOC
+#if defined(ZPLANALLOC) && defined(PS2_PROFILE)
+	if (poly->numpts > 0 && poly->numpts < PP_CLASSES)
+	{
+		*(void **)poly = pp_free[poly->numpts];
+		pp_free[poly->numpts] = poly;
+	}
+	else
+		Z_Free(poly);
+#elif defined(ZPLANALLOC)
 	Z_Free(poly);
 #else
 	const size_t size = sizeof (poly_t) + sizeof (polyvertex_t) * poly->numpts;
