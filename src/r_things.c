@@ -892,7 +892,7 @@ static vissprite_t overflowsprite;
 #ifdef PS2_PROFILE
 // PS2-87: a chunk is 64 vissprite_t followed by their clip arrays (2 x vid.width INT16 each); the screen width a chunk was made for is
 // remembered, R_ResetVisSprites (from R_ExecuteSetViewSize, between two frames) drops the chunks when it changes.
-static INT16 overflowclip[2 * MAXVIDWIDTH];
+static INT16 overflowclip[2 * (MAXVIDWIDTH + 1)];
 
 void R_ResetVisSprites(void)
 {
@@ -910,7 +910,11 @@ static vissprite_t *R_GetVisSprite(UINT32 num)
 		// Allocate chunk if necessary
 		if (!visspritechunks[chunk])
 		{
-			const size_t w = (size_t)vid.width; // R_ProjectSprite/R_ClipVisSprite only touch the columns of the view: x < viewwidth <= vid.width
+			// PS2-150 (OPT10-S): one column more than the view has: the clip loops of a floor sprite (SC_SPLAT, R_ClipSprites: x2 = viewwidth, and
+			// R_CheckSpriteVisible, <= x2) run to x == viewwidth. With exactly vid.width columns the last sprite of a chunk wrote two bytes behind its block:
+			// the first bytes of the next block header of the zone (flags: "prev-free flag 1 but previous block is used" after the Tutorial map,
+			// found by the soak; with ZDEBUG red zones: "red zone overwritten", owner r_things.c:914). The arrays of the original are MAXVIDWIDTH wide.
+			const size_t w = (size_t)vid.width + 1;
 			vissprite_t *vs = Z_Malloc(sizeof(vissprite_t) * VISSPRITESPERCHUNK + 2 * w * sizeof (INT16) * VISSPRITESPERCHUNK, PU_LEVEL, &visspritechunks[chunk]);
 			INT16 *clip = (INT16 *)(vs + VISSPRITESPERCHUNK);
 			UINT32 i;
@@ -943,7 +947,7 @@ static vissprite_t *R_NewVisSprite(void)
 	{
 #ifdef PS2_PROFILE
 		overflowsprite.clipbot = overflowclip; // PS2-87
-		overflowsprite.cliptop = overflowclip + MAXVIDWIDTH;
+		overflowsprite.cliptop = overflowclip + MAXVIDWIDTH + 1;
 #endif
 		return &overflowsprite;
 	}
