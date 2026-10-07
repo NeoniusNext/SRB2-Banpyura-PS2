@@ -1,6 +1,6 @@
 """Run one content test (OPT6-F) in PCSX2: the engine ELF + the packs + the add-ons you name, engine arguments after "--".
 
-usage: ftest_run.py --name NAME --elf SRB2.ELF [--files a.pk3,b.wad,dir/...] [--cfg 'cvar "val"'] [--ram 32|128]
+usage: ftest_run.py --name NAME --elf SRB2.ELF [--files a.pk3,b.wad,dir/...,SRC=REL/PATH] [--cfg 'cvar "val"'] [--ram 32|128]
                     [--until TEXT] [--timeout 600] [--out build/opt6-f/run] [--demo DEMO_001] -- engine args...
 Stages <out>/<name>/ (like opt_run.py; the add-on files are copied next to the ELF, so "host:" = that directory and
 "-file NAME.pk3" finds them), starts PCSX2 only through run_pcsx2.py (machine-wide lock) and waits for TEXT in boot.txt
@@ -40,20 +40,25 @@ def main():
     boot = run / 'boot.txt'
     if boot.exists():
         boot.unlink()
-    for extra in ('FINEACON.DAT',):  # lazily read data files that live next to the packs
-        if (Path(a.pak) / extra).exists():
-            shutil.copy2(Path(a.pak) / extra, run / extra)
+    # FINEACON.DAT (lazily read data file next to the packs) is linked by opt_run.stage() together with the packs
     for f in [x for x in a.files.split(',') if x]:
+        rel = None
+        if '=' in f:  # SRC=REL/PATH: the file goes to <run>/REL/PATH (e.g. build/x/ZH.pk3=.srb2/addons/ZH.pk3 for the Add-ons menu folder)
+            f, rel = f.split('=', 1)
         src = Path(f)
         if not src.is_absolute():
             src = ROOT / src
-        dst = run / src.name
+        dst = run / (rel or src.name)
+        dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
             shutil.rmtree(dst, ignore_errors=True)
             shutil.copytree(src, dst)
         else:
             shutil.copy2(src, dst)
     args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt'] + a.extra
+    # PCSX2 -gameargs is cut at ~128 characters: everything after "-logfile boot.txt" goes to <run>/ps2args, one argument per line (as opt_run.py)
+    (run / 'ps2args').write_text('\n'.join(args[2:]) + '\n')
+    args = args[:2]
     cmd = [sys.executable, str(ROOT / 'tools/ps2/run_pcsx2.py'), '--elf', str(run / 'SRB2.ELF'), '--log', str(run / 'pcsx2.log'),
            '--args=' + ' '.join(args), '--timeout', str(a.timeout), '--lock-wait', str(a.lock_wait), '--until-file', str(boot), '--until', a.until]
     env = dict(os.environ, SRB2_PCSX2=PCSX2[a.ram])
