@@ -31,6 +31,7 @@ def main():
     ap.add_argument('--refcache', default=str(ROOT / 'build/ref'))
     ap.add_argument('--panels', default=str(ROOT / 'build/panels'))
     ap.add_argument('--hwextra', default='')
+    ap.add_argument('--zreserve', default='3072', help='-zreserve (KiB of C heap kept outside the zone arena): smaller = bigger arena')
     ap.add_argument('--timeout', type=float, default=600)
     ap.add_argument('--norun', action='store_true', help='do not run the emulator, only (re)build the panels from the existing runs')
     ap.add_argument('--refonly', action='store_true')
@@ -52,7 +53,7 @@ def main():
         runname = f'{a.tag}_m{m}'
         if not a.norun:
             cmd = [sys.executable, str(T / 'hf_run.py'), runname, '--elf', a.elf, '--timeout', str(a.timeout), '--cfg', a.cfg, '--',
-                   '-skipintro', '-warp', m, '-renderer', 'Hardware', '-zreserve', '3072', '-vidshot', f'k{a.tick}'] + a.hwextra.split()
+                   '-skipintro', '-warp', m, '-renderer', 'Hardware', '-zreserve', a.zreserve, '-vidshot', f'k{a.tick}'] + a.hwextra.split()
             if a.emu:
                 cmd[2:2] = ['--emu', a.emu]
             rc, out = run(cmd)
