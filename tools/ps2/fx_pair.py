@@ -48,6 +48,7 @@ def main():
     ap.add_argument('--out', default=str(ROOT / 'build/fx'))
     ap.add_argument('--emu', default='')
     ap.add_argument('--pcsw', action='store_true', help='PC reference = PC software renderer')
+    ap.add_argument('--all', action='store_true', help='a panel and metrics for every shot of the spec (shot i of the PC run against shot i of the PS2 run)')
     ap.add_argument('--ref', default='', help='name of the cached PC reference (default: the run name): scenes of different builds share it')
     a = ap.parse_args()
     spec = a.shot or f'k{a.tick}'
@@ -93,6 +94,14 @@ def main():
     if not hw:
         print('no HW picture')
         return 1
+    if a.all:
+        hws = sorted((ROOT / 'build/runs' / runname).glob('vidshot-*.ppm'), key=lambda x: int(x.stem.split('_')[-1]))
+        pcs = sorted(refdir.glob('shot-*.png'), key=lambda x: int(x.stem.split('-')[1]))
+        for i, (h, c) in enumerate(zip(hws, pcs)):
+            pn = Path(a.out) / f'{a.name}_{i}.png'
+            rc, out = run([sys.executable, str(T / 'hfpanel.py'), '--pc', str(c), '--hw', str(h), '--out', str(pn), '--label', f'MAP{a.map} shot {i} ({h.stem.split("-")[-1]})', '--json', '--scale', str(a.zoom)])
+            print(i, h.name, out.strip().splitlines()[-1] if out.strip() else 'hfpanel: no output')
+        return 0
     panel = Path(a.out) / f'{a.name}.png'
     if a.nopc or not ref.exists():
         from PIL import Image

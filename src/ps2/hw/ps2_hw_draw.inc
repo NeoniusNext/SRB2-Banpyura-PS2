@@ -1378,6 +1378,8 @@ typedef struct
 	int ripple; // PS2-HW-120: the vertices are a triangle STRIP (the water polygon between its depth planes), not a convex fan
 } piece_t;
 
+static qw_t *ws_pack(qw_t *o, const cv_t *v, int cnt, const pack_t *pk); // ps2_hw_water.inc (PS2-HW-120): the vertices of a water strip, put_vertex with the plan constants in registers
+
 static inline int ov_room(int cnt)
 {
 	return OV.n + 1 + (u32)cnt * 3u <= OVQ_QW;
@@ -1487,8 +1489,15 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		o[0].d[0] = HWGIF_TAG(cnt, 1, 1, ptype | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)), 0, pk.nreg);
 		o[0].d[1] = pack_regdesc(pk.fmt);
 		o++;
-		for (i = 0; i < cnt; i++)
-			o = put_vertex(o, &v[i], &pk);
+		if (pc->ripple && (pk.fmt == 0 || pk.fmt == 1) && !pk.ramp && !(ps2hwd_dbg_flags & 0x40000)) // -hwdbg 262144: put_vertex for the water strips too (A/B)
+		{
+			o = ws_pack(o, v, cnt, &pk);
+		}
+		else
+		{
+			for (i = 0; i < cnt; i++)
+				o = put_vertex(o, &v[i], &pk);
+		}
 		H.st.verts_out += (u32)cnt;
 		if (k)
 			H.st.passes++;
@@ -2236,7 +2245,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	}
 	else if (P.water && P.textured && !P.vcol && !vcol)
 	{
-		G.p_water++, emit_water_poly(v, cnt, pc, na, big);
+		G.p_water++, emit_water_poly(v, cnt, pc, na, big, LF_PV(vu0, or_));
 		G.c_water += cyc() - gt1;
 		HG_SKY(4, cyc() - gt1);
 	}

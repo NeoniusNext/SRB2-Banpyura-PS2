@@ -454,8 +454,9 @@ typedef struct
 {
 	int i; // index of the vertex a
 	int dir; // +1 / -1
-	const cv_t *a, *b;
+	const cv_t *b; // the vertex the edge goes to
 	float aw, bw, inv; // depths of the ends, 1 / (bw - aw)
+	float ax, ay, az, a0, a1; // the vertex a
 	float dx, dy, dz, d0, d1; // b - a
 	int last; // index in ws_out of the latest point of the chain
 } wchain_t;
@@ -463,18 +464,23 @@ typedef struct
 static inline void wc_edge(wchain_t *c, const cv_t *v, int cnt)
 {
 	int nx = c->i + c->dir;
+	const cv_t *a = &v[c->i];
 
 	nx = nx < 0 ? cnt - 1 : nx >= cnt ? 0 : nx;
-	c->a = &v[c->i];
 	c->b = &v[nx];
-	c->aw = c->a->w;
+	c->aw = a->w;
 	c->bw = c->b->w;
 	c->inv = c->bw > c->aw ? 1.0f / (c->bw - c->aw) : 0.0f;
-	c->dx = c->b->x - c->a->x;
-	c->dy = c->b->y - c->a->y;
-	c->dz = c->b->z - c->a->z;
-	c->d0 = c->b->a[0] - c->a->a[0];
-	c->d1 = c->b->a[1] - c->a->a[1];
+	c->ax = a->x;
+	c->ay = a->y;
+	c->az = a->z;
+	c->a0 = a->a[0];
+	c->a1 = a->a[1];
+	c->dx = c->b->x - c->ax;
+	c->dy = c->b->y - c->ay;
+	c->dz = c->b->z - c->az;
+	c->d0 = c->b->a[0] - c->a0;
+	c->d1 = c->b->a[1] - c->a1;
 }
 
 // the point of the chain on the plane of depth cut (the edge reaches beyond it), the shift (dsv, dtv) of the plane applied
@@ -482,18 +488,18 @@ static inline void wc_cross(cv_t *o, const wchain_t *c, float cut, float dsv, fl
 {
 	const float tt = (cut - c->aw) * c->inv;
 
-	o->x = c->a->x + c->dx * tt;
-	o->y = c->a->y + c->dy * tt;
-	o->z = c->a->z + c->dz * tt;
+	o->x = c->ax + c->dx * tt;
+	o->y = c->ay + c->dy * tt;
+	o->z = c->az + c->dz * tt;
 	o->w = cut;
-	o->a[0] = c->a->a[0] + c->d0 * tt - dsv;
-	o->a[1] = c->a->a[1] + c->d1 * tt - dtv;
+	o->a[0] = c->a0 + c->d0 * tt - dsv;
+	o->a[1] = c->a1 + c->d1 * tt - dtv;
 }
 
 static int lit_fast_poly(const cv_t *v, const void *pvv, int cnt, float sb, float tb); // ps2_hw_fast.inc (PS2-HW-43)
 
 // 1 when the polygon was drawn. `cut`: the polygon needs the repeat cuts (a power of two texture over 4096 texels, a width that is not a power of two): water_generic
-static int water_sweep(const cv_t *v, int cnt, piece_t pc, int na, int cut)
+static int water_sweep(const cv_t *v, const void *pv, int cnt, piece_t pc, int na, int cut)
 {
 	float zc[WS_NPLANE], cw[WS_NPLANE], th[WS_NPLANE], z0, z1, wlo, whi;
 	int icl[WS_NPLANE + 1], cls[WS_NPLANE], pidx[WS_NPLANE];
@@ -539,7 +545,7 @@ static int water_sweep(const cv_t *v, int cnt, piece_t pc, int na, int cut)
 	if (z0 >= t->zend)
 	{
 		// no ripple that far: an ordinary lit polygon (the common path of the walls and floors; cut_and_emit costs three times as much)
-		if (P.npass == 1 && !P.pass[0].ramp && P.pass[0].tex == (u8)P.textured && !P.oldpath && lit_fast_poly(v, NULL, cnt, pc.sb, pc.tb))
+		if (P.npass == 1 && !P.pass[0].ramp && P.pass[0].tex == (u8)P.textured && !P.oldpath && lit_fast_poly(v, pv, cnt, pc.sb, pc.tb))
 			return 1;
 		cut_and_emit(v, cnt, 0, pc, na);
 		return 1;
@@ -826,6 +832,43 @@ static void ripple_bake(cv_t *p, int n, const rtab_t *t)
 	}
 }
 
+// put_vertex for the formats 0 / 1 (ST, RGBAQ, XYZ2 / XYZF2) with the constants of the plan in registers: the packets are the same, bit for bit (-hwdbg 262144 uses
+// put_vertex: the host test compares both). The plan is a global, and the stores of the packet (floats) may alias it, so put_vertex reloads a dozen constants per vertex.
+static qw_t *ws_pack(qw_t *o, const cv_t *v, int cnt, const pack_t *pk)
+{
+	const float zo = P.zo, zk = P.zk, zbias = P.zbias, zmax = P.zmax, ox = P.ox, kx = P.kx, oy = P.oy, ky = P.ky, tsx = P.tsx, tsy = P.tsy, sb = pk->sb, tb = pk->tb;
+	const u32 c0 = pk->col & 255, c1 = (pk->col >> 8) & 255, c2 = (pk->col >> 16) & 255, c3 = pk->col >> 24;
+	const int fogfmt = pk->fmt == 1;
+	const u32 fogw = pk->fog << 4;
+	int i;
+
+	for (i = 0; i < cnt; i++, o += 3)
+	{
+		const float q = 1.0f / v[i].w;
+		float zf = zo + v[i].z * q * zk + zbias;
+		const int xi = (int)(ox + v[i].x * q * kx);
+		const int yi = (int)(oy + v[i].y * q * ky);
+		u32 zi;
+
+		zf = clampf(zf, 0.0f, zmax);
+		zi = (u32)(int)zf;
+		o[0].f[0] = (v[i].a[0] - sb) * tsx * q;
+		o[0].f[1] = (v[i].a[1] - tb) * tsy * q;
+		o[0].f[2] = q;
+		o[0].w[3] = 0;
+		o[1].w[0] = c0;
+		o[1].w[1] = c1;
+		o[1].w[2] = c2;
+		o[1].w[3] = c3;
+		o[2].w[0] = (u32)xi;
+		o[2].w[1] = (u32)yi;
+		o[2].w[2] = fogfmt ? zi << 4 : zi;
+		o[2].w[3] = fogfmt ? fogw : 0;
+	}
+	H.gsr.valid &= ~(u32)RV_RGBAQ; // packed vertices changed Q behind the A+D state cache
+	return o;
+}
+
 static cv_t wpiece[CUTBUF], wrem[2][CUTBUF];
 
 // The general path (more than WF_MAXV vertices, not monotone, no light bands): the polygon is clipped plane by plane (clip_attr) and every piece
@@ -968,7 +1011,7 @@ static void emit_water_poly_old(const cv_t *v, int cnt, piece_t pc, int na)
 }
 
 // the water polygon of emit_poly (P.water): `big` = more texels than one GS primitive may span (the pieces are cut at whole repeats)
-static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na, int big)
+static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na, int big, const void *pv)
 {
 	const int dbg = ps2hwd_dbg_flags;
 #ifdef HW_FXPROF
@@ -1004,7 +1047,7 @@ static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na, int big)
 			emit_water_poly_old(v, cnt, pc, na);
 		return;
 	}
-	if (water_sweep(v, cnt, pc, na, big || P.cutx || P.cuty))
+	if (water_sweep(v, pv, cnt, pc, na, big || P.cutx || P.cuty))
 		return;
 	water_generic(v, cnt, pc, na);
 }

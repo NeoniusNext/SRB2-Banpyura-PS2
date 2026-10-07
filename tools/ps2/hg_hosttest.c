@@ -542,7 +542,7 @@ static double rp_screen_err(double wx, double wz, double dx, double dz)
 	return sqrt(ex * ex + ey * ey);
 }
 
-static int rp_dbg, rp_zero, rp_f, rp_pn, rp_nan;
+static int rp_packdbg, rp_dbg, rp_zero, rp_f, rp_pn, rp_nan, rp_packchk;
 static long rp_planes[2], rp_polys[2];
 static double rp_l0, rp_l1, rp_l2;
 static u64 rp_rng;
@@ -603,6 +603,7 @@ static void test_ripple(void)
 			ps2hwd_dbg_flags = mode == 0 ? (neg == 9 ? HWDBG_WATERNOGAP : 0) : HWDBG_WATERBANDS; /* mode 0: PS2-HW-120, mode 1: the OPT10 sweep */
 			cap_reset();
 			H.gsr.valid = 0;
+			H.clut_loaded = 0;
 			if (!begin_draw(neg == 8 ? (flags & ~(u32)PF_Ripple) : flags, &surf))
 			{
 				EXPECT(0, "begin_draw refused");
@@ -612,6 +613,45 @@ static void test_ripple(void)
 			emit_fan(vv, NULL, n, NULL);
 			decode_fans(0);
 			nf = nfans[0];
+			if (mode == 0 && neg != 8)
+			{
+				/* the strip packer (ws_pack) against put_vertex (-hwdbg 262144): the same packets, bit for bit */
+				static qw_t chk[1 << 16];
+				u32 n0 = cap_n;
+
+				if (n0 <= (1u << 16))
+				{
+					memcpy(chk, cap, (size_t)n0 * sizeof(qw_t));
+					ps2hwd_dbg_flags = 0x40000;
+					cap_reset();
+					H.gsr.valid = 0;
+					H.clut_loaded = 0; /* the first run loaded the CLUT: the second would not (TEX0.CLD) */
+					if (begin_draw(flags, &surf))
+						emit_fan(vv, NULL, n, NULL);
+					if (cap_n == n0 && memcmp(chk, cap, (size_t)n0 * sizeof(qw_t)) && rp_packdbg++ < 3)
+					{
+						u32 k;
+
+						for (k = 0; k < n0; k++)
+							if (memcmp(&chk[k], &cap[k], sizeof(qw_t)))
+							{
+								{
+									u32 j;
+
+									for (j = (k > 6 ? k - 6 : 0); j < k + 4 && j < n0; j++)
+										printf("HG dbg   qw %u: %08x %08x %08x %08x | %08x %08x %08x %08x\n", (unsigned)j, chk[j].w[0], chk[j].w[1], chk[j].w[2], chk[j].w[3], cap[j].w[0], cap[j].w[1], cap[j].w[2], cap[j].w[3]);
+								}
+								printf("HG dbg qw %u: ws_pack %08x %08x %08x %08x | put_vertex %08x %08x %08x %08x\n", (unsigned)k, chk[k].w[0], chk[k].w[1], chk[k].w[2], chk[k].w[3], cap[k].w[0], cap[k].w[1], cap[k].w[2], cap[k].w[3]);
+								break;
+							}
+					}
+					EXPECT(cap_n == n0 && !memcmp(chk, cap, (size_t)n0 * sizeof(qw_t)), "trial %d: ws_pack and put_vertex make different packets (%u / %u quadwords)", trial, (unsigned)n0, (unsigned)cap_n);
+					rp_packchk++;
+					memcpy(cap, chk, (size_t)n0 * sizeof(qw_t));
+					cap_n = n0;
+					ps2hwd_dbg_flags = 0;
+				}
+			}
 			if (neg == 8 && trial == 1 && mode == 0)
 			{
 				int i, f;
@@ -831,6 +871,7 @@ static void test_ripple(void)
 		}
 		printf("HG info ripple: ripple planes per polygon: continuous %.1f (%ld polygons), OPT10 bands %.1f (%ld polygons)\n", (double)rp_planes[0] / fmax(1.0, (double)rp_polys[0]), rp_polys[0], (double)rp_planes[1] / fmax(1.0, (double)rp_polys[1]), rp_polys[1]);
 		printf("HG info ripple: sample points in no piece: continuous %ld, OPT10 bands %ld\n", st[0][0].miss + st[0][1].miss + st[0][2].miss, st[1][0].miss + st[1][1].miss + st[1][2].miss);
+		printf("HG info ripple: %d polygons drawn with ws_pack and with put_vertex: identical packets\n", rp_packchk);
 		EXPECT(rp_nan == 0, "%d samples with a NaN / infinite error", rp_nan);
 		EXPECT(n_new > 2000, "only %ld samples", n_new);
 		{
