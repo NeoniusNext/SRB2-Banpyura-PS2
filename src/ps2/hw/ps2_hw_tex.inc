@@ -945,9 +945,19 @@ static int rgba_to_indices(const u32 *src, u32 n, u8 *dst, int *holes, int *uses
 // write rows [r0, r0+nr) of the stored texture: W2 pixels per row of bpp bytes, produced by fill(row, dst)
 typedef void (*rowfill_t)(void *ctx, u32 row, u8 *dst);
 
+// PS2-HW-73: a transfer must stay inside the 4 MiB of GS memory: the GS wraps the address, PCSX2 too, and the picture of another texture is overwritten
+// without any error. The pool allocator keeps to it by construction; this is the check that says so when it does not.
+static inline void vram_guard(u32 blk, int psm, u32 W2, u32 H2, u32 tbw, const char *what)
+{
+	if (blk < H.pool_base || blk + tex_footprint(psm, W2, H2, tbw) > VRAM_BLOCKS)
+		hw_failure(what);
+}
+
 static void upload_bands(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, u32 bpp, rowfill_t fill, void *ctx)
 {
 	u32 rowbytes = W2 * bpp;
+
+	vram_guard(blk, (int)psm, W2, H2, tbw, "texture upload outside the texture pool of the GS memory");
 	u32 band = (65536u / rowbytes) & ~15u; // rows per band, multiple of 16
 	u32 r0, nr, y;
 	qw_t *p;
@@ -1181,6 +1191,7 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 	u32 band = (262144u / W2) & ~15u, r0, nr, c0 = cyc();
 	qw_t *p;
 
+	vram_guard(blk, (int)psm, W2, H2, tbw, "zero-copy texture upload outside the texture pool of the GS memory");
 	H.serial++;
 	if (band < 16)
 		band = 16;
