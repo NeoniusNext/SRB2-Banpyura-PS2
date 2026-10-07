@@ -1642,6 +1642,8 @@ static int tex_upload(GLMipmap_t *m)
 	fillctx_t fc, *c = &fc;
 	u32 t0 = cyc();
 	const u8 *data = m->data;
+	u32 cw = sw, ch = sh; // the part of the block that is stored (PS2-HW-40)
+	int crop = 0;
 	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL;
 	u32 ssw = sw, ssh = sh, slv = 0; // size and level of the texels `data` holds when it is a cached level (dsrc) and not the full size
 	u32 lv = 0; // mip level the texture is stored at (PS2-HW-34); the texels of a level are made by dec_level
@@ -1686,6 +1688,14 @@ static int tex_upload(GLMipmap_t *m)
 
 	memset(c, 0, sizeof *c);
 	n = sw * sh;
+	// PS2-HW-40: a patch (sprite) is a block of the next power of two size around the real picture (a 100 x 150 sprite is 128 x 256): only the picture
+	// is stored (texture coordinates are scaled by the size of the block, clamping at the picture's edge), a quarter to a half of the blocks and bytes
+	if (m->regen_kind == 0 && m->format == GL_TEXFMT_AP_88 && m->ps2_uw && m->ps2_uh && m->ps2_uw <= sw && m->ps2_uh <= sh && (m->ps2_uw < sw || m->ps2_uh < sh) && !H.tex_cap_blocks)
+	{
+		cw = m->ps2_uw;
+		ch = m->ps2_uh;
+		crop = 1;
+	}
 
 	switch (m->format)
 	{
@@ -1730,28 +1740,51 @@ static int tex_upload(GLMipmap_t *m)
 			fill = fill_ap88;
 			if (m->flags & TF_CHROMAKEYED) // index 255 is the hole, the alpha byte is ignored
 			{
+				u32 y, x;
+
 				clut = 2;
 				c->mode = 1;
-				for (i = 0; i < n; i++)
-					if (data[i * 2] == 255)
-					{
-						holes = 1;
-						break;
-					}
+				for (y = 0; y < ch && !holes; y++)
+					for (x = 0; x < cw; x++)
+						if (data[((size_t)y * sw + x) * 2] == 255)
+						{
+							holes = 1;
+							break;
+						}
 				break;
 			}
-			for (i = 0; i < n; i++)
 			{
-				u8 a = data[i * 2 + 1];
+				// one pass over the stored part (the real picture of a patch): binary alpha (0 / 255), holes, an opaque texel of index 255, holes whose colour is not
+				// the hole colour of the palette
+				const u16 *d16 = (const u16 *)(const void *)data;
+				const u32 pal255 = H.pal[255];
+				u32 y, x;
 
-				if (a != 0 && a != 255)
+				for (y = 0; y < ch && !partial; y++)
 				{
-					partial = 1;
-					break;
+					const u16 *row = d16 + (size_t)y * sw;
+
+					for (x = 0; x < cw; x++)
+					{
+						const u32 v = row[x], a = v >> 8, idx = v & 255u;
+
+						if (a == 255)
+						{
+							opaque255 |= idx == 255;
+						}
+						else if (a == 0)
+						{
+							hole = 1;
+							if (idx != 255 && H.pal[idx] != pal255)
+								hole_rgb = 1;
+						}
+						else
+						{
+							partial = 1;
+							break;
+						}
+					}
 				}
-				hole |= a == 0;
-				hole_rgb |= a == 0 && H.pal[data[i * 2]] != H.pal[255];
-				opaque255 |= a == 255 && data[i * 2] == 255;
 			}
 			if (partial || hole_rgb || (hole && opaque255))
 			{
@@ -1822,6 +1855,11 @@ static int tex_upload(GLMipmap_t *m)
 		c->dy = dy;
 		W2 = sw >> dx;
 		H2 = sh >> dy;
+		if (crop)
+		{
+			W2 = cw;
+			H2 = ch;
+		}
 		tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
 		nblk = tex_footprint(psm, W2, H2, tbw);
 		if (cfg.tex_max_bytes > 0 && nblk > (u32)cfg.tex_max_bytes / 256u)
@@ -2009,8 +2047,8 @@ static int tex_upload(GLMipmap_t *m)
 		r->npot_x = (W2 & (W2 - 1)) != 0;
 		r->npot_y = (H2 & (H2 - 1)) != 0;
 		r->region = (u8)((r->npot_x ? 1 : 0) | (r->npot_y ? 2 : 0));
-		r->sxs = (float)W2 / (float)(1u << r->tw);
-		r->sys = (float)H2 / (float)(1u << r->th);
+		r->sxs = (float)(crop ? sw : W2) / (float)(1u << r->tw); // the engine's texture coordinate 1.0 is the whole block: sw texels, of which W2 are stored
+		r->sys = (float)(crop ? sh : H2) / (float)(1u << r->th);
 		if (holes && clut == 2 && (m->format == GL_TEXFMT_P_8 || m->format == GL_TEXFMT_AP_88))
 			m->flags |= TF_TRANSPARENT; // as r_opengl.c does for a chroma keyed texture with a hole
 		r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;

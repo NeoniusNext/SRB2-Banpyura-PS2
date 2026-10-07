@@ -78,6 +78,7 @@ struct GLMipmap_s
 	UINT32                ps2_planfr; // driver frame + 1 the plan belongs to (0 = none)
 	UINT8                 ps2_want; // the mip level (0 = full size) the frame plan resolved for the texture (OPT10: ps2_hw_plan.inc)
 	UINT16                ps2_pi; // OPT10: index of the texture's record in the driver's frame plan (valid while ps2_planfr is the current frame)
+	UINT16                ps2_uw, ps2_uh; // OPT10 (PS2-HW-40): the real size of a patch (the mipmap is its power of two size): only that part is stored in VRAM
 	UINT8                 ps2_ihint; // OPT10: the level the budgeted plan gave the texture for its immediate draws (translucent planes, sky), valid for 2 frames after ps2_ihfr
 	UINT32                ps2_ihfr, ps2_imfr; // driver frame + 1 of the plan that set the hint / of the last immediate draw of the texture
 	UINT8                 ps2_vis; // some polygon of the frame is visible at all

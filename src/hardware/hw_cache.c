@@ -671,6 +671,10 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 
 		grPatch->max_s = (float)patch->width / (float)grMipmap->width;
 		grPatch->max_t = (float)patch->height / (float)grMipmap->height;
+#ifdef PS2_PROFILE
+		grMipmap->ps2_uw = (UINT16)patch->width; // PS2-HW-40: the GS driver stores only the real part of the power of two block
+		grMipmap->ps2_uh = (UINT16)patch->height;
+#endif
 	}
 
 	Z_Free(grMipmap->data);
