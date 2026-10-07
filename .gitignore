@@ -35,3 +35,6 @@ Win32_LIB_ASM_Release
 
 # Python host-tool cache
 __pycache__/
+
+# OPT10-X: distribution folder made by tools/ps2/make_dist.py
+/dist/

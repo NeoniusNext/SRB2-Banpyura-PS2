@@ -299,6 +299,7 @@ static void own_clear(u32 blk, u32 n);
 
 // drop a texture from VRAM; the engine finds `downloaded` cleared and regenerates/uploads it when it needs it again
 static void lod_account(texrec_t *r);
+static int batch_phase; // (defined below)
 
 static void tex_drop(int i, int count_eviction)
 {
@@ -322,6 +323,14 @@ static void tex_drop(int i, int count_eviction)
 		rec_release(i);
 		return;
 	}
+	if (count_eviction && !r->screen && !r->pin && r->stamp == H.frame_no)
+	{
+		H.thrash_n++; // an image the frame uses is evicted in the frame: it has to be uploaded again when it is drawn (PS2-HW-39: feeds the budget controller)
+		H.thrash_blk += r->nblk;
+	}
+	if (count_eviction && (ps2hwd_dbg_flags & HWDBG_IMMDBG) && r->nblk >= 128)
+		CONS_Printf("HWIMM f=%u EVICT %s %ux%u lvl=%d blk=%u age=%u done=%d cur=%d phase=%d\n", (unsigned)H.frame_no, r->owner ? HWR_PS2_TexName(r->owner) : "-", (unsigned)r->sw, (unsigned)r->sh, (int)r->dx,
+			(unsigned)r->nblk, (unsigned)(H.frame_no - r->stamp), (int)(r->done == H.frame_no + 1), H.cur_tex == i, batch_phase);
 	// the image goes, and every view of it with it (their engine owners find `downloaded` cleared)
 	while (r->sec != NOREC)
 	{
@@ -529,6 +538,15 @@ static u32 vram_alloc_evicting(u32 n, u32 align, int hi)
 		b = hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
 		if (b)
 			return b;
+		if (!tries)
+		{
+			TX.alloc_fail++; // no free range fits: something has to go (PS2-HW-39: how often there was room in total, but not in one piece)
+			if (H.pool_blocks - H.used_blocks >= n)
+			{
+				TX.alloc_frag++;
+				TX.alloc_frag_blk += n;
+			}
+		}
 		if (n <= SMALL_REQUEST && !(ps2hwd_dbg_flags & 32))
 		{
 			int v = small_victim();
@@ -1005,6 +1023,12 @@ extern void HWR_PS2_UnlockData(void *data);
 extern void HWR_PS2_FreeData(void *data);
 extern void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser);
 extern void *HWR_PS2_AllocData(size_t bytes, void **newuser);
+extern const u8 *HWR_PS2_FlatPin(const GLMipmap_t *m);
+extern boolean HWR_PS2_FlatStreamable(const GLMipmap_t *m);
+extern boolean HWR_PS2_FlatRows(const GLMipmap_t *m, UINT32 row0, UINT32 nrows, UINT8 *dest);
+extern unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // hw_cache.c
+extern void HWR_PS2_FlatUnpin(const u8 *p, size_t bytes);
+static const u8 *tex_flatpin; // PS2-HW-38: the engine's flat pinned by the last tex_upload (the caller unpins it)
 
 #define DC_MAX 192
 #define DC_BUDGET (4u * 1024u * 1024u) // bytes of texels the cache may hold (the zone may take them back sooner)
@@ -1049,6 +1073,25 @@ static dcent_t *dc_find(u32 key, u32 w, u32 h, u32 lvl)
 		if (e->w == w && e->h == h && e->lvl == lvl)
 		{
 			e->stamp = ++dc_seq;
+			return e;
+		}
+	}
+	return NULL;
+}
+
+// the cached level of the texture that is the nearest finer one than `lv` but not the full size (levels 1 .. lv-1): the source of a coarser level
+// (a fourth of the work of making it from the full size, and no need for the full size texels at all)
+static dcent_t *dc_find_finer(u32 key, u32 w, u32 h, u32 lv, u32 *slv)
+{
+	u32 l;
+
+	for (l = lv - 1; l >= 1 && l < lv; l--)
+	{
+		dcent_t *e = dc_find(key, w >> l, h >> l, l);
+
+		if (e)
+		{
+			*slv = l;
 			return e;
 		}
 	}
@@ -1494,7 +1537,7 @@ static int scan_has_ff(const u8 *d, u32 n)
 // four samples of the block (its corners inside a margin of a quarter) is taken: the one whose luminance is farthest from the mean of the four,
 // which keeps a thin dark or light line visible where picking the middle texel would lose it (the PC driver's point sampling shows such a line
 // in a part of the pixels, never in none). Index 255 (hole / chroma key) is kept when at least two samples have it, else it is not picked.
-static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
+static void dec_level_ref(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
 {
 	u32 lum[256], i, x, y, bw = 1u << lv, o0 = bw >> 2, o1 = bw - 1 - o0, ow = sw >> lv, oh = sh >> lv;
 
@@ -1549,6 +1592,134 @@ static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
 	}
 }
 
+// The same as dec_level_ref, made fast (PS2-HW-39): 200 cycles per output texel became about 40 (a level 1 of a 1024 x 1024 plane took 55 M cycles = a
+// frame hitch of 0.2 s). A block of four equal samples is copied; the division of the mean is a multiplication (exact for the sums that occur).
+static void dec_level(const u8 *src, u32 sw, u32 sh, u32 lv, u8 *dst)
+{
+	u8 lum[256];
+	u32 i, x, y, bw = 1u << lv, o0 = bw >> 2, o1 = bw - 1 - o0, ow = sw >> lv, oh = sh >> lv;
+
+	for (i = 0; i < 256; i++)
+		lum[i] = (u8)(((H.pal[i] & 255u) * 77u + ((H.pal[i] >> 8) & 255u) * 150u + ((H.pal[i] >> 16) & 255u) * 29u) >> 8);
+	for (y = 0; y < oh; y++)
+	{
+		const u8 *r0 = src + (size_t)(y * bw + o0) * sw + o0, *r1 = src + (size_t)(y * bw + o1) * sw + o0;
+		const u32 dxb = o1 - o0; // distance of the second sample column from the first
+		u8 *o = dst + (size_t)y * ow;
+
+		for (x = 0; x < ow; x++, r0 += bw, r1 += bw)
+		{
+			const u32 a = r0[0], b = r0[dxb], c = r1[0], d = r1[dxb];
+			u32 sum, mean, la, lb, lc, ld, da, db, dc, dd, best, bestd, holes;
+
+			if (!((a ^ b) | (a ^ c) | (a ^ d)))
+			{
+				o[x] = (u8)a; // four equal samples: that colour (index 255 stays a hole)
+				continue;
+			}
+			holes = (a == 255) + (b == 255) + (c == 255) + (d == 255);
+			if (holes >= 2)
+			{
+				o[x] = 255;
+				continue;
+			}
+			la = lum[a];
+			lb = lum[b];
+			lc = lum[c];
+			ld = lum[d];
+			if (holes)
+			{
+				// three samples count: the hole contributes nothing
+				sum = (a != 255 ? la : 0) + (b != 255 ? lb : 0) + (c != 255 ? lc : 0) + (d != 255 ? ld : 0);
+				mean = ((sum + 1) * 21846u) >> 16; // (sum + 1) / 3
+			}
+			else
+			{
+				sum = la + lb + lc + ld;
+				mean = (sum + 2) >> 2;
+			}
+			// the sample whose luminance is farthest from the mean (the first of equals); holes are not candidates
+			da = a == 255 ? 0 : (la > mean ? la - mean : mean - la);
+			db = b == 255 ? 0 : (lb > mean ? lb - mean : mean - lb);
+			dc = c == 255 ? 0 : (lc > mean ? lc - mean : mean - lc);
+			dd = d == 255 ? 0 : (ld > mean ? ld - mean : mean - ld);
+			best = 256; // none yet
+			bestd = 0;
+			if (a != 255)
+			{
+				best = a;
+				bestd = da;
+			}
+			if (b != 255 && (best == 256 || db > bestd))
+			{
+				best = b;
+				bestd = db;
+			}
+			if (c != 255 && (best == 256 || dc > bestd))
+			{
+				best = c;
+				bestd = dc;
+			}
+			if (d != 255 && (best == 256 || dd > bestd))
+			{
+				best = d;
+				bestd = dd;
+			}
+			o[x] = (u8)best;
+		}
+	}
+}
+
+// PS2-HW-38: level `lv` of a big raw flat made band by band from its lump into a data cache entry (NULL: no room / the lump cannot be read)
+static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
+{
+	enum { BAND = 64 }; // rows per read: a multiple of the block of the coarsest level (32)
+	const u32 sw = m->width, sh = m->height, W2 = sw >> lv, H2 = sh >> lv;
+	u32 row0, t0 = cyc();
+	dcent_t *ne = dc_slot(W2 * H2);
+	u8 *band;
+
+	if (!ne || !HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
+		return NULL;
+	band = malloc((size_t)sw * BAND);
+	if (!band)
+	{
+		HWR_PS2_FreeData(ne->p);
+		ne->p = NULL;
+		return NULL;
+	}
+	for (row0 = 0; row0 < sh; row0 += BAND)
+	{
+		u32 rows = sh - row0 < BAND ? sh - row0 : BAND;
+
+		if (!HWR_PS2_FlatRows(m, row0, rows, band))
+		{
+			free(band);
+			HWR_PS2_FreeData(ne->p);
+			ne->p = NULL;
+			return NULL;
+		}
+		dec_level(band, sw, rows, lv, ne->p + (size_t)(row0 >> lv) * W2);
+	}
+	free(band);
+	ne->key = dc_key(m);
+	ne->bytes = W2 * H2;
+	ne->w = (u16)W2;
+	ne->h = (u16)H2;
+	ne->lvl = (u8)lv;
+	ne->busy = 0;
+	ne->stamp = ++dc_seq;
+	dc_bytes += ne->bytes;
+	TX.lvl_cyc += cyc() - t0;
+	{
+		static int logged;
+
+		if (logged++ < 40)
+			CONS_Printf("HWD level %u of %s %ux%u made in %u cycles from the lump (bands)\n", (unsigned)lv, HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)(cyc() - t0));
+	}
+	return ne;
+}
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -1559,7 +1730,10 @@ static int tex_upload(GLMipmap_t *m)
 	fillctx_t fc, *c = &fc;
 	u32 t0 = cyc();
 	const u8 *data = m->data;
-	dcent_t *dce = NULL, *l0 = NULL;
+	u32 cw = sw, ch = sh; // the part of the block that is stored (PS2-HW-39)
+	int crop = 0;
+	dcent_t *dce = NULL, *l0 = NULL, *dsrc = NULL;
+	u32 ssw = sw, ssh = sh, slv = 0; // size and level of the texels `data` holds when it is a cached level (dsrc) and not the full size
 	u32 lv = 0; // mip level the texture is stored at (PS2-HW-34); the texels of a level are made by dec_level
 	int lvdec = 0; // the stored texels are those of the cache entry of that level
 
@@ -1578,9 +1752,22 @@ static int tex_upload(GLMipmap_t *m)
 				lvdec = 1;
 			}
 		}
-		if (!dce && (l0 = dc_find(dc_key(m), sw, sh, 0)) != NULL)
+		if (lv && !dce && (dsrc = dc_find_finer(dc_key(m), sw, sh, lv, &slv)) != NULL)
+		{
+			data = dsrc->p; // PS2-HW-39: a finer level is cached: the coarser one is made from it
+			ssw = sw >> slv;
+			ssh = sh >> slv;
+		}
+		if (!dce && !dsrc && (l0 = dc_find(dc_key(m), sw, sh, 0)) != NULL)
 			data = l0->p; // the texels of this texture (or its other variant) are in the data cache: the engine need not make them again
+		if (lv && !dce && !dsrc && !l0 && !m->data && m->format == GL_TEXFMT_P_8 && HWR_PS2_FlatStreamable(m) && (dce = flat_make_level(m, lv)) != NULL)
+		{
+			data = dce->p; // PS2-HW-38: made now from the lump; from here on it is a cached level like any other
+			lvdec = 1;
+		}
 	}
+	if (!data && lv && m->regen_kind == 2 && m->format == GL_TEXFMT_P_8 && (tex_flatpin = HWR_PS2_FlatPin(m)) != NULL)
+		data = tex_flatpin; // PS2-HW-38: a level of a flat is made from the engine's flat itself
 	if (!data || !sw || !sh)
 	{
 		tex_fail_why = !data ? "no data (purged)" : "zero size";
@@ -1594,6 +1781,14 @@ static int tex_upload(GLMipmap_t *m)
 
 	memset(c, 0, sizeof *c);
 	n = sw * sh;
+	// PS2-HW-39: a patch (sprite) is a block of the next power of two size around the real picture (a 100 x 150 sprite is 128 x 256): only the picture
+	// is stored (texture coordinates are scaled by the size of the block, clamping at the picture's edge), a quarter to a half of the blocks and bytes
+	if (m->regen_kind == 0 && m->format == GL_TEXFMT_AP_88 && m->ps2_uw && m->ps2_uh && m->ps2_uw <= sw && m->ps2_uh <= sh && (m->ps2_uw < sw || m->ps2_uh < sh) && !H.tex_cap_blocks)
+	{
+		cw = m->ps2_uw;
+		ch = m->ps2_uh;
+		crop = 1;
+	}
 
 	switch (m->format)
 	{
@@ -1613,7 +1808,7 @@ static int tex_upload(GLMipmap_t *m)
 				else
 				{
 					if (!m->ps2_h255)
-						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, n) ? 2 : 1);
+						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, dsrc ? ssw * ssh : n) ? 2 : 1);
 					has255 = m->ps2_h255 == 2;
 				}
 				if (clut == 2 && !has255)
@@ -1638,28 +1833,51 @@ static int tex_upload(GLMipmap_t *m)
 			fill = fill_ap88;
 			if (m->flags & TF_CHROMAKEYED) // index 255 is the hole, the alpha byte is ignored
 			{
+				u32 y, x;
+
 				clut = 2;
 				c->mode = 1;
-				for (i = 0; i < n; i++)
-					if (data[i * 2] == 255)
-					{
-						holes = 1;
-						break;
-					}
+				for (y = 0; y < ch && !holes; y++)
+					for (x = 0; x < cw; x++)
+						if (data[((size_t)y * sw + x) * 2] == 255)
+						{
+							holes = 1;
+							break;
+						}
 				break;
 			}
-			for (i = 0; i < n; i++)
 			{
-				u8 a = data[i * 2 + 1];
+				// one pass over the stored part (the real picture of a patch): binary alpha (0 / 255), holes, an opaque texel of index 255, holes whose colour is not
+				// the hole colour of the palette
+				const u16 *d16 = (const u16 *)(const void *)data;
+				const u32 pal255 = H.pal[255];
+				u32 y, x;
 
-				if (a != 0 && a != 255)
+				for (y = 0; y < ch && !partial; y++)
 				{
-					partial = 1;
-					break;
+					const u16 *row = d16 + (size_t)y * sw;
+
+					for (x = 0; x < cw; x++)
+					{
+						const u32 v = row[x], a = v >> 8, idx = v & 255u;
+
+						if (a == 255)
+						{
+							opaque255 |= idx == 255;
+						}
+						else if (a == 0)
+						{
+							hole = 1;
+							if (idx != 255 && H.pal[idx] != pal255)
+								hole_rgb = 1;
+						}
+						else
+						{
+							partial = 1;
+							break;
+						}
+					}
 				}
-				hole |= a == 0;
-				hole_rgb |= a == 0 && H.pal[data[i * 2]] != H.pal[255];
-				opaque255 |= a == 255 && data[i * 2] == 255;
 			}
 			if (partial || hole_rgb || (hole && opaque255))
 			{
@@ -1730,6 +1948,11 @@ static int tex_upload(GLMipmap_t *m)
 		c->dy = dy;
 		W2 = sw >> dx;
 		H2 = sh >> dy;
+		if (crop)
+		{
+			W2 = cw;
+			H2 = ch;
+		}
 		tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
 		nblk = tex_footprint(psm, W2, H2, tbw);
 		if (cfg.tex_max_bytes > 0 && nblk > (u32)cfg.tex_max_bytes / 256u)
@@ -1741,7 +1964,7 @@ static int tex_upload(GLMipmap_t *m)
 		align = 1;
 		while (align < nblk && align < PAGE_BLOCKS)
 			align <<= 1;
-		blk = vram_alloc_evicting(nblk, align, 0);
+		blk = vram_alloc_evicting(nblk, align, nblk >= BIG_IMAGE_BLOCKS ? 1 : 0); // PS2-HW-39: big images from the top of the pool, small ones from the bottom: they do not cut each other's room into pieces
 		if (blk)
 			break;
 		if (!H.cap_adapt || H.cap_idx >= NCAPS - 1)
@@ -1757,16 +1980,49 @@ static int tex_upload(GLMipmap_t *m)
 		if (!dce)
 		{
 			dcent_t *ne;
-			void *srcblk = l0 ? (void *)l0->p : (void *)m->data;
+			void *srcblk = dsrc ? (void *)dsrc->p : l0 ? (void *)l0->p : (void *)m->data;
+			u32 dt0 = cyc();
 
-			if (srcblk)
+			if (srcblk && data == (const u8 *)srcblk)
 				HWR_PS2_LockData(srcblk); // the allocation below may purge the zone's caches, the source among them
 			if (l0)
 				l0->busy++;
+			if (dsrc)
+				dsrc->busy++;
 			ne = dc_slot(W2 * H2);
 			if (ne && HWR_PS2_AllocData(W2 * H2, (void **)(void *)&ne->p))
 			{
-				dec_level(data, sw, sh, lv, ne->p);
+				dec_level(data, ssw, ssh, lv - slv, ne->p);
+				if (ps2hwd_dbg_flags & HWDBG_COMPOSE)
+				{
+					// the reference version of the same level: the bytes must be the same (PS2-HW-39)
+					static unsigned dchecked, dbad;
+					u8 *ref = malloc((size_t)W2 * H2);
+
+					if (ref)
+					{
+						dec_level_ref(data, ssw, ssh, lv - slv, ref);
+						dchecked++;
+						if (memcmp(ref, ne->p, (size_t)W2 * H2))
+						{
+							dbad++;
+							CONS_Printf("HWC level MISMATCH %s %ux%u level %u (%u of %u differ)\n", HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)lv, dbad, dchecked);
+						}
+						else if (!(dchecked & 7))
+						{
+							CONS_Printf("HWC level check: %u levels identical, %u differ\n", dchecked - dbad, dbad);
+						}
+						free(ref);
+					}
+				}
+				TX.lvl_cyc += cyc() - dt0;
+				{
+					static int dl_logged;
+
+					if (dl_logged++ < 40)
+						CONS_Printf("HWD level %u of %s %ux%u made in %u cycles from %s\n", (unsigned)lv, HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)(cyc() - dt0),
+							dsrc ? "a cached level" : l0 ? "the cached full size" : tex_flatpin ? "the engine's flat" : "the engine's data");
+				}
 				ne->key = dc_key(m);
 				ne->bytes = W2 * H2;
 				ne->w = (u16)W2;
@@ -1780,13 +2036,17 @@ static int tex_upload(GLMipmap_t *m)
 			}
 			if (l0)
 				l0->busy--;
-			if (srcblk)
+			if (dsrc)
+				dsrc->busy--;
+			if (srcblk && data == (const u8 *)srcblk)
 				HWR_PS2_UnlockData(srcblk);
 		}
 		else
 		{
 			data = dce->p;
 		}
+		if (!dce && dsrc)
+			c->dx = c->dy = lv - slv; // no room for the level: plain decimation of the cached level
 		if (dce)
 		{
 			lvdec = 1;
@@ -1796,14 +2056,25 @@ static int tex_upload(GLMipmap_t *m)
 	}
 	else if (c->dx || c->dy)
 	{
+		static int logged;
+
 		H.st.tex_decimated++;
+		if (logged++ < 8)
+			CONS_Printf("HWD decimated texture %s %ux%u -> %ux%u (dx %u dy %u, cap %u)\n", HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh, (unsigned)(sw >> c->dx), (unsigned)(sh >> c->dy), (unsigned)c->dx, (unsigned)c->dy, (unsigned)H.tex_cap_blocks);
+	}
+	if (lv && !dce)
+	{
+		static int logged2;
+
+		if (logged2++ < 8)
+			CONS_Printf("HWD level %u of %s %ux%u made without the data cache (no zone memory): plain decimation\n", (unsigned)lv, HWR_PS2_TexName(m), (unsigned)sw, (unsigned)sh);
 	}
 
 	if (!dce && l0 && !lv && !c->dx && !c->dy)
 		dce = l0; // the full size texels are in the data cache: the upload reads them from there
 	c->src = data;
-	c->sw = sw;
-	c->sh = sh;
+	c->sw = ssw;
+	c->sh = ssh;
 	c->W2 = W2;
 	c->H2 = H2;
 
@@ -1869,8 +2140,8 @@ static int tex_upload(GLMipmap_t *m)
 		r->npot_x = (W2 & (W2 - 1)) != 0;
 		r->npot_y = (H2 & (H2 - 1)) != 0;
 		r->region = (u8)((r->npot_x ? 1 : 0) | (r->npot_y ? 2 : 0));
-		r->sxs = (float)W2 / (float)(1u << r->tw);
-		r->sys = (float)H2 / (float)(1u << r->th);
+		r->sxs = (float)(crop ? sw : W2) / (float)(1u << r->tw); // the engine's texture coordinate 1.0 is the whole block: sw texels, of which W2 are stored
+		r->sys = (float)(crop ? sh : H2) / (float)(1u << r->th);
 		if (holes && clut == 2 && (m->format == GL_TEXFMT_P_8 || m->format == GL_TEXFMT_AP_88))
 			m->flags |= TF_TRANSPARENT; // as r_opengl.c does for a chroma keyed texture with a hole
 		r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;
@@ -1932,6 +2203,7 @@ static int tex_view(GLMipmap_t *m, int owner_rec)
 // at level L, i.e. nothing is magnified compared with level 0.
 static float lodc[3][2]; // d(x, y, w) / d(u, v) of the polygon being drawn (poly_plane)
 static int lodc_ok;
+static int lodc_planar; // every vertex of the polygon lies on the plane the three vertices define (a kinked polygon, the horizon fill of the engine, does not)
 
 static void poly_plane(const cv_t *un, int n, float sw, float sh)
 {
@@ -1959,38 +2231,76 @@ static void poly_plane(const cv_t *un, int n, float sw, float sh)
 		lodc[k][1] = ((cc - c0) * u1 - (c1 - c0) * u2) / det;
 	}
 	lodc_ok = 1;
+	lodc_planar = 1;
+	for (k = 2; k < n; k++) // the other vertices must be where the plane puts them
+	{
+		float du = (un[k].a[0] - un[0].a[0]) * sw, dv = (un[k].a[1] - un[0].a[1]) * sh;
+		float px = un[0].x + lodc[0][0] * du + lodc[0][1] * dv, py = un[0].y + lodc[1][0] * du + lodc[1][1] * dv, pw = un[0].w + lodc[2][0] * du + lodc[2][1] * dv;
+		float tol = 2e-3f * (fabsf(un[k].x) + fabsf(un[k].y) + fabsf(un[k].w) + 1.0f);
+
+		if (k == third)
+			continue;
+		if (fabsf(px - un[k].x) > tol || fabsf(py - un[k].y) > tol || fabsf(pw - un[k].w) > tol)
+		{
+			lodc_planar = 0;
+			break;
+		}
+	}
 }
 
-static int poly_lod(const cv_t *cl, int cnt)
-{
-	float px = 0.5f * H.vpw, py = 0.5f * H.vph, smax = 0.0f;
-	int i, lvl = 0;
+static float lod_su, lod_sv; // the largest texel (pixels) along u and v that poly_lod found (the plan, ps2_hw_plan.inc; -hwdbg 0x8000000)
 
+// the screen size (pixels) of one texel along u and along v at every vertex of the clipped polygon `cl` (in the viewport, w > 0): the plane
+// coefficients lodc come from poly_plane. lod_su / lod_sv = the largest; returns 0 when the polygon cannot be measured.
+static int poly_density(const cv_t *cl, int cnt)
+{
+	float px = 0.5f * H.vpw, py = 0.5f * H.vph, su = 0.0f, sv = 0.0f;
+	int i;
+
+	lod_su = lod_sv = 0.0f;
 	if (!lodc_ok || cnt < 3)
 		return 0;
 	for (i = 0; i < cnt; i++)
 	{
-		float w = cl[i].w, iw2;
-		int axis;
+		float w = cl[i].w, iw2, dxs, dys, sz;
 
 		if (w < 1e-4f)
 			return 0;
 		iw2 = 1.0f / (w * w);
-		for (axis = 0; axis < 2; axis++)
-		{
-			float dxs = (lodc[0][axis] * w - cl[i].x * lodc[2][axis]) * iw2 * px, dys = (lodc[1][axis] * w - cl[i].y * lodc[2][axis]) * iw2 * py, sz = dxs * dxs + dys * dys;
-
-			if (sz > smax)
-				smax = sz;
-		}
+		dxs = (lodc[0][0] * w - cl[i].x * lodc[2][0]) * iw2 * px;
+		dys = (lodc[1][0] * w - cl[i].y * lodc[2][0]) * iw2 * py;
+		sz = dxs * dxs + dys * dys;
+		if (sz > su)
+			su = sz;
+		dxs = (lodc[0][1] * w - cl[i].x * lodc[2][1]) * iw2 * px;
+		dys = (lodc[1][1] * w - cl[i].y * lodc[2][1]) * iw2 * py;
+		sz = dxs * dxs + dys * dys;
+		if (sz > sv)
+			sv = sz;
 	}
-	smax = sqrtf(smax);
-	while (lvl < 5 && smax * 2.0f <= 1.0f)
+	lod_su = sqrtf(su);
+	lod_sv = sqrtf(sv);
+	return 1;
+}
+
+// the coarsest level at which no texel is magnified by more than `tol` (1 = nothing is magnified compared with the full size)
+static int lod_level_for(float smax, float tol)
+{
+	int lvl = 0;
+
+	while (lvl < 5 && smax * 2.0f <= tol)
 	{
 		smax *= 2.0f;
 		lvl++;
 	}
 	return lvl;
+}
+
+static int poly_lod(const cv_t *cl, int cnt)
+{
+	if (!poly_density(cl, cnt))
+		return 0;
+	return lod_level_for(lod_su > lod_sv ? lod_su : lod_sv, 1.0f);
 }
 
 static void lod_note(const cv_t *cl, int cnt)
@@ -2039,13 +2349,15 @@ static void tx_report(void)
 	static int win;
 	u32 f = TX.frames ? TX.frames : 1;
 
-	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u invis=%u\n",
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u plancyc=%u immcyc=%u mkpatch=%u/%u allocfail=%u/%u/%u thrash=%u/%u pct=%u lvlcyc=%u synccyc=%u planpoly=%u planmeas=%u\n",
 		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
 		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
 		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
 		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
 		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
-		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.invisible);
+		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.downgrades, (unsigned)TX.invisible,
+		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f, (unsigned)TX.alloc_fail, (unsigned)TX.alloc_frag, (unsigned)TX.alloc_frag_blk, (unsigned)(TX.thrash_n / f), (unsigned)(TX.thrash_blk / f), (unsigned)H.plan_pct, (unsigned)(TX.lvl_cyc / f), (unsigned)(TX.sync_cyc / f), (unsigned)(TX.plan_np / f), (unsigned)(TX.plan_mcyc / f));
+	ps2hwt_mkpatch_n = ps2hwt_mkpatch_cyc = 0;
 	memset(&TX, 0, sizeof TX);
 }
 

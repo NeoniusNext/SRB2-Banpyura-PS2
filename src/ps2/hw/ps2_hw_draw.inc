@@ -483,6 +483,8 @@ static void fx_report(void)
 }
 
 // Prepare everything for a polygon with these engine flags. Returns 0 when the polygon must not be drawn.
+static void imm_prepare(const FOutVector *verts, unsigned int n); // ps2_hw_plan.inc
+
 static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 {
 	u32 blend;
@@ -497,6 +499,8 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		hw_limit(HW_CORONA, "corona depth visibility is not implemented; draw rejected");
 		return 0;
 	}
+	if (H.imm_tex && !(flags & PF_NoTexture) && H.cur_tex == NOREC && !H.cur_missing)
+		imm_prepare(NULL, 0); // a draw that did not go through hw_DrawPolygon (the sky dome): the geometry is unknown, the texture is made resident at full size
 	if (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing)
 	{
 		H.st.tex_skipped++;
@@ -645,6 +649,27 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 				im->imgws = H.frame_no + 1;
 				TX.need_blk += im->nblk;
 				TX.need_n++;
+				if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+				{
+					H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
+					if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60 && im->owner)
+						CONS_Printf("HWUP %s %ux%u psm=%d clut=%d blk=%u lvl=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->w, (unsigned)im->h, (int)im->psm, (int)im->clut, (unsigned)im->nblk, (int)im->dx);
+				}
+				else
+				{
+					const GLMipmap_t *pk = im->owner->ps2_twin ? im->owner->ps2_twin : im->owner;
+
+					if (pk->ps2_planfr == H.frame_no + 1)
+					{
+						TX.need_in_plan += im->nblk;
+					}
+					else
+					{
+						TX.need_out_plan += im->nblk; // a big map texture drawn without the plan (sky dome, translucent walls, ...): stored at full size
+						if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)
+							CONS_Printf("HWNP %s %ux%u lvl=%d blk=%u phase=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->sw, (unsigned)im->sh, (int)im->dx, (unsigned)im->nblk, batch_phase);
+					}
+				}
 			}
 		}
 		if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame
