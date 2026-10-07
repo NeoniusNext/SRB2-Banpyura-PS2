@@ -72,6 +72,10 @@ static UINT8 * hooksErrored;
 
 static int errorRef;
 
+#ifdef PS2_OPT_PTICK
+boolean lua_mobjhooks_any; // PS2-174: see lua_hook.h
+#endif
+
 static boolean mobj_hook_available(int hook_type, mobjtype_t mobj_type)
 {
 #ifdef PS2_PROFILE
@@ -184,6 +188,9 @@ static void add_mobj_hook(lua_State *L, int hook_type)
 		mobjHookIds = Z_Calloc(sizeof (*mobjHookIds) * LIMIT_NUMMOBJTYPES, PU_STATIC, &mobjHookIds);
 #endif
 	add_hook(&mobjHookIds[mobj_type][hook_type]);
+#ifdef PS2_OPT_PTICK
+	lua_mobjhooks_any = true;
+#endif
 }
 
 #ifdef PS2_DYNLIMITS
@@ -638,7 +645,11 @@ static void res_force(Hook_State *hook)
                                GENERALISED HOOKS
    ========================================================================= */
 
+#ifdef PS2_OPT_PTICK
+int LUA_HookMobjSlow(mobj_t *mobj, int hook_type)
+#else
 int LUA_HookMobj(mobj_t *mobj, int hook_type)
+#endif
 {
 	Hook_State hook;
 	if (prepare_mobj_hook(&hook, false, hook_type, mobj))
@@ -649,7 +660,11 @@ int LUA_HookMobj(mobj_t *mobj, int hook_type)
 	return hook.status;
 }
 
+#ifdef PS2_OPT_PTICK
+int LUA_Hook2MobjSlow(mobj_t *t1, mobj_t *t2, int hook_type)
+#else
 int LUA_Hook2Mobj(mobj_t *t1, mobj_t *t2, int hook_type)
+#endif
 {
 	Hook_State hook;
 	if (prepare_mobj_hook(&hook, 0, hook_type, t1))
@@ -832,7 +847,11 @@ void LUA_HookPostThinkFrame(void)
 	hook_think_frame(HOOK(PostThinkFrame));
 }
 
+#ifdef PS2_OPT_PTICK
+int LUA_HookMobjLineCollideSlow(mobj_t *mobj, line_t *line)
+#else
 int LUA_HookMobjLineCollide(mobj_t *mobj, line_t *line)
+#endif
 {
 	Hook_State hook;
 	if (prepare_mobj_hook(&hook, 0, MOBJ_HOOK(MobjLineCollide), mobj))

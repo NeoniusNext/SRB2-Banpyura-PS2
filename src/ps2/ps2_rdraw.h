@@ -101,6 +101,23 @@ static inline void PS2_Fill16(UINT16 *p, UINT16 v, size_t n)
 	}
 }
 
+// PS2-174: FixedToDouble (x / 65536.0) from the integer bits. The original is a libgcc int -> double conversion and a double multiply (about 400 cycles
+// on the R5900, P_CalculateSlopeVectors does twelve of them). The conversion is exact (a 32-bit integer fits the 53-bit significand) and so is the
+// division by a power of two (no underflow in this range): the result is the integer's significand with the exponent lowered by 16. Zero gives +0.0
+// like 0 / 65536.0. Returns the IEEE double bit pattern.
+static inline UINT64 PS2_FixedToDoubleBits(INT32 x)
+{
+	const UINT32 m = x < 0 ? 0u - (UINT32)x : (UINT32)x;
+	UINT32 lz;
+	UINT64 mant;
+
+	if (!m)
+		return 0;
+	lz = PS2_Clz(m);
+	mant = (((UINT64)m << lz) & 0x7FFFFFFFu) << 21; // the 31 bits below the leading one, at the top of the 52-bit fraction
+	return ((UINT64)(x < 0) << 63) | ((UINT64)(1023 + 31 - 16 - lz) << 52) | mant;
+}
+
 // 32x32 -> 64 signed product with the R5900 mult instruction; (INT64)a * b is a libgcc call there (no 64-bit multiplier).
 static inline INT64 PS2_MulS32(INT32 a, INT32 b)
 {

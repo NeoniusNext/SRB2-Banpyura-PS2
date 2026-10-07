@@ -2242,6 +2242,12 @@ boolean P_CheckDeathPitCollide(mobj_t *mo)
 	if (mo->player && mo->player->pflags & PF_GODMODE)
 		return false;
 
+#ifdef PS2_OPT_PTICK
+	// PS2-175: the result needs a death pit sector (last term of the condition below); the two heights (pure functions) are not needed otherwise
+	if (mo->subsector->sector->damagetype != SD_DEATHPITTILT && mo->subsector->sector->damagetype != SD_DEATHPITNOTILT)
+		return false;
+#endif
+
 	fixed_t sectorFloor = P_GetSpecialBottomZ(mo, mo->subsector->sector, mo->subsector->sector);
 	fixed_t sectorCeiling = P_GetSpecialTopZ(mo, mo->subsector->sector, mo->subsector->sector);
 
@@ -3132,7 +3138,26 @@ boolean P_CanRunOnWater(player_t *player, ffloor_t *rover)
 //
 // Check for water, set stuff in mobj_t struct for movement code later.
 // This is called either by P_MobjThinker() or P_PlayerThink()
+#ifdef PS2_OPT_PTICK
+// PS2-175: an object that is not a player, in a sector without 3D floors (so without water), that was not under water: the loop finds no rover, the
+// underwater bit stays clear and the function returns at the "no change of state" test, after setting the two water heights and clearing the four
+// water bits. That is the case for most objects on most maps (1883 calls per tic on DEMO_003); it is done here, in a function with a short prologue.
+static void P_MobjCheckWaterFull(mobj_t *mobj);
 void P_MobjCheckWater(mobj_t *mobj)
+{
+	if (!mobj->player && !mobj->subsector->sector->ffloors && !(mobj->eflags & MFE_UNDERWATER))
+	{
+		mobj->watertop = mobj->waterbottom = mobj->z - 1000*FRACUNIT;
+		mobj->eflags &= ~(MFE_UNDERWATER|MFE_TOUCHWATER|MFE_GOOWATER|MFE_TOUCHLAVA);
+		return;
+	}
+	P_MobjCheckWaterFull(mobj);
+}
+
+static void P_MobjCheckWaterFull(mobj_t *mobj)
+#else
+void P_MobjCheckWater(mobj_t *mobj)
+#endif
 {
 	boolean waterwasnotset = (mobj->watertop == INT32_MAX);
 	boolean wasinwater = (mobj->eflags & MFE_UNDERWATER) == MFE_UNDERWATER;

@@ -460,6 +460,89 @@ boolean P_LookForPlayers(mobj_t *actor, boolean allaround, boolean tracer, fixed
 
 	stop = (actor->lastlook - 1) & PLAYERSMASK;
 
+#ifdef PS2_OPT_PTICK
+	// PS2-175: as P_LookForShield (PS2-97): the same walk over the slots lastlook .. stop-1, jumping from one player in the game to the next
+	// instead of stepping through the (usually 31) empty slots; lastlook ends where the loop below would leave it. The examination is the
+	// loop body below, statement for statement.
+	{
+		extern UINT32 ps2_ingamemask;
+		const INT32 first = actor->lastlook;
+		UINT32 todo = ps2_ingamemask;
+		todo = first ? ((todo >> first) | (todo << (MAXPLAYERS - first))) : todo; // bit k = slot (first + k) & PLAYERSMASK
+		todo &= ~(1u << (MAXPLAYERS - 1)); // offset 31 is the stop slot
+
+		while (todo)
+		{
+			const UINT32 low = todo & (0u - todo);
+			INT32 k = 0;
+			if (!(low & 0xffffu)) k += 16;
+			if (!(low & (0x00ff00ffu))) k += 8;
+			if (!(low & 0x0f0f0f0fu)) k += 4;
+			if (!(low & 0x33333333u)) k += 2;
+			if (!(low & 0x55555555u)) k += 1;
+			todo ^= low;
+			actor->lastlook = (first + k) & PLAYERSMASK;
+
+			if (c++ == 2)
+				return false;
+
+			player = &players[actor->lastlook];
+
+			if ((netgame || multiplayer) && player->spectator)
+				continue;
+
+			if (player->pflags & PF_INVIS)
+				continue; // ignore notarget
+
+			if (!player->mo || P_MobjWasRemoved(player->mo))
+				continue;
+
+			if (player->mo->health <= 0)
+				continue; // dead
+
+			if (player->bot == BOT_2PAI || player->bot == BOT_2PHUMAN)
+				continue; // ignore followbots
+
+			if (player->quittime)
+				continue; // Ignore uncontrolled bodies
+
+			if (dist > 0
+				&& P_AproxDistance(P_AproxDistance(player->mo->x - actor->x, player->mo->y - actor->y), player->mo->z - actor->z) > dist)
+				continue; // Too far away
+
+			if (!allaround)
+			{
+				an = R_PointToAngle2(actor->x, actor->y, player->mo->x, player->mo->y) - actor->angle;
+				if (an > ANGLE_90 && an < ANGLE_270)
+				{
+					dist = P_AproxDistance(player->mo->x - actor->x, player->mo->y - actor->y);
+					// if real close, react anyway
+					if (dist > FixedMul(MELEERANGE, actor->scale))
+						continue; // behind back
+				}
+			}
+
+			if (!P_CheckSight(actor, player->mo))
+				continue; // out of sight
+
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 14 // negative control of the host A/B: the target is not set
+			if (tracer)
+				P_SetTarget(&actor->tracer, actor->tracer);
+			else
+				P_SetTarget(&actor->target, actor->target);
+#else
+			if (tracer)
+				P_SetTarget(&actor->tracer, player->mo);
+			else
+				P_SetTarget(&actor->target, player->mo);
+#endif
+			return true;
+		}
+		actor->lastlook = stop;
+		return false;
+	}
+#endif
+
 	for (; ; actor->lastlook = (actor->lastlook + 1) & PLAYERSMASK)
 	{
 		// done looking
