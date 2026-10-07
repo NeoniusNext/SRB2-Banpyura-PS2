@@ -673,21 +673,26 @@ enum
 	CK_MULT, // alpha = one channel of the palette colour (multiplicative blend, one pass per channel): param = channel
 	CK_RAMP, // darkness / fog ramps (ps2_hw_draw.inc), built from a rampspec_t
 	CK_WIPE, // tinted wipe, one colour channel: param = channel | fade-in << 2 | polygon colour << 8
+	CK_LIGHT, // PS2-HW-71 palette rendering: a row of a colormap light table through the screen palette: param = pal_param(), flag = keyed
 };
 
 // the 256 entries of a CLUT image in index order (0x80 alpha = opaque); the caller swizzles
 static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 {
 	int i;
+	const u32 *op = out_pal(); // PS2-HW-71: the screen palette (flash, 565 crush) in palette rendering mode, else the texture palette
 
 	switch (kind)
 	{
+		case CK_LIGHT:
+			pal_light_entries(param, keyed, e);
+			break;
 		case CK_OPAQUE:
 		case CK_KEYED:
 			for (i = 0; i < 256; i++)
-				e[i] = H.pal[i] | (0x80u << 24);
+				e[i] = op[i] | (0x80u << 24);
 			if (kind == CK_KEYED)
-				e[255] = H.pal[255];
+				e[255] = op[255];
 			break;
 		case CK_ALPHA:
 			for (i = 0; i < 256; i++)
@@ -708,7 +713,7 @@ static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 
 			for (i = 0; i < 256; i++)
 			{
-				float r = (float)(H.pal[i] & 255) * (1.0f / 255.0f), g = (float)((H.pal[i] >> 8) & 255) * (1.0f / 255.0f), b = (float)((H.pal[i] >> 16) & 255) * (1.0f / 255.0f);
+				float r = (float)(op[i] & 255) * (1.0f / 255.0f), g = (float)((op[i] >> 8) & 255) * (1.0f / 255.0f), b = (float)((op[i] >> 16) & 255) * (1.0f / 255.0f);
 				float bright = sqrtf(r * r + g * g + b * b), o[3];
 				int k;
 
@@ -741,7 +746,7 @@ static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 		case CK_MULT:
 			for (i = 0; i < 256; i++)
 			{
-				u32 channel = (H.pal[i] >> (8 * (param & 3))) & 255u;
+				u32 channel = (op[i] >> (8 * (param & 3))) & 255u;
 				u32 modulation = (param >> 8) & 255u;
 				// Quantize the final factor once, rather than separately rounding texture and polygon channels.
 				e[i] = 0x00FFFFFFu | (((channel * modulation * 128u + 32512u) / 65025u) << 24);
@@ -755,7 +760,7 @@ static void clut_entries(u32 kind, u32 param, u32 keyed, u32 *e)
 
 static int clut_palette_dependent(u32 kind)
 {
-	return kind == CK_OPAQUE || kind == CK_KEYED || kind == CK_TINT || kind == CK_MULT;
+	return kind == CK_OPAQUE || kind == CK_KEYED || kind == CK_TINT || kind == CK_MULT || kind == CK_LIGHT;
 }
 
 static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)

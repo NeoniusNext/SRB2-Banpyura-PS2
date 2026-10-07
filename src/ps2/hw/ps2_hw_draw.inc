@@ -98,6 +98,9 @@ static struct
 	int ramp_scale;
 	int vcol; // vertices carry their own colours (sky dome)
 	int cull; // 0 two-sided; +1 keep CCW; -1 keep CW (models)
+	int pal; // PS2-HW-71: palette rendering: the pieces of the light staircase are drawn with the CLUT of their colormap row (CK_LIGHT) instead of GS fog
+	int pal_row; // the row whose CLUT the GS state holds (-1 = none)
+	u32 pal_tbl; // light table id of the polygon
 	int fast; // one plain pass, no cuts: polygons take emit_fast_fan (state set up once per plan, see serial)
 	int litfast; // as fast, but with the light staircase (LM_BANDS): polygons of one darkness class take lit_fast_poly (ps2_hw_fast.inc, PS2-HW-43)
 	int vuok, vu; // the plan can be drawn by the VU1 program (vuok); PS2HWD_DrawFans turns vu on for the polygons of a batch (ps2_hw_vu1.inc, PS2-HW-45)
@@ -500,6 +503,12 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		return 0;
 	}
 	frame_prepare(0);
+	if (palette_mode() != pal_last_mode) // PS2-HW-71: gr_paletterendering was switched: every CLUT made from a palette is rebuilt
+	{
+		pal_last_mode = palette_mode();
+		ov_flush_all();
+		H.pal_gen++;
+	}
 
 	textured = !(flags & PF_NoTexture) && H.cur_tex != NOREC;
 	if (textured)
@@ -551,11 +560,18 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		lit = 1;
 		wall = H.shader == 1 || H.shader == 2 || H.shader == 3; // wall fudges: wall, sprite, model; floor fudges: floor, water, fog
 		light_setup(&P.rs.lp, (int)surf->LightInfo.light_level, wall, (int)surf->LightInfo.fade_start, (int)surf->LightInfo.fade_end);
+		// PS2-HW-71: palette rendering: the engine gave the polygon a light table; a palette texture is lit by the CLUT of the colormap row
+		if (surf->LightTableId && lt_ok(surf->LightTableId) && textured && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2)
+			&& blend != PF_Fog && blend != (PF_Multiplicative & PF_Blending) && !(dbg & 2048))
+		{
+			P.rs.lp.pal = 1;
+			P.pal_tbl = surf->LightTableId;
+		}
 		P.rs.fade = (u32)surf->FadeColor.s.red | ((u32)surf->FadeColor.s.green << 8) | ((u32)surf->FadeColor.s.blue << 16);
 		P.rs.tint = surf->TintColor.rgba;
 		P.rs.alpha = (u8)av;
 		if ((dbg & 4096) && H.frame_no == 150) // -hwdbg 4096: the light parameters of every lit polygon of frame 150
-			CONS_Printf("HWT lit sh=%d fl=0x%x a=%d L=%d fs=%d fe=%d fade=%06x tint=%08x tex=%s\n", H.shader, (unsigned)flags, av, (int)P.rs.lp.light, P.rs.lp.fade_start, P.rs.lp.fade_end, (unsigned)P.rs.fade, (unsigned)P.rs.tint, textured && r->owner ? HWR_PS2_TexName(r->owner) : "-");
+			CONS_Printf("HWT lit sh=%d fl=0x%x a=%d L=%d fs=%d fe=%d fade=%06x tint=%08x tex=%s lt=%u pal=%d\n", H.shader, (unsigned)flags, av, (int)P.rs.lp.light, P.rs.lp.fade_start, P.rs.lp.fade_end, (unsigned)P.rs.fade, (unsigned)P.rs.tint, textured && r->owner ? HWR_PS2_TexName(r->owner) : "-", (unsigned)surf->LightTableId, P.rs.lp.pal);
 		if ((P.rs.tint >> 24) != 0)
 			fx_note(1u << 8);
 		if (P.rs.fade != 0 || P.rs.lp.fade_start != 0 || P.rs.lp.fade_end != 31)
@@ -565,6 +581,8 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	}
 	P.rs.variant = 0;
 	P.rs.scale = 0;
+	P.pal = 0;
+	P.pal_row = -1;
 	P.lmode = LM_NONE;
 	P.fogcol = 0;
 	P.water = lit && H.shader == 4 && (flags & PF_Ripple);
@@ -684,13 +702,13 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		ps->alpha = ALPHA_TRANS;
 		ps->abe = 1;
 		P.npass = 1;
-		if (textured && (r->clut == 1 || r->clut == 2) && lit && (P.rs.tint >> 24) != 0)
+		if (textured && (r->clut == 1 || r->clut == 2) && lit && (P.rs.tint >> 24) != 0 && !P.rs.lp.pal) // palette rendering: the tint is in the light table
 		{
 			ps->clut_kind = CK_TINT; // the tint equation per palette entry
 			ps->clut_param = P.rs.tint;
 			ps->clut_keyed = r->clut == 2;
 		}
-		else if (textured && lit && (P.rs.tint >> 24) != 0 && blend != PF_Fog)
+		else if (textured && lit && (P.rs.tint >> 24) != 0 && blend != PF_Fog && !P.rs.lp.pal)
 		{
 			hw_limit(HW_SHADER, "colormap tint on a direct colour texture is not applied");
 		}
@@ -879,7 +897,19 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		P.lmode = LM_BANDS;
 		P.fogcol = P.rs.fade;
 	}
-	if (P.lmode == LM_BANDS)
+	if (P.lmode == LM_BANDS && P.rs.lp.pal)
+	{
+		// PS2-HW-71: palette rendering: no fog; the textured passes take the CLUT of the colormap row of their piece (emit_piece / lit_fast_poly)
+		P.pal = 1;
+		for (i = 0; i < P.npass; i++)
+			if (P.pass[i].tex && P.pass[i].alpha != ALPHA_KEEPDST)
+			{
+				P.pass[i].clut_kind = CK_LIGHT;
+				P.pass[i].clut_param = 0;
+				P.pass[i].clut_keyed = r->clut == 2;
+			}
+	}
+	else if (P.lmode == LM_BANDS)
 	{
 		for (i = 0; i < P.npass; i++)
 			if (P.pass[i].tex || P.pass[i].col)
@@ -905,7 +935,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	if (P.litfast)
 		lit_fast_plan(); // PS2-HW-43
 	P.vu = 0;
-	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible);
+	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible) && !P.pal; // PS2-HW-71: the CLUT changes with the row of every polygon
 	P.serial = H.serial - 1; // the first polygon sets the state up
 	xf_update();
 	P.zmax = PS2HWD_ZMAX;
@@ -1311,7 +1341,28 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		(void)tmp;
 		if (ps->ramp)
 			continue; // light overlays and fog ramps are handled below
-		if (P.npass == 1)
+		if (P.pal && ps->tex && ps->clut_kind == CK_LIGHT)
+		{
+			// PS2-HW-71: the CLUT of the colormap row of this piece
+			const int row = pal_row_of(pc->cls);
+
+			if (P.npass == 1)
+			{
+				if (row != P.pal_row || P.serial != H.serial)
+				{
+					P.pass[0].clut_param = pal_param(row);
+					pass_setup(0, 0);
+					P.serial = H.serial;
+					P.pal_row = row;
+				}
+			}
+			else
+			{
+				P.pass[k].clut_param = pal_param(row);
+				pass_setup(k, 0);
+			}
+		}
+		else if (P.npass == 1)
 		{
 			// PS2-HW-65: the pieces of one polygon (light bands, repeats) and consecutive polygons of a plan share the pass 0 state: set it once
 			if (P.serial != H.serial)
@@ -2246,23 +2297,17 @@ static void sprite_tex(texrec_t *r, int linear, u64 frame, u64 alpha, int abe, i
 	s.use_tex = 1;
 	s.rgbaq = rgbaq_of(0x80808080u);
 	state_flush(&s);
-	// PS2-HW-70: the UV register holds 14 bits (1/16 texel units): U or V = 1024.0 (the far edge of a 1024 texel tile) would wrap to 0. The span is kept and
-	// the whole range moves down by the excess (at most 1/16 texel; pixel centres sample half a texel inside, so the nearest texel does not change).
-	// Found by -hwtextest on the 1024 texel textures: clamping only the end shortened the span, the GS truncates the per pixel step.
+	// PS2-HW-70: the UV register holds 14 bits (1/16 texel units): U or V = 1024.0 (the far edge of a 1024 texel tile) would wrap to 0 and the whole sprite
+	// would sample from the wrong end. The edge is clamped to the largest value (1023.9375); a sprite that must show the last texel of a 1024 texel axis
+	// 1:1 starts at the integer texel (the GS samples U0 + n, not U0 + n + 1/2), see tt_tile in ps2_hw_tt.inc.
 	if (u1 > 1023.9375f)
-	{
-		u0 -= u1 - 1023.9375f;
 		u1 = 1023.9375f;
-	}
 	if (v1 > 1023.9375f)
-	{
-		v0 -= v1 - 1023.9375f;
 		v1 = 1023.9375f;
-	}
-	if (u0 < 0.0f)
-		u0 = 0.0f;
-	if (v0 < 0.0f)
-		v0 = 0.0f;
+	if (u0 > 1023.9375f)
+		u0 = 1023.9375f;
+	if (v0 > 1023.9375f)
+		v0 = 1023.9375f;
 	p = pk_alloc(1 + 2 * 3);
 	p[0].d[0] = HWGIF_TAG(2, 1, 1, PRIM_SPRITE | PRIM_TME | (1u << 8) | (abe ? PRIM_ABE : 0), 0, 3);
 	p[0].d[1] = 3ull | (1ull << 4) | (5ull << 8); // UV, RGBAQ, XYZ2

@@ -683,7 +683,11 @@ void HWR_FadeScreenMenuBack(UINT16 color, UINT8 strength)
 		}
 		else // COLORMAP fade
 		{
+#ifdef PS2_PROFILE // PS2-HW-71: the colormap fade of the UI (SHADER_UI_COLORMAP_FADE: a lookup of every pixel through the light table) is the translucent black quad on the GS
+			if (false)
+#else
 			if (HWR_ShouldUsePaletteRendering())
+#endif
 			{
 				const hwdscreentexture_t scr_tex = HWD_SCREENTEXTURE_GENERIC2;
 
@@ -1394,7 +1398,11 @@ static inline boolean saveTGA(const char *file_name, void *buffer,
 UINT8 *HWR_GetScreenshot(void)
 {
 	UINT8 *buf = malloc(vid.width * vid.height * 3 * sizeof (*buf));
+#ifdef PS2_PROFILE
+	int tex = HWD_SCREENTEXTURE_GENERIC2; // PS2-HW-71
+#else
 	int tex = HWR_ShouldUsePaletteRendering() ? HWD_SCREENTEXTURE_GENERIC3 : HWD_SCREENTEXTURE_GENERIC2;
+#endif
 
 	if (!buf)
 		return NULL;
@@ -1407,7 +1415,11 @@ boolean HWR_Screenshot(const char *pathname)
 {
 	boolean ret;
 	UINT8 *buf = malloc(vid.width * vid.height * 3 * sizeof (*buf));
+#ifdef PS2_PROFILE
+	int tex = HWD_SCREENTEXTURE_GENERIC2; // PS2-HW-71
+#else
 	int tex = HWR_ShouldUsePaletteRendering() ? HWD_SCREENTEXTURE_GENERIC3 : HWD_SCREENTEXTURE_GENERIC2;
+#endif
 
 	if (!buf)
 	{

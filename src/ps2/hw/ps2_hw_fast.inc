@@ -15,6 +15,7 @@ static struct
 	float base; // startmap * sfudge
 	float cap;
 	float cf; // cfudge
+	int pal; // palette rendering: classes 0 and 1 are one colormap row
 	u64 have; // bit c: fog[c] / fogon[c] are valid for the plan
 	u8 fog[33];
 	u8 fogon[33];
@@ -30,6 +31,7 @@ static void lit_fast_plan(void)
 	LF.base = startmap * lp->sfudge;
 	LF.cap = (155.0f - lp->light) * 0.26f;
 	LF.cf = lp->cfudge;
+	LF.pal = lp->pal;
 	LF.have = 0;
 }
 
@@ -42,7 +44,7 @@ static inline int lf_class(float z)
 	scale = 160.0f / (lightz + 1.0f);
 	cm = lmaxf(LF.base - scale * 0.5f * LF.cf, LF.cap);
 	if (cm < 0.0f)
-		return 0;
+		return LF.pal ? 1 : 0;
 	if (cm >= 31.0f)
 		return 32;
 	return (int)cm + 1;
@@ -112,7 +114,20 @@ static int lit_fast_poly(const cv_t *v, const void *pvv, int cnt, float sb, floa
 	}
 	fogF = LF.fog[c0];
 	usefog = ps->fog && LF.fogon[c0];
-	if (P.serial != H.serial)
+	if (P.pal)
+	{
+		// PS2-HW-71: palette rendering: the colormap row of the class is a CLUT of its own (no fog); the GS state changes with the row
+		const int row = pal_row_of(c0);
+
+		if (row != P.pal_row || P.serial != H.serial)
+		{
+			P.pass[0].clut_param = pal_param(row);
+			pass_setup(0, 0);
+			P.serial = H.serial;
+			P.pal_row = row;
+		}
+	}
+	else if (P.serial != H.serial)
 	{
 		pass_setup(0, 0);
 		P.serial = H.serial;

@@ -143,6 +143,23 @@ static int tt_read(u32 rows)
 	return PS2HWD_ReadVram(tt_fb, H.fb_addr[H.target] / 256, (unsigned)(H.fbw / 64), H.fbpsm, 0, 0, H.fbw, (int)rows) == 0;
 }
 
+// frame buffer pixels (x, y) show texel (tx + x, ty + y) for the tile of tw x th pixels. The UV register cannot express 1024.0: the last texel column / row of a
+// 1024 texel axis is drawn by sprites of one pixel whose U / V is the integer texel (the GS samples U0 + n at pixel n: sub-texel starts shift the picture)
+static void tt_tile(texrec_t *r, u32 tx, u32 ty, u32 tw, u32 th)
+{
+	const u32 mw = tw - (tx + tw == 1024 ? 1u : 0u), mh = th - (ty + th == 1024 ? 1u : 0u);
+	const u64 fr = frame_reg(H.target, 0);
+
+	if (mw && mh)
+		sprite_tex(r, 0, fr, 0, 0, 0, 0, (int)mw, (int)mh, (float)tx, (float)ty, (float)(tx + mw), (float)(ty + mh), H.vw, H.vh, 0);
+	if (mw < tw && mh)
+		sprite_tex(r, 0, fr, 0, 0, (int)mw, 0, (int)mw + 1, (int)mh, (float)(tx + mw), (float)ty, 1023.9375f, (float)(ty + mh), H.vw, H.vh, 0);
+	if (mh < th && mw)
+		sprite_tex(r, 0, fr, 0, 0, 0, (int)mh, (int)mw, (int)mh + 1, (float)tx, (float)(ty + mh), (float)(tx + mw), 1023.9375f, H.vw, H.vh, 0);
+	if (mw < tw && mh < th)
+		sprite_tex(r, 0, fr, 0, 0, (int)mw, (int)mh, (int)mw + 1, (int)mh + 1, (float)(tx + mw), (float)(ty + mh), 1023.9375f, 1023.9375f, H.vw, H.vh, 0);
+}
+
 static void tt_clear(void)
 {
 	frame_prepare(1);
@@ -224,7 +241,7 @@ static void tt_one(const char *label, int *n_tested, int *n_failA, int *n_failB,
 			u32 tw = w - tx < 320 ? w - tx : 320, th = h - ty < 200 ? h - ty : 200;
 
 			tt_clear();
-			sprite_tex(r, 0, frame_reg(H.target, 0), 0, 0, 0, 0, (int)tw, (int)th, (float)tx, (float)ty, (float)(tx + tw), (float)(ty + th), H.vw, H.vh, 0);
+			tt_tile(r, tx, ty, tw, th);
 			if (!tt_read(th))
 			{
 				snprintf(why, sizeof why, "read-back failed");

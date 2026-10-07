@@ -25,6 +25,19 @@ def find_exe():
     return c[0]
 
 
+def grid_share(path):
+    """share of the pixels on the RGB565 crush grid (palette rendering with gr_palettedepth 16 produces 100%)"""
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return 1.0
+    r = {int(v / 31 * 255) for v in range(32)}
+    g = {int(v / 63 * 255) for v in range(64)}
+    a = np.asarray(Image.open(path).convert('RGB'))
+    return float((np.isin(a[..., 0], list(r)) & np.isin(a[..., 1], list(g)) & np.isin(a[..., 2], list(r))).mean())
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('name')
@@ -39,6 +52,7 @@ def main():
     ap.add_argument('--exe', default='')
     ap.add_argument('--timeout', type=float, default=240)
     ap.add_argument('--size', default='320x200')
+    ap.add_argument('--nogrid', action='store_true', help='do not check that the picture was made with palette rendering (the default look); a run without it is repeated')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     o = Path(a.out).resolve() / a.name
@@ -61,13 +75,20 @@ def main():
         args += ['-ps2ref-keys', a.keys]
     args += a.extra
     env = dict(os.environ, SRB2WADDIR='/opt/srb2-assets', SDL_AUDIODRIVER='dummy', LIBGL_ALWAYS_SOFTWARE='1')
-    try:
-        p = subprocess.run(args, cwd=str(o), env=env, capture_output=True, text=True, timeout=a.timeout)
-        out = p.stdout + p.stderr
-        rc = p.returncode
-    except subprocess.TimeoutExpired as e:
-        out = (e.stdout or b'').decode(errors='replace') + (e.stderr or b'').decode(errors='replace')
-        rc = 'timeout'
+    for attempt in range(3):
+        try:
+            p = subprocess.run(args, cwd=str(o), env=env, capture_output=True, text=True, timeout=a.timeout)
+            out = p.stdout + p.stderr
+            rc = p.returncode
+        except subprocess.TimeoutExpired as e:
+            out = (e.stdout or b'').decode(errors='replace') + (e.stderr or b'').decode(errors='replace')
+            rc = 'timeout'
+        shots = sorted(glob.glob(str(o / 'home/.srb2/screenshots/*')))
+        pal_off = 'gr_paletterendering' in (a.cfg + a.cmd + a.shots)
+        if a.nogrid or a.sw or pal_off or not shots or min(grid_share(x) for x in shots[-1:]) > 0.9 or attempt == 2:
+            break
+        # OpenGL (llvmpipe) sometimes starts without the shaders under load: the picture is then not the palette rendered default; make it again
+        shutil.rmtree(o / 'home/.srb2/screenshots', ignore_errors=True)
     (o / 'pc.out').write_text(out)
     lines = [l for l in out.splitlines() if l.startswith('PS2SHOT')]
     (o / 'pc.txt').write_text('\n'.join(lines) + '\n')

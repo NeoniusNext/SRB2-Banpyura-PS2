@@ -15,6 +15,7 @@ typedef struct
 	float light; // `lighting` uniform, 0..255
 	float sfudge, cfudge; // STARTMAP_FUDGE, SCALE_FUDGE: floor 1.06 / 1.15, wall 1.05 / 2.2
 	int fade_start, fade_end; // colormap fade range, 0..31 (0 / 31 = no remap)
+	int pal; // PS2-HW-71 palette rendering: the colormap row is floor(R_DoomColormap) clamped to 0..31, so the classes 0 and 1 are the same row (no cut between them)
 } lightp_t;
 
 static inline void light_setup(lightp_t *lp, int light, int wall, int fs, int fe)
@@ -24,6 +25,7 @@ static inline void light_setup(lightp_t *lp, int light, int wall, int fs, int fe
 	lp->cfudge = wall ? 2.2f : 1.15f;
 	lp->fade_start = fs;
 	lp->fade_end = fe;
+	lp->pal = 0;
 }
 
 static inline float lmaxf(float a, float b)
@@ -50,7 +52,7 @@ static inline int doom_class(const lightp_t *lp, float z)
 	float cm = floorf(doom_colormap(lp, z));
 
 	if (cm < 0.0f)
-		return 0;
+		return lp->pal ? 1 : 0;
 	if (cm >= 31.0f)
 		return 32;
 	return (int)cm + 1;

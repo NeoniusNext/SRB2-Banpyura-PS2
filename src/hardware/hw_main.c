@@ -5826,11 +5826,9 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 // Can't have palette rendering if shaders are disabled.
 boolean HWR_ShouldUsePaletteRendering(void)
 {
-#ifdef PS2_PROFILE // PS2-HW-62: no 3D palette lookup / light tables on the GS: sector light is the GLSL-equivalent fade (depth bands / ramp), the textures stay indexed
-	return false;
-#else
+	// PS2-HW-71 (OPT10, replaces PS2-HW-62): palette rendering is on as on the PC (default gr_paletterendering On): the GS lights palette textures with the
+	// CLUT of the colormap row (ps2_hw_pal.inc), the colours are those of the software renderer; the engine's non palette equations stay for the rest
 	return (pMasterPalette != NULL && cv_glpaletterendering.value && HWR_UseShader());
-#endif
 }
 
 // enable or disable palette rendering state depending on settings and availability
@@ -5849,7 +5847,9 @@ static void HWR_TogglePaletteRendering(void)
 			// The textures will still be converted to RGBA by r_opengl.
 			// This however makes hw_cache use paletted blending for composite textures!
 			// (patchformat is not touched)
+#ifndef PS2_PROFILE // PS2-HW-71: the GS keeps the map textures as palette indices (P_8 + chroma key): the CLUT lights them, no 16 bit alpha format
 			textureformat = GL_TEXFMT_AP_88;
+#endif
 
 			HWR_SetMapPalette();
 			HWR_SetPalette(pLocalPalette);
@@ -5866,7 +5866,9 @@ static void HWR_TogglePaletteRendering(void)
 		if (gl_palette_rendering_state)
 		{
 			gl_palette_rendering_state = false;
+#ifndef PS2_PROFILE
 			textureformat = GL_TEXFMT_RGBA;
+#endif
 			HWR_SetPalette(pLocalPalette);
 			// If the r_opengl "texture palette" stays the same during this switch, these textures
 			// will not be cleared out. However they are still out of date since the
@@ -6382,13 +6384,21 @@ void HWR_DoWipe(UINT8 wipenum, UINT8 scrnnum)
 
 void HWR_MakeScreenFinalTexture(void)
 {
+#ifdef PS2_PROFILE // PS2-HW-71: no palette post process on the GS (the CLUTs carry the palette): the frame is its own final picture
+	int tex = HWD_SCREENTEXTURE_GENERIC2;
+#else
 	int tex = HWR_ShouldUsePaletteRendering() ? HWD_SCREENTEXTURE_GENERIC3 : HWD_SCREENTEXTURE_GENERIC2;
+#endif
 	HWD.pfnMakeScreenTexture(tex);
 }
 
 void HWR_DrawScreenFinalTexture(int width, int height)
 {
+#ifdef PS2_PROFILE
+	int tex = HWD_SCREENTEXTURE_GENERIC2;
+#else
 	int tex = HWR_ShouldUsePaletteRendering() ? HWD_SCREENTEXTURE_GENERIC3 : HWD_SCREENTEXTURE_GENERIC2;
+#endif
 	HWD.pfnDrawScreenFinalTexture(tex, width, height);
 }
 
