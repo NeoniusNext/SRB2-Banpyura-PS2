@@ -1,13 +1,13 @@
 // PS2 GS hardware renderer driver: GIF stream validator (included by ps2_hwd.c after ps2_hw_gs.inc). PS2-HW-74 (OPT10, HF).
 //
-// -hwdbg 134217728 (HWDBG_VALIDATE): every buffer of the GIF ring is parsed as the GIF and the GS parse it, right before it is queued, and checked
+// -hwdbg 536870912 (HWDBG_VALIDATE): every buffer of the GIF ring is parsed as the GIF and the GS parse it, right before it is queued, and checked
 // against the rules a real GS keeps and PCSX2 forgives or models differently: register fields keep to their bit widths, image data is exactly what
 // TRXREG announces, the texture cache is flushed (TEXFLUSH) after local memory changed under a texture, vertices stay in the 12.4 fixed point
 // window, Z24 stays below 2^24, texture coordinates stay in the range the driver cuts for (UV_EXTENT), DMA tags and references are well formed.
 // Results: the first examples of every class as HWVAL lines when they happen, and a summary (HWVAL SUMMARY) every 300 frames and at shutdown.
 // The VU1 path (-hwdbg 0x4000000) is not checked: its GIF packets are made by the VU1 program and never pass the ring.
 
-#define HWDBG_VALIDATE 0x8000000
+#define HWDBG_VALIDATE 0x20000000 // bit 27 is HWDBG_LODDBG of the planner (HT), bit 28 HWDBG_IMMDBG
 
 #include <stdarg.h>
 #include <stdio.h>

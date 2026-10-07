@@ -47,7 +47,7 @@
 #include "ps2_hw_vif.inc" // PS2-HW-44: VIF1 as the transport of the GIF stream (-hwdbg 0x4000000)
 #include "ps2_hw_regs.inc"
 #include "ps2_hw_gs.inc"
-#include "ps2_hw_val.inc" // PS2-HW-74: -hwdbg 134217728 validates the GIF stream
+#include "ps2_hw_val.inc" // PS2-HW-74: -hwdbg 536870912 validates the GIF stream
 #include "ps2_hw_xform.inc"
 #include "ps2_hw_vu0.inc"
 #include "ps2_hw_light.inc"

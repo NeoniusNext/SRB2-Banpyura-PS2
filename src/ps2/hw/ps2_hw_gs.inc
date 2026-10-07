@@ -14,7 +14,7 @@ static void ov_flush_all(void); // draws queued by the light overlay (ps2_hw_dra
 static void rel_poll(void); // OPT9: engine data referenced by DMA is unlocked when the transfer is done (ps2_hw_tex.inc)
 static void rel_release_buf(int i);
 static void rel_release_all(void);
-static void val_init(void); // PS2-HW-74: GIF stream validator (ps2_hw_val.inc, -hwdbg 134217728)
+static void val_init(void); // PS2-HW-74: GIF stream validator (ps2_hw_val.inc, -hwdbg 536870912)
 static void val_buffer(const qw_t *b, u32 wr);
 static void val_reset(void);
 static void val_shutdown(void);
