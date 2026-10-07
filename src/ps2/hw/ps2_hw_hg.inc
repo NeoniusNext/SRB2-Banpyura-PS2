@@ -20,6 +20,7 @@ static struct
 	u32 p_cutold, c_cutold; // polygons / cycles of the old cut_and_emit (repeat cuts, wide polygons)
 	u32 pc_key, pc_copy, pc_touch, pc_misc, pc_miss; // cycles: key + lookup, P/LF copy, texture touch, rest of a hit, a miss
 	u32 sk_n[5], sk_c[5]; // emit_poly in the skybox view by branch (vu, fast, lit, cut, water): polygons, cycles
+	u32 wf_polys, wf_pieces, wf_bands; // band_sweep: polygons, pieces emitted, ripple planes inside the polygons
 	u32 dome_n, dome_begin, dome_xf, dome_emit, dome_tris; // sky_dome_fast: calls, cycles of begin_draw / vu0 transform of the mesh / strips and clipped triangles, clipped triangles
 	u32 sk_single, sk_begin, sk_batches, sk_fans; // hw_DrawPolygon / begin_draw / PS2HWD_DrawFans calls in the skybox view
 } G;
@@ -45,6 +46,7 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		(unsigned)(ps2hwp_cyc[HWP_S_NET] / frames), (unsigned)(ps2hwp_cyc[HWP_S_CLR2] / frames));
 	I_OutputMsg("HWPROF13 skybox view emit_poly n/cyc: vu=%u fast=%u/%u lit=%u/%u cut=%u/%u water=%u/%u | single=%u begin=%u batches=%u fans=%u\n", G.sk_n[0] / frames, G.sk_n[1] / frames, G.sk_c[1] / frames,
 		G.sk_n[2] / frames, G.sk_c[2] / frames, G.sk_n[3] / frames, G.sk_c[3] / frames, G.sk_n[4] / frames, G.sk_c[4] / frames, G.sk_single / frames, G.sk_begin / frames, G.sk_batches / frames, G.sk_fans / frames);
+	I_OutputMsg("HWPROF17 band_sweep: polys=%u pieces=%u ripple_planes=%u\n", G.wf_polys / frames, G.wf_pieces / frames, G.wf_bands / frames);
 	I_OutputMsg("HWPROF16 segs: one-sided simple=%u two-sided simple=%u complex=%u\n", ps2hwp_cnt[HWC_SEG_SIMPLE1] / frames, ps2hwp_cnt[HWC_SEG_SIMPLE2] / frames, ps2hwp_cnt[HWC_SEG_COMPLEX] / frames);
 	I_OutputMsg("HWPROF15 sky dome (driver): calls=%u begin=%u xform=%u emit=%u clipped_tris=%u\n", G.dome_n / frames, G.dome_begin / frames, G.dome_xf / frames, G.dome_emit / frames, G.dome_tris / frames);
 	I_OutputMsg("HWPROF12 view set-up: skybox clear=%u dome=%u clip=%u | main setupview=%u clip=%u\n", (unsigned)(ps2hwp_cyc[HWP_K_CLR] / frames), (unsigned)(ps2hwp_cyc[HWP_K_DOME] / frames),

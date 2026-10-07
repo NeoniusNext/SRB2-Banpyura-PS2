@@ -233,6 +233,8 @@ static boolean Impl_HWAcquire(void)
 				trace = atoi(M_GetNextParm());
 			if (M_CheckParm("-hwdbg") && M_IsNextParm())
 				dbg = atoi(M_GetNextParm());
+			if (M_CheckParm("-hwvu1"))
+				dbg |= 0x4000000; // PS2-HW-44/45 (OPT10 HG): the VU1 program transforms, clips and packs the polygons of a batch (HWDBG_VU1); validated on PCSX2 only, off by default
 			PS2HWD_SetTrace(trace, dbg);
 		}
 	}

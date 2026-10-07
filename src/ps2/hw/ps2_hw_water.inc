@@ -24,11 +24,17 @@ static int ripple_nplanes = 15;
 static float ripple_zmax2 = 320.0f;
 static int ripple_pol_old = -1; // the policy the table was made for (0 = PS2-HW-47, 1 = old)
 
+// PS2-HW-57: the shift of a band that lies between two table planes is the same for every polygon of the frame: made once per level time
+static float rt_ds[RIPPLE_MAXPLANES + 2], rt_dt[RIPPLE_MAXPLANES + 2];
+static u8 rt_ok[RIPPLE_MAXPLANES + 2];
+static int rt_time = -1;
+
 static void ripple_policy(int old)
 {
 	int i;
 
 	ripple_pol_old = old;
+	rt_time = -1;
 	if (old)
 	{
 		for (i = 0; i < RIPPLE_MAXPLANES; i++)
@@ -174,17 +180,35 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 			ripple_sin[i] = sinf((float)i * (6.28318530718f / 256.0f));
 		ripple_ready = 1;
 	}
+	if (rt_time != (int)H.leveltime)
+	{
+		memset(rt_ok, 0, sizeof rt_ok);
+		rt_time = (int)H.leveltime;
+	}
 	for (j = 0; j <= nr; j++)
 	{
-		float lo = j == 0 ? (f > 0 ? ripple_planes[f - 1] : 0.0f) : rz[j - 1];
-		float hi = f + j < ripple_nplanes ? ripple_planes[f + j] : ripple_zmax2;
+		const float lo0 = j == 0 ? (f > 0 ? ripple_planes[f - 1] : 0.0f) : rz[j - 1];
+		const float hi0 = f + j < ripple_nplanes ? ripple_planes[f + j] : ripple_zmax2;
+		float lo = lo0, hi = hi0;
 
 		if (lo < z0)
 			lo = z0;
 		if (hi > z1)
 			hi = z1;
-		if ((j == 0 ? (f > 0 ? ripple_planes[f - 1] : 0.0f) : rz[j - 1]) >= ripple_zmax2)
+		if (lo0 >= ripple_zmax2)
 			bds[j] = bdt[j] = 0.0f;
+		else if (lo == lo0 && hi == hi0 && f + j <= RIPPLE_MAXPLANES)
+		{
+			const int b = f + j; // between the planes b - 1 and b of the table: the same for every polygon of this level time
+
+			if (!rt_ok[b])
+			{
+				ripple_offset(0.5f * (lo + hi), &rt_ds[b], &rt_dt[b]);
+				rt_ok[b] = 1;
+			}
+			bds[j] = rt_ds[b];
+			bdt[j] = rt_dt[b];
+		}
 		else
 			ripple_offset(0.5f * (lo + hi), &bds[j], &bdt[j]);
 	}
@@ -217,7 +241,10 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 		p2.tb += bdt[ib[j]];
 		p2.cls = icl[j];
 		emit_piece(wf_piece, np, &p2);
+		G.wf_pieces++;
 	}
+	G.wf_polys++;
+	G.wf_bands += (u32)nr;
 	H.st.bands += (u32)m + 1;
 	return 1;
 }
