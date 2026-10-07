@@ -55,6 +55,7 @@ static struct
 	int ndirty;
 	int fb_dirty;
 	int tf_reported;
+	int use_dirty[2]; // TEX0 or CLAMP written since the pair was checked
 } VAL;
 
 static void val_err(int cls, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -130,30 +131,64 @@ static u32 val_bpp(u32 psm)
 	}
 }
 
-// page size of a format in pixels
-static void val_page(u32 psm, u32 *pw, u32 *ph)
+// page and block geometry of a format: page size in pixels, block size in pixels, block order inside the page (the GS block tables)
+static const u8 vb_t32[4][8] = {{0, 1, 4, 5, 16, 17, 20, 21}, {2, 3, 6, 7, 18, 19, 22, 23}, {8, 9, 12, 13, 24, 25, 28, 29}, {10, 11, 14, 15, 26, 27, 30, 31}};
+static const u8 vb_t16[8][4] = {{0, 2, 8, 10}, {1, 3, 9, 11}, {4, 6, 12, 14}, {5, 7, 13, 15}, {16, 18, 24, 26}, {17, 19, 25, 27}, {20, 22, 28, 30}, {21, 23, 29, 31}};
+static const u8 vb_t16s[8][4] = {{0, 2, 16, 18}, {1, 3, 17, 19}, {8, 10, 24, 26}, {9, 11, 25, 27}, {4, 6, 20, 22}, {5, 7, 21, 23}, {12, 14, 28, 30}, {13, 15, 29, 31}};
+
+// address (in 256-byte blocks) of the block that holds pixel (x, y) of a buffer at `bp` with width `bw` (64-pixel units)
+static u32 val_block_of(u32 psm, u32 bp, u32 bw, u32 x, u32 y)
 {
+	u32 pw, ph, bkw, bkh, page, idx;
+
 	switch (val_bpp(psm))
 	{
-		case 32: case 24: *pw = 64; *ph = 32; break;
-		case 16: *pw = 64; *ph = 64; break;
-		case 8: *pw = 128; *ph = 64; break;
-		default: *pw = 128; *ph = 128; break;
+		case 32: case 24: pw = 64; ph = 32; bkw = 8; bkh = 8; break;
+		case 16: pw = 64; ph = 64; bkw = 16; bkh = 8; break;
+		case 8: pw = 128; ph = 64; bkw = 16; bkh = 16; break;
+		default: pw = 128; ph = 128; bkw = 32; bkh = 16; break;
 	}
+	page = (y / ph) * (bw * 64 / pw ? bw * 64 / pw : 1) + x / pw;
+	x %= pw;
+	y %= ph;
+	if (val_bpp(psm) == 32 || val_bpp(psm) == 24 || val_bpp(psm) == 8)
+		idx = vb_t32[y / bkh][x / bkw];
+	else if (psm == 0x0A || psm == 0x3A)
+		idx = vb_t16s[y / bkh][x / bkw];
+	else
+		idx = vb_t16[y / bkh][x / bkw];
+	return bp + page * PAGE_BLOCKS + idx;
 }
 
-// upper bound of the 256-byte blocks a w x h rectangle of a buffer with `tbw` (64-pixel units) takes
-static u32 val_blocks(u32 psm, u32 tbw, u32 w, u32 h)
+// end (exclusive, in 256-byte blocks) of the blocks a w x h rectangle at (x0, y0) of a buffer takes. The page based bound answers first; only when it
+// passes the end of VRAM the exact block table walk decides (it is a few thousand steps for a 1024 x 1024 texture).
+static u32 val_end(u32 psm, u32 bp, u32 bw, u32 x0, u32 y0, u32 w, u32 h)
 {
-	u32 pw, ph, stride, pages_w, pages_h;
+	u32 pw, ph, stride, pages_w, pages_h, x, y, end = bp, bkw, bkh;
 
-	val_page(psm, &pw, &ph);
-	stride = tbw * 64;
-	if (stride < w)
-		stride = w;
+	switch (val_bpp(psm))
+	{
+		case 32: case 24: pw = 64; ph = 32; bkw = 8; bkh = 8; break;
+		case 16: pw = 64; ph = 64; bkw = 16; bkh = 8; break;
+		case 8: pw = 128; ph = 64; bkw = 16; bkh = 16; break;
+		default: pw = 128; ph = 128; bkw = 32; bkh = 16; break;
+	}
+	stride = bw * 64;
+	if (stride < x0 + w)
+		stride = x0 + w;
 	pages_w = (stride + pw - 1) / pw;
-	pages_h = (h + ph - 1) / ph;
-	return pages_w * pages_h * PAGE_BLOCKS;
+	pages_h = (y0 + h + ph - 1) / ph;
+	if (bp + pages_w * pages_h * PAGE_BLOCKS <= VRAM_BLOCKS)
+		return bp + pages_w * pages_h * PAGE_BLOCKS;
+	for (y = y0 / bkh * bkh; y < y0 + h; y += bkh)
+		for (x = x0 / bkw * bkw; x < x0 + w; x += bkw)
+		{
+			const u32 b = val_block_of(psm, bp, bw, x, y) + 1;
+
+			if (b > end)
+				end = b;
+		}
+	return end;
 }
 
 static void val_dirty_add(u32 lo, u32 hi)
@@ -175,37 +210,49 @@ static void val_dirty_add(u32 lo, u32 hi)
 	}
 }
 
+// the texels a draw with the TEX0 / CLAMP of `ctx` can read: the clamp region when it is a region clamp, the whole texture otherwise
+static void val_tex_extent(int ctx, u32 *w, u32 *h)
+{
+	const u64 t = VAL.tex0[ctx], c = VAL.clamp[ctx];
+	const u32 tw = (u32)((t >> 26) & 15), th = (u32)((t >> 30) & 15), wms = (u32)(c & 3), wmt = (u32)((c >> 2) & 3);
+
+	*w = 1u << (tw > 10 ? 10 : tw);
+	*h = 1u << (th > 10 ? 10 : th);
+	if (wms == 2 && (u32)((c >> 14) & 0x3FF) + 1 < *w)
+		*w = (u32)((c >> 14) & 0x3FF) + 1;
+	if (wmt == 2 && (u32)((c >> 34) & 0x3FF) + 1 < *h)
+		*h = (u32)((c >> 34) & 0x3FF) + 1;
+}
+
 static void val_tex_region(int ctx, u32 *lo, u32 *hi)
 {
 	const u64 t = VAL.tex0[ctx];
-	const u32 tbp = (u32)(t & 0x3FFF), tbw = (u32)((t >> 14) & 63), psm = (u32)((t >> 20) & 63), tw = (u32)((t >> 26) & 15), th = (u32)((t >> 30) & 15);
+	const u32 tbp = (u32)(t & 0x3FFF), tbw = (u32)((t >> 14) & 63), psm = (u32)((t >> 20) & 63);
+	u32 w, h;
 
+	val_tex_extent(ctx, &w, &h);
 	*lo = tbp;
-	*hi = tbp + val_blocks(psm, tbw, 1u << (tw > 10 ? 10 : tw), 1u << (th > 10 ? 10 : th));
+	*hi = val_bpp(psm) ? val_end(psm, tbp, tbw, 0, 0, w, h) : tbp;
 }
 
+// what is checked when the registers are written: field values alone
 static void val_check_tex0(int ctx, u64 t)
 {
 	const u32 tbp = (u32)(t & 0x3FFF), tbw = (u32)((t >> 14) & 63), psm = (u32)((t >> 20) & 63), tw = (u32)((t >> 26) & 15), th = (u32)((t >> 30) & 15);
 	const u32 cbp = (u32)((t >> 37) & 0x3FFF), cpsm = (u32)((t >> 51) & 15), csm = (u32)((t >> 55) & 1), csa = (u32)((t >> 56) & 31), cld = (u32)((t >> 61) & 7);
-	u32 lo, hi;
 
 	VAL.tex0[ctx] = t;
 	VAL.tex0s++;
 	VAL.tf_reported = 0;
+	VAL.use_dirty[ctx] = 1;
 	if (!val_bpp(psm))
 		val_err(VE_TEX0, "TEX0 PSM %02x is no format (TEX0 %016llx)", psm, (unsigned long long)t);
 	if (tw > 10 || th > 10)
 		val_err(VE_TEX0, "TEX0 TW=%u TH=%u above 10 (the GS holds 1024 texels per axis; TEX0 %016llx)", tw, th, (unsigned long long)t);
 	if (val_bpp(psm) && val_bpp(psm) <= 8 && (tbw & 1))
 		val_err(VE_TEX0TBW, "TEX0 TBW=%u is odd for the %u-bit format %02x (pages are 128 pixels wide; TBP0=%u TW=%u)", tbw, val_bpp(psm), psm, tbp, tw);
-	if (tw <= 10 && tbw * 64u < (1u << tw))
-		val_err(VE_TEX0TBW, "TEX0 TBW=%u (%u pixels) is narrower than the texture (TW=%u = %u texels)", tbw, tbw * 64, tw, 1u << tw);
 	if (!tbw)
 		val_err(VE_TEX0TBW, "TEX0 TBW=0 (TEX0 %016llx)", (unsigned long long)t);
-	val_tex_region(ctx, &lo, &hi);
-	if (hi > VRAM_BLOCKS)
-		val_err(VE_TEX0VRAM, "texture TBP0=%u psm=%02x %ux%u tbw=%u reaches block %u of %u (VRAM wraps on the GS)", tbp, psm, 1u << (tw > 10 ? 10 : tw), 1u << (th > 10 ? 10 : th), tbw, hi, VRAM_BLOCKS);
 	if (cld > 5)
 		val_err(VE_TEX0, "TEX0 CLD=%u (CLUT load mode)", cld);
 	if (cld)
@@ -221,22 +268,38 @@ static void val_check_tex0(int ctx, u64 t)
 
 static void val_check_clamp(int ctx, u64 c)
 {
-	const u32 wms = (u32)(c & 3), wmt = (u32)((c >> 2) & 3);
-	const u32 minu = (u32)((c >> 4) & 0x3FF), maxu = (u32)((c >> 14) & 0x3FF), minv = (u32)((c >> 24) & 0x3FF), maxv = (u32)((c >> 34) & 0x3FF);
-	const u64 t = VAL.tex0[ctx];
-	const u32 tw = (u32)((t >> 26) & 15), th = (u32)((t >> 30) & 15);
-
 	VAL.clamp[ctx] = c;
+	VAL.use_dirty[ctx] = 1;
 	if (c >> 44)
 		val_err(VE_CLAMP, "CLAMP %016llx has bits above MAXV (a field overflowed)", (unsigned long long)c);
-	if (wms == 2 && tw <= 10 && (minu > maxu || maxu >= (1u << tw)))
+}
+
+// what depends on the pair TEX0 + CLAMP is checked when a vertex of a textured primitive uses it (the two registers are written in either order)
+static void val_check_use(int ctx)
+{
+	const u64 t = VAL.tex0[ctx], c = VAL.clamp[ctx];
+	const u32 tbp = (u32)(t & 0x3FFF), tbw = (u32)((t >> 14) & 63), psm = (u32)((t >> 20) & 63), tw = (u32)((t >> 26) & 15), th = (u32)((t >> 30) & 15);
+	const u32 wms = (u32)(c & 3), wmt = (u32)((c >> 2) & 3);
+	const u32 minu = (u32)((c >> 4) & 0x3FF), maxu = (u32)((c >> 14) & 0x3FF), minv = (u32)((c >> 24) & 0x3FF), maxv = (u32)((c >> 34) & 0x3FF);
+	u32 w, h, lo, hi;
+
+	VAL.use_dirty[ctx] = 0;
+	if (tw > 10 || th > 10 || !val_bpp(psm))
+		return;
+	val_tex_extent(ctx, &w, &h);
+	if (wms == 2 && (minu > maxu || maxu >= (1u << tw)))
 		val_err(VE_CLAMP, "region clamp U %u..%u outside the texture (TW=%u)", minu, maxu, tw);
-	if (wmt == 2 && th <= 10 && (minv > maxv || maxv >= (1u << th)))
+	if (wmt == 2 && (minv > maxv || maxv >= (1u << th)))
 		val_err(VE_CLAMP, "region clamp V %u..%u outside the texture (TH=%u)", minv, maxv, th);
-	if (wms == 3 && tw <= 10 && ((maxu >> tw) != 0))
+	if (wms == 3 && ((maxu >> tw) != 0))
 		val_err(VE_CLAMP, "region repeat U fix bits %u lie beyond the texture width (TW=%u, mask %u)", maxu, tw, minu);
-	if (wmt == 3 && th <= 10 && ((maxv >> th) != 0))
+	if (wmt == 3 && ((maxv >> th) != 0))
 		val_err(VE_CLAMP, "region repeat V fix bits %u lie beyond the texture height (TH=%u, mask %u)", maxv, th, minv);
+	if (w > tbw * 64u)
+		val_err(VE_TEX0TBW, "a draw reads %u texels per row but TBW=%u holds %u (TW=%u, clamp mode %u): the rows overlap", w, tbw, tbw * 64, tw, wms);
+	val_tex_region(ctx, &lo, &hi);
+	if (hi > VRAM_BLOCKS)
+		val_err(VE_TEX0VRAM, "texture TBP0=%u psm=%02x %ux%u (read area) tbw=%u reaches block %u of %u (VRAM wraps on the GS)", tbp, psm, w, h, tbw, hi, VRAM_BLOCKS);
 }
 
 static void val_prim(u32 p)
@@ -287,6 +350,8 @@ static void val_vertex(u32 x, u32 y, u32 z, int kick)
 		const u64 t = VAL.tex0[ctx];
 		const u32 tw = (u32)((t >> 26) & 15), th = (u32)((t >> 30) & 15);
 
+		if (VAL.use_dirty[ctx])
+			val_check_use(ctx);
 		if (!(VAL.prim & (1u << 8))) // ST / Q
 		{
 			union { u32 w; float f; } s, tt, q;
@@ -513,7 +578,7 @@ static void val_gsreg(u32 addr, u64 d)
 			VAL.img_left = 0;
 			if ((dir == 0 || dir == 2) && bpp && rrw && rrh)
 			{
-				const u32 hi = dbp + val_blocks(dpsm, dbw, dsax + rrw, dsay + rrh);
+				const u32 hi = val_end(dpsm, dbp, dbw, dsax, dsay, rrw, rrh);
 
 				if (hi > VRAM_BLOCKS)
 					val_err(VE_BITBLT, "transfer to DBP=%u psm=%02x %ux%u at %u,%u reaches block %u of %u (VRAM wraps on the GS)", dbp, dpsm, rrw, rrh, dsax, dsay, hi, VRAM_BLOCKS);

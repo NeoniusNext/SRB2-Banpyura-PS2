@@ -245,6 +245,50 @@ int main(void)
 	finish();
 	bad += check("clean reglist fan", VE_PRIM, 0);
 
+	// the screen texture of the driver: 320 x 200 CT32 at the top of VRAM, TW=9 TH=8, region clamp 0..319 / 0..199 written BEFORE TEX0: clean
+	begin();
+	state();
+	ad1(2ull | (2ull << 2) | (319ull << 14) | (199ull << 34), 0x08);
+	ad1(tex0(15264, 5, 0x00, 9, 8, 4000, 1), 0x06);
+	fan3(PRIM_TRIFAN | PRIM_TME, 0.5f, 0x8000 + 16 * 60, 5000);
+	finish();
+	bad += check("clean screen texture at the VRAM end", VE_TEX0VRAM, 0);
+	// a 64 x 64 PSMT8 upload that ends exactly at the end of VRAM (blocks 16368..16383): clean; one block further: reported
+	begin();
+	state();
+	ad_tag(4);
+	ad(alloc(1), (u64)16368 << 32 | (u64)2 << 48 | (u64)0x13 << 56, 0x50);
+	ad(alloc(1), 0, 0x51);
+	ad(alloc(1), 64ull | (64ull << 32), 0x52);
+	ad(alloc(1), 0, 0x53);
+	{
+		qw_t *p = alloc(1);
+		u32 i;
+
+		p->d[0] = HWGIF_TAG(256, 1, 0, 0, 2, 0);
+		for (i = 0; i < 256; i++)
+			alloc(1)->d[0] = i;
+	}
+	finish();
+	bad += check("clean upload to the VRAM end", VE_BITBLT, 0);
+	begin();
+	state();
+	ad_tag(4);
+	ad(alloc(1), (u64)16369 << 32 | (u64)2 << 48 | (u64)0x13 << 56, 0x50);
+	ad(alloc(1), 0, 0x51);
+	ad(alloc(1), 64ull | (64ull << 32), 0x52);
+	ad(alloc(1), 0, 0x53);
+	{
+		qw_t *p = alloc(1);
+		u32 i;
+
+		p->d[0] = HWGIF_TAG(256, 1, 0, 0, 2, 0);
+		for (i = 0; i < 256; i++)
+			alloc(1)->d[0] = i;
+	}
+	finish();
+	bad += check("upload one block past VRAM end", VE_BITBLT, 1);
+
 	// seeded faults
 #define FAULT(NAME, CLS, BODY) \
 	begin(); \
@@ -255,9 +299,9 @@ int main(void)
 
 	FAULT("TEX0 TW=11", VE_TEX0, ad1(tex0(2000, 2, 0x13, 11, 6, 4000, 1), 0x06));
 	FAULT("TEX0 TBW odd for T8", VE_TEX0TBW, ad1(tex0(2000, 3, 0x13, 7, 6, 4000, 1), 0x06));
-	FAULT("TEX0 TBW narrower than texture", VE_TEX0TBW, ad1(tex0(2000, 1, 0x00, 7, 6, 4000, 1), 0x06));
-	FAULT("TEX0 beyond VRAM", VE_TEX0VRAM, ad1(tex0(16000, 16, 0x00, 10, 10, 4000, 1), 0x06));
-	FAULT("CLAMP region beyond texture", VE_CLAMP, ad1(2ull | (2ull << 2) | (0ull << 4) | (200ull << 14) | (0ull << 24) | (10ull << 34), 0x08));
+	FAULT("TEX0 TBW narrower than texture", VE_TEX0TBW, { ad1(tex0(2000, 1, 0x00, 7, 6, 4000, 1), 0x06); fan3(PRIM_TRIFAN | PRIM_TME, 1.0f, 0x8000 + 16 * 60, 5000); });
+	FAULT("TEX0 beyond VRAM", VE_TEX0VRAM, { ad1(tex0(16000, 16, 0x00, 10, 10, 4000, 1), 0x06); fan3(PRIM_TRIFAN | PRIM_TME, 1.0f, 0x8000 + 16 * 60, 5000); });
+	FAULT("CLAMP region beyond texture", VE_CLAMP, { ad1(2ull | (2ull << 2) | (0ull << 4) | (200ull << 14) | (0ull << 24) | (10ull << 34), 0x08); fan3(PRIM_TRIFAN | PRIM_TME, 1.0f, 0x8000 + 16 * 60, 5000); });
 	FAULT("CLAMP overflow into reserved bits", VE_CLAMP, ad1(2ull | (1ull << 50), 0x08));
 	FAULT("SCISSOR x1 = 2048", VE_SCISSOR, ad1(0ull | (2048ull << 16) | (223ull << 48), 0x40));
 	FAULT("ALPHA selector 3", VE_ALPHA, ad1(3ull, 0x42));
