@@ -479,18 +479,40 @@ static void fx_report(void)
 	fx_seen = 0;
 }
 
-// Prepare everything for a polygon with these engine flags. Returns 0 when the polygon must not be drawn.
-static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf);
-
-static int begin_draw(u32 flags, const FSurfaceInfo *surf)
+// What every draw with a texture does to the texture manager's books (begin_draw_inner and the plan cache hit path, PS2-HW-46)
+static void plan_tex_touch(texrec_t *r)
 {
-	u32 t0 = cyc();
-	int r = begin_draw_inner(flags, surf);
+	texrec_t *im;
 
-	G.begin_n++;
-	G.begin_cyc += cyc() - t0;
-	return r;
+	lru_touch(H.cur_tex);
+	im = &H.rec[img_of(H.cur_tex)];
+	if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set
+	{
+		im->imgws = H.frame_no + 1;
+		TX.need_blk += im->nblk;
+		TX.need_n++;
+	}
+	if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame
+	{
+		int k;
+
+		r->ws = H.frame_no + 1;
+		H.st.ws_blocks += r->nblk;
+		H.st.ws_tex++;
+		if (H.pred_frame != H.frame_no + 1)
+		{
+			memset(H.pred, 0, sizeof H.pred);
+			H.pred_frame = H.frame_no + 1;
+		}
+		for (k = 0; k < NCAPS; k++)
+			H.pred[k] += r->fp[k];
+	}
 }
+
+// Prepare everything for a polygon with these engine flags. Returns 0 when the polygon must not be drawn.
+// begin_draw (below, behind ps2_hw_fast.inc) is the plan cache (PS2-HW-46) in front of begin_draw_inner, which makes the plan.
+static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf);
+static int begin_draw(u32 flags, const FSurfaceInfo *surf);
 
 static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 {
@@ -630,32 +652,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		P.linear = linear;
 		// a non power of two axis is clamped to the texture's own region; its repeat was turned into cuts
 		P.clamp = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34);
-		lru_touch(H.cur_tex);
-		{
-			texrec_t *im = &H.rec[img_of(H.cur_tex)];
-
-			if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set
-			{
-				im->imgws = H.frame_no + 1;
-				TX.need_blk += im->nblk;
-				TX.need_n++;
-			}
-		}
-		if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame
-		{
-			int k;
-
-			r->ws = H.frame_no + 1;
-			H.st.ws_blocks += r->nblk;
-			H.st.ws_tex++;
-			if (H.pred_frame != H.frame_no + 1)
-			{
-				memset(H.pred, 0, sizeof H.pred);
-				H.pred_frame = H.frame_no + 1;
-			}
-			for (k = 0; k < NCAPS; k++)
-				H.pred[k] += r->fp[k];
-		}
+		plan_tex_touch(r); // LRU order and working set statistics of the texture drawn
 	}
 
 	// ---- blend / pass plan ----
@@ -1776,10 +1773,14 @@ static void ripple_offset(float zc, float *ds, float *dt)
 	*dt = ripple_sinf(a + 1.57079633f) * RIPPLE_AMP; // cos
 }
 
+#include "ps2_hw_water.inc" // PS2-HW-47: water_fast, the one sweep water polygon
+
 static cv_t wpiece[CUTBUF], wrem[2][CUTBUF];
 
 static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
 {
+	if (water_fast(v, cnt, pc))
+		return;
 	float wlo = v[0].w, whi = v[0].w, z0, z1, ds, dt, step = RIPPLE_STEP;
 	const cv_t *rem = v;
 	int nrem = cnt, i, k, which = 0;
@@ -1862,6 +1863,186 @@ static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
 #include "ps2_hw_fast.inc" // PS2-HW-43: lit_fast_poly / lit_fast_plan
 #include "ps2_hw_vu1.inc" // PS2-HW-45: vu_poly / vu_sync (the VU1 program draws the polygons of a batch)
 
+// ---- PS2-HW-46: plan cache ----
+// begin_draw_inner makes the plan of a draw (blend passes, light, texture parameters, GS state values) in about 1000 cycles, and the
+// engine's sprite loop, the HUD and the translucent walls/planes call it for every polygon (1300 draw calls per frame on GFZ1). The plan
+// is a pure function of the polygon flags, the colour/light of the surface, the view/shader state of the driver and a handful of
+// properties of the texture record, so the plans of the last draws are kept (direct mapped, NPLANC entries) and a draw with a known
+// key restores its plan instead (everything that belongs to the texture itself is refreshed from the record).
+// -hwdbg 16384 (= 0x4000): no plan cache (A/B).
+typedef __typeof__(P) plan_t;
+typedef __typeof__(LF) lfstate_t;
+
+typedef struct
+{
+	u32 flags, pcol, tint, fade, light, fs, fe; // the surface
+	u32 vp[4], near, guard_x, guard_y, xfv, shader, shaders_on, filter; // the view and shader state
+	u32 tex; // the texture record's properties that the plan reads
+} plankey_t;
+
+typedef struct
+{
+	plankey_t k;
+	int used;
+	plan_t P;
+	lfstate_t lf;
+} planent_t;
+
+#define NPLANC 16
+#define HWDBG_NOPLANC 0x4000
+static planent_t planc[NPLANC];
+static planent_t *planc_active; // the entry whose plan P / LF belong to (LF collects its light classes while the plan is in use)
+
+static inline u32 f2u(float f)
+{
+	union
+	{
+		float f;
+		u32 u;
+	} c;
+
+	c.f = f;
+	return c.u;
+}
+
+#ifndef PLAN_KEY_PCOL
+#define PLAN_KEY_PCOL(c) (c) // (the host test mutates it: tools/ps2/hg_hosttest.c, negative control 2)
+#endif
+
+static inline void plan_key(plankey_t *k, u32 flags, const FSurfaceInfo *surf, const texrec_t *r)
+{
+	u32 t = surf ? 1u << 31 : 0;
+
+	k->flags = flags;
+	if (surf)
+	{
+		k->pcol = PLAN_KEY_PCOL(surf->PolyColor.rgba);
+		k->tint = surf->TintColor.rgba;
+		k->fade = surf->FadeColor.rgba;
+		k->light = (u32)surf->LightInfo.light_level;
+		k->fs = (u32)surf->LightInfo.fade_start;
+		k->fe = (u32)surf->LightInfo.fade_end;
+	}
+	else
+	{
+		k->pcol = k->tint = k->fade = k->light = k->fs = k->fe = 0;
+	}
+	k->vp[0] = f2u(H.vpx);
+	k->vp[1] = f2u(H.vpy);
+	k->vp[2] = f2u(H.vpw);
+	k->vp[3] = f2u(H.vph);
+	k->near = f2u(H.near_plane);
+	k->guard_x = (u32)H.guard_x;
+	k->guard_y = (u32)H.guard_y;
+	k->xfv = xf_ver;
+	k->shader = (u32)H.shader;
+	k->shaders_on = (u32)H.shaders_on;
+	k->filter = (u32)H.tex_filter;
+	if (r)
+		t |= (u32)r->psm | ((u32)r->clut << 6) | ((u32)(r->notcc != 0) << 8) | ((u32)(r->screen != 0) << 9) | ((u32)(r->wrapx != 0) << 10) | ((u32)(r->wrapy != 0) << 11)
+			| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17);
+	k->tex = t;
+}
+
+static inline u32 plan_slot(const plankey_t *k)
+{
+	u32 h = k->flags * 0x9E3779B1u;
+
+	h ^= (k->pcol + (k->light << 8) + (k->tint << 1) + (k->fade << 3) + k->fs * 31u + k->fe * 17u + k->tex * 0x85EBCA6Bu) * 0xC2B2AE35u;
+	return (h >> 12) & (NPLANC - 1);
+}
+
+static inline int plan_key_eq(const plankey_t *a, const plankey_t *b)
+{
+	const u32 *x = (const u32 *)(const void *)a, *y = (const u32 *)(const void *)b;
+	u32 d = 0;
+	size_t i;
+
+	for (i = 0; i < sizeof(plankey_t) / 4; i++)
+		d |= x[i] ^ y[i];
+	return d == 0;
+}
+
+static int begin_draw(u32 flags, const FSurfaceInfo *surf)
+{
+	u32 t0 = cyc();
+	plankey_t k;
+	planent_t *e;
+	const texrec_t *r;
+	int ok;
+
+	if (planc_active) // the light classes the last plan collected stay with it
+		planc_active->lf = LF;
+	if ((ps2hwd_dbg_flags & HWDBG_NOPLANC) || (flags & PF_Corona) || (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing) || H.frame_no % 300 == 299) // (the frame of the HWFX census makes every plan)
+	{
+		planc_active = NULL;
+		ok = begin_draw_inner(flags, surf);
+		G.begin_n++;
+		G.begin_cyc += cyc() - t0;
+		return ok;
+	}
+	frame_prepare(0);
+	xf_update();
+	r = (!(flags & PF_NoTexture) && H.cur_tex != NOREC) ? &H.rec[H.cur_tex] : NULL;
+	plan_key(&k, flags, surf, r);
+	e = &planc[plan_slot(&k)];
+	if (e->used && plan_key_eq(&e->k, &k))
+	{
+		texrec_t *tr = (texrec_t *)r;
+		u32 c1 = cyc(), c2, c3;
+
+		G.pc_key += c1 - t0;
+		P = e->P;
+		LF = e->lf;
+		planc_active = e;
+		c2 = cyc();
+		G.pc_copy += c2 - c1;
+		if (tr)
+		{
+			const int wms = P.wrapx ? 0 : 1, wmt = P.wrapy ? 0 : 1;
+
+			P.r = tr;
+			P.tsx = tr->sxs;
+			P.tsy = tr->sys;
+			P.clamp = (u64)((tr->region & 1) ? 2 : wms) | ((u64)((tr->region & 2) ? 2 : wmt) << 2) | ((u64)(tr->uw - 1) << 14) | ((u64)(tr->vh - 1) << 34);
+			plan_tex_touch(tr);
+		}
+		c3 = cyc();
+		G.pc_touch += c3 - c2;
+		P.serial = H.serial - 1; // the first polygon sets the GS state up
+		if (OV.n)
+			ov_flush(); // anything but a ramp plan sees the picture with the queued light applied
+#ifdef HW_VU0
+		if (P.vu0)
+			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+#endif
+		H.cur_flags = flags;
+		G.plan_hit++;
+		G.begin_n++;
+		G.pc_misc += cyc() - c3;
+		G.begin_cyc += cyc() - t0;
+		return 1;
+	}
+	ok = begin_draw_inner(flags, surf);
+	if (ok && P.lmode != LM_RAMP)
+	{
+		e->k = k;
+		e->used = 1;
+		e->P = P;
+		e->lf = LF;
+		planc_active = e;
+	}
+	else
+	{
+		planc_active = NULL;
+	}
+	G.plan_miss++;
+	G.begin_n++;
+	G.pc_miss += cyc() - t0;
+	G.begin_cyc += cyc() - t0;
+	return ok;
+}
+
 // Transform, clip and pack one convex polygon.
 // Vertices: base[idx[i]] (or base[i] when idx is NULL); with `vcol` (4 floats per vertex index) they carry colours.
 static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float *vcol)
@@ -1869,7 +2050,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
 	int i, cnt, and_ = 0x3F, or_ = 0, na = P.vcol ? 6 : 2, big = 0;
 	cv_t *v;
-	u32 t0 = cyc();
+	u32 t0 = cyc(), gt1;
 	piece_t pc;
 #ifdef HW_VU0
 	const int vu0 = P.vu0 && !vcol && !P.vcol;
@@ -1956,18 +2137,31 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	pc.ripple = 0;
 	if ((ps2hwd_dbg_flags & HWDBG_TEX) && P.textured && H.cur_tex != NOREC && H.rec[H.cur_tex].sw && !vcol && !P.vcol)
 		lod_note(v, cnt); // OPT9 instrumentation: the mip level this polygon needs
+	gt1 = cyc();
 	if (P.fast && !P.vcol && !vcol && !big)
+	{
 #ifdef HW_VU0
 		G.p_fast++, emit_fast_fan(v, (vu0 && !or_) ? (const void *)pvbuf : NULL, cnt, pc.sb, pc.tb);
 #else
 		emit_fast_fan(v, NULL, cnt, pc.sb, pc.tb);
 #endif
+		G.c_fast += cyc() - gt1;
+	}
 	else if (P.litfast && !big && !vcol && !P.vcol && !(ps2hwd_dbg_flags & 8192) && lit_fast_poly(v, LF_PV(vu0, or_), cnt, pc.sb, pc.tb))
+	{
 		G.p_lit++; // PS2-HW-43: drawn
+		G.c_lit += cyc() - gt1;
+	}
 	else if (P.water && P.textured && !P.vcol && !vcol && !big)
+	{
 		G.p_water++, emit_water_poly(v, cnt, pc, na);
+		G.c_water += cyc() - gt1;
+	}
 	else
+	{
 		G.p_cut++, cut_and_emit(v, cnt, 0, pc, na);
+		G.c_cut += cyc() - gt1;
+	}
 	H.st.cyc_draw += cyc() - t0;
 }
 

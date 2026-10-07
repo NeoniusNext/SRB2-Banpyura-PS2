@@ -18,6 +18,7 @@
 #include "../z_zone.h"
 #include "../ps2/hw/ps2_hwd.h"
 #include "hw_sort.h"
+#include "../ps2/hw/ps2_hw_prof.h"
 #endif
 
 // The texture for the next polygon given to HWR_ProcessPolygon.
@@ -183,6 +184,11 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 {
     if (iNumPts < 3)
         return; // no triangles; do not advance the fan writer past its allocation
+#ifdef PS2_PROFILE
+	HWC_ADD(HWC_PROC); // OPT10 HG: calls (HWC_PROC_BATCH: the batched ones)
+	if (currently_batching)
+		HWC_ADD(HWC_PROC_BATCH);
+#endif
     if (currently_batching)
 	{
 		if (!pSurf)

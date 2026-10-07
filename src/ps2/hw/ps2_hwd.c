@@ -667,9 +667,16 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		CONS_Printf("HWT poly n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u\n", (unsigned)iNumPts, (unsigned)PolyFlags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u);
 	}
-	G.single++;
-	if (begin_draw((u32)PolyFlags, pSurf))
-		emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
+	{
+		const u32 gt0 = cyc();
+		const int gk = ((PolyFlags & PF_NoTexture) ? 1 : 0) | ((PolyFlags & PF_NoDepthTest) ? 2 : 0) | ((PolyFlags & PF_Occlude) ? 4 : 0);
+
+		G.single++;
+		G.sing_by[gk]++;
+		if (begin_draw((u32)PolyFlags, pSurf))
+			emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
+		G.sing_cyc[gk] += cyc() - gt0;
+	}
 }
 
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc)

@@ -29,10 +29,22 @@ enum
 	HWP_BATCHDRAW, // driver draws of HWR_RenderBatches
 	HWP_SUBSEC, // HWR_Subsector (inclusive: planes, sprites, segs)
 	HWP_LIGHT, // HWR_Lighting
+	// OPT10 (HG): parts of the setup span (HWPROF6)
+	HWP_S_PAL, // ST_doPaletteStuff
+	HWP_S_FRAME, // R_SetupFrame
+	HWP_S_CLR1, // ClearBuffer(colour)
+	HWP_S_NET, // NetUpdate
+	HWP_S_CLR2, // HWR_ClearView
+	HWP_S_SETSH, // SetTransform / shader state / PS_ perf timing
 	HWP_NUM
 };
 
 extern unsigned long long ps2hwp_cyc[HWP_NUM];
+
+// OPT10 (HG): event counters of the engine side (HWPROF3 line, per frame)
+enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_NUM };
+extern unsigned int ps2hwp_cnt[HWC_NUM];
+#define HWC_ADD(i) (ps2hwp_cnt[i]++)
 
 static inline unsigned int ps2hwp_now(void)
 {
@@ -52,6 +64,7 @@ static inline unsigned int ps2hwp_now(void)
 #define HWP_LAP(idx) ((void)0)
 #define HWP_SPAN_BEGIN(name) ((void)0)
 #define HWP_SPAN_END(name, idx) ((void)0)
+#define HWC_ADD(i) ((void)0)
 #endif
 
 #endif

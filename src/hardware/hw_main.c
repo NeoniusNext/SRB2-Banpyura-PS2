@@ -48,6 +48,7 @@
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hw_prof.h" // PS2-HW-15: COP0 phase accumulators of the hardware renderer (HWPROF lines)
 unsigned long long ps2hwp_cyc[HWP_NUM];
+unsigned int ps2hwp_cnt[HWC_NUM];
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
@@ -660,6 +661,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 static void HWR_RenderPlaneTimed(subsector_t *subsector, extrasubsector_t *xsub, boolean isceiling, fixed_t fixedheight, FBITFIELD PolyFlags, INT32 lightlevel, levelflat_t *levelflat, sector_t *FOFsector, UINT8 alpha, extracolormap_t *planecolormap)
 {
 	HWP_SPAN_BEGIN(t);
+	HWC_ADD(HWC_PLANES);
 	HWR_RenderPlane(subsector, xsub, isceiling, fixedheight, PolyFlags, lightlevel, levelflat, FOFsector, alpha, planecolormap);
 	HWP_SPAN_END(t, HWP_PLANE);
 }
@@ -1922,6 +1924,7 @@ static void HWR_ProcessSeg(void)
 static void HWR_ProcessSegTimed(void)
 {
 	HWP_SPAN_BEGIN(t);
+	HWC_ADD(HWC_SEGS);
 	HWR_ProcessSeg();
 	HWP_SPAN_END(t, HWP_SEG);
 }
@@ -2445,6 +2448,7 @@ static boolean HWR_DoCulling(line_t *cullheight, line_t *viewcullheight, float v
 static void HWR_Subsector(size_t num)
 {
 	INT16 count;
+	HWC_ADD(HWC_SUBSECS);
 	seg_t *line;
 	subsector_t *sub;
 	static sector_t tempsec; //SoM: 4/7/2000
@@ -4012,6 +4016,9 @@ static int CompareVisSprites(const void *p1, const void *p2)
 static void HWR_SortVisSprites(void)
 {
 	UINT32 i;
+#ifdef PS2_PROFILE
+	ps2hwp_cnt[HWC_SPRITES] += gl_visspritecount;
+#endif
 	for (i = 0; i < gl_visspritecount; i++)
 	{
 		gl_vsprorder[i] = HWR_GetVisSprite(i);
@@ -5520,9 +5527,11 @@ static void HWR_SetupView(player_t *player, INT32 viewnumber, float fpov, boolea
 	{
 		// do we really need to save player (is it not the same)?
 		player_t *saved_player = stplyr;
+		HWP_SPAN_BEGIN(tpal);
 		stplyr = player;
 		ST_doPaletteStuff();
 		stplyr = saved_player;
+		HWP_SPAN_END(tpal, HWP_S_PAL);
 #ifdef ALAM_LIGHTING
 		HWR_SetLights(viewnumber);
 #else
@@ -5531,10 +5540,14 @@ static void HWR_SetupView(player_t *player, INT32 viewnumber, float fpov, boolea
 	}
 
 	// note: sets viewangle, viewx, viewy, viewz
-	if (skybox)
-		R_SkyboxFrame(player);
-	else
-		R_SetupFrame(player);
+	{
+		HWP_SPAN_BEGIN(tfr);
+		if (skybox)
+			R_SkyboxFrame(player);
+		else
+			R_SetupFrame(player);
+		HWP_SPAN_END(tfr, HWP_S_FRAME);
+	}
 
 	gl_viewx = FixedToFloat(viewx);
 	gl_viewy = FixedToFloat(viewy);
@@ -5693,7 +5706,11 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 		HWD.pfnSetShaderInfo(HWD_SHADERINFO_LEVELTIME, (INT32)leveltime); // The water surface shader needs the leveltime.
 
 	if (viewnumber == 0) // Only do it if it's the first screen being rendered
+	{
+		HWP_SPAN_BEGIN(tc1);
 		HWD.pfnClearBuffer(true, false, &ClearColor); // Clear the Color Buffer, stops HOMs. Also seems to fix the skybox issue on Intel GPUs.
+		HWP_SPAN_END(tc1, HWP_S_CLR1);
+	}
 
 	PS_START_TIMING(ps_hw_skyboxtime);
 	if (skybox && drawsky) // If there's a skybox and we should be drawing the sky, draw the skybox
@@ -5705,10 +5722,18 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	framecount++; // timedemo
 
 	// check for new console commands.
-	NetUpdate();
+	{
+		HWP_SPAN_BEGIN(tnet);
+		NetUpdate();
+		HWP_SPAN_END(tnet, HWP_S_NET);
+	}
 
 	//------------------------------------------------------------------------
-	HWR_ClearView(); // Clears the depth buffer and resets the view I believe
+	{
+		HWP_SPAN_BEGIN(tc2);
+		HWR_ClearView(); // Clears the depth buffer and resets the view I believe
+		HWP_SPAN_END(tc2, HWP_S_CLR2);
+	}
 	HWP_SPAN_END(hwp_tsetup, HWP_SETUP);
 
 	if (!skybox && drawsky) // Don't draw the regular sky if there's a skybox
