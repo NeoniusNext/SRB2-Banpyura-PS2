@@ -10,6 +10,7 @@
 #define HWDBG_VALIDATE 0x8000000
 
 #include <stdarg.h>
+#include <stdio.h>
 
 enum
 {
@@ -62,31 +63,32 @@ static void val_err(int cls, const char *fmt, ...)
 {
 	if (VAL.err[cls]++ < 3)
 	{
-		char buf[200];
+		char buf[240];
 		va_list ap;
 
 		va_start(ap, fmt);
 		vsnprintf(buf, sizeof buf, fmt, ap);
 		va_end(ap);
-		printf("HWVAL %s f=%u: %s\n", ve_name[cls], H.frame_no, buf);
+		I_OutputMsg("HWVAL %s f=%u: %s\n", ve_name[cls], H.frame_no, buf);
 	}
 }
 
 static void val_summary(const char *why)
 {
-	int i;
+	char buf[700];
+	int i, n;
 	u32 tot = 0;
 
-	printf("HWVAL SUMMARY %s f=%u: packets=%u qwords=%u verts=%u prims=%u images=%u image_qw=%u ad=%u texflush=%u tex0=%u max_texel=%u |", why, H.frame_no,
+	n = snprintf(buf, sizeof buf, "HWVAL SUMMARY %s f=%u: packets=%u qwords=%u verts=%u prims=%u images=%u image_qw=%u ad=%u texflush=%u tex0=%u max_texel=%u |", why, H.frame_no,
 		VAL.packets, VAL.qwords, VAL.verts, VAL.prims, VAL.images, VAL.image_qw, VAL.ad, VAL.tflush, VAL.tex0s, VAL.maxu_seen);
-	for (i = 0; i < VE_NERR; i++)
+	for (i = 0; i < VE_NERR && n < (int)sizeof buf - 40; i++)
 		if (VAL.err[i])
 		{
-			printf(" %s=%u", ve_name[i], VAL.err[i]);
+			n += snprintf(buf + n, sizeof buf - (size_t)n, " %s=%u", ve_name[i], VAL.err[i]);
 			tot += VAL.err[i];
 		}
-	printf(" | errors=%u\n", tot);
-	fflush(stdout);
+	snprintf(buf + n, sizeof buf - (size_t)n, " | errors=%u", tot);
+	I_OutputMsg("%s\n", buf);
 }
 
 static void val_init(void)
@@ -94,7 +96,7 @@ static void val_init(void)
 	memset(&VAL, 0, sizeof VAL);
 	VAL.on = (ps2hwd_dbg_flags & HWDBG_VALIDATE) != 0 && !V.on;
 	if (VAL.on)
-		printf("HWVAL on: the GIF stream is validated (PS2-HW-74)\n");
+		I_OutputMsg("HWVAL on: the GIF stream is validated (PS2-HW-74)\n");
 }
 
 static void val_shutdown(void)
@@ -765,7 +767,7 @@ static void val_buffer(const qw_t *b, u32 wr)
 				val_err(VE_DMATAG, "REF with QWC=0");
 			if (addr >= 0x02000000u)
 				val_err(VE_DMATAG, "REF address %08x is outside the 32 MB of RAM", addr);
-			else
+			else if (!(addr & 15))
 				val_run(src, qwc);
 			i += 1;
 		}
