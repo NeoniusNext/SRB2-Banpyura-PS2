@@ -1411,7 +1411,7 @@ static void hw_UnSetShader(void)
 static void hw_SetShaderInfo(hwdshaderinfo_t info, INT32 value)
 {
 	if (info == HWD_SHADERINFO_LEVELTIME)
-		H.leveltime = value;
+		H.leveltime = ps2hwd_force_lt >= 0 ? ps2hwd_force_lt : value;
 }
 
 // PS2-HW-71: palette rendering (gr_paletterendering): the colour of a texel is lighttable[index][row]. The GS does it with CLUTs (ps2_hw_pal.inc): the
