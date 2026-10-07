@@ -18,3 +18,14 @@ const char *I_LocateWad(void)
 	I_OutputMsg("Host PS2_PROFILE packs: %s\n", directory ? directory : ".");
 	return directory;
 }
+
+// OPT10-SW: netcode files call PS2Net_Unlink under PS2_PROFILE (EE: src/ps2/ps2_net.c); on the host it is plain unlink
+#include <unistd.h>
+int PS2Net_Unlink(const char *path) { return unlink(path); }
+// host stubs of the EE network/HTTP layer (the demos never touch the network)
+#include "ps2/ps2_curl.h"
+boolean PS2Net_Up(void) { return false; }
+ps2_httpget_t *PS2HttpGet_Open(const char *url, long stall_seconds, int maxredirs, const char *useragent) { (void)url; (void)stall_seconds; (void)maxredirs; (void)useragent; return NULL; }
+int PS2HttpGet_Step(ps2_httpget_t *g, ps2curl_write_fn write_fn, void *userdata, long *status, long *total, long *got, char *errbuf, size_t errsize) { (void)g; (void)write_fn; (void)userdata; (void)status; (void)total; (void)got; (void)errbuf; (void)errsize; return -1; }
+void PS2HttpGet_Close(ps2_httpget_t *g) { (void)g; }
+void StoreLuaFileCallback(INT32 id) { (void)id; }
