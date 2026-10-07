@@ -30,6 +30,12 @@
 
 * Полная сборка: `SRB2_PS2_OUT=$PWD/build/out SRB2_PS2_NO= SRB2_PS2_HW=1 python3 tools/ps2/build.py --jobs 2` — 182/182 файлов, LTO 112 с, **ELF 10 649 392 Б**.
   Загрузка: `opt_run.py --name smoke0 --map MAP01 -- -zquit 120` -> `ZQUIT DONE`, 0 ошибок, арена 24.4 МБ, свободно 7.7 МБ (`build/runs/smoke0`).
+* **Итоговая сборка** (HEAD на 02:30 UTC, `build/out`, `SRB2_PS2_NO= SRB2_PS2_HW=1 build.py --jobs 2`, 182/182 файлов, `NOMD5` не определён): **ELF 10 657 324 Б**, `opt_run.py --name smoke-final --map MAP01 -- -zquit 120` -> `done=True errors=0`, arena 24 150 016, used 16 701 856, free 7 448 160.
+  Все сетевые прогоны до 02:30 шли на предыдущей сборке `build/out4` (ELF 10 657 196 Б; `size`: text 4 325 688 против 4 325 712 — +24 Б кода; исходники `src` между сборками отличаются только переименованием номеров реестра в комментариях (`git diff 12192b8 b0bc9c8 -- src/w_wad.c src/netcode/d_net.c`) и меткой коммита/даты в строке версии;
+  логика та же); ключевые сценарии перепрогнаны на итоговой сборке — таблица «итоговая сборка» в разделе 5.
+* **Сбой стенда: PCSX2.ini копии `net1` стал пустым** (0 Б, 01:57 UTC): эмулятор убит SIGKILL в момент записи настроек при выходе (мастер-копия выходит дольше 8 с под нагрузкой). Пустой ini -> следующий запуск зависает на первом мастере настройки
+  (`pcsx2.log` кончается строкой `Loading config from ...`, 0 % CPU, 10 минут простоя — потерян один прогон `reconnect`). Исправление в `net_session.py`: ожидание после SIGINT 25 с вместо 8, перед стартом пустой ini (< 1000 Б) восстанавливается из
+  `<копия>/usr/bin/PCSX2.ini.good` (рабочие копии сделаны для `net1`, `net2`, `usbk`), сторож зависшего старта (нет `boot.txt` 300 с и `pcsx2.log` < 1500 Б -> код 3 и повтор по `--retries`).
 * Эмуляторы сети: `/opt/pcsx2/net1`, `net2`: в `usr/bin/inis/PCSX2.ini` `[DEV9/Eth] EthEnable=true EthApi=Sockets EthDevice=eth0` (единственный интерфейс контейнера, 192.0.2.2). Гость получает по DHCP 192.0.2.100, шлюз 192.0.2.1.
 * ПК-сторона: `build/pc-ref` (PS2REF) НЕ годится для сети — в нём нет хука `-netsync` (`#if PS2_PROFILE || NETSYNC_DIAG`). Собран `build/pc-net` из этого дерева:
   `cmake -S . -B build/pc-net -G Ninja -DCMAKE_BUILD_TYPE=Release -DSRB2_CONFIG_STATIC_STDLIB=OFF -DSRB2_CONFIG_USE_GME=OFF -DSRB2_CONFIG_HWRENDER=OFF -DCMAKE_C_FLAGS=-DNETSYNC_DIAG && ninja -C build/pc-net -j2 SRB2SDL2`.
@@ -55,13 +61,13 @@
 
 | **PS2-сервер <-> PS2-клиент, соак** (`soak-ps2srv-ps2cli`, два PCSX2 `net1`/`net2`, оба игрока ходят и прыгают по `-padscript`, `resynchattempts 0`, `blamecfail On`) | `net_batch.py soak-ps2srv-ps2cli`, `netsync_compare.py srv/boot.txt cli/boot.txt --min-players 2` | сервер дошёл до gametic 13 335, клиент до 8 470: **216 общих отсчётов NETSYNC, gametic 945..8470 (7 525 тиков с двумя игроками), 0 отличий** (`state`, `cons`, `rnd` совпадают); ошибок/ресинхронизаций/таймаутов нет (`build/opt10-x/run/soak-ps2srv-ps2cli/compare.json`). Сборка с BACKUPTICS 1024 (см. раздел 3). |
 
-## 2. PS2-сервер выбрасывал присоединяющегося PS2-клиента: причина и исправление (PS2-139)
+## 2. PS2-сервер выбрасывал присоединяющегося PS2-клиента: причина и исправление (PS2-113)
 
 Симптом (воспроизводился на нагруженной машине, load average 12-15 при шести агентах с эмуляторами и LTO-сборками): `soak-ps2srv-ps2cli`: клиент входит, грузит сейв, затем сервер печатает `*Soni left the game (Connection timeout)`,
 клиент через `nettimeout` тиков своего времени — `PS2 net: server timeout (no packet from the server for N tics), back to the title screen`; поток сервер->клиент превращается в одни `punch` (сниффер `udp_sniff.py`, `udp_sniff_sum.py`: пакеты по секундам).
 
 Поиск (запуском): сначала считал причиной `nettimeout`/`jointimeout` — подняты до максимума 2100 в `reference.cfg` обоих узлов: **не помогло** (сервер выбрасывал клиента через те же ~220 тиков после входа).
-Диагностическая строка в `Net_ConnectionTimeout` (`PS2 net: timeout node N: now .. lastrecv .. freeze .. connectiontimeout .. jointimeout ..`, PS2-139) показала: `now 1959 lastrecv 1957 freeze 3863 connectiontimeout 2100` — ни один из часов не истёк.
+Диагностическая строка в `Net_ConnectionTimeout` (`PS2 net: timeout node N: now .. lastrecv .. freeze .. connectiontimeout .. jointimeout ..`, PS2-112) показала: `now 1959 lastrecv 1957 freeze 3863 connectiontimeout 2100` — ни один из часов не истёк.
 Вызывал `d_clisrv.c:TryRunTics`: `if (maketic + realtics >= netnodes[i].tic + BACKUPTICS - TICRATE) Net_ConnectionTimeout(i)`: узел, чей подтверждённый тик отстаёт от `maketic` на `BACKUPTICS - TICRATE`, выбрасывается (иначе кольцо тиков переполнилось бы).
 На PS2 `BACKUPTICS = 256` (PS2-123) => предел **221 игровой тик** (6.3 с игрового времени; PS2-сервер работает медленнее 35 тиков/с, `I_GetTime` у него убегал вперёд ~1.7x: `now 1959` при gametic 1140). Клиенту на загрузку уровня после входа этого не хватает.
 Совпало точно: вход на gametic ~920, выброс на ~1140.
@@ -105,7 +111,78 @@
   полная конфигурация (`build/out4`): арена 24 150 016, `used` 16 701 872, свободно 7 448 144. То есть `used` у полной даже меньше (таблицы лимитов стартуют малыми и растут только по требованию аддона, `PS2Limits_Grow`),
   а цена — статическая: арена на 1.39 МБ меньше (код Lua/UDMF/аддонов в ELF) и ELF 10.66 МБ против 9.54 МБ. Golden четырёх демо в полной конфигурации побитно равен `golden/ps2-head` (раздел 3).
 * **USB-клавиатура на Linux** (`tools/ps2/kbd_x11.py`, копия эмулятора `/opt/pcsx2/usbk`: `[USB1] Type = hidkbd`, `[Pad1] Type = None`, хоткеи пусты, свой Xvfb, ввод `xdotool`): консоль с клавиатуры
-  (`setcontrol "console" "f12"`: обратная кавычка эмулятором в HID не отдаётся — как в OPT9-K) — `$echo zqxkw` -> `zqxkw` (`build/runs/kbd4`); `-kbdlog` показывает сырые события (`raw down usage 0x04` для `a`). Ввод адреса сервера с клавиатуры — см. раздел «Сеть, сценарии».
+  (`setcontrol "console" "f12"`: обратная кавычка эмулятором в HID не отдаётся — как в OPT9-K) — `$echo zqxkw` -> `zqxkw` (`build/runs/kbd4`); `-kbdlog` показывает сырые события (`raw down usage 0x04` для `a`). Ввод адреса сервера с клавиатуры — раздел 5, строка `kbd-addr`.
 * **Переподключение (`reconnect`) — артефакт сценария, не движка.** Первый вариант падал: после `exitgame` и `connect` PS2 через ~250 тиков делал `I_Error: Tried to transmit to another node`. Диагностика PS2-112 (`D_QuitNetGame`/`CL_Reset`/`SV_StartSinglePlayerServer`/`Net_ConnectionTimeout` печатают `caller`;
   `tools/ps2/addr_sym.py` переводит адрес в функцию по `nm`): `SV_StartSinglePlayerServer netgame 1 server 0 client 1 caller G_DeferedInitNew+0x60` — паду-скрипт нажимал Cross каждые 100 тиков и на титульном экране после `exitgame` открыл меню и выбрал «1 Player»
   ПОД только что установленным соединением; игра перестала быть сетевой, а узел 1 остался `ingame` -> тайм-аут -> отправка пакета при `netgame=0`. Человек до меню во время сетевой игры не доберётся. Сценарий исправлен: Cross только в окнах присоединения (200..1100, 1780..2600).
+  **Результат после исправления (запуском):** `reconnect` rc 0 за 1123 с: сервер печатает `Sonic has joined the game` -> `Sonic left the game` (после `exitgame` клиента, gametic 4928) -> `Sonic has rejoined the game` (клиент снова скачал `$$$.sav`, загрузил карту);
+  `netsync_compare`: 160 общих отсчётов, gametic 35..6090, **0 отличий**. Через ~60 с после повторного входа тот же артефакт сценария выстрелил ещё раз: в логе `music O__CHSEL` (музыка выбора персонажа) и `SV_StartSinglePlayerServer netgame 1 server 0 client 1 caller G_DeferedInitNew`,
+  потом `I_Error: Tried to transmit to another node` — поздние Cross сценария (кадры 1880+) выбрали «1 Player» в главном меню, которое, судя по логу, осталось открытым под экраном подключения после команды `connect` из консоли.
+  Причина установлена по логу и адресам вызова (`addr_sym.py`), на ПК-сборке НЕ проверялась (возможно, так же в апстриме); человек, нажимающий Cross в игре, этого не вызовет. Сценарий зачтён по `rejoined`+0 отличий; переделка
+  (Cross только в окне 1780..1900) не прогонялась.
+
+## 5. Сводка сетевых прогонов (все — запуском, `net_batch.py` -> `net_session.py` + `netsync_compare.py`)
+
+«Отсчётов» — общие строки `NETSYNC` (раз в 35 тиков: хэш состояния `state`, `cons`, `rnd`) двух узлов, «тики» — диапазон gametic. Во всех строках с отсчётами **0 отличий**. rc: 0 условие выполнено, 2 таймаут/условие не наступило,
+3 эмулятор умер/DEV9, 5 `abort_on` (клиента выбросило по тайм-ауту), 6 лог-шторм. Все прогоны шли на машине с load average 12-34 на 4 ядрах (5-6 агентов с эмуляторами и сборками): медленный PS2-узел отстаёт, и сервер его выбрасывает
+(`Connection timeout`) — поэтому часть сценариев пришлось повторять (отмечено). Прогнано на `build/out4`, если не сказано иное.
+
+| Группа | Сценарий (имя в `net_specs*.py`) | rc | с | отсчётов / тики | Что проверено |
+|---|---|---|---|---|---|
+| PS2 <-> ПК | `ps2srv-pccli`, `pcsrv-ps2cli` | 0 | 68 / 76 | 37 / 43 (210..1470, 35..1505) | вход клиента, одинаковое состояние |
+| | `soak-pcsrv-ps2cli` (ПК dedicated, PS2-клиент ходит/прыгает по `-padscript`) | 0 | 226 | **190 (35..6650)** | соак >= 5000 тиков |
+| | `soak-ps2srv-pccli` (PS2-сервер, ПК-клиент) | 0 | 249 | **183 (280..6650)** | соак >= 5000 тиков, ПК-клиент -> PS2-сервер |
+| | `addons-udp`, `addons-http`, `addons-http-404`, `addons-http-chunked` | 0 | 88 / 94 / 96 / 98 | 43 / 51 / 51 / 50 | аддон NSK.pk3 (скин+Lua+SOC) качается с ПК-сервера по UDP; по HTTP-источнику (`http_static.py`); при 404 — откат на UDP; chunked-ответ |
+| | `mode-{match,ctf,race,tag,coop,teammatch}-pcsrv-ps2cli` | 0 (tag: rc 5, повтор rc 0) | 102-114 | 61-64 (35..~2200) | режимы Match/CTF/Race/Tag/Co-op/Team Match, ПК-сервер -> PS2-клиент |
+| PS2 <-> PS2 | `soak-ps2srv-ps2cli` (два PCSX2) | 0* | 418 | **216 (945..8470, двое игроков)** | соак; *rc 2 было из-за неверного `until` (NETSYNC 6500 не кратен 35), состояние совпало |
+| | `mode-{match,ctf,race,tag,coop}-ps2srv-ps2cli` | 0 | 107-124 | 36-43 (700..2170) | те же режимы, PS2-сервер <-> PS2-клиент |
+| | `mode-teammatch-ps2srv-ps2cli` | 2, 5 (нагрузка) | 336, 133 | 36 / 0 | клиента выбросили: клиент не успел загрузить карту (на load 33 за 132 с он ещё грузил сейв, сервер ушёл на 988 тиков вперёд = правило `BACKUPTICS - TICRATE`); перепрогон — в таблице итоговой сборки |
+| | `addons-ps2srv-ps2cli` / `addons-ps2srv-pccli` | см. итоговую сборку | | 101 (2380..5880) | аддон с PS2-хоста (`-file` в host:) качает PS2-/ПК-клиент |
+| | `quit-match-2p`, `quit-coop-2p` (PS2-хост выходит командой `quit`) | 0 / 0 | 222 / 207 | 57 (770..2730) / 41 (665..2065) | клиент через 350 тиков печатает `server timeout ... back to the title screen`, без `I_Error` |
+| | `quit-match`, `quit-coop` (хост один) | 0 / 0 | 104 / 111 | — | выход без `I_Error` (`D_QuitNetGame`, `end of logstream`) |
+| Сплит-экран по сети | `split-net` (PS2-клиент с двумя локальными игроками, `splitscreen 1`) | 0* | 138 | 85 (35..2975) | *в первом прогоне команда `splitscreen 1` на кадре 1500 не наступила (на нагруженной машине кадров ~1 на 3 тика), `players=1`; спецификация исправлена (кадр 800, ожидание `players=2`); перепрогон — в таблице итоговой сборки |
+| Мастер-сервер | `ps2host-mock`, `ps2host-menu` (PS2-хост регистрируется на mock, ПК-клиент заходит из списка; во втором игра создана из меню Host) | 0 / 0 | 74 / 549 | — / 365 (1575..14315) | `POST /rooms/1/register` принят mock (`ps2host-mock/mock.jsonl`), запись видна в списке, клиент вошёл |
+| | `menu-browse` (PS2: Multiplayer -> комната -> список mock -> сервер -> Enter) | 0 | 200 | 44 (35..1540) | **ПК-сервер зарегистрировался на mock** (`POST` из `dconfig.cfg`), PS2-меню показало его строкой «SRB2 server», окно информации (28 мс, GREENFLOWER ZONE 1, Co-op, Dedicated), вход; `docs/GATES/g1/opt10-X/menu-browse-mock.jpg` |
+| | `ms-blackhole`, `ms-refused` (мастер недоступен: адрес без маршрута / порт отказал) | 0 / 0 | 101 / 77 | — | `Registering this server...` -> `ERROR: There was a problem contacting the master server...`, игра идёт дальше (NETSYNC 700 достигнут) |
+| | `real-ms-read` (ЧТЕНИЕ настоящего списка через `ms_relay.py`: GET `versions/18`, `rooms`, `servers`; остальное relay отвергает) | 0 | 69 | — | список настоящего мастера показан в PS2-меню (снимок не приложен: чужие имена серверов); **единственное** обращение к `ds.ms.srb2.org` этого отчёта, кроме инцидента; повторно не запускалось |
+| Ввод адреса | `osk-connect` (экранная клавиатура, Triangle в меню ввода адреса), `osk-shot` | 0 / 0 | 111 / 67 | 43 (35..1505) | адрес набран кнопками, соединение с ПК-сервером, одинаковое состояние; `osk-address.jpg` |
+| | `kbd-addr` (`kbd_x11.py --pc-server`: PCSX2 `usbk` с USB-клавиатурой, `xdotool`: Return, Down, Return, Down, набор `192.0.2.2`, Return, Return...) | 0 | ~60 | — (`NETSYNC` до 420) | меню Multiplayer -> адрес с клавиатуры -> `Contacting the server` -> `Sonic has joined the game` -> `MAP01` (`build/logs/kbd-addr.txt`) |
+| Отказы | `server-kill` (сервер убит) | 0 | 75 | 20 | клиент: `server timeout`, возврат на титул, без `I_Error` |
+| | `client-kill` (клиент убит) | 0 (после правки текста условия) | 77 | 15 | сервер: `left the game (Connection timeout)`, продолжает считать тики (`NETSYNC` идёт дальше; за окно grace видно 3 отсчёта, счётчик `players` в них ещё 2 — снятие слота дольше окна не прослежено) |
+| | `reconnect` (клиент `exitgame`, `connect`) | 0 | 1123 | **160 (35..6090)** | `joined` -> `left` -> `rejoined`, см. раздел 4 |
+| HW + сеть | `sw-net-coop` (контроль: PS2-клиент software) | 0 | 191 | 136 (35..4760) | — |
+| | `hw-net-coop` (PS2-клиент `-renderer Hardware`, ПК-сервер) | 2 | 900 | 30 (35..1050) | HW-клиент падает (`Z_CheckHeap`), см. «не закрыто» |
+
+## 6. Дистрибутив и запуск из него (проверено запуском)
+
+`python3 tools/ps2/make_dist.py` -> `dist/SRB2-PS2/` (192.9 МиБ, жёсткие ссылки на паки, каталог в `.gitignore`): `SRB2.ELF` (итоговая сборка, 10 657 324 Б), `SRB2.PAK`, `ZONES.PAK`, `CHARS.PAK`, `MUSIC.PAK`, `FINEACON.DAT`, `modules/{mcman,mcserv,bdm,bdmfs_fatfs,usbmass_bd}.irx`,
+`autoload/README.txt`, `ps2args.example`, `README.txt` (русский + английский: запуск на консоли — uLaunchELF/OPL/FreeMcBoot; запуск в PCSX2 — Boot ELF, HostFs, 32 МБ, сеть Sockets/PCAP, `punch` для сервера на PS2; аргументы `ps2args`).
+Запуск из каталога дистрибутива в эмуляторе (`run_pcsx2.py --elf dist/SRB2-PS2/SRB2.ELF --args "-logfile boot.txt -skipintro -warp 1 -zquit 120"`): все четыре пака подключены (`Added file host:/SRB2.PAK (12614 lumps)`, `ZONES.PAK`, `CHARS.PAK`, `MUSIC.PAK`),
+MAP01 загружена, `ZQUIT DONE`, 0 ошибок, арена 24 158 208, free 7 521 920 (`build/logs/dist-launch-boot.txt`). Артефакты запуска (`boot.txt`, `.srb2`) из `dist/` убраны.
+
+## 7. Реестр отличий (диапазон X: `PS2-100..139`; номера 111-116 новые)
+
+| ID | Что | Файлы | Чем проверено |
+|---|---|---|---|
+| PS2-111 | MD5 для файлов аддонов на PS2 (раньше `-DNOMD5` занулял все дайджесты: демо с аддонами не воспроизводились, сервер отдавал клиентам нулевые дайджесты); cooked-паки не хешируются, нулевой дайджест ничего не идентифицирует | `src/w_wad.c`, `tools/ps2/build.py` | `demo_addon_test.py`: запись/воспроизведение 29 общих строк, 0 различий; golden 4 демо побитно; старт MAP01 не медленнее |
+| PS2-112 | диагностика сети PS2 (`PS2_PROFILE`): поля тайм-аута узла в `Net_ConnectionTimeout`, строки `CL_Reset`/`D_QuitNetGame`/`SV_StartSinglePlayerServer` с адресом вызова | `src/netcode/d_net.c`, `d_clisrv.c`, `tools/ps2/addr_sym.py` | нашли причину PS2-113 и артефакт `reconnect` |
+| PS2-113 | `BACKUPTICS` на PS2 256 -> 1024 (PS2-сервер выбрасывал присоединяющегося клиента через 221 тик отставания; +216 КБ статической памяти) | `src/netcode/protocol.h` | `soak-ps2srv-ps2cli`: 216 отсчётов, 0 отличий, без тайм-аутов; арена -216 КБ |
+| PS2-114 | `SRB2_PS2_NO` по умолчанию пуст: полная конфигурация (Lua, UDMF, аддоны, лимиты); `NOMD5` только в урезанном профиле | `tools/ps2/build.py` | полная сборка 182/182, smoke MAP01, все сценарии этого отчёта |
+| PS2-115 | `NETSYNC_DIAG`: ПК-клиент с `-netsync` сам нажимает ENTER на экранах информации о сервере/подтверждения аддонов (под Xvfb нажать некому); в обычной ПК-сборке кода нет | `src/netcode/client_connection.c` | PS2-сервер <-> ПК-клиент, 183 отсчёта |
+| PS2-116 | Стенд на Linux: `net_session.py` (ограждение мастер-сервера, аудит логов, сторож лог-шторма и зависшего старта, восстановление ini), `net_batch.py`, `net_specs*.py`, `net_env.py`, `kbd_x11.py`, `ms_relay.py`, `make_dist.py`, `udp_probe.py`, `udp_sniff*.py`, `padseq.py`, `make_udmf_map.py`, `demo_addon_test.py`, `dedicated_noreg_test.py`, `golden_full.sh` | `tools/ps2/*` | см. разделы 0-6 |
+
+## 8. Правки в чужих файлах (по месту, ради стенда или найденной ошибки)
+
+* `src/netcode/client_connection.c` — `NETSYNC_AUTOENTER` (только `#ifdef NETSYNC_DIAG`, PS2-115). `src/netcode/protocol.h` — `BACKUPTICS` (PS2-113: **затрагивает память: +216 КБ статически**; агенту S/координатору: если не хватает на больших картах — 512 даёт 13.6 с терпимого отставания).
+* `src/netcode/d_net.c`, `d_clisrv.c` — диагностические строки под `PS2_PROFILE` (PS2-112). `src/w_wad.c` — MD5 только для аддонов (PS2-111).
+* `tools/ps2/build.py` — умолчание `SRB2_PS2_NO` и `NOMD5` (PS2-114). `tools/ps2/opt_run.py` — `stage` подключает `FINEACON.DAT` к пакам (без него полная сборка не стартует). `tools/ps2/ftest_run.py`, `pc_run.py`, `addon_compare.py`, `make_addons.py` —
+  перенос на Linux (`ps2args`, нормализация 64-битных хэшей, новые тестовые аддоны). `tools/ps2/run_pcsx2.py` — взят целиком из ветки `claude/determined-knuth-8c4nbi` (сторож лог-шторма 300 МБ, код 5; указание координатора). `.gitignore` — `/dist/`.
+
+## 9. Не закрыто
+
+* **`mass:` (USB-накопитель)** не проверен: PCSX2 не эмулирует USB mass storage; модули `bdm/bdmfs_fatfs/usbmass_bd` грузятся (`FT_MC prepare mass: 0`), чтение/запись нет. Проверка — на железе.
+* **Настоящие сторонние аддоны** (десять из OPT9 на Windows, ZombieEscape2) на Linux недоступны, репозитории GitHub вне доступа сессии; проверены официальные ассеты и синтетические аддоны (ZIP/PNG, Lua, лимиты, скин, UDMF, HUD, демо с аддонами, сеть). Сохранения с аддонами не проверялись (демо — да).
+* **HW + сеть/смена уровня**: PS2-клиент `-renderer Hardware` в сети падает (`Z_CheckHeap`, `hw-net-coop`; `hw-net-match` не прогонялся); `map MAP02` из MAP01 в HW на старой сборке — `I_Error: Out of memory allocating 1048576 bytes`, на `build/out4` OOM нет, но «Map is now MAP02» за 1000 с не наступило (load 30): не подтверждено. Домен HT/HF/S, не исправлялось.
+* **Нагрузка стенда.** Сетевые сценарии зависят от загрузки процессора: при load > 30 на 4 ядрах медленный PS2-узел отстаёт, и сервер его выбрасывает по правилу `BACKUPTICS - TICRATE` (28 с при 1024). Повторы отмечены в таблицах.
+* **Две записи на настоящем мастере** (`160.79.106.128:5029`, `160.79.106.141:5029`, «SRB2 server» — из инцидента, начало отчёта): убрать не могу (нет токена), по указанию координатора больше никаких обращений к `ds.ms.srb2.org` кроме разового чтения списка; 209.145.63.242 и чужие серверы не трогал.
+* USB-клавиатура проверена только в PCSX2 (эмулируемый HID, `xdotool`); на настоящей консоли и с настоящими клавиатурами не проверялась. `mc0:` проверен записью/чтением файла на эмулируемой карте памяти.

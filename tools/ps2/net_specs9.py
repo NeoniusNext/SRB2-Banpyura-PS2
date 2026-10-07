@@ -366,8 +366,10 @@ write('split-net', {
     'timeout': 900,
     'nodes': [pcsrv(start=0),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] , cfg=CFG_SYNC,
-                  files={'pad.txt': pad(*crosses(150, 700, 60)) + ',' + walk(1, 800, 9000, seed=3) + ',' + walk(2, 800, 9000, seed=4), 'cmd.txt': '1500:splitscreen 1'}, start=8)],
-    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=2800'}, {'node': 'srv', 'text': 'NETSYNC gametic=2800'}], 'grace': 3})
+                  files={'pad.txt': pad(*crosses(150, 700, 60)) + ',' + walk(1, 900, 9000, seed=3) + ',' + walk(2, 900, 9000, seed=4), 'cmd.txt': '800:splitscreen 1'}, start=8)],
+    # a loaded machine shows ~1 frame per 3 game tics: the command is given in displayed frames (800), the walk starts after it; the run ends when the server has
+    # printed players=2 and both ends have passed gametic 2800
+    'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 2800}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 2800}, {'node': 'srv', 'text': 'players=2'}], 'grace': 3})
 
 if __name__ == '__main__':
     for n, s in SPECS.items():
