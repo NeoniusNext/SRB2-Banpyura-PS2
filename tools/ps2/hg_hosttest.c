@@ -107,7 +107,7 @@ static int neg;
 /* ---- test framework ---- */
 static int group_fail, total_fail, groups;
 static const char *group_name;
-#define NEGCOUNT 4
+#define NEGCOUNT 5
 
 static void group_begin(const char *name)
 {
@@ -325,11 +325,12 @@ static void decode_fans(int which)
 }
 
 /* ---- group: water ---- */
+static int wt_w = 64, wt_h = 64; /* the texture of water_setup (litclip: sizes that are not powers of two) */
 static void water_setup(float yaw)
 {
 	FTransform t;
 	FSurfaceInfo surf;
-	GLMipmap_t *m = mk_flat(64, 64);
+	GLMipmap_t *m = mk_flat(wt_w, wt_h);
 	int ri;
 
 	host_init();
@@ -578,6 +579,134 @@ static void test_bands(void)
 
 		snprintf(d, sizeof d, "%d polygons (%d cut into several pieces), %d/%d pieces (cut_and_emit / sweep), %d compared (max xy %.0f LSB, st %.2g), %d count differences", polys, cutpolys, total_pieces[0],
 			total_pieces[1], compared, maxdxy, maxdst, countdiff);
+		group_end(d);
+	}
+}
+
+/* ---- group: litclip (PS2-HW-62: a clipped polygon of one darkness class takes the lit fast path instead of cut_and_emit) ---- */
+static void test_litclip(void)
+{
+	const u32 flags = PF_Masked | PF_Modulated | PF_ColorMapped | PF_Occlude;
+	int trial, polys = 0, lit = 0, litclipped = 0, compared = 0, cutpolys = 0, diffs = 0;
+
+	group_begin("litclip");
+	for (trial = 0; trial < 800; trial++)
+	{
+		FOutVector vv[8];
+		FSurfaceInfo surf;
+		int pass, n, k, wall = rnd() % 3 == 0;
+		double cx = rndf(-900, 900), cz = rndf(-300, 1500), rx = rndf(20, 900), rz = rndf(20, 900);
+		double x0 = rndf(-900, 900), z0 = rndf(-300, 1500), x1 = rndf(-900, 900), z1 = rndf(-300, 1500), y0 = rndf(-60, 60), y1 = rndf(80, 400);
+		int lvl = (int)(rnd() % 256);
+		u32 lit0, clip0;
+
+		wt_w = trial % 3 == 0 ? 48 : 64; /* 48: not a power of two: the polygon is cut at the repeats (stage 0) */
+		wt_h = trial % 4 == 0 ? 40 : 64;
+		water_setup((float)rndf(-180, 180));
+		H.leveltime = 0;
+		memset(&surf, 0, sizeof surf);
+		surf.PolyColor.rgba = 0xFFFFFFFFu;
+		surf.LightInfo.light_level = lvl;
+		surf.LightInfo.fade_start = (rnd() % 4 == 0) ? 3 : 0;
+		surf.LightInfo.fade_end = (rnd() % 4 == 0) ? 22 : 31;
+		H.shaders_on = 1;
+		H.shader = wall ? 1 : 0;
+		if (wall)
+		{
+			n = 4;
+			vv[0].x = (float)x0; vv[0].z = (float)z0; vv[0].y = (float)y0;
+			vv[1].x = (float)x1; vv[1].z = (float)z1; vv[1].y = (float)y0;
+			vv[2].x = (float)x1; vv[2].z = (float)z1; vv[2].y = (float)y1;
+			vv[3].x = (float)x0; vv[3].z = (float)z0; vv[3].y = (float)y1;
+		}
+		else
+		{
+			n = 3 + (int)(rnd() % 5);
+			water_poly(vv, n, cx, cz, rx, rz);
+		}
+		{
+			const double sc = trial % 5 == 0 ? 16.0 : 128.0; /* 16: more than UV_EXTENT texels: the polygon is cut at whole repeats even for a power of two texture */
+
+			for (k = 0; k < n; k++)
+			{
+				vv[k].s = (float)(vv[k].x / sc);
+				vv[k].t = (float)(vv[k].y / sc - vv[k].z / sc);
+			}
+		}
+		lit0 = G.p_lit;
+		clip0 = H.st.clipped;
+		for (pass = 0; pass < 2; pass++)
+		{
+			ps2hwd_dbg_flags = pass == 0 ? 0 : 8192; /* 8192: the general path only */
+			cap_reset();
+			H.gsr.valid = 0;
+			if (!begin_draw(flags, &surf))
+			{
+				EXPECT(0, "begin_draw refused");
+				continue;
+			}
+			emit_fan(vv, NULL, n, NULL);
+			decode_fans(pass);
+			if (pass == 0)
+			{
+				const int l = (int)(G.p_lit - lit0), c = (int)(H.st.clipped - clip0);
+
+				lit += l > 0;
+				litclipped += l > 0 && c > 0;
+			}
+		}
+		ps2hwd_dbg_flags = 0;
+		polys++;
+		if (nfans[0] > 1)
+			cutpolys++;
+		if (nfans[0] != nfans[1])
+		{
+			EXPECT(0, "trial %d: %d pieces by the lit path / cut_and_emit, %d by cut_and_emit", trial, nfans[0], nfans[1]);
+			if (getenv("HGDBG"))
+			{
+				int q;
+
+				printf("DBG trial %d wall %d n %d lvl %d litdelta %d clipdelta %d\n", trial, wall, n, lvl, (int)(G.p_lit - lit0), (int)(H.st.clipped - clip0));
+				for (q = 0; q < n; q++)
+					printf("  v %g %g %g\n", (double)vv[q].x, (double)vv[q].y, (double)vv[q].z);
+				for (q = 0; q < nfans[0]; q++)
+					printf("  new fan %d: %d verts w/ q %g\n", q, fans[0][q].n, (double)fans[0][q].v[0].q);
+				for (q = 0; q < nfans[1]; q++)
+					printf("  old fan %d: %d verts\n", q, fans[1][q].n);
+			}
+			diffs++;
+			continue;
+		}
+		for (k = 0; k < nfans[0]; k++)
+		{
+			const gfan_t *a = &fans[0][k], *b = &fans[1][k];
+			int i;
+
+			if (a->n != b->n)
+			{
+				EXPECT(0, "trial %d piece %d: %d vertices vs %d", trial, k, a->n, b->n);
+				diffs++;
+				continue;
+			}
+			for (i = 0; i < a->n; i++)
+			{
+				const int same = a->v[i].x == b->v[i].x && a->v[i].y == b->v[i].y && a->v[i].z == b->v[i].z && a->v[i].f == b->v[i].f + (neg == 5 ? 1 : 0) && a->v[i].col == b->v[i].col
+					&& memcmp(&a->v[i].s, &b->v[i].s, sizeof(float)) == 0 && memcmp(&a->v[i].t, &b->v[i].t, sizeof(float)) == 0 && memcmp(&a->v[i].q, &b->v[i].q, sizeof(float)) == 0;
+
+				EXPECT(same, "trial %d piece %d vertex %d: xy %d,%d vs %d,%d z %d vs %d fog %d vs %d st %g,%g vs %g,%g q %g vs %g", trial, k, i, a->v[i].x, a->v[i].y, b->v[i].x, b->v[i].y, a->v[i].z, b->v[i].z,
+					a->v[i].f, b->v[i].f, (double)a->v[i].s, (double)a->v[i].t, (double)b->v[i].s, (double)b->v[i].t, (double)a->v[i].q, (double)b->v[i].q);
+				diffs += !same;
+			}
+			compared++;
+		}
+	}
+	wt_w = wt_h = 64;
+	EXPECT(litclipped >= 30, "only %d polygons were clipped and drawn by the lit path: the test does not reach it", litclipped);
+	{
+		char d[220];
+
+		snprintf(d, sizeof d, "%d polygons (%d by the lit path, %d of them clipped, %d cut into several pieces), %d pieces compared: bit-identical to cut_and_emit (%d differences)", polys, lit, litclipped, cutpolys,
+			compared, diffs);
 		group_end(d);
 	}
 }
@@ -868,8 +997,8 @@ static void test_clip(void)
 	}	{
 		/* lf_class_w (PS2-HW-60: the light class with a memory of proven depth ranges) against lf_class(zfrag_of_w()) for random walks and jumps of w */
 		static const int lights[] = {0, 40, 96, 128, 160, 200, 255};
-		int li, k, cl_bad = 0;
-		long cl_n = 0, cl_slow = 0;
+		int li, k, cl_bad = 0, th_bad = 0;
+		long cl_n = 0, cl_slow = 0, th_n = 0;
 
 		for (li = 0; li < 7; li++)
 		{
@@ -892,7 +1021,33 @@ static void test_clip(void)
 				cl_n++;
 			}
 			cl_slow += __builtin_popcountll(LF.known);
+			/* lf_thresholds (memory of the step depths) against doom_thresholds for random depth pairs */
+			for (k = 0; k < 20000; k++)
+			{
+				const float wa = (float)rndf(0.5, 4000.0), wb = wa + (float)rndf(0.0, k % 4 == 0 ? 3000.0 : 60.0);
+				const float za = zfrag_of_w(wa), zb = zfrag_of_w(wb);
+				const int c0 = lf_class_w(wa), c1 = lf_class_w(wb);
+				float th1[MAXCUTS], th2[MAXCUTS];
+				int cls1[MAXCUTS], cls2[MAXCUTS], cls0, n1, n2, q;
+
+				n1 = doom_thresholds(&P.rs.lp, za, zb, th1, cls1, MAXCUTS, &cls0);
+				th_n++;
+				if (cls0 != c0 || (c0 == c1 && n1 != 0))
+				{
+					th_bad++;
+					continue;
+				}
+				if (c0 == c1)
+					continue;
+				n2 = lf_thresholds(c0, c1, za, zb, th2, cls2, MAXCUTS);
+				if (n1 != n2 + (neg == 4 ? 1 : 0))
+					th_bad++;
+				else
+					for (q = 0; q < n1; q++)
+						th_bad += (th1[q] != th2[q]) || cls1[q] != cls2[q];
+			}
 		}
+		EXPECT(!th_bad, "lf_thresholds differs from doom_thresholds in %d of %ld depth pairs", th_bad, th_n);
 		EXPECT(!cl_bad, "lf_class_w differs from lf_class in %d of %ld depths", cl_bad, cl_n);
 		(void)cl_slow;
 	}
@@ -913,9 +1068,10 @@ int main(int argc, char **argv)
 			neg = atoi(argv[i] + 4);
 	cap = malloc(sizeof(qw_t) * CAP_MAX);
 	if (neg)
-		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : neg == 4 ? "clip" : "bands");
+		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : neg == 4 ? "clip" : neg == 5 ? "litclip" : "bands");
 	test_water();
 	test_bands();
+	test_litclip();
 	test_plancache();
 	test_clip();
 	printf("HG negctl-count %d\n", NEGCOUNT);

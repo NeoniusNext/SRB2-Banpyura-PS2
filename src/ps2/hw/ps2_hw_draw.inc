@@ -36,6 +36,9 @@ enum
 
 #define MAXPASS 4
 static void lit_fast_plan(void); // ps2_hw_fast.inc (PS2-HW-43)
+static inline int lf_class_w(float w); // ps2_hw_fast.inc
+static int lf_thresholds(int c0, int c1, float z0, float z1, float *th, int *cls, int max); // ps2_hw_fast.inc (PS2-HW-62)
+static u32 lf_fog(int cls, int *on); // ps2_hw_fast.inc (PS2-HW-62)
 #define PRIM_IIP (1u << 3)
 #define PRIM_TME (1u << 4)
 #define PRIM_FGE (1u << 5)
@@ -99,6 +102,7 @@ static struct
 	int vcol; // vertices carry their own colours (sky dome)
 	int cull; // 0 two-sided; +1 keep CCW; -1 keep CW (models)
 	int fast; // one plain pass, no cuts: polygons take emit_fast_fan (state set up once per plan, see serial)
+	int oldpath; // -hwdbg 8192: the general path only (no lit fast path, doom_thresholds, the clip chain of clip_attr, fog_of_class): A/B of PS2-HW-43 / 62
 	int litfast; // as fast, but with the light staircase (LM_BANDS): polygons of one darkness class take lit_fast_poly (ps2_hw_fast.inc, PS2-HW-43)
 	int vuok, vu; // the plan can be drawn by the VU1 program (vuok); PS2HWD_DrawFans turns vu on for the polygons of a batch (ps2_hw_vu1.inc, PS2-HW-45)
 	int vu0; // the plan's constants are in VU0 (vu0_batch_load): emit_poly transforms on VU0
@@ -937,8 +941,9 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		&& P.pass[0].tex == (u8)textured && !(ps2hwd_dbg_flags & 64);
 	P.litfast = P.npass == 1 && P.lmode == LM_BANDS && !P.cutx && !P.cuty && !P.water && !P.pass[0].ramp && !(flags & PF_Ripple)
 		&& P.pass[0].tex == (u8)textured && !(ps2hwd_dbg_flags & 64);
-	if (P.litfast)
-		lit_fast_plan(); // PS2-HW-43
+	P.oldpath = (ps2hwd_dbg_flags & 8192) != 0;
+	if (P.lmode == LM_BANDS)
+		lit_fast_plan(); // PS2-HW-43 (PS2-HW-62: also for the plans that take cut_and_emit: the class memory, the fog and the step depths are per plan)
 	P.vu = 0;
 	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible);
 	P.serial = H.serial - 1; // the first polygon sets the state up
@@ -1076,7 +1081,7 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 	u32 zi;
 
 	zf = clampf(zf, 0.0f, P.zmax);
-	zi = (u32)zf;
+	zi = (u32)(int)zf; // 0 <= zf <= Z24: the signed conversion is one instruction, the unsigned one a compare and a branch (PS2-HW-62)
 	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4 || pk->fmt == 5)
 	{
 		if (pk->ramp)
@@ -1176,7 +1181,7 @@ static void emit_reglist_fan(const cv_t *v, int cnt, const pack_t *pk, u32 prim)
 		u32 zi;
 
 		zf = clampf(zf, 0.0f, P.zmax);
-		zi = (u32)zf;
+		zi = (u32)(int)zf; // (PS2-HW-62)
 		if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 5)
 		{
 			qw_t st;
@@ -1284,6 +1289,51 @@ static int clip_attr(const cv_t *in, int n, cv_t *out, int which, float cut, int
 	return m;
 }
 
+// clip_attr(side 0) and clip_attr(side 1) of the same cut in one walk over the edges (PS2-HW-62): the same vertices in the same order (the point on
+// an edge is computed once, from the end with the smaller value, and goes to both parts), half the loads, compares and interpolations.
+static void clip_attr2(const cv_t *in, int n, cv_t *outlo, int *nlo, cv_t *outhi, int *nhi, int which, float cut, int na)
+{
+	const int ai = which - 3; // cv_t: x y z w a[0..]; 6 = w, 7 = a[0], 8 = a[1]
+	int i, k, ml = 0, mh = 0;
+
+	for (i = 0; i < n; i++)
+	{
+		const cv_t *v0 = &in[i], *v1 = &in[i + 1 == n ? 0 : i + 1];
+		const float f0 = ((const float *)v0)[ai], f1 = ((const float *)v1)[ai];
+		const int l0 = f0 < cut, l1 = f1 < cut, h0 = f0 >= cut, h1 = f1 >= cut;
+
+		if (l0)
+			outlo[ml++] = *v0;
+		if (h0)
+			outhi[mh++] = *v0;
+		if (l0 != l1 || h0 != h1)
+		{
+			const cv_t *lo = f0 < f1 ? v0 : v1, *hi = f0 < f1 ? v1 : v0;
+			float flo = f0 < f1 ? f0 : f1, fhi = f0 < f1 ? f1 : f0, t = (cut - flo) / (fhi - flo);
+			cv_t o;
+
+			o.x = lo->x + (hi->x - lo->x) * t;
+			o.y = lo->y + (hi->y - lo->y) * t;
+			o.z = lo->z + (hi->z - lo->z) * t;
+			o.w = lo->w + (hi->w - lo->w) * t;
+			for (k = 0; k < na; k++)
+				o.a[k] = lo->a[k] + (hi->a[k] - lo->a[k]) * t;
+			if (which == 6)
+				o.w = cut;
+			else if (which == 7)
+				o.a[0] = cut;
+			else
+				o.a[1] = cut;
+			if (l0 != l1)
+				outlo[ml++] = o;
+			if (h0 != h1)
+				outhi[mh++] = o;
+		}
+	}
+	*nlo = ml;
+	*nhi = mh;
+}
+
 #define CUTBUF (PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA + 16)
 static cv_t cutbuf[3][3][CUTBUF];
 #define MAXCUTS 40
@@ -1336,7 +1386,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 	if (cnt < 3)
 		return;
 	if (pc->cls >= 0)
-		fogF = fog_of_class(&P.rs, pc->cls, &fog_on);
+		fogF = (P.lmode == LM_BANDS && !P.oldpath) ? lf_fog(pc->cls, &fog_on) : fog_of_class(&P.rs, pc->cls, &fog_on);
 	for (k = 0; k < P.npass; k++)
 	{
 		const pass_t *ps = &P.pass[k];
@@ -1464,9 +1514,13 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 	{
 		for (k = 0; k < cl->n; k++)
 		{
-			int np = clip_attr(rem, nrem, piece, cl->which, cl->cuts[k], 0, na);
 			cv_t *rb = cutbuf[stage][1 + which];
+			int np, nr2 = 0;
 
+			if (P.oldpath)
+				np = clip_attr(rem, nrem, piece, cl->which, cl->cuts[k], 0, na);
+			else
+				clip_attr2(rem, nrem, piece, &np, rb, &nr2, cl->which, cl->cuts[k], na); // PS2-HW-62: both parts at once (the recursion below does not touch this stage's buffers)
 			if (np >= 3)
 			{
 				piece_t p2 = *pc;
@@ -1479,7 +1533,7 @@ static void emit_cuts(const cv_t *v, int cnt, int stage, const piece_t *pc, int 
 					p2.cls = cl->cls[k];
 				cut_and_emit(piece, np, next_stage, p2, na);
 			}
-			nrem = clip_attr(rem, nrem, rb, cl->which, cl->cuts[k], 1, na);
+			nrem = P.oldpath ? clip_attr(rem, nrem, rb, cl->which, cl->cuts[k], 1, na) : nr2;
 			rem = rb;
 			which ^= 1;
 			if (nrem < 3)
@@ -1647,9 +1701,27 @@ static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na)
 			if (v[i].w > whi)
 				whi = v[i].w;
 		}
-		z0 = zfrag_of_w(wlo);
-		z1 = zfrag_of_w(whi);
-		n = doom_thresholds(&P.rs.lp, z0, z1, th, cls, MAXCUTS, &cls0);
+		if (P.oldpath)
+		{
+			z0 = zfrag_of_w(wlo);
+			z1 = zfrag_of_w(whi);
+			n = doom_thresholds(&P.rs.lp, z0, z1, th, cls, MAXCUTS, &cls0);
+		}
+		else
+		{
+			// PS2-HW-62: the classes of the ends from the plan's memory of depth ranges; one class = no step (doom_thresholds finds none either), no divisions
+			cls0 = lf_class_w(wlo);
+			if (cls0 == lf_class_w(whi))
+			{
+				n = 0;
+			}
+			else
+			{
+				z0 = zfrag_of_w(wlo);
+				z1 = zfrag_of_w(whi);
+				n = lf_thresholds(cls0, lf_class_w(whi), z0, z1, th, cls, MAXCUTS);
+			}
+		}
 		if (n)
 		{
 			for (i = 0; i < n; i++)
@@ -2191,8 +2263,15 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	}
 	else
 	{
+		// why the polygon takes the general path (HWPROF20): 0 texture size not a power of two, 1 other plan (passes, ramp, ...), 2 many texels, 3 vertex colours,
+		// 4 clipped (litfast), 5 spans light classes (litfast), 6 other
+		const int why = (P.cutx || P.cuty) ? 0 : (!P.fast && !P.litfast) ? 1 : big ? 2 : (vcol || P.vcol) ? 3 : (P.litfast && or_) ? 4 : P.litfast ? 5 : 6;
+		u32 gt2;
+
 		G.p_cutold++, cut_and_emit(v, cnt, 0, pc, na);
-		G.c_cutold += cyc() - gt1;
+		gt2 = cyc() - gt1;
+		G.c_cutold += gt2;
+		G.cw_n[why]++, G.cw_c[why] += gt2;
 	}
 	H.st.cyc_draw += cyc() - t0;
 }

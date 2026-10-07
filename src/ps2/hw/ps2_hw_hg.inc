@@ -22,6 +22,7 @@ static struct
 	u32 sk_n[5], sk_c[5]; // emit_poly in the skybox view by branch (vu, fast, lit, cut, water): polygons, cycles
 	u32 wf_polys, wf_pieces, wf_bands; // band_sweep: polygons, pieces emitted, ripple planes inside the polygons
 	u32 dome_n, dome_begin, dome_xf, dome_emit, dome_tris; // sky_dome_fast: calls, cycles of begin_draw / vu0 transform of the mesh / strips and clipped triangles, clipped triangles
+	u32 cw_n[7], cw_c[7]; // the polygons of cut_and_emit by reason (HWPROF20): polygons, cycles
 	u32 sk_single, sk_begin, sk_batches, sk_fans; // hw_DrawPolygon / begin_draw / PS2HWD_DrawFans calls in the skybox view
 } G;
 
@@ -47,6 +48,8 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF13 skybox view emit_poly n/cyc: vu=%u fast=%u/%u lit=%u/%u cut=%u/%u water=%u/%u | single=%u begin=%u batches=%u fans=%u\n", G.sk_n[0] / frames, G.sk_n[1] / frames, G.sk_c[1] / frames,
 		G.sk_n[2] / frames, G.sk_c[2] / frames, G.sk_n[3] / frames, G.sk_c[3] / frames, G.sk_n[4] / frames, G.sk_c[4] / frames, G.sk_single / frames, G.sk_begin / frames, G.sk_batches / frames, G.sk_fans / frames);
 	I_OutputMsg("HWPROF19 plane cycles: hit=%u miss=%u bypass=%u\n", (unsigned)(ps2hwp_cyc[HWP_PL_HIT] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_MISS] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_BYP] / frames));
+	I_OutputMsg("HWPROF20 cut_and_emit by reason n/cyc: pow2=%u/%u plan=%u/%u big=%u/%u vcol=%u/%u clipped=%u/%u classes=%u/%u other=%u/%u\n", G.cw_n[0] / frames, G.cw_c[0] / frames, G.cw_n[1] / frames, G.cw_c[1] / frames,
+		G.cw_n[2] / frames, G.cw_c[2] / frames, G.cw_n[3] / frames, G.cw_c[3] / frames, G.cw_n[4] / frames, G.cw_c[4] / frames, G.cw_n[5] / frames, G.cw_c[5] / frames, G.cw_n[6] / frames, G.cw_c[6] / frames);
 	I_OutputMsg("HWPROF18 plane cache key misses: height=%u light=%u flags=%u texture=%u offsets=%u epoch=%u poly=%u\n", ps2hwp_cnt[HWC_PKM_H] / frames, ps2hwp_cnt[HWC_PKM_L] / frames, ps2hwp_cnt[HWC_PKM_F] / frames,
 		ps2hwp_cnt[HWC_PKM_T] / frames, ps2hwp_cnt[HWC_PKM_O] / frames, ps2hwp_cnt[HWC_PKM_E] / frames, ps2hwp_cnt[HWC_PKM_P] / frames);
 	I_OutputMsg("HWPROF17 band_sweep: polys=%u pieces=%u ripple_planes=%u\n", G.wf_polys / frames, G.wf_pieces / frames, G.wf_bands / frames);

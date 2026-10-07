@@ -12,7 +12,7 @@
 // 16 units up to 640). The offset of the shader is at most 0.025 of the texture (1.6 texels of a 64 texel flat), a texel is below 0.25 pixel at
 // z = 640 and about 0.5 pixel at z = 320 (320 pixel wide view, 90 degree field of view): the far bands moved the picture by less than half a pixel.
 
-#define HWDBG_OLDWATER 0x10000000 // -hwdbg 268435456: the old band by band water polygon (A/B)
+#define HWDBG_OLDWATER 0x40000000 // -hwdbg 1073741824 (0x10000000 is HT's IMMDBG): the old band by band water polygon (A/B)
 #define HWDBG_BANDSWEEP 512 // -hwdbg 512: band_sweep (not cut_and_emit) makes the light staircase pieces of ordinary polygons. OFF by default: no gain (6 % of the cut polygons' cost,
 // 0.01 M of 11 M) and its pieces differ from cut_and_emit by up to 1/16 pixel, which flips texels along the texel edges of a sharp texture: 2 % of the pixels of a GFZ1 frame
 #define HWDBG_WATERPOL 0x20000000 // -hwdbg 536870912: the sweep with the old ripple bands (16 units up to 640): equivalence test against HWDBG_OLDWATER
@@ -134,7 +134,18 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 		f++;
 	for (i = f; i < ripple_nplanes && ripple_planes[i] < z1; i++)
 		rz[nr++] = ripple_planes[i];
-	nc = doom_thresholds(&P.rs.lp, z0, z1, th, cls, WF_NPLANE, &cls0);
+	if (P.oldpath)
+	{
+		nc = doom_thresholds(&P.rs.lp, z0, z1, th, cls, WF_NPLANE, &cls0);
+	}
+	else
+	{
+		int c1;
+
+		cls0 = lf_class_w(wlo); // PS2-HW-62: the plan's memory of classes and step depths (LM_BANDS: lit_fast_plan ran in begin_draw)
+		c1 = lf_class_w(whi);
+		nc = cls0 == c1 ? 0 : lf_thresholds(cls0, c1, z0, z1, th, cls, WF_NPLANE);
+	}
 	if (nr + nc > WF_NPLANE)
 		return 0;
 	// merge: interval j lies between plane j - 1 and plane j; its ripple band and darkness class
