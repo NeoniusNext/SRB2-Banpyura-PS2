@@ -225,7 +225,7 @@ write('client-kill', {
               dict(id='cli', kind='pc', exe=PC, cwd=PCDIR,
                    args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', HOME2],
                    start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6}, stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0})],
-    'until': [{'node': 'srv', 'text': 'has left the game'}], 'grace': 3})
+    'until': [{'node': 'srv', 'text': 'left the game (Connection timeout)'}], 'grace': 3})
 
 # 6. soaks: every pairing for N game tics, both sides walking and jumping (pad scripts / the PC player stands still), the state hash of both
 # sides compared with tools/ps2/netsync_compare.py afterwards. extra = console commands/args of the server (gametype, map...).

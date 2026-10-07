@@ -31,6 +31,9 @@
 
 #ifdef __GNUC__
 #include <unistd.h>
+#ifdef PS2_PROFILE
+#include <strings.h> // strcasecmp (PS2-139)
+#endif
 #endif
 
 #define ZWAD
@@ -953,7 +956,20 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	// Let's not add a wad file if the MD5 matches
 	// an MD5 of an already added WAD file!
 	//
+#ifdef PS2_PROFILE
+	// PS2-139: MD5 of add-on files only (pk3/wad/soc/lua: demos, net file lists and the duplicate check need it); a cooked pack (100 MB of MUSIC.PAK) is never
+	// hashed, its digest stays zero. Without this every demo recorded with add-ons failed to play ("loaded out of order": all digests were zero, so every
+	// demo entry matched the first important file) and the file list a PS2 server sent carried zero digests.
+	memset(md5sum, 0, sizeof md5sum);
+	{
+		const char *ext = strrchr(filename, '.');
+
+		if (!ext || strcasecmp(ext, ".pak"))
+			W_MakeFileMD5(filename, md5sum);
+	}
+#else
 	W_MakeFileMD5(filename, md5sum);
+#endif
 
 #ifndef LIFT_FILE_RESTRICTIONS
 	for (size_t i = 0; i < numwadfiles; i++)
@@ -961,7 +977,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 		if (wadfiles[i]->type == RET_FOLDER)
 			continue;
 
-		if (!memcmp(wadfiles[i]->md5sum, md5sum, 16))
+		if (!memcmp(wadfiles[i]->md5sum, md5sum, 16)
+#ifdef PS2_PROFILE
+			&& (md5sum[0] | md5sum[1] | md5sum[2] | md5sum[3]) // PS2-139: a zero digest (cooked pack) identifies nothing
+#endif
+			)
 		{
 			CONS_Alert(CONS_ERROR, M_GetText("%s is already loaded\n"), filename);
 			if (handle)
@@ -2833,6 +2853,15 @@ void W_VerifyFileMD5(UINT16 wadfilenum, const char *matchmd5)
 #else
 	UINT8 realmd5[MD5_LEN];
 	INT32 ix;
+
+#ifdef PS2_PROFILE
+	{
+		static const UINT8 zero[MD5_LEN]; // PS2-139: a cooked pack is not hashed (its digest is zero) and is not the pk3 the expected digest belongs to
+
+		if (!memcmp(wadfiles[wadfilenum]->md5sum, zero, MD5_LEN))
+			return;
+	}
+#endif
 
 	I_Assert(strlen(matchmd5) == 2*MD5_LEN);
 	I_Assert(wadfilenum < numwadfiles);

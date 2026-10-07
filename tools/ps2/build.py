@@ -35,7 +35,7 @@ if IS_WIN:
 else:
     ENV['PATH'] = ':'.join([str(DEV/'ee/bin'), str(DEV/'iop/bin'), str(DEV/'bin'), str(DEV/'dvp/bin'), '/usr/bin', '/bin'])
 
-DEFS = ['-D_EE', '-DPS2', '-DPS2_PROFILE', '-DNOHW', '-DNOMD5',  # no HAVE_PNG / HAVE_ZLIB: PS2-20 (cooked packs only)
+DEFS = ['-D_EE', '-DPS2', '-DPS2_PROFILE', '-DNOHW',  # no HAVE_PNG / HAVE_ZLIB: PS2-20 (cooked packs only)
         '-DPS2_AUDIO_VORBIS', '-DPS2_AUDIO_MP3',
         '-DNOMUMBLE', '-DNO_IPV6', '-DNOUPNP', '-DCMAKECONFIG', '-D_LARGEFILE64_SOURCE',
         '-DNOEXECINFO', '-DUNIXCOMMON']
@@ -57,6 +57,8 @@ LIBS = ['-lps2_drivers', '-llz4', '-lgskit', '-ldmakit', '-laudsrv', '-lpad', '-
 NO_FEATURES = [x for x in os.environ.get('SRB2_PS2_NO', '').lower().split(',') if x]
 for _f in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DPS2_NO_' + _f.upper()]
+if 'addons' in NO_FEATURES:
+    CFLAGS = CFLAGS + ['-DNOMD5']  # PS2-139: MD5 (demo file lists, net file lists, map digests, remote admin) comes with the add-ons; the cut-down profile keeps it off
 if 'zippng' not in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DHAVE_ZLIB', '-DHAVE_PNG']  # PS2-100: pk3 (ZIP) and PNG pictures of add-ons; cooked packs stay the fast path
     LIBS = [l for l in LIBS if l != '-lm'] + ['-lpng16', '-lz', '-lm']

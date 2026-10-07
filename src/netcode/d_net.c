@@ -332,9 +332,10 @@ void Net_ConnectionTimeout(INT32 node)
 
 #ifdef PS2_PROFILE
 	// PS2-139: say which clock ran out (HandleNodeTimeouts: freeze, Net_AckTicker: last packet) and with which limits, so that a test log explains a dropped node
-	CONS_Printf("PS2 net: timeout node %d: now %u lastrecv %u freeze %u connectiontimeout %u jointimeout %u firstack %u server %d\n", (int)node,
+	CONS_Printf("PS2 net: timeout node %d: now %u lastrecv %u freeze %u connectiontimeout %u jointimeout %u firstack %u server %d client %d netgame %d gamestate %d ingame %d tic %u maketic %u caller %p\n", (int)node,
 		(unsigned)I_GetTime(), (unsigned)nodes[node].lasttimepacketreceived, (unsigned)netnodes[node].freezetimeout, (unsigned)connectiontimeout,
-		(unsigned)jointimeout, (unsigned)nodes[node].firstacktosend, (int)server);
+		(unsigned)jointimeout, (unsigned)nodes[node].firstacktosend, (int)server, (int)client, (int)netgame, (int)gamestate, (int)netnodes[node].ingame,
+		(unsigned)netnodes[node].tic, (unsigned)maketic, __builtin_return_address(0));
 #endif
 
 	if (server)

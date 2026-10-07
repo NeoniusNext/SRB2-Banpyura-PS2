@@ -19,6 +19,10 @@
 2. у ПК-движков снимаются `https_proxy`/`http_proxy`/`all_proxy`: наружу из контейнера они выйти не могут;
 3. каждому PS2-узлу в `reference.cfg` пишется `masterserver` (по умолчанию мёртвый локальный порт; у сценариев с mock/relay — их URL);
 4. после каждой сессии логи всех узлов проверяются на `ds.ms.srb2.org` (`MASTER SERVER AUDIT FAILED`, код возврата 4).
+Проверка по требованию координатора «dedicated без явного masterserver не регистрируется нигде»: (а) по коду `RegisterServer()` вызывается только при `masterserver_room_id > 0` (`d_clisrv.c:814`, `mserv.c:456/562/592`), умолчание `-1` (`mserv.c:71`);
+комнату задаёт только `-room N` (`d_main.c:1737`) или выбор комнаты в меню; (б) все ~25 прогонов PC-dedicated/PC-клиентов и PS2-серверов до и после инцидента без `-room` не содержат ни `Registering this server`, ни `HMS:` (grep по всем `out.txt`/`boot.txt`);
+(в) `python3 tools/ps2/dedicated_noreg_test.py`: настоящий бинарь `-dedicated -server -warp MAP01` как в соак-сценариях, 25 с: `server started: True; master-server lines: 0`, `OK`. Единственный путь к регистрации — явный `-room`/`masterserver_room_id`, он теперь есть
+только у сценариев с mock (в `config.cfg` вместе с URL mock).
 Чтение настоящего списка теперь только через `tools/ps2/ms_relay.py` (пропускает GET `rooms`/`servers`/`rooms/N/servers`/`versions/N`, остальное — 405/403; журнал `relay.jsonl`).
 
 ## 0. Стенд (проверено запуском)
