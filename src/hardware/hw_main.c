@@ -470,6 +470,7 @@ typedef struct
 	FBITFIELD flags_in, flags_out;
 	FOutVector *verts; // the polygon: vertices in parena, the surface
 	FSurfaceInfo surf;
+	float p0x, p0y; // the first point of the polygon (a stale entry of another level would have to match this too)
 	UINT16 xsub, epoch, used;
 	INT16 lightlevel, texnum;
 	UINT8 isceiling, alpha, shader, nverts, cap, valid;
@@ -478,10 +479,19 @@ typedef struct
 #define PCACHE_SETS 256
 #define PCACHE_WAYS 4
 #define PCACHE_ARENA_VERTS 6144
-static planecache_t *pcache; // PCACHE_SETS sets of PCACHE_WAYS ways, PU_LEVEL
-static FOutVector *parena; // the vertices of the entries: bumped, PU_LEVEL
+// The tables live on the C heap, not in the zone: the zone has to keep one contiguous megabyte for the renderer's construction scratch
+// (PU_RENDERWORK), and a PU_LEVEL block of 200 KB taken on the first frame of a tight level (GFZ2) made that request fail ("OOM ... frame 6").
+// A failed allocation turns the cache off. The tables are dropped when the level changes (the map's subsector array, its size or the level time
+// going back), and every entry also holds the first point of its polygon.
+static planecache_t *pcache; // PCACHE_SETS sets of PCACHE_WAYS ways
+static FOutVector *parena; // the vertices of the entries: bumped
 static size_t parena_used;
 static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
+static size_t subhoriz_n;
+static const void *pc_owner;
+static size_t pc_nsub;
+static tic_t pc_time;
+static boolean pcache_dead;
 static UINT32 plane_epoch, plane_epoch_sig, plane_reports;
 static boolean pcache_on; // set per view by HWR_PlaneCacheFrame
 
@@ -492,17 +502,36 @@ static boolean HWR_PlaneCacheFrame(void)
 	const float *cp = &Cubepal[0][0][0][0];
 	int i;
 
-	if (ps2hwd_dbg_flags & 0x10000)
+	if ((ps2hwd_dbg_flags & 0x10000) || pcache_dead)
 		return false;
 	if (!pcache)
 	{
-		if (Z_ArenaFree() < 2 * 1024 * 1024)
-			return false; // a tight level: no room for it
-		Z_Calloc(PCACHE_SETS * PCACHE_WAYS * sizeof(planecache_t), PU_LEVEL, &pcache);
-		Z_Malloc(PCACHE_ARENA_VERTS * sizeof(FOutVector), PU_LEVEL, &parena);
+		pcache = calloc(PCACHE_SETS * PCACHE_WAYS, sizeof(planecache_t));
+		parena = malloc(PCACHE_ARENA_VERTS * sizeof(FOutVector));
+		if (!pcache || !parena)
+		{
+			free(pcache);
+			free(parena);
+			pcache = NULL;
+			parena = NULL;
+			pcache_dead = true; // no room on the heap
+			return false;
+		}
+		pc_owner = NULL;
+	}
+	if (pc_owner != (const void *)extrasubsectors || pc_nsub != addsubsector || leveltime < pc_time)
+	{
+		// another level (or the same one started again): nothing of the old tables is valid
+		memset(pcache, 0, PCACHE_SETS * PCACHE_WAYS * sizeof(planecache_t));
 		parena_used = 0;
 		plane_epoch_sig = 0;
+		free(subhoriz);
+		subhoriz = NULL;
+		subhoriz_n = 0;
+		pc_owner = extrasubsectors;
+		pc_nsub = addsubsector;
 	}
+	pc_time = leveltime;
 	sig ^= (UINT32)cv_glshaders.value << 3;
 	sig ^= (UINT32)gl_shadersavailable << 5;
 	sig ^= (UINT32)HWR_ShouldUsePaletteRendering() << 7;
@@ -532,7 +561,12 @@ static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
 	if (n >= numsubsectors)
 		return true;
 	if (!subhoriz)
-		Z_Calloc(numsubsectors, PU_LEVEL, &subhoriz);
+	{
+		subhoriz = calloc(numsubsectors, 1);
+		if (!subhoriz)
+			return true; // (no room: not cached)
+		subhoriz_n = numsubsectors;
+	}
 	if (!subhoriz[n])
 	{
 		subhoriz[n] = 1;
@@ -609,6 +643,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	planecache_t *pce = NULL; // PS2-HW-55
 	boolean pc_hit = false;
 	UINT8 pc_xs = 0;
+	const unsigned int pc_t0 = ps2hwp_now();
 #endif
 
 	float height; // constant y for all points on the convex flat polygon
@@ -686,7 +721,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 			pce = HWR_PlaneCacheFind((UINT16)(xsub - extrasubsectors), FOFsector, (UINT8)isceiling, &tag);
 			if (tag && pce->fixedheight == fixedheight && pce->flags_in == PolyFlags && pce->lightlevel == (INT16)lightlevel && pce->texnum == (INT16)texnum
 				&& pce->colormap == planecolormap && pce->alpha == alpha && pce->xscale == kxs && pce->yscale == kys && pce->xoff == kxo && pce->yoff == kyo
-				&& pce->angle == kang && pce->epoch == (UINT16)plane_epoch && pce->poly == xsub->planepoly)
+				&& pce->angle == kang && pce->epoch == (UINT16)plane_epoch && pce->poly == xsub->planepoly && pce->p0x == pv->x && pce->p0y == pv->y)
 			{
 				pce->used = (UINT16)validcount;
 				if (!(ps2hwd_dbg_flags & 32768))
@@ -695,6 +730,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 					if (!levelflat)
 						HWR_SetCurrentTexture(NULL);
 					HWR_ProcessPolygon(&pce->surf, pce->verts, pce->nverts, pce->flags_out, pce->shader, false);
+					ps2hwp_cyc[HWP_PL_HIT] += (unsigned int)(ps2hwp_now() - pc_t0);
 					return;
 				}
 				pc_hit = true; // check mode: calculated below and compared with the entry
@@ -723,6 +759,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 				pce->angle = kang;
 				pce->epoch = (UINT16)plane_epoch;
 				pce->poly = xsub->planepoly;
+				pce->p0x = pv->x;
+				pce->p0y = pv->y;
 				pce->used = (UINT16)validcount;
 				pce->valid = 0; // set by the store
 			}
@@ -973,6 +1011,9 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 #ifdef ALAM_LIGHTING
 	// add here code for dynamic lighting on planes
 	HWR_PlaneLighting(planeVerts, nrPlaneVerts);
+#endif
+#ifdef PS2_PROFILE
+	ps2hwp_cyc[pc_xs ? HWP_PL_MISS : HWP_PL_BYP] += (unsigned int)(ps2hwp_now() - pc_t0);
 #endif
 }
 

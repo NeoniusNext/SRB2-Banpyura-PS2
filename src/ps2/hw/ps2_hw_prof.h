@@ -51,6 +51,9 @@ enum
 	HWP_SP_SHADOW, // HWR_DrawSprites: drop shadows (HWR_DrawDropShadow)
 	HWP_SP_DRAW, // HWR_DrawSprites: HWR_DrawSprite / precipitation / models
 	HWP_SP_FLUSH, // HWR_DrawSprites: HWR_RenderBatches of the collected sprites
+	HWP_PL_HIT, // HWR_RenderPlane: served from the plane cache
+	HWP_PL_MISS, // ... calculated and stored
+	HWP_PL_BYP, // ... not cacheable (slope, horizon line, ...)
 	HWP_NUM
 };
 
