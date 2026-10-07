@@ -268,6 +268,27 @@ static void test_div128(unsigned long long *checks, unsigned long long *fails)
 	}
 }
 
+/* ---- PS2-174: PS2_FixedToDoubleBits (src/ps2/ps2_rdraw.h) against x / (double)FRACUNIT ---- */
+static void test_ftd(unsigned long long *checks, unsigned long long *fails)
+{
+	UINT32 i;
+	static const INT32 edge[] = {0, 1, -1, 2, -2, 3, 65535, 65536, 65537, -65535, -65536, -65537, 0x7FFFFFFF, (INT32)0x80000000, (INT32)0x80000001, 0x40000000, -0x40000000, 0x7FFF0000, (INT32)0x8000FFFF};
+	for (i = 0; i < 120000000u + sizeof edge / sizeof edge[0]; i++)
+	{
+		INT32 x = i < sizeof edge / sizeof edge[0] ? edge[i] : (INT32)rnd_mixed();
+		double ref = x / (double)FRACUNIT, got;
+		UINT64 bits = PS2_FixedToDoubleBits(x), rb;
+#ifdef SW_BROKEN
+		if (bits) bits++;
+#endif
+		memcpy(&got, &bits, sizeof got);
+		memcpy(&rb, &ref, sizeof rb);
+		(*checks)++;
+		if (rb != bits && ++*fails <= 5)
+			printf("SW FixedToDouble mismatch x=%d: %llx vs %llx\n", (int)x, (unsigned long long)bits, (unsigned long long)rb);
+	}
+}
+
 int main(void)
 {
 	unsigned long long checks[8] = {0}, fails[8] = {0};
@@ -288,6 +309,10 @@ int main(void)
 	test_div128(&checks[3], &fails[3]);
 	printf("SW Div128 checks=%llu failures=%llu\n", checks[3], fails[3]);
 	bad += fails[3] != 0;
+
+	test_ftd(&checks[4], &fails[4]);
+	printf("SW FixedToDouble checks=%llu failures=%llu\n", checks[4], fails[4]);
+	bad += fails[4] != 0;
 
 	printf("SW DONE failures=%d\n", bad);
 	return bad ? 1 : 0;

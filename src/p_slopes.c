@@ -55,12 +55,50 @@ static void CalculateNormalDir(pslope_t *slope, dvector3_t *dnormal)
 	}
 }
 
+#ifdef PS2_SLOPESTAT // host diagnostics: how often P_CalculateSlopeVectors runs and how often its six integer inputs were seen before
+#include <stdio.h>
+static unsigned long long ps2_slst[4];
+static struct { INT32 k[6]; int used; } ps2_slmemo[1 << 14];
+static void PS2_SlopeStatDump(void)
+{
+	fprintf(stderr, "SLOPESTAT calls %llu repeated inputs %llu (%.1f%%) memo-miss-by-collision %llu\n", ps2_slst[0], ps2_slst[1], 100.0 * ps2_slst[1] / (ps2_slst[0] + 1), ps2_slst[2]);
+}
+#endif
+
+#ifdef PS2_OPT_MATH
+#include "ps2/ps2_rdraw.h"
+static inline double PS2_FixedToDoubleExact(fixed_t x)
+{
+	const UINT64 bits = PS2_FixedToDoubleBits(x);
+	double d;
+
+	memcpy(&d, &bits, sizeof d);
+	return d;
+}
+#define SLOPE_FTD(x) PS2_FixedToDoubleExact(x) // PS2-174: bit-identical to FixedToDouble, without two libgcc calls
+#else
+#define SLOPE_FTD(x) FixedToDouble(x)
+#endif
+
 void P_CalculateSlopeVectors(pslope_t *slope)
 {
 	dvector3_t dnormal;
+#ifdef PS2_SLOPESTAT
+	{
+		static int reg;
+		INT32 k[6] = {slope->normal.x, slope->normal.y, slope->normal.z, slope->o.x, slope->o.y, slope->o.z};
+		UINT32 h = 0, i;
+		if (!reg) { reg = 1; atexit(PS2_SlopeStatDump); }
+		for (i = 0; i < 6; i++) h = h * 2654435761u + (UINT32)k[i];
+		h = (h >> 18) & ((1 << 14) - 1);
+		ps2_slst[0]++;
+		if (ps2_slmemo[h].used && !memcmp(ps2_slmemo[h].k, k, sizeof k)) ps2_slst[1]++;
+		else { if (ps2_slmemo[h].used) ps2_slst[2]++; memcpy(ps2_slmemo[h].k, k, sizeof k); ps2_slmemo[h].used = 1; }
+	}
+#endif
 
-	DVector3_Load(&dnormal, FixedToDouble(slope->normal.x), FixedToDouble(slope->normal.y), FixedToDouble(slope->normal.z));
-	DVector3_Load(&slope->dorigin, FixedToDouble(slope->o.x), FixedToDouble(slope->o.y), FixedToDouble(slope->o.z));
+	DVector3_Load(&dnormal, SLOPE_FTD(slope->normal.x), SLOPE_FTD(slope->normal.y), SLOPE_FTD(slope->normal.z));
+	DVector3_Load(&slope->dorigin, SLOPE_FTD(slope->o.x), SLOPE_FTD(slope->o.y), SLOPE_FTD(slope->o.z));
 
 	CalculateNormalDir(slope, &dnormal);
 }
