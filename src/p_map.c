@@ -2211,7 +2211,11 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 		// PS2-168: the cells of the box that lie inside the blockmap, in the same order (xl and yl are never negative: they come from an unsigned
 		// shift), and nothing at all in a level without polyobjects (the array is NULL there, PS2-88). The loop body is the original's.
 		// PS2-200: and only the cells of the box that can hold a polyobject link (ps2_polycells): the others have none, so visiting them did nothing
+#ifdef PS2_OPT_CORE
+		if (polyblocklinks && xl <= ps2_polycells[1] && xh >= ps2_polycells[0] && yl <= ps2_polycells[3] && yh >= ps2_polycells[2]) // the boxes meet
+#else
 		if (polyblocklinks)
+#endif
 		{
 #ifdef PS2_OPT_CORE
 			const INT32 pxl = xl < ps2_polycells[0] ? ps2_polycells[0] : xl;
