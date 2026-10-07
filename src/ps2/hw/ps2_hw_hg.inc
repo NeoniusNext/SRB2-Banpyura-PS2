@@ -49,8 +49,8 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF12 view set-up: skybox clear=%u dome=%u clip=%u | main setupview=%u clip=%u\n", (unsigned)(ps2hwp_cyc[HWP_K_CLR] / frames), (unsigned)(ps2hwp_cyc[HWP_K_DOME] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_K_CLIP] / frames), (unsigned)(ps2hwp_cyc[HWP_M_SETUP] / frames), (unsigned)(ps2hwp_cyc[HWP_M_CLIP] / frames));
 	I_OutputMsg("HWPROF14 sprites: shadow=%u draw=%u flush=%u\n", (unsigned)(ps2hwp_cyc[HWP_SP_SHADOW] / frames), (unsigned)(ps2hwp_cyc[HWP_SP_DRAW] / frames), (unsigned)(ps2hwp_cyc[HWP_SP_FLUSH] / frames));
-	I_OutputMsg("HWPROF11 sprite batching: calls=%u flush_nonopaque=%u solo=%u shadows=%u | plane cache hit=%u miss=%u bypass=%u bad=%u\n", ps2hwp_cnt[HWC_SPR_ON] / frames, ps2hwp_cnt[HWC_SPR_FLUSH] / frames, ps2hwp_cnt[HWC_SPR_SOLO] / frames,
-		ps2hwp_cnt[HWC_SPR_SHADOW] / frames, ps2hwp_cnt[HWC_PLANE_HIT] / frames, ps2hwp_cnt[HWC_PLANE_MISS] / frames, ps2hwp_cnt[HWC_PLANE_BYPASS] / frames, ps2hwp_cnt[HWC_PLANE_BAD]);
+	I_OutputMsg("HWPROF11 sprite batching: calls=%u flush_nonopaque=%u solo=%u shadows=%u | plane cache hit=%u miss=%u (tag) keymiss=%u bypass=%u bad=%u\n", ps2hwp_cnt[HWC_SPR_ON] / frames, ps2hwp_cnt[HWC_SPR_FLUSH] / frames, ps2hwp_cnt[HWC_SPR_SOLO] / frames,
+		ps2hwp_cnt[HWC_SPR_SHADOW] / frames, ps2hwp_cnt[HWC_PLANE_HIT] / frames, ps2hwp_cnt[HWC_PLANE_MISS] / frames, ps2hwp_cnt[HWC_PLANE_KEYMISS] / frames, ps2hwp_cnt[HWC_PLANE_BYPASS] / frames, ps2hwp_cnt[HWC_PLANE_BAD]);
 	I_OutputMsg("HWPROF10 skybox view: set=%u bg=%u bsp=%u batch=%u sprites=%u nodes=%u\n", (unsigned)(ps2hwp_cyc[HWP_K_SET] / frames), (unsigned)(ps2hwp_cyc[HWP_K_BG] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_K_BSP] / frames), (unsigned)(ps2hwp_cyc[HWP_K_BAT] / frames), (unsigned)(ps2hwp_cyc[HWP_K_SPR] / frames), (unsigned)(ps2hwp_cyc[HWP_K_NODE] / frames));
 	memset(ps2hwp_cnt, 0, sizeof ps2hwp_cnt);

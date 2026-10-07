@@ -458,9 +458,10 @@ typedef struct
 	UINT8 isceiling, alpha, shader, nverts, cap, valid;
 } planecache_t;
 
-#define PCACHE_SETS 512
+#define PCACHE_SETS 256
+#define PCACHE_WAYS 4
 #define PCACHE_ARENA_VERTS 6144
-static planecache_t *pcache; // PCACHE_SETS sets of two ways, PU_LEVEL
+static planecache_t *pcache; // PCACHE_SETS sets of PCACHE_WAYS ways, PU_LEVEL
 static FOutVector *parena; // the vertices of the entries: bumped, PU_LEVEL
 static size_t parena_used;
 static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
@@ -480,7 +481,7 @@ static boolean HWR_PlaneCacheFrame(void)
 	{
 		if (Z_ArenaFree() < 2 * 1024 * 1024)
 			return false; // a tight level: no room for it
-		Z_Calloc(PCACHE_SETS * 2 * sizeof(planecache_t), PU_LEVEL, &pcache);
+		Z_Calloc(PCACHE_SETS * PCACHE_WAYS * sizeof(planecache_t), PU_LEVEL, &pcache);
 		Z_Malloc(PCACHE_ARENA_VERTS * sizeof(FOutVector), PU_LEVEL, &parena);
 		parena_used = 0;
 		plane_epoch_sig = 0;
@@ -530,22 +531,26 @@ static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
 static planecache_t *HWR_PlaneCacheFind(UINT16 xsub, const sector_t *fof, UINT8 isceiling, boolean *hit)
 {
 	UINT32 h = (UINT32)xsub * 2u + isceiling;
-	planecache_t *set;
+	planecache_t *set, *victim;
+	int w;
 
 	h ^= (UINT32)(uintptr_t)fof >> 4;
-	h = (h * 2654435761u) >> 23; // 9 bits
-	set = &pcache[(h & (PCACHE_SETS - 1)) * 2];
+	h = (h * 2654435761u) >> 24; // 8 bits
+	set = &pcache[(h & (PCACHE_SETS - 1)) * PCACHE_WAYS];
 	*hit = true;
-	if (set[0].valid && set[0].xsub == xsub && set[0].fof == fof && set[0].isceiling == isceiling)
-		return &set[0];
-	if (set[1].valid && set[1].xsub == xsub && set[1].fof == fof && set[1].isceiling == isceiling)
-		return &set[1];
+	for (w = 0; w < PCACHE_WAYS; w++)
+		if (set[w].valid && set[w].xsub == xsub && set[w].fof == fof && set[w].isceiling == isceiling)
+			return &set[w];
 	*hit = false;
-	if (!set[0].valid)
-		return &set[0];
-	if (!set[1].valid)
-		return &set[1];
-	return (INT16)(set[0].used - set[1].used) <= 0 ? &set[0] : &set[1];
+	victim = &set[0];
+	for (w = 0; w < PCACHE_WAYS; w++)
+	{
+		if (!set[w].valid)
+			return &set[w]; // an empty way (or one that held a plane that did not fit the arena: its tag is dropped)
+		if ((INT16)(set[w].used - victim->used) < 0)
+			victim = &set[w]; // the least recently used
+	}
+	return victim;
 }
 
 static void HWR_PlaneCacheStore(planecache_t *e, const FSurfaceInfo *surf, const FOutVector *verts, UINT32 nverts, FBITFIELD flags, INT32 shader)
@@ -679,7 +684,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 			}
 			else
 			{
-				HWC_ADD(HWC_PLANE_MISS);
+				HWC_ADD(tag ? HWC_PLANE_KEYMISS : HWC_PLANE_MISS);
 				pc_hit = false;
 				pce->fof = FOFsector;
 				pce->xsub = (UINT16)(xsub - extrasubsectors);
