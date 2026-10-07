@@ -45,6 +45,7 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		(unsigned)(ps2hwp_cyc[HWP_S_NET] / frames), (unsigned)(ps2hwp_cyc[HWP_S_CLR2] / frames));
 	I_OutputMsg("HWPROF13 skybox view emit_poly n/cyc: vu=%u fast=%u/%u lit=%u/%u cut=%u/%u water=%u/%u | single=%u begin=%u batches=%u fans=%u\n", G.sk_n[0] / frames, G.sk_n[1] / frames, G.sk_c[1] / frames,
 		G.sk_n[2] / frames, G.sk_c[2] / frames, G.sk_n[3] / frames, G.sk_c[3] / frames, G.sk_n[4] / frames, G.sk_c[4] / frames, G.sk_single / frames, G.sk_begin / frames, G.sk_batches / frames, G.sk_fans / frames);
+	I_OutputMsg("HWPROF16 segs: one-sided simple=%u two-sided simple=%u complex=%u\n", ps2hwp_cnt[HWC_SEG_SIMPLE1] / frames, ps2hwp_cnt[HWC_SEG_SIMPLE2] / frames, ps2hwp_cnt[HWC_SEG_COMPLEX] / frames);
 	I_OutputMsg("HWPROF15 sky dome (driver): calls=%u begin=%u xform=%u emit=%u clipped_tris=%u\n", G.dome_n / frames, G.dome_begin / frames, G.dome_xf / frames, G.dome_emit / frames, G.dome_tris / frames);
 	I_OutputMsg("HWPROF12 view set-up: skybox clear=%u dome=%u clip=%u | main setupview=%u clip=%u\n", (unsigned)(ps2hwp_cyc[HWP_K_CLR] / frames), (unsigned)(ps2hwp_cyc[HWP_K_DOME] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_K_CLIP] / frames), (unsigned)(ps2hwp_cyc[HWP_M_SETUP] / frames), (unsigned)(ps2hwp_cyc[HWP_M_CLIP] / frames));

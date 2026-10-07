@@ -2227,6 +2227,15 @@ static void HWR_ProcessSegTimed(void)
 {
 	HWP_SPAN_BEGIN(t);
 	HWC_ADD(HWC_SEGS);
+	{
+		// the segs a polygon cache could serve: no polyobject, no 3D floors, slopes or fake floors on either side, no two-sided middle texture
+		const seg_t *sg = gl_curline;
+		const sector_t *fs = sg->frontsector, *bs = sg->backsector;
+		const boolean simple = !sg->polyseg && !fs->ffloors && !fs->c_slope && !fs->f_slope && fs->heightsec == -1 && !fs->numlights
+			&& (!bs || (!bs->ffloors && !bs->c_slope && !bs->f_slope && bs->heightsec == -1 && !bs->numlights && !sg->sidedef->midtexture));
+
+		HWC_ADD(simple ? (bs ? HWC_SEG_SIMPLE2 : HWC_SEG_SIMPLE1) : HWC_SEG_COMPLEX);
+	}
 	HWR_ProcessSeg();
 	HWP_SPAN_END(t, HWP_SEG);
 }
