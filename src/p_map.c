@@ -758,6 +758,21 @@ static unsigned PIT_DoCheckThing(mobj_t *thing)
 	I_Assert(!P_MobjWasRemoved(tmthing));
 	I_Assert(!P_MobjWasRemoved(thing));
 
+#ifdef PS2_OPT_PTICK
+	// PS2-176: every outcome below that is not CHECKTHING_DONE is the same to the only caller (PIT_CheckThing: result != CHECKTHING_DONE), and
+	// DONE (and every side effect) comes only after the overlap test with blockdist = both radii that all the branches below make first
+	// (the name check, Metal Sonic, spike and Metal battle cases and the general case); things whose boxes do not overlap are dropped here.
+	{
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 15 // negative control of the host A/B: things closer than the touching distance but farther than half of it are dropped too
+		const fixed_t bd = (thing->radius + tmthing->radius) >> 1;
+#else
+		const fixed_t bd = thing->radius + tmthing->radius;
+#endif
+		if (abs(thing->x - tmx) >= bd || abs(thing->y - tmy) >= bd)
+			return CHECKTHING_NOCOLLIDE;
+	}
+#endif
+
 	// Ignore spectators
 	if ((tmthing->player && tmthing->player->spectator)
 	|| (thing->player && thing->player->spectator))
