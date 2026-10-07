@@ -104,6 +104,18 @@ Facts from runs in the emulator (details, pictures and numbers: `docs/GATES/g1/o
 * `-hwfbh N` (**PS2-HW-68**): internal frame buffer height; 200 = one pixel per engine pixel (the default 224 stretches 200 rows and the `-vidshot` readback resamples them bilinearly: soft HUD edges in pictures).
 * `-vidshot iN` (N-th intermission frame), `-vidcmd 'cmd~arg;cmd2'` (console commands on the third frame); PC side `-ps2ref-shot/-ps2ref-keys/-ps2ref-cmd` (src/ps2ref.c) take the engine's own OpenGL screenshot of the same frame.
 * Textures taller or wider than 1024 (THZ pipes `THPIP*` 128x1536) are stored decimated by 2 (`dx/dy`), the one remaining quality loss of the texture path (`TTDECIM` lines).
+* **GIF stream validator (PS2-HW-74, `ps2_hw_val.inc`, `-hwdbg 536870912`, bit 29 of `ps2hwd_dbg_flags`)**: every ring buffer is parsed as the GIF and the GS parse it, in `pk_flush` before it is queued, and checked against the
+  rules a real GS keeps and PCSX2 forgives: DMA tags and 16-byte aligned REF addresses, register field widths (TEX0 TW/TH/TBW/CLD, CLAMP, SCISSOR, FRAME, ZBUF, ALPHA, TEST.ZTE, BITBLTBUF, TRXPOS, TRXREG), IMAGE size
+  against TRXREG, no register write inside a transfer, VRAM bounds by the exact GS block tables, **TEXFLUSH after local memory was written under a texture** (the real GS texture cache; PCSX2 has none), vertices inside the
+  +-2000 pixel guard band, Z within the Z buffer format, Q > 0, texel span of one primitive <= UV_EXTENT. The output is `HWVAL <class> f=<frame>: ...` (three examples per class) and `HWVAL SUMMARY`. Not checked: the VU1 path
+  (`-hwdbg 0x4000000`). Host test of the validator itself: `tools/ps2/hf_valtest.c` (4 clean streams, 27 seeded faults). The `-hwdbg` bits in use: 1..16384 (see above), 0x100000..0x2000000 HT, 0x4000000 VU1, 0x8000000 HWDBG_LODDBG,
+  0x10000000 HWDBG_IMMDBG, **0x20000000 the validator**; a value that is a bit of another feature changes the run (the validator first took 0x8000000 and printed the plan of every frame).
+* Memory (S/HT find): **PS2-HW-76** the patches of the wall textures are loaded with `PU_PATCH_LOWPRIORITY` (`hw_cache.c`), freed at every level load (they were pinned for the session: 4.9 MB after 7 level changes);
+  **PS2-HW-79** the batch arrays (`PU_HWRBATCH`) go back to the zone at every level change (`HWR_ReleaseBatching`; 1.45 MB after THZ2/ACZ1 against 0.42 MB). With both, the 50 map change chain (7 light maps) passes in the HW renderer.
+  `-zreserve 3072` (the C heap kept outside the zone) costs the zone 1.1 MB against 1536: the maps GFZ2, THZ2, ACZ1, ERZ1, MAP08, MAP40 do not load with 3072 and load with 1536; MAP10, 11, 14, 23 do not fit even with the
+  engine default of 512.
+* Measurement tools of OPT10-HF: `pcshot.py` (PC reference), `hf_run.py`, `hfpanel.py`, `hfbatch.py` (`--zreserve`, `--emu`), `hfscreens.py`, `hftt.py`, `hf_perfcmp.py` (HWPROF windows of two runs), `hf_zcaller.py` (`-zcaller` log by tag and
+  caller), `hf_chaincmp.py` (every picture of a map change chain has a twin), `hf_hudaddon.py` (Lua HUD test add-on), console command `hf_split 1` (splitscreen in single player, PC and PS2).
 
 ## Complete callback matrix
 
