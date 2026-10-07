@@ -3,9 +3,10 @@
 ; One run (MSCAL) draws a chunk of convex polygons that the EE wrote into the VU1 data memory (UNPACK into the double buffer, XTOP):
 ;   chunk   qw 0           : x = number of polygons
 ;   polygon qw 0 (header)  : x = vertex count n (3..12), y, z, w = 0 (reserved for per polygon flags)
-;           qw 1           : x = sb, y = tb (whole texture repeats removed from s, t), z = w = 0
-;           qw 2 + 2i      : x, y, z, 1.0 of vertex i (object space of the engine)
-;           qw 3 + 2i      : s, t of vertex i
+;           qw 1           : x = sb, y = tb (whole texture repeats removed from s, t), z = tsx, w = tsy (the texture coordinate scale of the polygon's texture:
+;                            a polygon of another texture of the same plan only changes this, PS2-HW-107)
+;           qw 2 + 2i      : x, y, z of vertex i (object space of the engine; w is not read: the program uses 1.0)
+;           qw 3 + 2i      : s, t of vertex i (z, w are not read)
 ; The program transforms with the matrix of the plan, classifies the vertices against the six planes of the clipping volume (the guard band of the
 ; driver: x and y are pre-scaled by the plan matrix so that the volume is |x'|, |y'|, |z| <= w), throws away polygons that are outside one plane, clips
 ; (Sutherland-Hodgman, near plane first) those that cross one and, in the palette lighting mode, cuts what is left at the eye depths where the colormap
@@ -19,7 +20,7 @@
 ;    4      (kxg, kyg, zk, 1): screen scale; x/y already contain the guard band factors
 ;    5      (ox, oy, zo, 0): screen offset (the 16 sub pixel bits and the rounding are in the constants)
 ;    6      (0, 0, zmax, 0)
-;    7      (tsx, tsy, 1, 0): texture coordinate scale
+;    7      (tsx, tsy, 1, 0): texture coordinate scale of the plan (the polygon header overrides x, y)
 ;    8      RGBAQ of the polygons (integers R, G, B, A)
 ;    9      GIF tag of a textured fan (NLOOP patched), 10 GIF tag of a flat fan
 ;    11     (rlo, 155, 0, 1e-30): x = the lowest row the plan may meet (a float), y = 155 (the light equation), w = the epsilon of the sign tests
@@ -221,7 +222,8 @@ PolyLoop:
 		NOP					iaddiu		VI07,VI00,0
 		NOP					iaddiu		VI08,VI00,OCMASK
 		IDLE	4
-		NOP					iaddiu		VI09,VI04,0
+		addz.x		VF08,VF00,VF29z		iaddiu		VI09,VI04,0
+		addw.y		VF08,VF00,VF29w		NOP
 
 ; ---- transform + classify every vertex ----
 VLoop:
@@ -231,7 +233,7 @@ VLoop:
 		mulax		ACC,VF01,VF12x		NOP
 		madday		ACC,VF02,VF12y		NOP
 		maddaz		ACC,VF03,VF12z		NOP
-		maddw		VF14,VF04,VF12w		NOP
+		maddw		VF14,VF04,VF00w		NOP
 		addw.xyz	VF15,VF14,VF14w		sq			VF14,0(VI12)
 		subw.xyz	VF16,VF14,VF14w		sq			VF13,1(VI12)
 		IDLE	4

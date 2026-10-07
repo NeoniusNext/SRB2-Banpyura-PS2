@@ -811,23 +811,39 @@ static void split_draw(const FSurfaceInfo *surf, u32 flags, const FOutVector *v,
 }
 
 // A single polygon (hw_DrawPolygon: HUD, shadows, sprites that are not batched) through the VU1 program: with the plan of the previous single draw (same key) it joins
-// the open chunk (no begin_draw, no constants); else the plan is made and the constants go to the VU1 memory. What the VU1 path does not take (a plan with cuts, a
-// polygon of too many texels) is drawn by the general path.
+// the open chunk (no begin_draw, no constants); with the plan of the previous single draw and another texture of the same kind (a run of HUD glyphs, sprites) the plan
+// is retargeted (PS2-HW-107: the texture registers and the texture scale, nothing else); else the plan is made and the constants go to the VU1 memory. What the VU1
+// path does not take (a plan with cuts, a polygon of too many texels) is drawn by the general path.
 static void single_draw(FSurfaceInfo *surf, u32 flags, FOutVector *v, int n)
 {
 	vukey_t k;
+	int how = 0;
 
 	vu_key_make(&k, flags, surf);
-	if (vu_plan_valid && VU.consts_ok && P.serial == H.serial && vu_key_eq(&k, &VK))
+	if (vu_plan_valid && VU.consts_ok && P.serial == H.serial)
+		how = vu_key_cmp(&k, &VK);
+	if (how)
 	{
+		if (how == 1)
+		{
+			vu_retarget(surf);
+			VK = k;
+		}
 		if (vu_poly(v, n, P.rs.lp.light))
 		{
 			G.s_vu++;
-			G.s_same++;
+			if (how == 2)
+				G.s_same++;
+			else
+				G.s_retarget++;
 			return;
 		}
+		VU.reuse = 0;
+		vu_plan_valid = 0;
 		vu_sync();
 		P.vu = 0;
+		if (how == 1 && P.lmode == LM_BANDS)
+			lit_fast_plan(); // the light level of this polygon (the program took it from the header)
 		emit_fan(v, NULL, n, NULL);
 		return;
 	}
@@ -943,27 +959,6 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		CONS_Printf("HWT fans n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u psm=%d clut=%d\n", nfans, flags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u, tr ? (int)tr->psm : -1, tr ? (int)tr->clut : -1);
 	}
-	{
-		// measurement (HWPROF25): how many different plans a frame makes, and how many it would make without the light level of the sectors
-		static u32 seen_a[512], seen_c[512], seen_t[512], fr = ~0u;
-		const FSurfaceInfo *sf = (const FSurfaceInfo *)surf;
-		u32 ha, hc, ht, i2;
-
-		if (fr != H.frame_no)
-		{
-			fr = H.frame_no;
-			memset(seen_a, 0, sizeof seen_a);
-			memset(seen_c, 0, sizeof seen_c);
-			memset(seen_t, 0, sizeof seen_t);
-		}
-		ht = (u32)H.cur_tex * 2654435761u + 1u;
-		hc = (ht ^ flags) * 2246822519u + sf->PolyColor.rgba * 3266489917u + sf->LightTableId * 668265263u + 7u;
-		ha = (hc ^ (u32)sf->LightInfo.light_level) * 374761393u + sf->FadeColor.rgba * 2654435761u + sf->TintColor.rgba * 2246822519u + (u32)sf->LightInfo.fade_start * 31u + (u32)sf->LightInfo.fade_end * 17u + 1u;
-#define SEEN(arr, h, ctr) do { for (i2 = (h) & 511u;; i2 = (i2 + 1) & 511u) { if (!(arr)[i2]) { (arr)[i2] = (h) | 1u; G.ctr++; break; } if ((arr)[i2] == ((h) | 1u)) break; } } while (0)
-		SEEN(seen_a, ha, pk_all);
-		SEEN(seen_c, hc, pk_core);
-		SEEN(seen_t, ht, pk_tex);
-	}
 	G.batches++;
 	G.fans += nfans;
 	G.sk_batches += ps2hwp_skyview;
@@ -993,12 +988,9 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 
 		if (P.vu) // PS2-HW-100: the VU1 program takes the polygon (or it goes the general way below, in order)
 		{
-			const u32 vt = cyc();
-
 			if (vu_poly(fv, fn, fl))
 			{
 				G.p_vu++;
-				G.c_vu += cyc() - vt;
 				continue;
 			}
 			vu_sync();

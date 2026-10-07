@@ -38,6 +38,7 @@ static struct
 	u32 npoly;
 	int open;
 	int consts_ok; // the constants of the current plan are in the VU1 memory
+	int reuse; // the next vu_plan_setup is a retarget of the plan (another texture): the constants stay (PS2-HW-107)
 	int rowmode; // the plan is lit by the colormap rows of a light table (P.pal)
 	int rlo, rhi; // the rows the program may meet (their TEX0 are in the table)
 	float cn[VU_NCONST][4] __attribute__((aligned(16)));
@@ -392,19 +393,21 @@ static void vu_chunk_end(void);
 static inline void vu_sync(void);
 
 // the constants of the plan go behind FLUSHE: the program that may still run is done with them; the TEX2 table of the colormap rows follows when the
-// VU1 memory does not hold the rows of this table (rows [rlo, rhi])
-static void vu_consts_send(int send_rows)
+// VU1 memory does not hold the rows of this table (rows [rlo, rhi]). what = 1: only the integers of the plan (the row the GS holds: a retargeted plan loaded the
+// CLUT of its first row), the rest of the constants did not change.
+static void vu_consts_send(int send_rows, int what)
 {
 	qw_t *b, *t;
 	const u32 nrow = send_rows ? (u32)(VU.rhi - VU.rlo + 1) : 0;
+	const u32 nc = what ? 1u : (u32)VU_NCONST;
 
-	vu_room(1 + VU_NCONST + 1 + nrow + 2);
+	vu_room(1 + nc + 1 + nrow + 2);
 	t = vu_tag_slot();
 	b = H.ring[H.cur];
-	t->d[0] = dma_tag(VU_NCONST, DMAT_CNT, 0);
-	t->d[1] = 0x10000000ull | ((u64)VIF_UNPACK_V4_32(0, VU_NCONST, 0) << 32); // FLUSHE
-	memcpy(b + H.wr, VU.cn, VU_NCONST * sizeof(qw_t));
-	H.wr += VU_NCONST;
+	t->d[0] = dma_tag(nc, DMAT_CNT, 0);
+	t->d[1] = 0x10000000ull | ((u64)VIF_UNPACK_V4_32(what ? 16u : 0u, nc, 0) << 32); // FLUSHE
+	memcpy(b + H.wr, what ? VU.cn[16] : VU.cn[0], nc * sizeof(qw_t));
+	H.wr += nc;
 	if (nrow)
 	{
 		t = b + H.wr++;
@@ -423,8 +426,10 @@ static int vu_plan_setup(void)
 	vlight_t vl;
 	const texrec_t *r = P.r;
 	int send_rows = 0;
+	const int reuse = VU.reuse && VU.consts_ok;
 	u32 c0 = cyc(), c1, c2;
 
+	VU.reuse = 0;
 	vu_sync();
 	VU.rowmode = P.pal;
 	VU.stat_plans++;
@@ -493,10 +498,25 @@ static int vu_plan_setup(void)
 	P.serial = H.serial;
 	c2 = cyc();
 	G.vs_pass += c2 - c1;
+	if (reuse)
+	{
+		// the same plan, another texture: the constants are the plan's; the row the GS holds is the first row of the table again (pass_setup loaded it)
+		if (VU.rowmode)
+		{
+			((u32 *)(void *)VU.cn[16])[2] = (u32)VU.rlo;
+			vu_consts_send(send_rows, 1);
+		}
+		c1 = cyc();
+		G.vs_consts += 0;
+		G.vs_send += c1 - c2;
+		G.vs_reuse++;
+		G.vs_c += c1 - c0;
+		return 1;
+	}
 	vu_consts_build(VU.rowmode ? &vl : NULL);
 	c1 = cyc();
 	G.vs_consts += c1 - c2;
-	vu_consts_send(send_rows);
+	vu_consts_send(send_rows, 0);
 	c2 = cyc();
 	G.vs_send += c2 - c1;
 	G.vs_c += c2 - c0;
@@ -505,14 +525,22 @@ static int vu_plan_setup(void)
 
 // ---- single draws (hw_DrawPolygon: HUD, sprites that are not batched, shadows) through the VU1 program ----
 // A chunk stays open between two single draws; a draw whose plan is the one of the last single draw (the same key: flags, surface, texture, view) joins it: no
-// begin_draw, no constants, no new chunk. Anything else ends the chunk (the ring writers do) and makes a plan.
+// begin_draw, no constants, no new chunk. A draw of the same plan with another texture of the same kind (and, when the plan lights by rows, another light level)
+// only retargets the plan (PS2-HW-107): the new texture's registers, the texture scale (it travels in the polygon header), no begin_draw_inner, no constants.
+// Anything else ends the chunk (the ring writers do) and makes a plan.
 
-#define VK_N 28
+#define VK_N 32 // words (16 doublewords: the key is compared by doublewords)
 
 typedef struct
 {
 	u32 w[VK_N];
-} vukey_t;
+} __attribute__((aligned(8))) vukey_t;
+
+// the groups of words: core 0..5 (flags, colour, tint, fade, light table, kind of the texture), light 6..9, texture 10..17, view 18..31
+#define VKL_BEG 3
+#define VKT_BEG 5
+#define VKV_BEG 9
+#define VKV_END 16
 
 static vukey_t VK; // the key vu_plan_valid belongs to
 
@@ -540,53 +568,103 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 		w[1] = surf->PolyColor.rgba;
 		w[2] = surf->TintColor.rgba;
 		w[3] = surf->FadeColor.rgba;
-		w[4] = (u32)surf->LightInfo.light_level;
-		w[5] = (u32)surf->LightInfo.fade_start;
-		w[6] = (u32)surf->LightInfo.fade_end;
-		w[7] = surf->LightTableId;
+		w[4] = surf->LightTableId;
+		w[6] = (u32)surf->LightInfo.light_level;
+		w[7] = (u32)surf->LightInfo.fade_start;
+		w[8] = (u32)surf->LightInfo.fade_end;
 	}
 	else
 	{
-		w[1] = w[2] = w[3] = w[4] = w[5] = w[6] = w[7] = 0;
+		w[1] = w[2] = w[3] = w[4] = w[6] = w[7] = w[8] = 0;
 	}
+	w[9] = 0;
 	if (r)
 	{
-		w[8] = (u32)H.cur_tex + 1u;
-		w[9] = r->blk;
-		w[10] = (u32)r->psm | ((u32)r->clut << 8) | ((u32)r->wrapx << 12) | ((u32)r->wrapy << 13) | ((u32)r->nearest_only << 14) | ((u32)r->notcc << 15) | ((u32)r->region << 16)
+		// the kind: what of the texture decides the plan (begin_draw_inner), the same bits as the plan cache's key
+		w[5] = (u32)r->psm | ((u32)r->clut << 6) | ((u32)(r->notcc != 0) << 8) | ((u32)(r->screen != 0) << 9) | ((u32)(r->wrapx != 0) << 10) | ((u32)(r->wrapy != 0) << 11)
+			| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17);
+		w[10] = (u32)H.cur_tex + 1u;
+		w[11] = r->blk;
+		w[12] = (u32)r->psm | ((u32)r->clut << 8) | ((u32)r->wrapx << 12) | ((u32)r->wrapy << 13) | ((u32)r->nearest_only << 14) | ((u32)r->notcc << 15) | ((u32)r->region << 16)
 			| ((u32)r->npot_x << 18) | ((u32)r->npot_y << 19) | ((u32)r->screen << 20) | ((u32)r->tw << 24) | ((u32)r->th << 28);
-		w[11] = (u32)r->uw | ((u32)r->vh << 16);
-		w[12] = f2u_(r->sxs);
-		w[13] = f2u_(r->sys);
-		w[14] = (u32)r->tbw | ((u32)r->w << 8) | ((u32)r->h << 20);
+		w[13] = (u32)r->uw | ((u32)r->vh << 16);
+		w[14] = f2u_(r->sxs);
+		w[15] = f2u_(r->sys);
+		w[16] = (u32)r->tbw | ((u32)r->w << 8) | ((u32)r->h << 20);
 	}
 	else
 	{
-		w[8] = w[9] = w[10] = w[11] = w[12] = w[13] = w[14] = 0;
+		// a texture that is missing (begin_draw_inner skips the polygon) never matches a plan
+		w[5] = (!(flags & PF_NoTexture) && H.cur_missing) ? (1u << 18) : 0;
+		w[10] = w[11] = w[12] = w[13] = w[14] = w[15] = w[16] = 0;
 	}
-	w[15] = xf_ver;
-	w[16] = f2u_(H.vpx);
-	w[17] = f2u_(H.vpy);
-	w[18] = f2u_(H.vpw);
-	w[19] = f2u_(H.vph);
-	w[20] = f2u_(H.near_plane);
-	w[21] = (u32)H.guard_x;
-	w[22] = (u32)H.guard_y;
-	w[23] = (u32)H.shader | ((u32)H.shaders_on << 8) | ((u32)H.tex_filter << 12) | ((u32)(H.imm_tex != NULL) << 20);
-	w[24] = H.pal_gen;
-	w[25] = H.sciss_x0 | (H.sciss_y0 << 16);
-	w[26] = H.sciss_x1 | (H.sciss_y1 << 16);
-	w[27] = (u32)H.target | (H.frame_no << 4) | ((u32)palette_mode() << 3);
+	w[17] = 0;
+	w[18] = xf_ver;
+	w[19] = f2u_(H.vpx);
+	w[20] = f2u_(H.vpy);
+	w[21] = f2u_(H.vpw);
+	w[22] = f2u_(H.vph);
+	w[23] = f2u_(H.near_plane);
+	w[24] = (u32)H.guard_x;
+	w[25] = (u32)H.guard_y;
+	w[26] = (u32)H.shader | ((u32)H.shaders_on << 8) | ((u32)H.tex_filter << 12) | ((u32)(H.imm_tex != NULL) << 20);
+	w[27] = H.pal_gen;
+	w[28] = H.sciss_x0 | (H.sciss_y0 << 16);
+	w[29] = H.sciss_x1 | (H.sciss_y1 << 16);
+	w[30] = (u32)H.target | (H.frame_no << 4) | ((u32)palette_mode() << 3);
+	w[31] = 0;
 }
 
-static inline int vu_key_eq(const vukey_t *a, const vukey_t *b)
+static inline u64 vk_d(const vukey_t *a, const vukey_t *b, int i)
 {
-	u32 d = 0;
+	return ((const u64 *)(const void *)a)[i] ^ ((const u64 *)(const void *)b)[i];
+}
+
+// 2 = the same plan, the same texture and light; 1 = the same plan, another texture of the same kind (and another light level when the plan lights by rows); 0 = another plan
+static inline int vu_key_cmp(const vukey_t *a, const vukey_t *b)
+{
+	u64 dc, dl, dt, dv;
 	int i;
 
-	for (i = 0; i < VK_N; i++)
-		d |= a->w[i] ^ b->w[i];
-	return d == 0;
+	dc = vk_d(a, b, 0) | vk_d(a, b, 1) | vk_d(a, b, 2);
+	dv = 0;
+	for (i = VKV_BEG; i < VKV_END; i++)
+		dv |= vk_d(a, b, i);
+	if (dc | dv)
+		return 0;
+	dl = vk_d(a, b, 3) | vk_d(a, b, 4);
+	dt = vk_d(a, b, 5) | vk_d(a, b, 6) | vk_d(a, b, 7) | vk_d(a, b, 8);
+	if (!(dl | dt))
+		return 2;
+	if (dl && !P.pal)
+		return 0; // the light level is a part of the plan unless the program lights by rows
+	return 1;
+}
+
+// The plan of the last single draw (P, GS state, VU1 constants) for another texture of the same kind: what begin_draw_inner derives from the texture record. The kind
+// (psm, palette kind, wrap, npot, region, filter inputs) is equal by the key, so the passes, the cut flags and the filter stay.
+static void vu_retarget(const FSurfaceInfo *surf)
+{
+	texrec_t *r = (!(P.flags & PF_NoTexture) && H.cur_tex != NOREC) ? &H.rec[H.cur_tex] : NULL;
+
+	if (r)
+	{
+		const int wms = P.wrapx ? 0 : 1, wmt = P.wrapy ? 0 : 1;
+
+		P.r = r;
+		P.tsx = r->sxs;
+		P.tsy = r->sys;
+		P.clamp = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34);
+		plan_tex_touch(r);
+	}
+	if (P.pal && surf)
+	{
+		P.rs.lp.light = (float)surf->LightInfo.light_level; // the polygon header carries it; the general path (a polygon the program does not take) needs it in the plan
+		P.rs.lp.fade_start = surf->LightInfo.fade_start;
+		P.rs.lp.fade_end = surf->LightInfo.fade_end;
+	}
+	VU.reuse = 1; // vu_plan_setup keeps the constants of the plan (the texture scale travels in the polygon header)
+	P.serial = H.serial - 1; // the GS state of the pass again (the texture registers)
 }
 
 static void vu_chunk_begin(void)
@@ -649,34 +727,17 @@ static void vu_chunk_flush(void)
 }
 
 // Called by emit_poly (before anything else) for a plan that is VU1 capable. Returns 1 when the polygon was taken (drawn or dropped).
+// The polygon goes into the chunk in one pass over its vertices (PS2-HW-107: the extent of s, t for the texture repeat is found while the vertices are copied,
+// the w lanes and the zero lanes are not written: the program does not read them; the header carries the texture scale of the polygon).
 static int vu_poly(const FOutVector *base, int n, float light)
 {
-	float smin = 0.0f, smax = 0.0f, tmin = 0.0f, tmax = 0.0f;
 	float sb = 0.0f, tb = 0.0f;
 	int i;
 	u32 need;
-	qw_t *o, *b;
+	qw_t *o, *v;
 
 	if (n < 3 || n > VU_MAXVERT)
 		return 0;
-	if (P.textured && (P.wrapx || P.wrapy))
-	{
-		smin = smax = base[0].s;
-		tmin = tmax = base[0].t;
-		for (i = 1; i < n; i++)
-		{
-			smin = hw_minf(smin, base[i].s);
-			smax = hw_maxf(smax, base[i].s);
-			tmin = hw_minf(tmin, base[i].t);
-			tmax = hw_maxf(tmax, base[i].t);
-		}
-		if ((P.wrapx && (smax - smin) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin) * (float)P.r->h > UV_EXTENT))
-			return 0; // cut at whole repeats: cut_and_emit
-		sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
-		tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
-	}
-	H.st.polys++;
-	H.st.verts_in += (u32)n;
 	if (!VU.consts_ok || P.serial != H.serial)
 	{
 		// first polygon of the plan, or the general path wrote GS state in between: the state of pass 0 and the constants again
@@ -684,8 +745,6 @@ static int vu_poly(const FOutVector *base, int n, float light)
 		{
 			P.vu = 0;
 			P.vuok = 0;
-			H.st.polys--;
-			H.st.verts_in -= (u32)n;
 			VU.stat_fallback++;
 			return 0;
 		}
@@ -701,30 +760,53 @@ static int vu_poly(const FOutVector *base, int n, float light)
 		pk_flush();
 		vu_chunk_begin();
 	}
-	b = H.ring[H.cur];
-	o = b + H.wr;
+	o = H.ring[H.cur] + H.wr;
+	v = o + 2;
+	if (P.textured && (P.wrapx || P.wrapy))
+	{
+		float smin = base[0].s, smax = smin, tmin = base[0].t, tmax = tmin;
+
+		for (i = 0; i < n; i++, v += 2)
+		{
+			const float s = base[i].s, t = base[i].t;
+
+			v[0].f[0] = base[i].x;
+			v[0].f[1] = base[i].y;
+			v[0].f[2] = base[i].z;
+			v[1].f[0] = s;
+			v[1].f[1] = t;
+			smin = hw_minf(smin, s);
+			smax = hw_maxf(smax, s);
+			tmin = hw_minf(tmin, t);
+			tmax = hw_maxf(tmax, t);
+		}
+		if ((P.wrapx && (smax - smin) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin) * (float)P.r->h > UV_EXTENT))
+			return 0; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
+		sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
+		tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
+	}
+	else
+	{
+		for (i = 0; i < n; i++, v += 2)
+		{
+			v[0].f[0] = base[i].x;
+			v[0].f[1] = base[i].y;
+			v[0].f[2] = base[i].z;
+			v[1].f[0] = base[i].s;
+			v[1].f[1] = base[i].t;
+		}
+	}
 	o[0].w[0] = (u32)n;
 	o[0].f[1] = light; // the light level of the polygon's sector: the program makes cap and base of the colormap row equation from it
-	o[0].w[2] = o[0].w[3] = 0;
 	o[1].f[0] = sb;
 	o[1].f[1] = tb;
-	o[1].w[2] = o[1].w[3] = 0;
-	for (i = 0; i < n; i++)
-	{
-		qw_t *v = o + 2 + 2 * i;
-
-		v[0].f[0] = base[i].x;
-		v[0].f[1] = base[i].y;
-		v[0].f[2] = base[i].z;
-		v[0].f[3] = 1.0f;
-		v[1].f[0] = base[i].s;
-		v[1].f[1] = base[i].t;
-		v[1].w[2] = v[1].w[3] = 0;
-	}
+	o[1].f[2] = P.tsx;
+	o[1].f[3] = P.tsy;
+	H.st.polys++;
+	H.st.verts_in += (u32)n;
 	H.wr += need;
 	VU.chunk_n += need;
 	VU.npoly++;
-	VU.stat_polys++;
 	return 1;
 }
 
