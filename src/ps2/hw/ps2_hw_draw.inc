@@ -482,15 +482,37 @@ static void fx_report(void)
 // What every draw with a texture does to the texture manager's books (begin_draw_inner and the plan cache hit path, PS2-HW-46)
 static void plan_tex_touch(texrec_t *r)
 {
-	texrec_t *im;
-
 	lru_touch(H.cur_tex);
-	im = &H.rec[img_of(H.cur_tex)];
-	if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set
 	{
-		im->imgws = H.frame_no + 1;
-		TX.need_blk += im->nblk;
-		TX.need_n++;
+		texrec_t *im = &H.rec[img_of(H.cur_tex)];
+
+		if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set
+		{
+			im->imgws = H.frame_no + 1;
+			TX.need_blk += im->nblk;
+			TX.need_n++;
+			if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+			{
+				H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
+				if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60 && im->owner)
+					CONS_Printf("HWUP %s %ux%u psm=%d clut=%d blk=%u lvl=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->w, (unsigned)im->h, (int)im->psm, (int)im->clut, (unsigned)im->nblk, (int)im->dx);
+			}
+			else
+			{
+				const GLMipmap_t *pk = im->owner->ps2_twin ? im->owner->ps2_twin : im->owner;
+
+				if (pk->ps2_planfr == H.frame_no + 1)
+				{
+					TX.need_in_plan += im->nblk;
+				}
+				else
+				{
+					TX.need_out_plan += im->nblk; // a big map texture drawn without the plan (sky dome, translucent walls, ...): stored at full size
+					if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)
+						CONS_Printf("HWNP %s %ux%u lvl=%d blk=%u phase=%d\n", HWR_PS2_TexName(im->owner), (unsigned)im->sw, (unsigned)im->sh, (int)im->dx, (unsigned)im->nblk, batch_phase);
+				}
+			}
+		}
 	}
 	if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame
 	{
@@ -510,6 +532,8 @@ static void plan_tex_touch(texrec_t *r)
 }
 
 // Prepare everything for a polygon with these engine flags. Returns 0 when the polygon must not be drawn.
+static void imm_prepare(const FOutVector *verts, unsigned int n); // ps2_hw_plan.inc
+
 // begin_draw (below, behind ps2_hw_fast.inc) is the plan cache (PS2-HW-46) in front of begin_draw_inner, which makes the plan.
 static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf);
 static int begin_draw(u32 flags, const FSurfaceInfo *surf);
@@ -528,6 +552,8 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		hw_limit(HW_CORONA, "corona depth visibility is not implemented; draw rejected");
 		return 0;
 	}
+	if (H.imm_tex && !(flags & PF_NoTexture) && H.cur_tex == NOREC && !H.cur_missing)
+		imm_prepare(NULL, 0); // a draw that did not go through hw_DrawPolygon (the sky dome): the geometry is unknown, the texture is made resident at full size
 	if (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing)
 	{
 		H.st.tex_skipped++;
@@ -652,7 +678,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		P.linear = linear;
 		// a non power of two axis is clamped to the texture's own region; its repeat was turned into cuts
 		P.clamp = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34);
-		plan_tex_touch(r); // LRU order and working set statistics of the texture drawn
+		plan_tex_touch(r); // LRU order, the working set and the plan statistics of the texture drawn (the body is above)
 	}
 
 	// ---- blend / pass plan ----
@@ -1909,7 +1935,7 @@ static inline u32 f2u(float f)
 #define PLAN_KEY_PCOL(c) (c) // (the host test mutates it: tools/ps2/hg_hosttest.c, negative control 2)
 #endif
 
-static inline void plan_key(plankey_t *k, u32 flags, const FSurfaceInfo *surf, const texrec_t *r)
+static inline void pcache_make_key(plankey_t *k, u32 flags, const FSurfaceInfo *surf, const texrec_t *r)
 {
 	u32 t = surf ? 1u << 31 : 0;
 
@@ -1984,7 +2010,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	frame_prepare(0);
 	xf_update();
 	r = (!(flags & PF_NoTexture) && H.cur_tex != NOREC) ? &H.rec[H.cur_tex] : NULL;
-	plan_key(&k, flags, surf, r);
+	pcache_make_key(&k, flags, surf, r);
 	e = &planc[plan_slot(&k)];
 	if (e->used && plan_key_eq(&e->k, &k))
 	{

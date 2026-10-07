@@ -35,9 +35,12 @@ therein, increment this number.
 //  be transmitted.
 
 #ifdef PS2_PROFILE
-// PS2-11/PS2-123: tic ring; netcmds is BACKUPTICS x 32 players x 9 B (74 KB). 256 allows 221 tics (6.3 s) of catch-up after a hitch or while a
-// joining client downloads the savegame; demos and saves do not store it.
-#define BACKUPTICS 256
+// PS2-11/PS2-123/PS2-113: tic ring; netcmds is BACKUPTICS x 32 players x 9 B (74 KB at 256, 295 KB at 1024). The server drops a node whose acknowledged tic
+// lags maketic by BACKUPTICS - TICRATE (d_clisrv.c, "Net_ConnectionTimeout"): with 256 a PS2 client that needs more than 221 game tics (6.3 s, but a PS2 server
+// runs below 35 tics per second, so ~10 s of wall time) to load the level after joining was dropped ("left the game (Connection timeout)"; OPT10-X measured it:
+// 221 tics after the join, in every PS2 server <- PS2 client run on a loaded machine). 1024 is what the PC game uses (28 s of catch-up); the 221 KB it costs
+// come out of the zone arena (static BSS). Demos and saves do not store the ring.
+#define BACKUPTICS 1024
 #else
 #define BACKUPTICS 1024
 #endif

@@ -9,6 +9,7 @@ static void poll_dma(void);
 static void tex_cap_control(void);
 static void tx_report(void);
 static void lod_frame_end(void);
+static void plan_frame_end(void); // ps2_hw_plan.inc
 static void ov_flush_all(void); // draws queued by the light overlay (ps2_hw_draw.inc); every frame boundary and read-back first
 static void rel_poll(void); // OPT9: engine data referenced by DMA is unlocked when the transfer is done (ps2_hw_tex.inc)
 static void rel_release_buf(int i);
@@ -525,7 +526,24 @@ static void frame_end(void)
 	H.last_drawn = H.target;
 	H.have_drawn = 1;
 	H.frame_open = 0;
+	H.imm_tex = NULL;
+	plan_frame_end();
 	tex_cap_control();
+	{
+		// PS2-HW-37: the room the frame plan leaves for the textures it does not plan: what this frame drew of them (+15 %), falling slowly
+		u32 cur = H.unplanned_cur + H.unplanned_cur / 7u, dec = H.plan_reserve - (H.plan_reserve >> 4);
+
+		H.plan_reserve = cur > dec ? cur : dec;
+		if (H.plan_reserve < 512u)
+			H.plan_reserve = 512u;
+		if (H.plan_reserve > H.pool_blocks / 3u)
+			H.plan_reserve = H.pool_blocks / 3u;
+		TX.unplanned += H.unplanned_cur;
+		TX.plan_blk += H.plan_last;
+		TX.plan_exact += H.plan_exact;
+		H.unplanned_cur = 0;
+		H.plan_last = H.plan_exact = 0;
+	}
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_frame_end();
 	H.frame_no++;

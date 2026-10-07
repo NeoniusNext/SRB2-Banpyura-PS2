@@ -139,6 +139,9 @@ void ResetNode(INT32 node)
 
 void CL_Reset(void)
 {
+#ifdef PS2_PROFILE
+	CONS_Printf("PS2 net: %s netgame %d server %d client %d gametic %u caller %p\n", "CL_Reset", (int)netgame, (int)server, (int)client, (unsigned)gametic, __builtin_return_address(0)); // PS2-112: where a net game ends / a local game starts (diagnostic, found the reconnect scenario artifact)
+#endif
 	if (metalrecording)
 		G_StopMetalRecording(false);
 	if (metalplayback)
@@ -651,6 +654,9 @@ void CL_RemovePlayer(INT32 playernum, kickreason_t reason)
 //
 void D_QuitNetGame(void)
 {
+#ifdef PS2_PROFILE
+	CONS_Printf("PS2 net: %s netgame %d server %d client %d gametic %u caller %p\n", "D_QuitNetGame", (int)netgame, (int)server, (int)client, (unsigned)gametic, __builtin_return_address(0)); // PS2-112: where a net game ends / a local game starts (diagnostic, found the reconnect scenario artifact)
+#endif
 	mousegrabbedbylua = true;
 	I_UpdateMouseGrab();
 
@@ -826,6 +832,9 @@ void SV_SpawnServer(void)
 // called at singleplayer start and stopdemo
 void SV_StartSinglePlayerServer(void)
 {
+#ifdef PS2_PROFILE
+	CONS_Printf("PS2 net: %s netgame %d server %d client %d gametic %u caller %p\n", "SV_StartSinglePlayerServer", (int)netgame, (int)server, (int)client, (unsigned)gametic, __builtin_return_address(0)); // PS2-112: where a net game ends / a local game starts (diagnostic, found the reconnect scenario artifact)
+#endif
 	server = true;
 	netgame = false;
 	multiplayer = false;

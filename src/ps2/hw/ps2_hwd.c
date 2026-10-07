@@ -332,6 +332,8 @@ void PS2HWD_Shutdown(void)
 	rel_release_all();
 	dc_flush();
 	tex_free_all();
+	H.imm_tex = NULL;
+	plan_reset();
 	ramp_tex = NOREC;
 	OV.n = 0;
 	for (i = 0; i < NBUF; i++)
@@ -674,6 +676,8 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 		G.single++;
 		G.sk_single += ps2hwp_skyview;
 		G.sing_by[gk]++;
+		if (H.imm_tex && !(PolyFlags & PF_NoTexture))
+			imm_prepare(pOutVerts, (unsigned int)iNumPts); // PS2-HW-37: the texture is made resident at the level this polygon needs
 		if (begin_draw((u32)PolyFlags, pSurf))
 			emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
 		G.sing_cyc[gk] += cyc() - gt0;
@@ -871,7 +875,7 @@ static texrec_t *twin_rec(GLMipmap_t *m)
 
 // Select a texture. While the engine collects batched polygons nothing is uploaded: the texture is made resident when its batch is
 // drawn (the GS pool cannot hold all the textures of a frame), asking the engine for the data again when the zone dropped it.
-static void hw_SetTexture(GLMipmap_t *TexInfo)
+static void settex_now(GLMipmap_t *TexInfo)
 {
 	texrec_t *r;
 	int ri;
@@ -931,7 +935,7 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		int vis = 1;
 
 		want = tex_want(TexInfo, &vis);
-		if (batch_phase == 0 || pk->ps2_planfr != H.frame_no + 1)
+		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != H.frame_no + 1)
 			pk->ps2_full_fr = H.frame_no + 1;
 		if (!vis && !r)
 		{
@@ -941,13 +945,25 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 			TX.invisible++;
 			return;
 		}
-		if (r && !r->screen && (u32)r->dx > want)
+		if (r && !r->screen && plan_too_coarse(TexInfo, (u32)r->dx, want))
 		{
-			// stored at a coarser level than this draw needs: the image is made again (every variant of it)
+			// stored at a coarser level than this draw needs (beyond the tolerance of the plan): the image is made again (every variant of it)
+			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
+				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d UPGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
 			ov_flush_all();
 			tex_drop(img_of((int)(r - H.rec)), 0);
 			r = NULL;
 			TX.upgrades++;
+		}
+		else if (r && (batch_phase == 2 || imm_level >= 0) && plan_too_fine(TexInfo, r, want))
+		{
+			// stored finer than the plan needs and the difference is worth the blocks: made again at the planned level (PS2-HW-37)
+			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
+				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d DOWNGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
+			ov_flush_all();
+			tex_drop(img_of((int)(r - H.rec)), 0);
+			r = NULL;
+			TX.downgrades++;
 		}
 	}
 	if (r && H.cap_adapt && r->capi != H.cap_idx && !r->screen && !r->pin && batch_phase != 1 && r->sw)
@@ -994,7 +1010,8 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		return;
 	}
 	if (!TexInfo->data && !(TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= 2048
-		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want)))))
+		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want))
+			|| (want && TexInfo->regen_kind == 2) || (want > 1 && dc_find_finer(dc_key(TexInfo), TexInfo->width, TexInfo->height, want, &(u32){0}))))) // PS2-HW-38/39: a level of a flat needs no copy of the flat (tex_upload pins the engine's)
 	{
 		u32 c0 = cyc();
 
@@ -1003,7 +1020,14 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 		TX.regen_n++;
 		H.st.tex_regen++;
 	}
+	if ((ps2hwd_dbg_flags & HWDBG_IMMDBG) && (u32)TexInfo->width * TexInfo->height >= PLAN_MIN_TEXELS)
+		CONS_Printf("HWIMM f=%u %s %ux%u want=%u UPLOAD imm=%d phase=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, imm_level, batch_phase);
 	ri = tex_upload(TexInfo);
+	if (tex_flatpin)
+	{
+		HWR_PS2_FlatUnpin(tex_flatpin, (size_t)TexInfo->width * TexInfo->height);
+		tex_flatpin = NULL;
+	}
 	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
 		HWR_PS2_ReleaseMipmapData(TexInfo);
 	if (ri == NOREC)
@@ -1024,6 +1048,22 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 	H.cur_missing = 0;
 	if (batch_phase == 2)
 		H.rec[ri].done = H.frame_no + 1;
+}
+
+// hwdriver SetTexture: a big map texture selected outside the batches waits for its polygon (imm_prepare, PS2-HW-37), the rest is made resident now
+static void hw_SetTexture(GLMipmap_t *TexInfo)
+{
+	if (!H.up)
+		return;
+	H.imm_tex = NULL;
+	if (TexInfo && batch_phase == 0 && plan_wants(TexInfo) && !(ps2hwd_dbg_flags & HWDBG_NOPLAN))
+	{
+		H.imm_tex = TexInfo;
+		H.cur_tex = NOREC;
+		H.cur_missing = 0;
+		return;
+	}
+	settex_now(TexInfo);
 }
 
 // The batched polygon of this texture is drawn later in the frame: the texture (or the image of its other variant) must stay in VRAM until then.
@@ -1054,7 +1094,7 @@ static void hw_UpdateTexture(GLMipmap_t *TexInfo)
 		dma_fence(); // the engine has changed the texels: no queued reference may still read the old ones
 		tex_drop((int)(r - H.rec), 0);
 	}
-	hw_SetTexture(TexInfo);
+	settex_now(TexInfo);
 }
 
 static void hw_DeleteTexture(GLMipmap_t *TexInfo)
@@ -1065,6 +1105,10 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		return;
 	if (H.up)
 		dma_fence(); // the engine frees the texels after this call: no queued DMA may read them (also when the image was evicted meanwhile)
+	if (H.imm_tex == TexInfo)
+		H.imm_tex = NULL;
+	if (H.up)
+		plan_forget(TexInfo);
 	if (H.up && (r = rec_of(TexInfo)) != NULL)
 	{
 		ov_flush_all();
@@ -1089,6 +1133,8 @@ static void hw_ClearMipMapCache(void)
 		return;
 	ov_flush_all();
 	dma_fence();
+	H.imm_tex = NULL;
+	plan_reset();
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)

@@ -96,6 +96,7 @@ int PS2HWD_ReadVram(void *dst, unsigned int blk, unsigned int tbw, int psm, int 
 	return -3;
 }
 
+static void imm_prepare(const FOutVector *verts, unsigned int n) { (void)verts; (void)n; } /* ps2_hw_plan.inc (HT planner): not part of the host test */
 #include "ps2_hw_xform.inc"
 #include "ps2_hw_light.inc"
 #include "ps2_hw_tex.inc"
