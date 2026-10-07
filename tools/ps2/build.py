@@ -35,7 +35,7 @@ if IS_WIN:
 else:
     ENV['PATH'] = ':'.join([str(DEV/'ee/bin'), str(DEV/'iop/bin'), str(DEV/'bin'), str(DEV/'dvp/bin'), '/usr/bin', '/bin'])
 
-DEFS = ['-D_EE', '-DPS2', '-DPS2_PROFILE', '-DNOHW', '-DNOMD5',  # no HAVE_PNG / HAVE_ZLIB: PS2-20 (cooked packs only)
+DEFS = ['-D_EE', '-DPS2', '-DPS2_PROFILE', '-DNOHW',  # no HAVE_PNG / HAVE_ZLIB: PS2-20 (cooked packs only)
         '-DPS2_AUDIO_VORBIS', '-DPS2_AUDIO_MP3',
         '-DNOMUMBLE', '-DNO_IPV6', '-DNOUPNP', '-DCMAKECONFIG', '-D_LARGEFILE64_SOURCE',
         '-DNOEXECINFO', '-DUNIXCOMMON']
@@ -52,10 +52,13 @@ LIBS = ['-lps2_drivers', '-llz4', '-lgskit', '-ldmakit', '-laudsrv', '-lpad', '-
 
 
 # OPT6-F: content systems the profile used to cut out (src/doomtype.h: PS2_ZIPPNG, PS2_LUA, PS2_UDMF, PS2_ADDONS, PS2_LIMITS).
-# SRB2_PS2_NO=lua,udmf,... builds with those switched off (A/B measurements); the default list shrinks as the stages are done.
-NO_FEATURES = [x for x in os.environ.get('SRB2_PS2_NO', 'lua,udmf,addons,limits').lower().split(',') if x]
+# SRB2_PS2_NO=lua,udmf,... builds with those switched off (A/B measurements). OPT10-X: the default list is EMPTY (everything is in: Lua, UDMF, add-ons, limits,
+# network): every system was run in the emulator in the full configuration (docs/GATES/g1/opt10-X.md); the old cut-down profile is SRB2_PS2_NO=lua,udmf,addons,limits.
+NO_FEATURES = [x for x in os.environ.get('SRB2_PS2_NO', '').lower().split(',') if x]
 for _f in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DPS2_NO_' + _f.upper()]
+if 'addons' in NO_FEATURES:
+    CFLAGS = CFLAGS + ['-DNOMD5']  # PS2-111: MD5 (demo file lists, net file lists, map digests, remote admin) comes with the add-ons; the cut-down profile keeps it off
 if 'zippng' not in NO_FEATURES:
     CFLAGS = CFLAGS + ['-DHAVE_ZLIB', '-DHAVE_PNG']  # PS2-100: pk3 (ZIP) and PNG pictures of add-ons; cooked packs stay the fast path
     LIBS = [l for l in LIBS if l != '-lm'] + ['-lpng16', '-lz', '-lm']

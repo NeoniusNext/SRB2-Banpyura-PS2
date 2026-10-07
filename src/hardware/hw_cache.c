@@ -31,6 +31,13 @@
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
+unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
+static inline unsigned int ps2hwt_now(void)
+{
+	unsigned int v;
+	__asm__ volatile("mfc0 %0,$9" : "=r"(v));
+	return v;
+}
 #endif
 
 INT32 patchformat = GL_TEXFMT_AP_88; // use alpha for holes
@@ -310,6 +317,68 @@ static void HWR_DrawPatchInCache(GLMipmap_t *mipmap,
 	// NOTE: should this actually be pblockwidth*bpp?
 	blockmodulo = pblockwidth*bpp;
 
+#ifdef PS2_PROFILE
+	// PS2-HW-38: as the composition of map textures (PS2-HW-36): the block is row-major and the posts are columns, written column by column every
+	// texel lands in another cache line of the 8 KiB data cache (about 25 cycles per texel: 0.4 M cycles for a 128x128 sprite). The same bytes
+	// (alpha 0xFF for every texel of a post, the transparent rest of the block stays as MakeBlock filled it) are written in bands of 64 rows.
+	if (!ps2_slow_composite && (bpp == 1 || bpp == 2) && !(mipmap->flags & TF_CHROMAKEYED))
+	{
+		const UINT8 *cm = mipmap->colormap ? mipmap->colormap->data : NULL;
+		INT32 y0, j;
+
+		for (y0 = 0; y0 < pblockheight; y0 += 64)
+		{
+			const INT32 y1 = y0 + 64 > pblockheight ? pblockheight : y0 + 64;
+
+			for (j = 0; j < pwidth; j++)
+			{
+				const column_t *pc = &realpatch->columns[j];
+				UINT8 *dcol = block + (size_t)j * bpp;
+				unsigned i;
+
+				for (i = 0; i < pc->num_posts; i++)
+				{
+					const post_t *post = &pc->posts[i];
+					INT32 position = (INT32)post->topdelta, end = position + (INT32)post->length, ys, y;
+					const UINT8 *src;
+					UINT8 *d;
+
+					if (position < 0)
+						position = 0; // the original starts the source at -position: handled by the offset below
+					ys = position > y0 ? position : y0;
+					if (end > pblockheight)
+						end = pblockheight;
+					if (end > y1)
+						end = y1;
+					if (ys >= end)
+						continue;
+					src = pc->pixels + post->data_offset + (ys - (INT32)post->topdelta);
+					d = dcol + (size_t)ys * (size_t)blockmodulo;
+					if (bpp == 2)
+					{
+						for (y = ys; y < end; y++, d += blockmodulo)
+						{
+							const UINT8 t = *src++;
+
+							*(UINT16 *)(void *)d = (UINT16)(0xFF00u | (cm ? cm[t] : t));
+						}
+					}
+					else
+					{
+						for (y = ys; y < end; y++, d += blockmodulo)
+						{
+							const UINT8 t = *src++;
+
+							*d = cm ? cm[t] : t;
+						}
+					}
+				}
+			}
+		}
+		return;
+	}
+#endif
+
 	// Draw each column to the block cache
 	for (; ncols--; block += bpp, xfrac += xfracstep)
 	{
@@ -480,9 +549,24 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
 		case 1: memset(block, HWR_PATCHES_CHROMAKEY_COLORINDEX, blocksize); break;
 		case 2:
 				// fill background with chromakey, alpha = 0
+#ifdef PS2_PROFILE
+				{
+					// OPT10 (HT): four texels per store (when block is 8 byte aligned; the tail and the unaligned case go texel by texel)
+					const UINT64 pat = (UINT64)bu16 * 0x0001000100010001ull;
+					UINT64 *q = (UINT64 *)(void *)block;
+
+					i = 0;
+					if (((size_t)block & 7u) == 0)
+						for (; i + 4 <= blocksize; i += 4)
+							*q++ = pat;
+					for (; i < blocksize; i++)
+						memcpy(block+i*sizeof(UINT16), &bu16, sizeof(UINT16));
+				}
+#else
 				for (i = 0; i < blocksize; i++)
 				//[segabor]
 					memcpy(block+i*sizeof(UINT16), &bu16, sizeof(UINT16));
+#endif
 				break;
 		case 4: memset(block, 0x00, blocksize*sizeof(UINT32)); break;
 	}
@@ -602,6 +686,10 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 
 		grPatch->max_s = (float)patch->width / (float)grMipmap->width;
 		grPatch->max_t = (float)patch->height / (float)grMipmap->height;
+#ifdef PS2_PROFILE
+		grMipmap->ps2_uw = (UINT16)patch->width; // PS2-HW-39: the GS driver stores only the real part of the power of two block
+		grMipmap->ps2_uh = (UINT16)patch->height;
+#endif
 	}
 
 	Z_Free(grMipmap->data);
@@ -609,12 +697,44 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 
 	if (makebitmap)
 	{
+#ifdef PS2_PROFILE
+		unsigned int t0 = ps2hwt_now();
+#endif
 		MakeBlock(grMipmap);
 
 		HWR_DrawPatchInCache(grMipmap,
 			grMipmap->width, grMipmap->height,
 			patch->width, patch->height,
 			patch);
+#ifdef PS2_PROFILE
+		ps2hwt_mkpatch_n++;
+		ps2hwt_mkpatch_cyc += ps2hwt_now() - t0;
+		if ((ps2hwd_dbg_flags & 0x1000000) /* HWDBG_COMPOSE */ && !ps2_slow_composite && format2bpp(grMipmap->format) <= 2)
+		{
+			// the same patch by the original column loops: the bytes must be the same
+			static unsigned checked, bad;
+			GLMipmap_t chk = *grMipmap;
+			size_t bytes = (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format);
+
+			chk.data = NULL;
+			ps2_slow_composite = true;
+			MakeBlock(&chk);
+			HWR_DrawPatchInCache(&chk, chk.width, chk.height, patch->width, patch->height, patch);
+			ps2_slow_composite = false;
+			checked++;
+			if (!chk.data || memcmp(chk.data, grMipmap->data, bytes))
+			{
+				bad++;
+				CONS_Printf("HWC patch composite MISMATCH %dx%d (patch %dx%d) colormap %d (%u of %u checked differ)\n", (int)grMipmap->width, (int)grMipmap->height, (int)patch->width, (int)patch->height,
+					grMipmap->colormap != NULL, bad, checked);
+			}
+			else if (!(checked & 31))
+			{
+				CONS_Printf("HWC patch composite check: %u patches identical, %u differ\n", checked - bad, bad);
+			}
+			Z_Free(chk.data);
+		}
+#endif
 	}
 }
 
@@ -1049,6 +1169,54 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 			memcpy(Z_Malloc(size, PU_HWRCACHE, &m->data), R_GetFlatForTexture(m->regen_id), size);
 		}
 	}
+}
+
+// OPT10 (PS2-HW-38): the mip levels of a big flat (the 1 MiB cloud planes) are made from the engine's own converted flat, pinned while the driver
+// reads it: no second copy of 1 MiB (two of them at once ran the 22 MiB arena out of a contiguous 1 MiB block)
+// PS2-HW-38: can the rows of this flat be read straight from its lump? (a raw flat of the size of the texture, not resident as the engine's flat: the levels
+// of a 1 MiB cloud plane are then made from bands of 64 rows, and no 1 MiB block is ever needed - the arena of the full build has none to give)
+boolean HWR_PS2_FlatStreamable(const GLMipmap_t *m)
+{
+	const texture_t *t;
+	const texpatch_t *patch;
+
+	if (m->regen_kind != 2 || m->regen_id < 0 || (size_t)m->regen_id >= gl_numtextures || !textures[m->regen_id])
+		return false;
+	t = textures[m->regen_id];
+	if (t->flat != NULL || t->type != TEXTURETYPE_FLAT || t->patchcount < 1)
+		return false;
+	patch = &t->patches[0];
+	return W_LumpLengthPwad(patch->wad, patch->lump) == (size_t)m->width * m->height;
+}
+
+boolean HWR_PS2_FlatRows(const GLMipmap_t *m, UINT32 row0, UINT32 nrows, UINT8 *dest)
+{
+	const texpatch_t *patch = &textures[m->regen_id]->patches[0];
+	size_t bytes = (size_t)m->width * nrows;
+
+	return W_ReadLumpHeaderPwad(patch->wad, patch->lump, dest, bytes, (size_t)row0 * m->width) == bytes;
+}
+
+const UINT8 *HWR_PS2_FlatPin(const GLMipmap_t *m)
+{
+	UINT8 *p;
+
+	if (m->regen_kind != 2 || m->regen_id < 0 || (size_t)m->regen_id >= gl_numtextures)
+		return NULL;
+	p = R_GetFlatForTexture((size_t)m->regen_id);
+	if (p)
+		Z_ChangeTag(p, PU_STATIC);
+	return p;
+}
+
+void HWR_PS2_FlatUnpin(const UINT8 *p, size_t bytes)
+{
+	// a 1 MiB plane would stay in the cache (and, touched in this frame, out of the zone's reach) for nothing: the levels made from it are
+	// in the driver's data cache, it is read again when a level has to be made again
+	if (bytes >= 512 * 1024)
+		Z_Free((void *)p);
+	else
+		Z_ChangeTag((void *)p, PU_CACHE);
 }
 
 void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)

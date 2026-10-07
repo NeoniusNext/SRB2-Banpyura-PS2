@@ -76,7 +76,11 @@ struct GLMipmap_s
 	UINT8                 ps2_h255; // 0 unknown, 1 no texel has index 255, 2 some has (cached: scanning 512 KiB costs 0.6 M cycles)
 	// PS2-HW-34: what the batches of this frame need of the texture (ps2_hw_plan.inc): on the original mipmap of a variant pair
 	UINT32                ps2_planfr; // driver frame + 1 the plan belongs to (0 = none)
-	UINT8                 ps2_want; // the coarsest mip level (0 = full size) at which no polygon of the frame magnifies a texel
+	UINT8                 ps2_want; // the mip level (0 = full size) the frame plan resolved for the texture (OPT10: ps2_hw_plan.inc)
+	UINT16                ps2_pi; // OPT10: index of the texture's record in the driver's frame plan (valid while ps2_planfr is the current frame)
+	UINT16                ps2_uw, ps2_uh; // OPT10 (PS2-HW-39): the real size of a patch (the mipmap is its power of two size): only that part is stored in VRAM
+	UINT8                 ps2_ihint; // OPT10: the level the budgeted plan gave the texture for its immediate draws (translucent planes, sky), valid for 2 frames after ps2_ihfr
+	UINT32                ps2_ihfr, ps2_imfr; // driver frame + 1 of the plan that set the hint / of the last immediate draw of the texture
 	UINT8                 ps2_vis; // some polygon of the frame is visible at all
 	UINT32                ps2_full_fr; // driver frame + 1 of the last draw that needed the full size without a plan (the next plans keep the full size)
 #endif

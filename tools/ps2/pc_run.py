@@ -1,17 +1,20 @@
-"""Run the PC reference game (srb2-assets/srb2win.exe) with add-ons and collect its FTLUA lines (OPT9-F).
+"""Run the PC reference game (build/pc-net: this source tree, Linux, own Xvfb) with add-ons and collect its FTLUA lines (OPT9-F, ported to Linux in OPT10-X).
 
-usage: pc_run.py --name NAME [--files a.pk3,b.wad,...] [--warp 1] [--until 'FTLUA map'] [--timeout 120] [--out build/opt9-f/pc] [-- extra engine args]
+usage: pc_run.py --name NAME [--files a.pk3,b.wad,...] [--warp 1] [--until 'FTLUA map'] [--timeout 120] [--out build/opt10-x/pc] [-- extra engine args]
 Files are given as paths (relative to the repo root or absolute); they are passed with -file in this order (the last one is loaded last).
 Writes <out>/<name>/pc.out (stdout) and ftlua.txt (the FTLUA lines, "FTLUA " prefix kept), kills the game when --until appears or the timeout is over.
 """
 import argparse
 import os
+import signal
 import subprocess
 import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import net_env  # noqa: E402
 
 
 def main():
@@ -21,13 +24,13 @@ def main():
     ap.add_argument('--warp', default='1')
     ap.add_argument('--until', default='FTLUA things')
     ap.add_argument('--timeout', type=float, default=120)
-    ap.add_argument('--out', default=str(ROOT / 'build/opt9-f/pc'))
-    ap.add_argument('--exe', default=str(ROOT / 'build/opt7-s/pc/srb2-s7pc.exe'), help='PC reference: default the PC build of this source tree (build/opt7-s/pc), srb2-assets/srb2win.exe is another version')
+    ap.add_argument('--out', default=str(ROOT / 'build/opt10-x/pc'))
+    ap.add_argument('--exe', default=str(ROOT / net_env.pc_exe()), help='PC reference: default the PC build of this source tree (build/pc-net, tools/ps2/net_env.py); srb2-assets/srb2win.exe is another version')
     ap.add_argument('--nomusic', action='store_true')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     o = Path(a.out).resolve() / a.name
-    (o / 'home').mkdir(parents=True, exist_ok=True)
+    (o / 'home' / '.srb2').mkdir(parents=True, exist_ok=True)
     a.exe = str(Path(a.exe) if Path(a.exe).is_absolute() else ROOT / a.exe)
     args = [a.exe, '-home', str(o / 'home'), '-skipintro'] + (['-warp', a.warp] if a.warp else []) + ['-nosound']  # -nosound: no sound device; the music still goes through S_ChangeMusic (an error for a missing lump is printed either way)
     if a.nomusic:
@@ -40,7 +43,9 @@ def main():
     args += a.extra
     outf = open(o / 'pc.out', 'wb')
     errf = open(o / 'pc.err', 'wb')
-    p = subprocess.Popen(args, cwd=str(Path(a.exe).parent), stdout=outf, stderr=errf, creationflags=0x08000000)
+    env = dict(os.environ, SRB2WADDIR=os.environ.get('SRB2WADDIR', '/opt/srb2-assets'), SDL_AUDIODRIVER='dummy', LIBGL_ALWAYS_SOFTWARE='1')
+    args = ['xvfb-run', '-a', '-s', '-screen 0 800x600x24'] + args
+    p = subprocess.Popen(args, cwd=str(o), stdout=outf, stderr=subprocess.STDOUT, env=env, start_new_session=True)
     t0 = time.time()
     state = 'timeout'
     while time.time() - t0 < a.timeout:
@@ -53,7 +58,12 @@ def main():
             break
         time.sleep(1.0)
     if p.poll() is None:
-        p.kill()
+        os.killpg(os.getpgid(p.pid), signal.SIGINT)
+        time.sleep(2)
+    try:
+        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+    except OSError:
+        pass
     outf.close()
     errf.close()
     text = (o / 'pc.out').read_text(errors='replace')
