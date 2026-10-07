@@ -85,8 +85,8 @@ void PS2HWFB_Init(void)
 
 void PS2HWFB_Report(void)
 {
-	I_OutputMsg("ps2_hwfb: fallbacks %lu returns %lu soft-retries %lu thrown %lu level-fails %lu zone-jumps %lu gaveup %d last \"%s\"\n", (unsigned long)hwfb_fallbacks,
-		(unsigned long)hwfb_returns, (unsigned long)hwfb_softretries, (unsigned long)hwfb_thrown, (unsigned long)hwfb_levelfails, (unsigned long)Z_GuardRecovered(), (int)hwfb_gaveup, hwfb_last);
+	I_OutputMsg("ps2_hwfb: fallbacks %lu returns %lu soft-retries %lu thrown %lu level-fails %lu zone-jumps %lu guarded-allocs %lu gaveup %d last \"%s\"\n", (unsigned long)hwfb_fallbacks,
+		(unsigned long)hwfb_returns, (unsigned long)hwfb_softretries, (unsigned long)hwfb_thrown, (unsigned long)hwfb_levelfails, (unsigned long)Z_GuardRecovered(), (unsigned long)Z_GuardAllocs(), (int)hwfb_gaveup, hwfb_last);
 }
 
 #ifdef HWRENDER

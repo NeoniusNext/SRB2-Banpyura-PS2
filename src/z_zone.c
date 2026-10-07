@@ -804,8 +804,9 @@ void Z_ReportCosts(void)
 static zguard_t *zguard;
 static UINT32 zoom_recovered, zoom_refused;
 // -zoomtest N[,N2...]: fault injection: the next allocation with a hardware tag (or any tag after "all") made N frames after the guard was armed fails
-static UINT32 zoomtest_frames[8], zoomtest_n, zoomtest_next, zoomtest_every, zoomtest_last;
+static UINT32 zoomtest_frames[8], zoomtest_n, zoomtest_next, zoomtest_every, zoomtest_last, zoomnth, zoomnth_count, zoomnth_after;
 static boolean zoomtest_any;
+static UINT32 zguard_allocs;
 static UINT32 zoomtest_armed_frame;
 
 void Z_GuardPush(zguard_t *g)
@@ -843,6 +844,11 @@ UINT32 Z_GuardRecovered(void)
 	return zoom_recovered;
 }
 
+UINT32 Z_GuardAllocs(void)
+{
+	return zguard_allocs;
+}
+
 // An unrecoverable condition outside the allocator (a driver resource failure): back to the guard with the reason, or false when none is armed
 boolean Z_GuardThrow(const char *reason)
 {
@@ -859,7 +865,17 @@ boolean Z_GuardThrow(const char *reason)
 // Test hook: true when this allocation is to fail now (the allocator then goes down the out-of-memory path without looking at the arena)
 static boolean Z_OomInjected(INT32 tag)
 {
-	if (!zguard || (!zoomtest_every && (!zoomtest_n || zoomtest_next >= zoomtest_n)))
+	if (!zguard)
+		return false;
+	zguard_allocs++;
+	if (zoomnth)
+	{
+		// -zoomnth N [-zoomafter F]: the N-th allocation made under a guard from frame F on (any tag) fails: the systematic test of every allocation site of a level load
+		if (((zframe - zoomtest_armed_frame) & Z_FRAME_MASK) < zoomnth_after || ++zoomnth_count != zoomnth)
+			return false;
+		return true;
+	}
+	if (!zoomtest_every && (!zoomtest_n || zoomtest_next >= zoomtest_n))
 		return false;
 	if (!zoomtest_any && !(tag == PU_HWRCACHE || tag == PU_HWRCACHE_UNLOCKED || tag == PU_HWRBATCH || tag == PU_HWRPLANE || tag == PU_HWRPATCHINFO
 		|| tag == PU_HWRPATCHCOLMIPMAP || tag == PU_HWRMODELTEXTURE || tag == PU_HWRMODELTEXTURE_UNLOCKED || tag == PU_HWRLIGHTTABLEDATA))
@@ -896,15 +912,32 @@ static void Z_OomTestInit(void)
 		}
 		zoomtest_armed_frame = zframe;
 	}
+	if (M_CheckParm("-zoomnth") && M_IsNextParm())
+		zoomnth = (UINT32)atol(M_GetNextParm());
+	if (M_CheckParm("-zoomafter") && M_IsNextParm())
+		zoomnth_after = (UINT32)atol(M_GetNextParm());
 	if (M_CheckParm("-zoomevery") && M_IsNextParm())
 		zoomtest_every = (UINT32)atol(M_GetNextParm());
 	zoomtest_any = M_CheckParm("-zoomany") != 0;
 }
 
+static boolean Z_IsHWTag(INT32 tag)
+{
+	return tag == PU_HWRCACHE || tag == PU_HWRCACHE_UNLOCKED || tag == PU_HWRBATCH || tag == PU_HWRPLANE || tag == PU_HWRPATCHINFO || tag == PU_HWRPATCHCOLMIPMAP
+		|| tag == PU_HWRMODELTEXTURE || tag == PU_HWRMODELTEXTURE_UNLOCKED || tag == PU_HWRLIGHTTABLEDATA;
+}
+
+// May this failure go back to a guard? Not while a Lua hook runs (its state cannot be abandoned) and, in a network game, only a hardware renderer allocation:
+// the net code (NetUpdate runs inside the frame) must not be left half way, the game state of all players depends on it.
+static boolean Z_GuardMayJump(INT32 tag)
+{
+	return zguard && !PS2Lua_InCall() && (!netgame || Z_IsHWTag(tag));
+}
+
 static void Z_OutOfMemory(size_t size, INT32 tag, size_t align)
 {
 	zpinned = NULL;
-	if (zguard && !PS2Lua_InCall())
+	if (Z_GuardMayJump(tag))
 	{
 		zguard->size = size;
 		zguard->tag = tag;
@@ -915,7 +948,7 @@ static void Z_OutOfMemory(size_t size, INT32 tag, size_t align)
 		longjmp(zguard->jb, 1);
 	}
 	if (zguard)
-		zoom_refused++; // a Lua hook is running: its state cannot be abandoned
+		zoom_refused++; // a Lua hook is running or a network game: not abandoned
 	Z_OutOfMemoryFatal(size, tag, align);
 }
 
