@@ -7,4 +7,5 @@ for d in "$@"; do
   if [ -f tools/ps2/golden_allhash/$d.csv ]; then
     if cmp -s tools/ps2/golden_allhash/$d.csv build/runs/$TAG-$d/refout/allhash.csv; then echo "ALLHASH $d identical ($(wc -l < build/runs/$TAG-$d/refout/allhash.csv) frames)"; else echo "ALLHASH $d DIFFER"; diff tools/ps2/golden_allhash/$d.csv build/runs/$TAG-$d/refout/allhash.csv | head -5; fi
   fi
+  rm -f build/runs/$TAG-$d/pcsx2.log build/runs/$TAG-$d/SRB2.ELF build/runs/$TAG-$d/*.PAK build/runs/$TAG-$d/refout/frame-*.idx
 done

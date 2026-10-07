@@ -1141,7 +1141,11 @@ static fixed_t HighestOnLine(fixed_t radius, fixed_t x, fixed_t y, line_t *line,
 		);
 }
 
+#ifdef PS2_OPT_REND // PS2-162: the flat case is an inline in p_local.h, only slopes come here
+fixed_t P_MobjFloorZSlope(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#else
 fixed_t P_MobjFloorZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#endif
 {
 	I_Assert(sector != NULL);
 
@@ -1217,7 +1221,11 @@ fixed_t P_MobjFloorZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y,
 		return sector->floorheight;
 }
 
+#ifdef PS2_OPT_REND
+fixed_t P_MobjCeilingZSlope(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#else
 fixed_t P_MobjCeilingZ(sector_t *sector, sector_t *boundsec, fixed_t x, fixed_t y, fixed_t radius, line_t *line, boolean lowest, boolean perfect)
+#endif
 {
 	I_Assert(sector != NULL);
 
@@ -10185,8 +10193,52 @@ static boolean P_FuseThink(mobj_t *mobj)
 //
 // P_MobjThinker
 //
+#ifdef PS2_TYPESTAT // diagnostics of tools/ps2/host_variant.sh (host only): which mobj types pay for P_CheckPosition every tic
+#include <stdio.h>
+static unsigned ps2_typestat[4][NUMMOBJTYPES];
+static void PS2_TypeStatDump(void)
+{
+	static const char *const what[4] = {"thinker: calls", "thinker: ZMovement+CheckPosition", "scenery: calls", "scenery: ZMovement+CheckPosition"};
+	int w, t, best;
+	for (w = 0; w < 4; w++)
+	{
+		unsigned total = 0, shown = 0;
+		unsigned char used[NUMMOBJTYPES];
+		memset(used, 0, sizeof used);
+		for (t = 0; t < NUMMOBJTYPES; t++)
+			total += ps2_typestat[w][t];
+		fprintf(stderr, "TYPESTAT %s: total %u\n", what[w], total);
+		for (; shown < 14; shown++)
+		{
+			best = -1;
+			for (t = 0; t < NUMMOBJTYPES; t++)
+				if (!used[t] && ps2_typestat[w][t] && (best < 0 || ps2_typestat[w][t] > ps2_typestat[w][best]))
+					best = t;
+			if (best < 0)
+				break;
+			used[best] = 1;
+			fprintf(stderr, "TYPESTAT   type %d: %u\n", best, ps2_typestat[w][best]);
+		}
+	}
+}
+static void PS2_TypeStat(int w, mobjtype_t type)
+{
+	static int reg;
+	if (!reg)
+	{
+		reg = 1;
+		atexit(PS2_TypeStatDump);
+	}
+	ps2_typestat[w][type]++;
+}
+#define PS2_TYPESTAT_N(w, mo) PS2_TypeStat(w, (mo)->type)
+#else
+#define PS2_TYPESTAT_N(w, mo) ((void)0)
+#endif
+
 void P_MobjThinker(mobj_t *mobj)
 {
+	PS2_TYPESTAT_N(0, mobj);
 	I_Assert(mobj != NULL);
 	I_Assert(!P_MobjWasRemoved(mobj));
 
@@ -10316,6 +10368,7 @@ void P_MobjThinker(mobj_t *mobj)
 		|| (!(mobj->eflags & MFE_VERTICALFLIP) && mobj->z != mobj->floorz)
 		|| P_IsObjectInGoop(mobj))
 	{
+		PS2_TYPESTAT_N(1, mobj);
 		if (!P_ZMovement(mobj))
 			return; // mobj was removed
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
@@ -10498,6 +10551,7 @@ void P_PushableThinker(mobj_t *mobj)
 // Quick, optimized function for scenery
 void P_SceneryThinker(mobj_t *mobj)
 {
+	PS2_TYPESTAT_N(2, mobj);
 	if (mobj->flags & MF_BOXICON)
 	{
 		if (!(mobj->eflags & MFE_VERTICALFLIP))
@@ -10532,6 +10586,7 @@ void P_SceneryThinker(mobj_t *mobj)
 		|| (!(mobj->eflags & MFE_VERTICALFLIP) && mobj->z != mobj->floorz)
 		|| P_IsObjectInGoop(mobj))
 	{
+		PS2_TYPESTAT_N(3, mobj);
 		if (!P_SceneryZMovement(mobj))
 			return; // mobj was removed
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!

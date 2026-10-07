@@ -43,7 +43,7 @@
 #define PS2NS_ALLOC(n) Z_Malloc((n), PU_STATIC, NULL)
 #define PS2NS_FREE(p) Z_Free(p)
 #define PS2NS_OOM() I_Error("R_CreateDrawNodes: out of memory")
-#define PS2NS_MISMATCH(from, v, r) I_Error("PS2NS_Next: vector scan %d, scalar %d (from %d)", (int)(v), (int)(r), (int)(from))
+#define PS2NS_MISMATCH() I_Error("PS2NS_NextGroup: the vector scan differs from the scalar reference")
 #include "ps2/ps2_nodescan.h"
 #endif
 #ifdef HWRENDER
@@ -3527,7 +3527,7 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 	{
 		ps2_nodescan_t *const ns = &r_nodescan;
 		boolean fastok = true; // the table holds every node of the list (every rectangle fitted)
-		INT32 nx1, nx2, ny1, ny2, step = 1, lab, idx;
+		INT32 nx1, nx2, ny1, ny2, step = 1, lab;
 
 		PS2NS_Reset(ns);
 		{
@@ -3566,17 +3566,24 @@ static void R_CreateDrawNodes(maskcount_t* mask, drawnode_t* head, boolean temps
 			{
 				// Only the nodes the rectangle test does not reject can claim the sprite. The sprite goes before the claiming node
 				// that comes first in the list (labels in list order), which is the node the original loop stops at.
-				INT32 bestorder = INT32_MAX;
-				for (idx = PS2NS_Next(ns, 0, rover->x1, rover->x2, rover->szt, rover->sz); idx < ns->count;
-					idx = PS2NS_Next(ns, idx + 1, rover->x1, rover->x2, rover->szt, rover->sz))
+				INT32 bestorder = INT32_MAX, grp = 0;
+				const INT32 groups = PS2NS_GROUPS(ns);
+				for (;;)
 				{
-					drawnode_t *const n = (drawnode_t *)ns->node[idx];
-					PS2SUB_N(91);
-					if (n->order < bestorder && R_DrawNodeClaims(n, rover, sintersect))
+					UINT64 lanes = PS2NS_NextGroup(ns, &grp, groups, rover->x1, rover->x2, rover->szt, rover->sz);
+					if (grp >= groups)
+						break;
+					do
 					{
-						claim = n;
-						bestorder = n->order;
-					}
+						drawnode_t *const n = (drawnode_t *)ns->node[grp * 8 + PS2NS_PopLane(&lanes)];
+						PS2SUB_N(91);
+						if (n->order < bestorder && R_DrawNodeClaims(n, rover, sintersect))
+						{
+							claim = n;
+							bestorder = n->order;
+						}
+					} while (lanes);
+					grp++;
 				}
 			}
 			else

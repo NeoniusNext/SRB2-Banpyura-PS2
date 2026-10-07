@@ -5,15 +5,19 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  ps2_nodescan.h
-/// \brief PS2-161: compact rectangle table of the draw node list of R_CreateDrawNodes (r_things.c)
+/// \brief PS2-161: compact rectangle table of the draw node list of R_CreateDrawNodes (r_things.c), and the stable sprite sort
 ///
 /// The sprite phase of R_CreateDrawNodes walks the whole node list for every sprite and, for every node, first runs a rejection test
 /// (x range of sprite and node, y range for planes and sprites) and only then the real ordering test. The test never has side effects
-/// and rejects ~95% of the nodes. This table keeps, in list order, one rectangle per node so the rejection runs over arrays
-/// (8 nodes per step with the R5900 multimedia instructions): a node is rejected  <=>  x1 > rx2 || x2 < rx1 || y1 > rsz || y2 < rszt.
+/// and rejects ~95% of the nodes. This table keeps one rectangle per node so the rejection runs over arrays, 8 nodes per step with the
+/// R5900 multimedia instructions: a node is rejected  <=>  x1 > rx2 || x2 < rx1 || y1 > rsz || y2 < rszt.
 /// The caller keeps the linked list as the truth and runs the original test for every node that is not rejected (the test has no side
-/// effects), then takes the claiming node that is first in the list, so the result is identical to the original loop. Tested by tools/ps2/sw_hosttest.py (host, scalar scan) and by the PS2_NODECHECK shadow
-/// check on the EE.
+/// effects), then takes the claiming node that is first in the list, so the result is identical to the original loop.
+///
+/// Layout: groups of 8 nodes, one 64-byte block per group: x1[8], x2[8], y1[8], y2[8] (INT16). Lanes beyond the node count reject
+/// everything. The table is in creation order (appending never moves anything).
+/// Tested by tools/ps2/sw_hosttest.py (host: portable kernel against the scalar reference) and, for the MMI kernel, by the PS2_NODECHECK
+/// shadow check on the EE plus the four-demo golden comparison.
 
 #ifndef __PS2_NODESCAN__
 #define __PS2_NODESCAN__
@@ -26,7 +30,7 @@
 #define PS2NS_ALLOC(n) malloc(n)
 #define PS2NS_FREE(p) free(p)
 #define PS2NS_OOM() abort()
-#define PS2NS_MISMATCH(from, v, r) abort()
+#define PS2NS_MISMATCH() abort()
 #endif
 
 #define PS2NS_LIM 30000 // coordinates beyond this make the caller use the original loop
@@ -35,9 +39,9 @@
 
 typedef struct
 {
-	INT16 *x1, *x2, *y1, *y2; // [capacity], 16-byte aligned, creation order
-	void **node;              // [capacity]
-	INT32 count, capacity;    // capacity is a multiple of 8; lanes >= count reject everything
+	INT16 *blk;            // [capacity / 8][32], 64-byte aligned
+	void **node;           // [capacity]
+	INT32 count, capacity; // capacity is a multiple of 8, > count + 7: the group after the last node exists and rejects everything
 	void *mem;
 } ps2_nodescan_t;
 
@@ -46,10 +50,12 @@ static inline void PS2NS_FillNone(ps2_nodescan_t *ns, INT32 from, INT32 to)
 	INT32 i;
 	for (i = from; i < to; i++)
 	{
-		ns->x1[i] = PS2NS_NONE_X1;
-		ns->x2[i] = PS2NS_NONE_X2;
-		ns->y1[i] = PS2NS_NONE_X1;
-		ns->y2[i] = PS2NS_NONE_X2;
+		INT16 *g = ns->blk + (size_t)(i >> 3) * 32;
+		const INT32 l = i & 7;
+		g[l] = PS2NS_NONE_X1;
+		g[8 + l] = PS2NS_NONE_X2;
+		g[16 + l] = PS2NS_NONE_X1;
+		g[24 + l] = PS2NS_NONE_X2;
 		ns->node[i] = NULL;
 	}
 }
@@ -68,29 +74,23 @@ static inline void PS2NS_Reserve(ps2_nodescan_t *ns, INT32 need)
 		return;
 	{
 		const INT32 cap = (INT32)(((size_t)(need + 8) * 3 / 2 + 7) & ~(size_t)7);
-		const size_t bytes = (size_t)cap * (4 * sizeof(INT16) + sizeof(void *)) + 32;
+		const size_t bytes = (size_t)(cap >> 3) * 64 + (size_t)cap * sizeof(void *) + 64;
 		unsigned char *mem = (unsigned char *)PS2NS_ALLOC(bytes);
 		ps2_nodescan_t n;
 		unsigned char *p;
 
 		if (!mem)
 			PS2NS_OOM();
-		p = (unsigned char *)(((uintptr_t)mem + 15) & ~(uintptr_t)15);
-		n.x1 = (INT16 *)p;
-		n.x2 = n.x1 + cap;
-		n.y1 = n.x2 + cap;
-		n.y2 = n.y1 + cap;
-		n.node = (void **)(n.y2 + cap);
+		p = (unsigned char *)(((uintptr_t)mem + 63) & ~(uintptr_t)63);
+		n.blk = (INT16 *)p;
+		n.node = (void **)(p + (size_t)(cap >> 3) * 64);
 		n.count = ns->count;
 		n.capacity = cap;
 		n.mem = mem;
 		PS2NS_FillNone(&n, 0, cap);
 		if (ns->count)
 		{
-			memcpy(n.x1, ns->x1, (size_t)ns->count * sizeof(INT16));
-			memcpy(n.x2, ns->x2, (size_t)ns->count * sizeof(INT16));
-			memcpy(n.y1, ns->y1, (size_t)ns->count * sizeof(INT16));
-			memcpy(n.y2, ns->y2, (size_t)ns->count * sizeof(INT16));
+			memcpy(n.blk, ns->blk, (size_t)((ns->count + 7) >> 3) * 64);
 			memcpy(n.node, ns->node, (size_t)ns->count * sizeof(void *));
 		}
 		if (ns->mem)
@@ -103,114 +103,148 @@ static inline void PS2NS_Reserve(ps2_nodescan_t *ns, INT32 need)
 static inline void PS2NS_Append(ps2_nodescan_t *ns, void *node, INT32 x1, INT32 x2, INT32 y1, INT32 y2)
 {
 	const INT32 at = ns->count;
+	INT16 *g;
 	PS2NS_Reserve(ns, at + 1);
-	ns->x1[at] = (INT16)x1;
-	ns->x2[at] = (INT16)x2;
-	ns->y1[at] = (INT16)y1;
-	ns->y2[at] = (INT16)y2;
+	g = ns->blk + (size_t)(at >> 3) * 32;
+	g[at & 7] = (INT16)x1;
+	g[8 + (at & 7)] = (INT16)x2;
+	g[16 + (at & 7)] = (INT16)y1;
+	g[24 + (at & 7)] = (INT16)y2;
 	ns->node[at] = node;
 	ns->count++;
 }
 
 static inline boolean PS2NS_Passes(const ps2_nodescan_t *ns, INT32 i, INT32 rx1, INT32 rx2, INT32 rszt, INT32 rsz)
 {
+	const INT16 *g = ns->blk + (size_t)(i >> 3) * 32;
+	const INT32 l = i & 7;
 #if defined(PS2_NEGCTL) && PS2_NEGCTL == 7 // negative control of the host A/B (tools/ps2/host_ab.sh): off by one in the x test
-	return !((ns->x1[i] >= rx2) | (ns->x2[i] < rx1) | (ns->y1[i] > rsz) | (ns->y2[i] < rszt));
+	return !((g[l] >= rx2) | (g[8 + l] < rx1) | (g[16 + l] > rsz) | (g[24 + l] < rszt));
 #else
-	return !((ns->x1[i] > rx2) | (ns->x2[i] < rx1) | (ns->y1[i] > rsz) | (ns->y2[i] < rszt));
+	return !((g[l] > rx2) | (g[8 + l] < rx1) | (g[16 + l] > rsz) | (g[24 + l] < rszt));
 #endif
 }
 
-// first index >= from whose rectangle is not rejected, or count (the reference scalar scan)
-static inline INT32 PS2NS_NextScalar(const ps2_nodescan_t *ns, INT32 from, INT32 rx1, INT32 rx2, INT32 rszt, INT32 rsz)
+// number of groups to scan (the last one may be partial: its missing lanes reject)
+#define PS2NS_GROUPS(ns) (((ns)->count + 7) >> 3)
+
+// Portable kernel and reference: the first group >= g that has a passing lane, left in *g (== groups when there is none); the result has
+// 0xFF in byte k when lane k of that group passes (the layout the MMI kernel produces).
+static inline UINT64 PS2NS_NextGroupScalar(const ps2_nodescan_t *ns, INT32 *g, INT32 groups, INT32 rx1, INT32 rx2, INT32 rszt, INT32 rsz)
 {
-	INT32 i;
-	for (i = from; i < ns->count; i++)
-		if (PS2NS_Passes(ns, i, rx1, rx2, rszt, rsz))
-			return i;
-	return ns->count;
+	INT32 i = *g, l;
+	for (; i < groups; i++)
+	{
+		UINT64 m = 0;
+		for (l = 0; l < 8; l++)
+			if (PS2NS_Passes(ns, i * 8 + l, rx1, rx2, rszt, rsz))
+				m |= (UINT64)0xFF << (8 * l);
+		if (m)
+		{
+			*g = i;
+			return m;
+		}
+	}
+	*g = groups;
+	return 0;
 }
 
 #if defined(_EE) && defined(__GNUC__) && !defined(PS2NS_SCALAR)
-// 8 nodes per step: PCGTH compares eight signed halfwords at once. Everything stays inside one asm block (the registers are 128 bit
-// wide, the compiler only knows their low halves); $8-$15 style fixed registers as in ps2_audio.c would also do, here the compiler picks
-// scratch registers through dummy 64-bit outputs.
-static inline INT32 PS2NS_NextVec(const ps2_nodescan_t *ns, INT32 from, INT32 rx1, INT32 rx2, INT32 rszt, INT32 rsz)
+// PCGTH compares eight signed halfwords at once; one 64-byte block per group, two groups per loop pass. Everything stays inside one asm
+// block (the registers are 128 bits wide, the compiler only knows their low halves); the compiler picks the scratch registers through
+// dummy 64-bit outputs, the same way ps2_audio.c uses fixed ones.
+static inline UINT64 PS2NS_NextGroupVec(const ps2_nodescan_t *ns, INT32 *g, INT32 groups, INT32 rx1, INT32 rx2, INT32 rszt, INT32 rsz)
 {
-	INT32 i = from;
-	// scalar until the group boundary
-	while ((i & 7) && i < ns->count)
-	{
-		if (PS2NS_Passes(ns, i, rx1, rx2, rszt, rsz))
-			return i;
-		i++;
-	}
-	if (i >= ns->count)
-		return ns->count;
-	{
-		const UINT32 w1 = ((UINT32)rx1 & 0xFFFFu) * 0x10001u, w2 = ((UINT32)rx2 & 0xFFFFu) * 0x10001u;
-		const UINT32 w3 = ((UINT32)rsz & 0xFFFFu) * 0x10001u, w4 = ((UINT32)rszt & 0xFFFFu) * 0x10001u;
-		const INT16 *a = ns->x1 + i, *b = ns->x2 + i, *c = ns->y1 + i, *d = ns->y2 + i;
-		const INT16 *aend = ns->x1 + ns->count; // groups starting below this are scanned (padding lanes reject)
-		unsigned long long vrx1, vrx2, vrsz, vrszt, t0, t1, t2, t3, m;
-		__asm__ volatile(
-			"pextlw %[vrx1],%[w1],%[w1]\n\t"
-			"pcpyld %[vrx1],%[vrx1],%[vrx1]\n\t"
-			"pextlw %[vrx2],%[w2],%[w2]\n\t"
-			"pcpyld %[vrx2],%[vrx2],%[vrx2]\n\t"
-			"pextlw %[vrsz],%[w3],%[w3]\n\t"
-			"pcpyld %[vrsz],%[vrsz],%[vrsz]\n\t"
-			"pextlw %[vrszt],%[w4],%[w4]\n\t"
-			"pcpyld %[vrszt],%[vrszt],%[vrszt]\n\t"
-			"1:\n\t"
-			"lq %[t0],0(%[a])\n\t"
-			"lq %[t1],0(%[b])\n\t"
-			"lq %[t2],0(%[c])\n\t"
-			"lq %[t3],0(%[d])\n\t"
-			"pcgth %[t0],%[t0],%[vrx2]\n\t"   // x1 > rx2
-			"pcgth %[t1],%[vrx1],%[t1]\n\t"   // rx1 > x2
-			"pcgth %[t2],%[t2],%[vrsz]\n\t"   // y1 > rsz
-			"pcgth %[t3],%[vrszt],%[t3]\n\t"  // rszt > y2
-			"por %[t0],%[t0],%[t1]\n\t"
-			"por %[t2],%[t2],%[t3]\n\t"
-			"por %[t0],%[t0],%[t2]\n\t"
-			"pnor %[t0],%[t0],%[t0]\n\t"      // lanes that pass are all ones
-			"pcpyud %[t1],%[t0],%[t0]\n\t"
-			"or %[m],%[t0],%[t1]\n\t"
-			"bnez %[m],2f\n\t"
-			"addiu %[a],%[a],16\n\t"
-			"addiu %[b],%[b],16\n\t"
-			"addiu %[c],%[c],16\n\t"
-			"addiu %[d],%[d],16\n\t"
-			"sltu %[m],%[a],%[aend]\n\t"
-			"bnez %[m],1b\n\t"
-			"2:\n\t"
-			: [a] "+r"(a), [b] "+r"(b), [c] "+r"(c), [d] "+r"(d), [vrx1] "=&r"(vrx1), [vrx2] "=&r"(vrx2), [vrsz] "=&r"(vrsz),
-			  [vrszt] "=&r"(vrszt), [t0] "=&r"(t0), [t1] "=&r"(t1), [t2] "=&r"(t2), [t3] "=&r"(t3), [m] "=&r"(m)
-			: [w1] "r"(w1), [w2] "r"(w2), [w3] "r"(w3), [w4] "r"(w4), [aend] "r"(aend)
-			: "memory");
-		i = (INT32)(a - ns->x1);
-		// the group at i holds a passing lane unless the scan ran off the end
-		for (; i < ns->count; i++)
-			if (PS2NS_Passes(ns, i, rx1, rx2, rszt, rsz))
-				return i;
-		return ns->count;
-	}
+	const UINT32 w1 = ((UINT32)rx1 & 0xFFFFu) * 0x10001u, w2 = ((UINT32)rx2 & 0xFFFFu) * 0x10001u;
+	const UINT32 w3 = ((UINT32)rsz & 0xFFFFu) * 0x10001u, w4 = ((UINT32)rszt & 0xFFFFu) * 0x10001u;
+	const INT16 *p = ns->blk + (size_t)*g * 32, *const pend = ns->blk + (size_t)groups * 32;
+	unsigned long long vrx1, vrx2, vrsz, vrszt, t0, t1, t2, t3, m, hit = 0;
+
+	if (*g >= groups)
+		return 0;
+	__asm__ volatile(
+		"pextlw %[vrx1],%[w1],%[w1]\n\t"
+		"pcpyld %[vrx1],%[vrx1],%[vrx1]\n\t"
+		"pextlw %[vrx2],%[w2],%[w2]\n\t"
+		"pcpyld %[vrx2],%[vrx2],%[vrx2]\n\t"
+		"pextlw %[vrsz],%[w3],%[w3]\n\t"
+		"pcpyld %[vrsz],%[vrsz],%[vrsz]\n\t"
+		"pextlw %[vrszt],%[w4],%[w4]\n\t"
+		"pcpyld %[vrszt],%[vrszt],%[vrszt]\n\t"
+		"1:\n\t"
+		"lq %[t0],0(%[p])\n\t"
+		"lq %[t1],16(%[p])\n\t"
+		"lq %[t2],32(%[p])\n\t"
+		"lq %[t3],48(%[p])\n\t"
+		"pcgth %[t0],%[t0],%[vrx2]\n\t"   // x1 > rx2
+		"pcgth %[t1],%[vrx1],%[t1]\n\t"   // rx1 > x2
+		"pcgth %[t2],%[t2],%[vrsz]\n\t"   // y1 > rsz
+		"pcgth %[t3],%[vrszt],%[t3]\n\t"  // rszt > y2
+		"por %[t0],%[t0],%[t1]\n\t"
+		"por %[t2],%[t2],%[t3]\n\t"
+		"por %[t0],%[t0],%[t2]\n\t"
+		"pnor %[t0],%[t0],%[t0]\n\t"      // lanes that pass are all ones
+		"pcpyud %[t1],%[t0],%[t0]\n\t"
+		"or %[m],%[t0],%[t1]\n\t"
+		"bnez %[m],2f\n\t"
+		"addiu %[p],%[p],64\n\t"
+		"sltu %[m],%[p],%[pend]\n\t"
+		"bnez %[m],1b\n\t"
+		"b 3f\n\t"
+		"2:\n\t"
+		"ppacb %[t1],%[t0],%[t0]\n\t"      // one byte per lane: 0xFF where the lane passes
+		"or %[hit],%[t1],$0\n\t"           // low 64 bits to a general register
+		"3:\n\t"
+		: [p] "+r"(p), [vrx1] "=&r"(vrx1), [vrx2] "=&r"(vrx2), [vrsz] "=&r"(vrsz), [vrszt] "=&r"(vrszt), [t0] "=&r"(t0), [t1] "=&r"(t1),
+		  [t2] "=&r"(t2), [t3] "=&r"(t3), [m] "=&r"(m), [hit] "+r"(hit)
+		: [w1] "r"(w1), [w2] "r"(w2), [w3] "r"(w3), [w4] "r"(w4), [pend] "r"(pend)
+		: "memory");
+	*g = (INT32)((p - ns->blk) >> 5);
+	return hit;
 }
 #ifdef PS2_NODECHECK // shadow check on the EE: every vector scan is compared with the scalar reference, a difference stops the game
-static inline INT32 PS2NS_Next(const ps2_nodescan_t *ns, INT32 from, INT32 rx1, INT32 rx2, INT32 rszt, INT32 rsz)
+static inline UINT64 PS2NS_NextGroup(const ps2_nodescan_t *ns, INT32 *g, INT32 groups, INT32 rx1, INT32 rx2, INT32 rszt, INT32 rsz)
 {
-	const INT32 v = PS2NS_NextVec(ns, from, rx1, rx2, rszt, rsz), r = PS2NS_NextScalar(ns, from, rx1, rx2, rszt, rsz);
-	if (v != r)
-		PS2NS_MISMATCH(from, v, r);
+	INT32 gv = *g, gs = *g;
+	const UINT64 v = PS2NS_NextGroupVec(ns, &gv, groups, rx1, rx2, rszt, rsz), s = PS2NS_NextGroupScalar(ns, &gs, groups, rx1, rx2, rszt, rsz);
+	if (gv != gs || v != s)
+		PS2NS_MISMATCH();
+	*g = gv;
 	return v;
 }
 #else
-#define PS2NS_Next PS2NS_NextVec
+#define PS2NS_NextGroup PS2NS_NextGroupVec
 #endif
 #else
-#define PS2NS_Next PS2NS_NextScalar
+#define PS2NS_NextGroup PS2NS_NextGroupScalar
 #endif
+
+// index of the lowest passing lane of a mask (bytes 0xFF/0x00) and removal of that lane; m != 0
+static inline INT32 PS2NS_PopLane(UINT64 *m)
+{
+	const UINT64 low = *m & (0 - *m); // lowest set bit: bit 8k of byte k
+	const UINT32 lo = (UINT32)low, hi = (UINT32)(low >> 32);
+	INT32 bit;
+#if defined(_EE) && defined(__GNUC__)
+	UINT32 r;
+	if (lo)
+	{
+		const UINT32 x = lo >> 1;
+		__asm__("plzcw %0,%1" : "=r"(r) : "r"(x));
+		bit = 31 - (INT32)(r & 0xFF);
+	}
+	else
+	{
+		const UINT32 x = hi >> 1;
+		__asm__("plzcw %0,%1" : "=r"(r) : "r"(x));
+		bit = 63 - (INT32)(r & 0xFF);
+	}
+#else
+	bit = lo ? 31 - __builtin_clz(lo) : 63 - __builtin_clz(hi);
+#endif
+	*m &= ~((low << 8) - low); // clear the byte (0xFF << 8k; for k = 7 the shift wraps to 0 and 0 - low is 0xFF00..00)
+	return bit >> 3;
+}
 
 // ---- R_SortVisSprites (r_things.c): stable ascending sort by (s, d) ----
 typedef struct { INT32 s; INT32 d; void *p; } ps2_vsortitem_t;

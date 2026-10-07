@@ -140,7 +140,7 @@ static void test_sort(unsigned long long *checks, unsigned long long *fails)
 	}
 }
 
-/* ---- PS2-161: rectangle table of the draw nodes: first passing index and growth/reuse of the table ---- */
+/* ---- PS2-161: rectangle table of the draw nodes: group scan + lane popping against the reference, growth/reuse of the table ---- */
 static void test_nodescan(unsigned long long *checks, unsigned long long *fails)
 {
 	static ps2_nodescan_t ns;
@@ -162,24 +162,40 @@ static void test_nodescan(unsigned long long *checks, unsigned long long *fails)
 		for (q = 0; q < 12; q++)
 		{
 			const INT32 qx1 = (INT32)(rnd() % 360) - 20, qx2 = qx1 + (INT32)(rnd() % 40), qszt = (INT32)(rnd() % 200) - 5, qsz = qszt + (INT32)(rnd() % 60);
-			INT32 from = 0, got, want;
+			INT32 grp = 0, want = 0;
+			const INT32 groups = PS2NS_GROUPS(&ns);
 			for (;;)
 			{
-				got = PS2NS_Next(&ns, from, qx1, qx2, qszt, qsz);
-				for (want = from; want < n; want++)
-					if (!((rx1[want] > qx2) | (rx2[want] < qx1) | (ry1[want] > qsz) | (ry2[want] < qszt)))
-						break;
-				checks[0]++;
-				if (got != want)
+				UINT64 lanes = PS2NS_NextGroup(&ns, &grp, groups, qx1, qx2, qszt, qsz);
+				if (grp >= groups)
+					break;
+				/* every passing lane of the group, lowest first, equals the reference scan of the nodes in creation order */
+				do
+				{
+					const INT32 idx = grp * 8 + PS2NS_PopLane(&lanes);
+					for (; want < n; want++)
+						if (!((rx1[want] > qx2) | (rx2[want] < qx1) | (ry1[want] > qsz) | (ry2[want] < qszt)))
+							break;
+					checks[0]++;
+					if (idx != want)
+					{
+						if (fails[0]++ < 8)
+							printf("SW FAIL nodescan n=%d got=%d want=%d\n", n, idx, want);
+						goto next_query;
+					}
+					want++;
+				} while (lanes);
+				grp++;
+			}
+			/* nothing passes after the last one */
+			for (; want < n; want++)
+				if (!((rx1[want] > qx2) | (rx2[want] < qx1) | (ry1[want] > qsz) | (ry2[want] < qszt)))
 				{
 					if (fails[0]++ < 8)
-						printf("SW FAIL nodescan n=%d from=%d got=%d want=%d\n", n, from, got, want);
+						printf("SW FAIL nodescan n=%d missed %d\n", n, want);
 					break;
 				}
-				if (want >= n)
-					break;
-				from = want + 1;
-			}
+next_query:;
 		}
 	}
 }
