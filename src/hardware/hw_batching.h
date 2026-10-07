@@ -34,5 +34,10 @@ void HWR_StartBatching(void);
 void HWR_SetCurrentTexture(GLMipmap_t *texture);
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader, boolean horizonSpecial);
 void HWR_RenderBatches(void);
+#ifdef PS2_PROFILE
+// PS2-HW-52: the sprite loop (HWR_DrawSprites) collects the polygons of opaque sprites and their shadows and draws them as batches
+extern boolean hwr_sprite_batch; // HWR_ProcessPolygon flushes the batch at the first polygon that is not order independent
+extern boolean hwr_sprite_shadow; // the polygon is a drop shadow
+#endif
 
 #endif

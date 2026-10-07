@@ -26,6 +26,10 @@
 GLMipmap_t *current_texture = NULL;
 
 boolean currently_batching = false;
+#ifdef PS2_PROFILE
+boolean hwr_sprite_batch = false;
+boolean hwr_sprite_shadow = false;
+#endif
 
 FOutVector* finalVertexArray = NULL;// contains subset of sorted vertices and texture coordinates to be sent to gpu
 UINT32* finalVertexIndexArray = NULL;// contains indexes for glDrawElements, taking into account fan->triangles conversion
@@ -185,6 +189,23 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
     if (iNumPts < 3)
         return; // no triangles; do not advance the fan writer past its allocation
 #ifdef PS2_PROFILE
+	if (currently_batching && hwr_sprite_batch)
+	{
+		// PS2-HW-52: batched sprite polygons are drawn in texture order, not in depth order. That is the same picture for polygons that write the depth
+		// buffer and are not blended (opaque sprites) and for the drop shadows (blended onto the floor without depth write: a shadow behind a sprite
+		// fails the depth test against it, one in front of the floor patch it covers is drawn over the floor either way). The first polygon of
+		// anything else (translucent or additive sprites, link draw, bounding boxes) draws what was collected first and goes the immediate way.
+		const boolean opaque = (PolyFlags & PF_Blending) == PF_Masked && (PolyFlags & PF_Occlude)
+			&& !(PolyFlags & (PF_Invisible | PF_NoDepthTest | PF_Corona | PF_Ripple | PF_WireFrame | PF_NoTexture | PF_Decal)) && !horizonSpecial;
+
+		if (!opaque && !hwr_sprite_shadow)
+		{
+			HWR_RenderBatches();
+			hwr_sprite_batch = false;
+			if (!(PolyFlags & PF_NoTexture) && current_texture)
+				HWD.pfnSetTexture(current_texture); // what the polygon selected while batching only noted it
+		}
+	}
 	HWC_ADD(HWC_PROC); // OPT10 HG: calls (HWC_PROC_BATCH: the batched ones)
 	if (currently_batching)
 		HWC_ADD(HWC_PROC_BATCH);
@@ -251,6 +272,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			// remove the sign bit to ensure that skybox and horizon line comes first.
 #ifdef PS2 // PS2-HW-31: the texture first (14 bits), then the state hash (16 bits)
 			polygonArray[polygonArraySize-1].hash = (INT32)((HWR_PS2_TextureOrder(current_texture) << 16) | ((hash ^ (hash >> 16)) & 0xFFFFu));
+#ifdef PS2_PROFILE
+			if (hwr_sprite_batch && !hwr_sprite_shadow)
+				polygonArray[polygonArraySize-1].hash |= 0x40000000; // PS2-HW-52: the shadows are drawn first, as each is drawn before its sprite
+#endif
 #else
 			polygonArray[polygonArraySize-1].hash = (hash & INT32_MAX);
 #endif

@@ -4500,10 +4500,34 @@ static void HWR_DrawSprites(void)
 {
 	UINT32 i;
 	boolean skipshadow = false; // skip shadow if it was drawn already for a linkdraw sprite encountered earlier in the list
+#ifdef PS2_PROFILE
+	// PS2-HW-52: the opaque sprites and the shadows are collected and drawn as batches (see HWR_ProcessPolygon); -hwdbg 524288 draws them one by one
+	boolean sprbatch = cv_glbatching.value && gl_visspritecount > 1 && !currently_batching && !(ps2hwd_dbg_flags & 0x80000);
+#endif
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, cv_glmodellighting.value);
 	for (i = 0; i < gl_visspritecount; i++)
 	{
 		gl_vissprite_t *spr = gl_vsprorder[i];
+#ifdef PS2_PROFILE
+		boolean sprwas = false;
+
+		if (sprbatch)
+		{
+			if (!spr->bbox && !spr->precip && spr->dispoffset)
+			{
+				// sprites with a display offset overlay one another at (nearly) the same depth, where the order of drawing decides: not batched
+				if (currently_batching)
+					HWR_RenderBatches();
+				hwr_sprite_batch = false;
+			}
+			else if (!currently_batching)
+			{
+				HWR_StartBatching();
+				hwr_sprite_batch = true;
+			}
+			sprwas = currently_batching && hwr_sprite_batch;
+		}
+#endif
 		if (spr->bbox)
 			HWR_DrawBoundingBox(spr);
 		else if (spr->precip)
@@ -4512,7 +4536,13 @@ static void HWR_DrawSprites(void)
 		{
 			if (spr->mobj && spr->mobj->shadowscale && cv_shadow.value && !skipshadow)
 			{
+#ifdef PS2_PROFILE
+				hwr_sprite_shadow = true;
+#endif
 				HWR_DrawDropShadow(spr->mobj, spr, spr->mobj->shadowscale);
+#ifdef PS2_PROFILE
+				hwr_sprite_shadow = false;
+#endif
 			}
 
 			if ((spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer)
@@ -4542,6 +4572,11 @@ static void HWR_DrawSprites(void)
 					HWR_DrawSprite(spr);
 				else
 				{
+#ifdef PS2_PROFILE
+					if (currently_batching) // a model is drawn by the backend at once
+						HWR_RenderBatches();
+					hwr_sprite_batch = false;
+#endif
 					if (!HWR_DrawModel(spr))
 						HWR_DrawSprite(spr);
 				}
@@ -4552,12 +4587,27 @@ static void HWR_DrawSprites(void)
 					HWR_DrawSprite(spr);
 				else
 				{
+#ifdef PS2_PROFILE
+					if (currently_batching)
+						HWR_RenderBatches();
+					hwr_sprite_batch = false;
+#endif
 					if (!HWR_DrawModel(spr))
 						HWR_DrawSprite(spr);
 				}
 			}
 		}
+#ifdef PS2_PROFILE
+		if (sprwas && !hwr_sprite_batch)
+			sprbatch = false; // the first polygon that was not order independent drew the batch: what follows is drawn in order
+#endif
 	}
+#ifdef PS2_PROFILE
+	if (currently_batching)
+		HWR_RenderBatches();
+	hwr_sprite_batch = false;
+	hwr_sprite_shadow = false;
+#endif
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, 0);
 
 	// At the end of sprite drawing, draw shapes of linkdraw sprites to z-buffer, so they
