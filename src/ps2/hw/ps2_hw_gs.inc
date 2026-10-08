@@ -100,6 +100,46 @@ static void poll_dma(void)
 #define GIF_STAT_REG ((volatile u32 *)0x10003020)
 #define WD_MAX_RECOVERIES 6
 
+// OPT11-STAB (PS2-HW-144): what the DMA was reading when the VIF1 stopped: the last references (pk_ref) and the tags in front of the stalled chain position
+#define PKR_HIST 16
+static struct
+{
+	u32 buf, off, addr, qwc, seq;
+} pkr_hist[PKR_HIST];
+static u32 pkr_n;
+
+static void wd_chain_dump(void)
+{
+	const u32 tadr = (u32)*D1_TADR, t = V.on ? tadr : (u32)*D2_TADR;
+	u32 i, k;
+
+	I_OutputMsg("HWD WATCHDOG: VIF1 CODE=%08x NUM=%08x ERR=%08x MARK=%08x | VPU_STAT=%08x D_STAT=%08x | GIF_CTRL=%08x GIF_MODE=%08x GIF_TAG0=%08x\n",
+		(unsigned)*(volatile u32 *)0x10003C80, (unsigned)*(volatile u32 *)0x10003C60, (unsigned)*(volatile u32 *)0x10003C20, (unsigned)*(volatile u32 *)0x10003C30,
+		(unsigned)*(volatile u32 *)0x10003830, (unsigned)*(volatile u32 *)0x1000E010, (unsigned)*(volatile u32 *)0x10003000, (unsigned)*(volatile u32 *)0x10003010,
+		(unsigned)*(volatile u32 *)0x10003040);
+	for (k = 0; k < PKR_HIST && k < pkr_n; k++)
+	{
+		const u32 j = (pkr_n - 1 - k) % PKR_HIST;
+
+		I_OutputMsg("HWD WATCHDOG: ref[-%u] seq=%u buf=%u off=%u addr=%08x qwc=%u\n", k, pkr_hist[j].seq, pkr_hist[j].buf, pkr_hist[j].off, pkr_hist[j].addr, pkr_hist[j].qwc);
+	}
+	for (i = 0; i < NBUF; i++)
+	{
+		const u32 base = phys(H.ring[i]);
+
+		if (t >= base && t < base + BUF_QW * 16u)
+		{
+			const u32 at = (t - base) >> 4, from = at > 28 ? at - 28 : 0, to = at + 4 < BUF_QW ? at + 4 : BUF_QW;
+
+			I_OutputMsg("HWD WATCHDOG: chain position: buffer %u (cur=%d), tag index %u of %u (queued qwc %u)\n", i, H.cur, at, (unsigned)BUF_QW, (unsigned)H.q_qwc[0]);
+			for (k = from; k < to; k++)
+				I_OutputMsg("HWD WATCHDOG:  [%4u]%s %016llx %016llx\n", k, k == at ? ">" : " ", (unsigned long long)H.ring[i][k].d[1], (unsigned long long)H.ring[i][k].d[0]);
+			return;
+		}
+	}
+	I_OutputMsg("HWD WATCHDOG: TADR %08x is in none of the %d ring buffers\n", t, NBUF);
+}
+
 // OPT5 watchdog: what every stuck wait reports instead of freezing silently (PS2-HW-21)
 static void wd_diag(const char *why)
 {
@@ -107,25 +147,42 @@ static void wd_diag(const char *why)
 		why, (unsigned)*VIF1_STAT, (unsigned)*D1_CHCR, (unsigned)*D1_MADR, (unsigned)*D1_QWC, (unsigned)*D1_TADR, V.on, H.frame_no, H.frame_open, H.finish_pending, H.pend, H.pend_done, H.disp, H.target, (unsigned)H.vbl, (unsigned)H.flips,
 		(unsigned)H.flip_vbl, H.irq_seen, H.pending, H.dma_busy, H.q_n, H.cur, H.wr, (unsigned)*D2_CHCR, (unsigned)*D2_MADR, (unsigned)*D2_QWC,
 		(unsigned)*GIF_STAT_REG, (unsigned)*GS_CSR);
+	wd_chain_dump();
 	fflush(stdout);
 }
 
 // A GIF DMA / GS wait ran out: stop channel 2, forget the queued buffers (they are never started: the ring is free again) and go on
 // with the next frame instead of sleeping forever. The frame in progress is lost; the state the GS knew is invalid. After
 // WD_MAX_RECOVERIES the engine is stopped with the diagnostics above.
+static u32 wd_last_flips = ~0u; // the flip count of the last recovery
+
 static void wd_recover(const char *why)
 {
 	u32 irq;
 
 	H.st.timeouts++;
 	wd_diag(why);
-	if (++H.st.wd_recoveries > WD_MAX_RECOVERIES)
+	// OPT11-STAB: a second hang with no frame shown in between is the same hang (a VU1 program that does not end: MAPMD, frame 57 of the merged tree): every wait is 2 s
+	// of a frozen picture, six of them (the old limit) took 12 s before the engine gave the hardware renderer up
+	if (++H.st.wd_recoveries > WD_MAX_RECOVERIES || H.flips == wd_last_flips)
 		hw_failure("PS2 GS watchdog: the GS/DMA stays stuck after repeated resets");
+	wd_last_flips = H.flips;
 	irq = DIntr();
 	*D2_CHCR = 0; // stop channel 2
 	if (V.on)
 		*D1_CHCR = 0; // PS2-HW-44: and the VIF channel
 	__asm__ volatile("sync.l");
+	// OPT11-STAB: the GIF and the VIF1 are reset too (as PS2HWD_Abort does): a GIF that was cut off in the middle of an IMAGE packet swallows every packet that follows as
+	// image data, so the next frame hung in the same place and the six recoveries (12 s of a frozen picture) did nothing (MAPMD, frame 57)
+	*(volatile u32 *)0x10003000 = 1; // GIF_CTRL.RST
+	if (V.on)
+		*VIF1_FBRST = 1;
+	if (!(ps2hwd_dbg_flags & HWDBG_NOZC))
+	{
+		// the hang goes away without the zero-copy texture uploads (-hwdbg 2097152; MAPMD: a GIF packet is cut off in the first frame with the world): from here on the texels go by copy
+		ps2hwd_dbg_flags |= HWDBG_NOZC;
+		I_OutputMsg("HWD WATCHDOG: zero-copy texture uploads are off from now on\n");
+	}
 	H.dma_busy = 0;
 	H.q_n = 0;
 	H.q_head = 0;
@@ -282,9 +339,44 @@ static void pk_ref(const void *data, u32 qwc)
 	{
 		t = b + H.run; // an empty run: its tag becomes the reference
 	}
+	{
+		const u32 hj = pkr_n++ % PKR_HIST;
+
+		pkr_hist[hj].buf = (u32)H.cur;
+		pkr_hist[hj].off = (u32)(t - b);
+		pkr_hist[hj].addr = phys(data);
+		pkr_hist[hj].qwc = qwc;
+		pkr_hist[hj].seq = H.q_seq;
+	}
 	t->d[0] = dma_tag(qwc, DMAT_REF, phys(data));
 	t->d[1] = V.on ? ((u64)VIF_NOP | ((u64)VIF_DIRECT(qwc) << 32)) : 0; // OPT10 (HG): no FLUSH here: the referenced data continue a GIF packet (the IMAGE data of an upload) that FLUSH would wait for forever
 	H.run = H.wr++;
+}
+
+// OPT11-STAB (PS2-HW-144): the last, partial quadword of the IMAGE data of a referenced upload (a texture of W*H texels where W*H is not a multiple of 16, e.g. 170x170 of MAPMD).
+// It must not be behind the FLUSH that every ordinary run starts with: FLUSH waits for the end of the GIF packet, and the IMAGE packet cannot end before this quadword is sent
+// (VIF1 stuck on FLUSH, GIF in the middle of the packet with an empty FIFO, VU1 idle: "GIF DMA ownership timeout (ring_wait)" for good). So it is a run of its own whose VIF
+// codes are NOP + DIRECT 1, and the run after it is the ordinary one again. Called right after pk_ref (the open run is the empty one behind the reference; the caller has made
+// room for two more slots).
+static int pk_oldtail; // -hwoldtail (test): the tail behind the FLUSH of an ordinary run as before PS2-HW-144 (the chain lint must find it, and MAPMD hangs)
+
+static void pk_ref_tail(const void *src, u32 nbytes)
+{
+	qw_t *b = H.ring[H.cur], *t;
+
+	if (pk_oldtail || H.wr > H.run + 1) // no reference in front (less than a quadword of image data): the tail goes in the run of the header, which has its FLUSH in front of the header already
+	{
+		t = pk_alloc(1);
+		t->d[0] = t->d[1] = 0;
+		memcpy(t, src, nbytes);
+		return;
+	}
+	b[H.run].d[0] = dma_tag(1, DMAT_CNT, 0);
+	b[H.run].d[1] = V.on ? ((u64)VIF_NOP | ((u64)VIF_DIRECT(1) << 32)) : 0;
+	t = b + H.wr++;
+	t->d[0] = t->d[1] = 0;
+	memcpy(t, src, nbytes);
+	H.run = H.wr++; // the next run starts behind the tail
 }
 
 // n A+D register writes behind one GIF tag

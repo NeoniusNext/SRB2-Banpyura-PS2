@@ -953,6 +953,11 @@ static void Z_OutOfMemory(size_t size, INT32 tag, size_t align)
 		zoom_recovered++;
 		CONS_Printf("OOM (recoverable): request %lu B tag %d (%s) align %lu, purge lock %d, frame %lu, free %lu B, largest %lu B\n", (unsigned long)size, (int)tag,
 			PS2Mem_TagName(tag), (unsigned long)align, (int)zpurgelock, (unsigned long)zframe, (unsigned long)ZA_FreeBytes(), (unsigned long)ZA_LargestFree());
+		if (zoom_recovered <= 2 && M_CheckParm("-zmap")) // OPT11-STAB: what stands between the free holes at the moment of the failure (first two failures)
+		{
+			PS2Mem_FreeList(256u << 10);
+			PS2Mem_Map(400);
+		}
 		longjmp(zguard->jb, 1);
 	}
 	if (zguard)

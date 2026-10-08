@@ -192,7 +192,22 @@ static void FrameLanded(const zguard_t *g)
 		snprintf(hwfb_last, sizeof hwfb_last, "software frame dropped: %s", g->reason);
 		if (recent + 1 >= HWFB_SOFT_RETRIES || !g->size)
 		{
-			// it did not help: this is the real size of what the picture needs
+			// it did not help: this is the real size of what the picture needs (MAPMG: a 2048x2048 texture used as a flat, 4 MB twice, in the one view that shows it)
+			if (g->size && !netgame && gamestate == GS_LEVEL)
+			{
+				// a local game leaves the map instead of ending the program: the title screen has plenty of memory
+				char why[96];
+
+				snprintf(why, sizeof why, "%lu bytes (%s)", (unsigned long)g->size, PS2Mem_TagName(g->tag));
+				snprintf(hwfb_last, sizeof hwfb_last, "map %d cannot be drawn: %.100s", (int)gamemap, why);
+				CONS_Alert(CONS_ERROR, "Not enough memory to draw map %s: %s. Back to the title screen.\n", G_BuildMapName(gamemap), why);
+				I_OutputMsg("ps2_hwfb: FRAME FAILED map %d: %s (software, %d tries)\n", (int)gamemap, why, HWFB_SOFT_RETRIES);
+				hwfb_levelfails++;
+				memset(hwfb_softframe, 0, sizeof hwfb_softframe);
+				Z_EmergencyFree();
+				COM_BufAddText("exitgame\n");
+				return;
+			}
 			Z_OutOfMemoryFatal(g->size, g->tag, 64);
 		}
 		CONS_Alert(CONS_WARNING, "Low memory: the frame is drawn again after the caches were emptied (%lu KB free).\n", (unsigned long)(Z_EmergencyFree() >> 10));

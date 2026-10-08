@@ -60,6 +60,15 @@ static struct
 	int use_dirty[2]; // TEX0 or CLAMP written since the pair was checked
 } VAL;
 
+// the chain lint of the VIF1 transport (lint_buffer below; -hwdbg 536870912 with VU1 on)
+static struct
+{
+	int on;
+	u32 left; // data qwords of the open GIF packet still to come
+	int open; // the last GIF tag had EOP = 0: the packet continues with the next tag
+	u32 errs, runs, flushes, next_report;
+} LINT;
+
 static void val_err(int cls, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
 
 static void val_err(int cls, const char *fmt, ...)
@@ -100,13 +109,20 @@ static void val_init(void)
 	VAL.on = (ps2hwd_dbg_flags & HWDBG_VALIDATE) != 0 && !V.on;
 	if (VAL.on)
 		I_OutputMsg("HWVAL on: the GIF stream is validated (PS2-HW-74)\n");
+	memset(&LINT, 0, sizeof LINT);
+	LINT.on = (ps2hwd_dbg_flags & HWDBG_VALIDATE) != 0 && V.on;
+	if (LINT.on)
+		I_OutputMsg("HWVAL LINT on: the DIRECT runs of the VIF1 chain are checked (FLUSH inside a GIF packet)\n");
 }
 
 static void val_shutdown(void)
 {
 	if (VAL.on)
 		val_summary("final");
+	if (LINT.on)
+		I_OutputMsg("HWVAL LINT SUMMARY: direct runs=%u flushes=%u errors=%u\n", LINT.runs, LINT.flushes, LINT.errs);
 	VAL.on = 0;
+	LINT.on = 0;
 }
 
 static void val_reset(void)
@@ -843,11 +859,95 @@ static void val_run(const qw_t *p, u32 n)
 	}
 }
 
+// OPT11-STAB (PS2-HW-144): the chain lint of the VIF1 transport (V.on, where the validator above is off: the VU1 program makes the polygon packets). The DIRECT runs of the ring
+// are parsed for GIF tags only, and a run whose VIF codes start with FLUSH must not begin while a GIF packet is open (data still to come, or the last tag had EOP = 0): FLUSH waits
+// for the end of the packet and the rest of it is behind the FLUSH, the VIF1 and the GIF wait for each other for good (MAPMD: the partial last quadword of a referenced upload).
+static void lint_run(const qw_t *p, u32 n)
+{
+	u32 j = 0;
+
+	while (j < n)
+	{
+		if (LINT.left)
+		{
+			const u32 m = n - j < LINT.left ? n - j : LINT.left;
+
+			LINT.left -= m;
+			j += m;
+			continue;
+		}
+		{
+			const u64 d0 = p[j].d[0];
+			const u32 nloop = (u32)(d0 & 0x7FFF), flg = (u32)((d0 >> 58) & 3);
+			u32 nreg = (u32)(d0 >> 60);
+
+			if (!nreg)
+				nreg = 16;
+			LINT.open = !((d0 >> 15) & 1);
+			LINT.left = flg == 0 ? nloop * nreg : flg == 1 ? (nloop * nreg + 1) / 2 : nloop;
+			j++;
+		}
+	}
+}
+
+static void lint_buffer(const qw_t *b, u32 wr)
+{
+	u32 i = 0;
+
+	while (i < wr)
+	{
+		const u64 t = b[i].d[0], c = b[i].d[1];
+		const u32 qwc = (u32)(t & 0xFFFF), id = (u32)((t >> 28) & 7);
+		const int direct = ((u32)(c >> 32) & 0x7F000000u) == 0x50000000u;
+
+		if ((u32)c == VIF_FLUSH)
+		{
+			LINT.flushes++;
+			if (LINT.left || LINT.open)
+			{
+				if (LINT.errs++ < 8)
+					I_OutputMsg("HWVAL LINT: VIF1 FLUSH at %u of the buffer while a GIF packet is open (%u qwords still to come, EOP=%d): the FLUSH waits for the end of the packet, stuck for good\n", i, LINT.left, !LINT.open);
+				LINT.left = 0;
+				LINT.open = 0;
+			}
+		}
+		if (id == 1 || id == 7)
+		{
+			if (i + 1 + qwc > wr)
+				return;
+			if (direct && qwc)
+				lint_run(b + i + 1, qwc), LINT.runs++;
+			i += 1 + qwc;
+		}
+		else if (id == 3 || id == 0)
+		{
+			const u32 addr = (u32)(t >> 32);
+
+			if (direct && qwc && !(addr & 15) && addr < 0x02000000u)
+				lint_run((const qw_t *)(uintptr_t)addr, qwc), LINT.runs++;
+			i++;
+		}
+		else
+			return;
+		if (id == 7 || id == 0)
+			break;
+	}
+}
+
 // one finished ring buffer: tags and the data they send, in the order the DMAC sends it
 static void val_buffer(const qw_t *b, u32 wr)
 {
 	u32 i = 0;
 
+	if (LINT.on)
+	{
+		lint_buffer(b, wr);
+		if (H.frame_no >= LINT.next_report) // a periodic line: the run may end (ZQUIT) before the engine shuts the driver down
+		{
+			LINT.next_report = H.frame_no + 50;
+			I_OutputMsg("HWVAL LINT SUMMARY: frame %u direct runs=%u flushes=%u errors=%u\n", H.frame_no, LINT.runs, LINT.flushes, LINT.errs);
+		}
+	}
 	if (!VAL.on)
 		return;
 	if (H.frame_no >= VAL.summary_frame + 300)

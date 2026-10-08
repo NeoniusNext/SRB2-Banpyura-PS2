@@ -1,0 +1,182 @@
+Setting up SRB2...
+
+
+Sonic Robo Blast 2
+Copyright (C) 1998-2025 by Sonic Team Junior
+
+This program comes with ABSOLUTELY NO WARRANTY.
+
+This is free software, and you are welcome to redistribute it
+and/or modify it under the terms of the GNU General Public License
+as published by the Free Software Foundation; either version 2 of
+the License, or (at your option) any later version.
+See the 'LICENSE.txt' file for details.
+
+Sonic the Hedgehog and related characters are trademarks of SEGA.
+We do not claim ownership of SEGA's intellectual property used
+in this program.
+
+M_StartupLocale...
+Looking for WADs in: host: (found)
+Z_Init(): Init zone memory allocation daemon. 
+Zone arena: 23528 KiB (RAM 32 MiB = 32 MB profile, C heap reserve 512 KiB, headroom 2048 KiB, slack 256 KiB, two-sided, red zones off), C heap left: 648 KiB
+System memory: 32MB - Free: 23MB
+I_InitializeTime()...
+W_InitMultipleFiles(): Adding IWAD and main PWADs.
+Added file host:/SRB2.PAK (12614 lumps)
+Loading SOC from host:/SRB2.PAK|SOC/SOC_LETR
+Loading SOC from host:/SRB2.PAK|SOC/SOC_TITL
+Added file host:/ZONES.PAK (169 lumps)
+Loading SOC from host:/ZONES.PAK|SOC/SOC_EMBM.txt
+Loading SOC from host:/ZONES.PAK|SOC/SOC_HEAD.txt
+Loading SOC from host:/ZONES.PAK|SOC/SOC_SECR.txt
+Loading SOC from host:/ZONES.PAK|SOC/Tutorial.txt
+Added file host:/CHARS.PAK (2054 lumps)
+Loading SOC from host:/CHARS.PAK|SOC/Characters.txt
+Added file host:/MUSIC.PAK (215 lumps)
+I_StartupGraphics()...
+VID_StartupOpenGL()...
+HWD init: gsKit_init_global
+HWD init: gsKit_init_screen
+HWD init: mode_switch
+HWD init: mode switched
+HWD init: rings ready
+HWD VU1: adding the VIF1 handler
+HWD VU1: handler 4, booting the microcode
+HWD VU1: program of 650 instructions uploaded, entries init 0 draw 4
+PS2 GS hardware renderer: internal 320x256 (frame 320 x 256 CT32, CRTC x8/x1, output 4), frame buffers at 0K/320K, Z24 at 640K, texture pool 3008K (376 pages), GIF DMA interrupt
+HWR_Startup()...
+HWD shaders on (-hwdbg 0)
+HWE acquired driver=ps2_hwd renderer=Hardware experimental=1 size=320x200
+HWE startup renderer=Hardware chosen=2 hardware=1
+Number of console HUD lines is now 5
+PS2 pad: ports 6/0 (state 6 = ready) after 1300 ms
+PS2 pad: joystick 1 is port 1
+PS2 pad: joystick 2 is port 2
+HU_LoadGraphics()...
+config file: reference.cfg
+Executing reference.cfg
+Default resolution: 320 x 200
+Windowed resolution: 320 x 200
+Default bit depth: 16 bits
+M_Init(): Init miscellaneous info.
+R_Init(): Init SRB2 refresh daemon.
+R_LoadParsedTranslations()...
+R_LoadTextures()...
+P_InitPicAnims()...
+R_InitSprites()...
+SRB2.PAK added 5261 frames in 391 sprites
+Error while loading models.dat: I/O error
+R_InitColormaps()...
+S_InitSfxChannels(): Setting up sound channels.
+PS2 audio: loading IOP sound modules
+PS2 audio: initializing audsrv RPC
+PS2 audio: configuring output
+PS2 audio: 22050 Hz stereo, 64 SFX channels, mixer and decoder threads, audsrv queue 9400 bytes, target 8192 bytes
+ST_Init(): Init status bar.
+D_CheckNetGame(): Checking network game status.
+Starting Server....
+PS2 kbd: usbkbd driver open, raw mode
+PS2 mouse: ps2mouse driver open, diff mode
+PS2 mouse: 0 mice plugged in
+Entering main game loop...
+===========================================================================
+                   We hope you enjoy this game as
+                     much as we did making it!
+                            ...wait. =P
+===========================================================================
+Sonic Robo Blast 2 Banpyura v2.2.15 (Oct  8 2026 11:56:38 041664a worktree-agent-a50b97c2e18e4e8cd) PS2 32-bit 
+Speeding off to level...
+PS2 audio: music playback type=4 looping=1 name=O_VSAGZ
+[zlibc] level-free-before      libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] level-free-before      t_ms=14340 cop0=4264938659 used=6480400 peak=6922592 free=17612272 largest=17170112 static=5849360 level=8816 cache=110800 patch=511424 sprite=0 evicted=0
+[zlibc] level-free-after       libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] level-free-after       t_ms=14359 cop0=4270617426 used=6360784 peak=6922592 free=17731888 largest=17174208 static=5849360 level=0 cache=0 patch=511424 sprite=0 evicted=31
+[zlibc] map-begin              libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] map-begin              t_ms=14905 cop0=136717000 used=6380848 peak=6922592 free=17711824 largest=17174208 static=5849696 level=8960 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] map-alloc              libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] map-alloc              t_ms=15229 cop0=232128150 used=9687904 peak=9687904 free=14404768 largest=14131264 static=7209152 level=1956560 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] map-data               libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] map-data               t_ms=15959 cop0=447639827 used=8785792 peak=10146368 free=15306880 largest=15070816 static=5849648 level=2413952 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] map-bsp                libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] map-bsp                t_ms=16123 cop0=495911174 used=9998464 peak=10146368 free=14094208 largest=13849744 static=5849648 level=3626624 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] blockmap-lists         libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] blockmap-lists         t_ms=16138 cop0=500330761 used=10053120 peak=10146368 free=14039552 largest=13795008 static=5849648 level=3681280 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] map-blockmap           libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] map-blockmap           t_ms=16158 cop0=506310747 used=10162640 peak=10217488 free=13930032 largest=13685488 static=5849648 level=3790800 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] map-spawnstate         libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] map-spawnstate         t_ms=16168 cop0=509126691 used=10078320 peak=10228960 free=14014352 largest=13641904 static=5849648 level=3706480 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] map-loaded             libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] map-loaded             t_ms=16267 cop0=538223579 used=9824736 peak=11435536 free=14267936 largest=13641904 static=5849648 level=3452896 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] slopes                 libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] slopes                 t_ms=16275 cop0=540690483 used=9862464 peak=11435536 free=14230208 largest=13641904 static=5849648 level=3490624 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] things                 libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] things                 t_ms=16347 cop0=561810283 used=10285328 peak=11435536 free=13807344 largest=13641904 static=5849648 level=3913488 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] specials               libc in use outside the arena 283920 B, free chunks 13592 B, growth left 460056 B
+[zck] specials               t_ms=16355 cop0=564428179 used=10373584 peak=11435536 free=13719088 largest=13641904 static=5857456 level=3993936 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] before-precache        libc in use outside the arena 295040 B, free chunks 2472 B, growth left 448936 B
+[zck] before-precache        t_ms=17753 cop0=976608387 used=12213232 peak=12213232 free=11879440 largest=11877056 static=5885504 level=5534736 cache=10768 patch=511424 sprite=0 evicted=31
+[zlibc] precache               libc in use outside the arena 295040 B, free chunks 2472 B, growth left 448936 B
+[zck] precache               t_ms=17755 cop0=977179300 used=12213232 peak=12213232 free=11879440 largest=11877056 static=5885504 level=5534736 cache=10768 patch=511424 sprite=0 evicted=31
+HWD sky: 1168 vertices, 10 loops, texture 256x255, max |s,t| 4.00 -> strips
+HWLT table 1 stored: 0 of 8192 colours not in the palette; row 0 [0,1,2]=ffffff f6f6f6 row 31 [128]=070707
+HWD level 2 of F:ICEWALL9 256x256 made in 137954 cycles from the engine's flat
+HWD level 3 of F:STONEW2 256x256 made in 95896 cycles from the engine's flat
+HWD level 2 of F:CESTONB5 256x256 made in 350450 cycles from the engine's flat
+HWD level 3 of F:CESTONB3 256x256 made in 98450 cycles from the engine's flat
+HWD WATCHDOG: GIF DMA ownership timeout (ring_wait) | VIF1 STAT=0000000b D1 CHCR=10000145 MADR=00000000 QWC=00000000 TADR=01c9ee80 V.on=1 | frame_no=57 frame_open=1 finish_pending=1 pend=0 pend_done=0 disp=1 target=0 | vbl=987 flips=57 flip_vbl=879 irq_seen=66 | dma: pending=1 busy=1 q_n=0 cur=1 wr=1 CHCR=00000001 MADR=007f3290 QWC=00000000 GIF_STAT=00000a00 CSR=551b400e
+HWD WATCHDOG: VIF1 CODE=11000000 NUM=00000000 ERR=00000000 MARK=00000000 | VPU_STAT=00000000 D_STAT=00a60040 | GIF_CTRL=00000000 GIF_MODE=00000000 GIF_TAG0=00000000
+HWD WATCHDOG: ref[-0] seq=64 buf=0 off=6906 addr=00f12d40 qwc=256
+HWD WATCHDOG: ref[-1] seq=64 buf=0 off=6808 addr=00f10cc0 qwc=256
+HWD WATCHDOG: ref[-2] seq=64 buf=0 off=5436 addr=00f0bc40 qwc=1024
+HWD WATCHDOG: ref[-3] seq=64 buf=0 off=5240 addr=00f06bc0 qwc=256
+HWD WATCHDOG: ref[-4] seq=64 buf=0 off=4542 addr=00f01b40 qwc=1024
+HWD WATCHDOG: ref[-5] seq=64 buf=0 off=4105 addr=00ef7e80 qwc=256
+HWD WATCHDOG: ref[-6] seq=64 buf=0 off=3057 addr=00ef17c0 qwc=1024
+HWD WATCHDOG: ref[-7] seq=64 buf=0 off=2961 addr=00ee4b00 qwc=1024
+HWD WATCHDOG: ref[-8] seq=64 buf=0 off=2709 addr=00ecb040 qwc=4096
+HWD WATCHDOG: ref[-9] seq=64 buf=0 off=2617 addr=00d973c0 qwc=64
+HWD WATCHDOG: ref[-10] seq=64 buf=0 off=2373 addr=00e86f00 qwc=256
+HWD WATCHDOG: ref[-11] seq=64 buf=0 off=1926 addr=00d96f80 qwc=64
+HWD WATCHDOG: ref[-12] seq=64 buf=0 off=1707 addr=00e119c0 qwc=256
+HWD WATCHDOG: ref[-13] seq=64 buf=0 off=123 addr=00e1b480 qwc=1806
+HWD WATCHDOG: ref[-14] seq=64 buf=0 off=7 addr=00df4240 qwc=3520
+HWD WATCHDOG: ref[-15] seq=63 buf=3 off=7 addr=00dd2800 qwc=4960
+HWD WATCHDOG: chain position: buffer 0 (cur=1), tag index 124 of 8192 (queued qwc 7278)
+HWD WATCHDOG:  [  96]  3aa2de03ba355ff8 000000000000001d
+HWD WATCHDOG:  [  97]  0001731e84c78653 3abd84ac80808080
+HWD WATCHDOG:  [  98]  3ab5973080808080 3a9c0decb9478755
+HWD WATCHDOG:  [  99]  00000000b94c9fc8 0001634284d288da
+HWD WATCHDOG:  [ 100]  00016c8982c488d3 3aba3a5e80808080
+HWD WATCHDOG:  [ 101]  3ac2933780808080 00000000ba3a36e3
+HWD WATCHDOG:  [ 102]  0000000000000000 00017d3b82a1863a
+HWD WATCHDOG:  [ 103]  000000000000000e 1000000000008008
+HWD WATCHDOG:  [ 104]  000000000000004c ffffffff00050000
+HWD WATCHDOG:  [ 105]  000000000000004e 0000000001000050
+HWD WATCHDOG:  [ 106]  0000000000000040 00ff0000013f0000
+HWD WATCHDOG:  [ 107]  0000000000000047 0000000000030000
+HWD WATCHDOG:  [ 108]  0000000000000042 0000000000000000
+HWD WATCHDOG:  [ 109]  0000000000000014 0000000000000000
+HWD WATCHDOG:  [ 110]  0000000000000008 0000000000000000
+HWD WATCHDOG:  [ 111]  000000000000003f 0000000000000000
+HWD WATCHDOG:  [ 112]  0000000000000051 2003400000008002
+HWD WATCHDOG:  [ 113]  0000008000000000 0000000000000000
+HWD WATCHDOG:  [ 114]  0000000000000000 0000800000008000
+HWD WATCHDOG:  [ 115]  0000008000000000 0000000000000000
+HWD WATCHDOG:  [ 116]  0000000000000000 0000900000009400
+HWD WATCHDOG:  [ 117]  000000000000000e 1000000000000004
+HWD WATCHDOG:  [ 118]  0000000000000050 1304186000000000
+HWD WATCHDOG:  [ 119]  0000000000000051 0000000000000000
+HWD WATCHDOG:  [ 120]  0000000000000052 000000aa000000aa
+HWD WATCHDOG:  [ 121]  0000000000000053 0000000000000000
+HWD WATCHDOG:  [ 122]  0000000000000000 080000000000870f
+HWD WATCHDOG:  [ 123]  5000070e00000000 00e1b4803000070e
+HWD WATCHDOG:  [ 124]> 5000062e11000000 000000001000062e
+HWD WATCHDOG:  [ 125]  0000000000000000 00000000a9a9a8a8
+HWD WATCHDOG:  [ 126]  000000000000000e 1000000000008001
+HWD WATCHDOG:  [ 127]  000000000000003f 0000000000000000
+HWD WATCHDOG: zero-copy texture uploads are off from now on
+HWD level 2 of T:ICEWALL9 256x256 made in 138110 cycles from the engine's data
+HWD level 2 of T:ICEWALL5 256x256 made in 184855 cycles from the engine's data
+HWD level 1 of T:STONEW2 256x256 made in 1986364 cycles from the engine's data
+HWD level 2 of T:CEZBIG1 512x512 made in 1050583 cycles from the engine's data

@@ -405,6 +405,34 @@ void R_ClearPlanes(void)
 	}
 }
 
+#if defined(PS2) || defined(PS2_PROFILE)
+// PS2-179 (OPT11-STAB): the planes of the busiest view of the earlier levels (a 2 KB block each, hundreds on the FOF maps) were recycled for ever and stayed among the long-lived
+// blocks of the arena; a new level starts without them (called by P_LoadLevel, no frame is drawing).
+void R_ReleaseVisplanes(void)
+{
+	INT32 i;
+	visplane_t *pl, *next;
+
+	for (i = 0; i < MAXVISPLANES; i++)
+	{
+		for (pl = visplanes[i]; pl; pl = next)
+		{
+			next = pl->next;
+			Z_Free(pl);
+		}
+		visplanes[i] = NULL;
+	}
+	for (pl = freetail; pl; pl = next)
+	{
+		next = pl->next;
+		Z_Free(pl);
+	}
+	freetail = NULL;
+	freehead = &freetail;
+	currentplane = floorplane = ceilingplane = NULL;
+}
+#endif
+
 static visplane_t *new_visplane(unsigned hash)
 {
 	visplane_t *check = freetail;

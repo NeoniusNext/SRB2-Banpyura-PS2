@@ -9,15 +9,17 @@
 #   files    damaged / garbage config, game data, saves                                                           (stab_files.py)
 #   packs    missing / truncated / corrupted data packs                                                           (stab_packs.py)
 #   hwfb     HW start without memory (-hwnomem), fallback and return at every map of a chain (-hwfbtest)
+#   flats    software chain of all maps with -flatcheck: the flat that is made straight from the patches (PS2-180) equals the composite route for every texture used as a flat
+#   lint     the VIF1 chain lint (-hwdbg 536870912): no FLUSH inside a GIF packet (the MAPMD/MAPME hang), maps with odd texture sizes   (PS2-HW-144)
 #   leak     50 map changes in software and in hardware (used bytes, C heap, stack must not grow)
 #   inject   out-of-memory injection sweeps: level load / frame, software and hardware                            (oom_inject.py)
 #   addons   Lua, limits, skins/sounds/music, UDMF map, Lua HUD (both renderers, + injection)                     (addon_compare.py, ftest_run.py)
 #   interp   interpreter + EE data cache against the recompiler (needs build/pcsx2-int, opt10-S.md)
 #   split    split screen, two scripted pads, both renderers
 #   net      PS2 <-> PC, PS2 <-> PS2, local mock master only (needs build/pc-net, build/pcsx2-net1/2; see net_env.py)
-#   demos    the 4 demos to the end: software (PC tics + PS2 frames), hardware (PC tics), hardware with injection
-#   sweep    84 maps, one session chain per renderer (chain_sweep.py) and every map on a cold boot (map_sweep.py)
-#   soak     20 game minutes in one session per renderer (stab_soak.py)
+#   demos    the 4 demos to the end: software (PC tics + PS2 frames), hardware (PC tics), hardware with injection (demosw demohw demohi; need the PS2REF ELF, built here)
+#   sweep    84 maps, one session chain per renderer (chain_sweep.py) and every map on a cold boot (map_sweep.py) (chainsw chainhw coldsw coldhw)
+#   soak     20 game minutes in one session per renderer (stab_soak.py) (soaksw soakhw)
 # The log is build/logs/stab-TAG.txt (TAG defaults to the ELF's file name); the runs are build/runs/<TAG>-*.
 # Environment: SRB2_STAB_PAK = the cooked packs (default: the shared build/pak of the main tree, read only), SRB2_STAB_FRAMES = frames per map (35),
 # SRB2_STAB_MINUTES = soak game minutes (20), SRB2_STAB_ZDBG = a ZDEBUG ELF for the heap checks (build/out-zdbg2/SRB2.ELF).
@@ -28,7 +30,7 @@ case $ELF in /*) ;; *) ELF=$ROOT/$ELF ;; esac
 shift
 TAG=${1:-$(basename "$ELF" .ELF)}
 [ $# -gt 0 ] && shift
-STAGES=${*:-ui video files packs hwfb leak inject addons interp split net demos sweep soak}
+STAGES=${*:-ui video files packs hwfb lint flats leak inject addons interp split net demos sweep soak}
 PAK=${SRB2_STAB_PAK:-/home/user/SRB2-Banpyura-PS2/build/pak}
 FRAMES=${SRB2_STAB_FRAMES:-35}
 MINUTES=${SRB2_STAB_MINUTES:-20}
@@ -39,6 +41,18 @@ L=$ROOT/build/logs/stab-$TAG.txt
 OPT="python3 -B tools/ps2/opt_run.py"
 
 say() { echo "$@" >> "$L"; }
+# The disk is shared by the agents: after every stage the heavy parts of this tag's run directories go (ELF copies, pack links, frame dumps, big emulator logs);
+# the engine logs (boot.txt), summaries and screenshots stay. SRB2_STAB_KEEP=1 keeps everything.
+slim_runs() {
+	local d
+	[ -n "$SRB2_STAB_KEEP" ] && return
+	for d in "$ROOT/build/runs/$TAG"-* "$ROOT"/build/runs/sweep/"$TAG"-*/* "$ROOT"/build/runs/msweep/"$TAG"-*/* "$ROOT"/build/runs/inject/"$TAG"-*/* "$ROOT"/build/stab-net/run/*/*; do
+		[ -d "$d" ] || continue
+		rm -f "$d/SRB2.ELF" "$d"/*.PAK "$d/FINEACON.DAT"
+		rm -rf "$d/refout"
+		find "$d" -maxdepth 1 -name pcsx2.log -size +2M -delete
+	done
+}
 run() { "$@" >> "$L" 2>&1; }
 grep_run() { # grep_run RUN PATTERN [cut]
 	grep -h "$2" "build/runs/$1/boot.txt" 2>/dev/null | cut -c1-${3:-230} >> "$L"
@@ -79,6 +93,22 @@ stage_hwfb() {
 		$OPT --name "$TAG-zdbg" --elf "$ZDBG" --pak "$PAK" --out build/runs --map MAP01 --timeout 3000 -- -zck -zheap 1 -zquit 150 -renderer Hardware -zoomtest 40,160 -zchain 02,03,04 >> "$L" 2>&1
 		grep_run "$TAG-zdbg" "ps2_hwfb\|OOM\|I_Error\|ZCHAIN" 200
 	fi
+}
+
+stage_flats() {
+	say "-- flat route self-test: -flatcheck over every map (software, one session chain); a DIFFER line is an error"
+	python3 tools/ps2/chain_sweep.py --elf "$ELF" --tag "$TAG-flats" --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames 12 -- -flatcheck >> "$L" 2>&1
+	grep -h "FLATCHECK\|FLATSTREAM" build/runs/sweep/$TAG-flats/*/boot.txt 2>/dev/null | cut -c1-200 | sort | uniq -c | sort -rn | head -60 >> "$L"
+}
+
+stage_lint() {
+	local M
+	say "-- chain lint of the VIF1 transport (HWVAL LINT errors must be 0, no WATCHDOG)"
+	for M in MAPMD MAPME MAP01 MAP23 MAP11; do
+		$OPT --name "$TAG-lint-$M" --elf "$ELF" --pak "$PAK" --out build/runs --map $M --timeout 900 --until "ZQUIT DONE" -- -zck -zquit 100 -renderer Hardware -hwdbg 536870912 >> "$L" 2>&1
+		say "$M:"
+		grep_run "$TAG-lint-$M" "HWVAL LINT\|WATCHDOG: GIF\|I_Error" 200
+	done
 }
 
 stage_leak() {
@@ -157,15 +187,32 @@ PYEOF
 	done
 }
 
-stage_net() {
+net_prepare() { # the scenario files, the add-ons the scenarios serve, the local environment
 	export SRB2_PCSX2_ROOT=$ROOT/build/pcsx2-roots
-	mkdir -p build/stab-net/run
+	mkdir -p build/stab-net/run build/stab-net/addons
 	python3 tools/ps2/net_env.py > /dev/null 2>&1
+	# the add-ons that the servers load and serve (ZT.pk3: containers and pictures, NSK.pk3: skin + Lua + SOC), made here when they are missing
+	[ -f build/stab-net/addons/NSK.pk3 ] && [ -f build/stab-net/addons/ZT.pk3 ] || python3 tools/ps2/make_addons.py --out build/stab-net/addons zip nsk >> "$L" 2>&1
+	# two generators: net_specs.py (ps2srv-pccli, pcsrv-ps2cli, ps2srv-ps2cli) and net_specs9.py (modes, add-ons, menus, kills, quit, soak, HW)
+	SRB2_NET_BASE=build/stab-net python3 tools/ps2/net_specs.py "$ELF" > /dev/null 2>&1
 	python3 tools/ps2/net_specs9.py --elf "$ELF" --base build/stab-net > /dev/null 2>&1
-	run python3 tools/ps2/net_batch.py --specs build/stab-net/specs --out build/stab-net/run --retries 2 \
-		ps2srv-pccli pcsrv-ps2cli mode-match-pcsrv-ps2cli mode-ctf-pcsrv-ps2cli mode-race-pcsrv-ps2cli mode-tag-pcsrv-ps2cli mode-coop-pcsrv-ps2cli \
-		ps2host-menu menu-browse server-kill client-kill soak-pcsrv-ps2cli soak-ps2srv-pccli soak-ps2srv-ps2cli \
-		addons-udp addons-http sw-net-coop hw-net-coop hw-net-match
+}
+net_batch() { # NEVER the real master server (ds.ms.srb2.org): every scenario uses a local mock / dead port, net_session.py audits the logs after each session (code 4)
+	net_prepare
+	run python3 tools/ps2/net_batch.py --specs build/stab-net/specs --out build/stab-net/run --retries 2 "$@"
+}
+stage_neta() { # PS2 <-> PC and PS2 <-> PS2, every game type
+	net_batch ps2srv-pccli pcsrv-ps2cli mode-match-pcsrv-ps2cli mode-ctf-pcsrv-ps2cli mode-race-pcsrv-ps2cli mode-tag-pcsrv-ps2cli mode-coop-pcsrv-ps2cli mode-teammatch-pcsrv-ps2cli \
+		mode-match-ps2srv-ps2cli mode-coop-ps2srv-ps2cli
+}
+stage_netb() { # add-on download (UDP, HTTP, HTTP 404, chunked HTTP, from a PS2 host)
+	net_batch addons-udp addons-http addons-http-404 addons-http-chunked addons-ps2srv-pccli
+}
+stage_netc() { # menus, master server (mock), on-screen keyboard, broken connections, quit, hardware renderer in a network game
+	net_batch ps2host-menu menu-browse osk-connect server-kill server-kill-hard client-kill ms-blackhole ms-refused quit-coop-2p quit-match-2p sw-net-coop hw-net-coop hw-net-match reconnect
+}
+stage_netd() { # long sessions
+	net_batch soak-pcsrv-ps2cli soak-ps2srv-pccli soak-ps2srv-ps2cli
 }
 
 demo_suite() { # demo_suite PREFIX sw|hw [extra engine args]
@@ -189,7 +236,7 @@ demo_suite() { # demo_suite PREFIX sw|hw [extra engine args]
 
 # The demos need the PS2REF ELF (tic log and frame dump, -DPS2REF) of the SAME source tree as ELF: SRB2_STAB_REFELF names one, otherwise it is built here (build/out-ref, incremental,
 # the environment of the caller: SRB2_PS2_NO / SRB2_PS2_HW as for the ELF itself; the default is the full configuration with the hardware renderer).
-stage_demos() {
+ref_elf() { # prints the PS2REF ELF (SRB2_STAB_REFELF, or built here)
 	local REF=${SRB2_STAB_REFELF:-}
 	if [ -z "$REF" ]; then
 		say "-- building the PS2REF ELF from this tree (build/out-ref)"
@@ -198,37 +245,79 @@ stage_demos() {
 		SRB2_PS2_OUT=$ROOT/build/out-ref SRB2_PS2_NO=${SRB2_PS2_NO-} SRB2_PS2_HW=${SRB2_PS2_HW-1} python3 tools/ps2/build.py --ps2ref --jobs 2 >> "$L" 2>&1
 		REF=$ROOT/build/out-ref/SRB2.ELF
 	fi
+	echo "$REF"
+}
+stage_demosw() {
+	local REF
+	REF=$(ref_elf)
 	[ -f "$REF" ] || { say "demos: no PS2REF ELF ($REF), skipped"; return; }
-	say "-- demos on $REF ($(stat -c %s "$REF") bytes)"
-	say "-- demos, software"
+	say "-- demos, software, on $REF ($(stat -c %s "$REF") bytes)"
 	ELF=$REF demo_suite dsw sw
-	say "-- demos, hardware"
+}
+stage_demohw() {
+	local REF
+	REF=$(ref_elf)
+	[ -f "$REF" ] || { say "demos: no PS2REF ELF ($REF), skipped"; return; }
+	say "-- demos, hardware, on $REF"
 	ELF=$REF demo_suite dhw hw
-	say "-- demos, hardware with an out-of-memory injection every 200 frames"
+}
+stage_demohi() {
+	local REF
+	REF=$(ref_elf)
+	[ -f "$REF" ] || { say "demos: no PS2REF ELF ($REF), skipped"; return; }
+	say "-- demos, hardware with an out-of-memory injection every 200 frames, on $REF"
 	ELF=$REF demo_suite dhi hw -zoomevery 200
 }
 
-stage_sweep() {
+stage_chainsw() {
 	say "-- chain sweep, software (all maps in session chains)"
 	run python3 tools/ps2/chain_sweep.py --elf "$ELF" --tag "$TAG-sw" --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -zstack
+}
+stage_chainhw() {
 	say "-- chain sweep, hardware"
 	run python3 tools/ps2/chain_sweep.py --elf "$ELF" --tag "$TAG-hw" --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -renderer Hardware -zstack
+}
+stage_coldsw() {
 	say "-- cold per-map sweep (one boot per map), software"
 	run python3 tools/ps2/map_sweep.py --elf "$ELF" --tag "$TAG-cold-sw" --out build/runs/msweep --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -zstack
+}
+stage_coldhw() {
 	say "-- cold per-map sweep, hardware"
 	run python3 tools/ps2/map_sweep.py --elf "$ELF" --tag "$TAG-cold-hw" --out build/runs/msweep --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -renderer Hardware -zstack
 }
 
-stage_soak() {
+stage_soaksw() {
 	run python3 tools/ps2/stab_soak.py --elf "$ELF" --tag "$TAG-soak" --renderer Software --minutes "$MINUTES"
+}
+stage_soakhw() {
 	run python3 tools/ps2/stab_soak.py --elf "$ELF" --tag "$TAG-soak" --renderer Hardware --minutes "$MINUTES"
 }
 
 echo "stab_run: ELF $ELF TAG $TAG stages: $STAGES -> $L"
 say "# stab_run $(date -u +%FT%TZ) ELF $ELF ($(stat -c %s "$ELF") bytes) stages: $STAGES"
+expand() { # aliases of the long stages (each part is resumable)
+	local x
+	for x in $STAGES; do
+		case $x in
+			demos) echo -n "demosw demohw demohi " ;;
+			sweep) echo -n "chainsw chainhw coldsw coldhw " ;;
+			soak) echo -n "soaksw soakhw " ;;
+			net) echo -n "neta netb netc netd " ;;
+			*) echo -n "$x " ;;
+		esac
+	done
+}
+STAGES=$(expand)
+# Resumable: a stage that finished in an earlier run with this TAG (STAGE-DONE in the log) is not run again (SRB2_STAB_RERUN=1 runs everything), so a restart of the
+# machine or of the session costs only the stage that was running.
 for s in $STAGES; do
+	if [ -z "$SRB2_STAB_RERUN" ] && grep -q "^STAGE-DONE $s\$" "$L" 2>/dev/null; then
+		echo "stab_run: stage $s is done (log), skipped"
+		continue
+	fi
 	say "== $s"
 	"stage_$s"
+	slim_runs
 	say "STAGE-DONE $s"
 done
 say "STAB-RUN-DONE"

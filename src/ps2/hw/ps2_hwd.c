@@ -314,6 +314,7 @@ boolean PS2HWD_Init(void)
 		ps2hwd_fx2 |= FX3_NOSTREAM;
 	if (!(ps2hwd_fx2 & (FX3_NOSTREAM | FX3_NOSPR)))
 		spr_alloc(); // the lists of the sprite stream (zone blocks while the driver runs; no stream when there is no room)
+	wd_last_flips = ~0u;
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
@@ -325,6 +326,13 @@ boolean PS2HWD_Init(void)
 	vu_nocut = M_CheckParm("-hwnocut") != 0; // PS2-HW-236 off (-hwnocut 0 = on, for an A/B run with the same form of the command line): the polygons that need cutting at whole repeats (and the fans of more than 12 vertices) are drawn by the EE as before
 	if (vu_nocut && M_CheckParm("-hwnocut") && M_IsNextParm())
 		vu_nocut = atoi(M_GetNextParm()) != 0;
+	pk_oldtail = M_CheckParm("-hwoldtail") != 0;
+	if (M_CheckParm("-hwvudump") && M_IsNextParm())
+		vu_dump_frame = (u32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwvustop") && M_IsNextParm())
+		vu_stop_frame = (u32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwvumax") && M_IsNextParm())
+		vu_max_poly = (u32)atoi(M_GetNextParm());
 	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
 	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
 		vu_bretmask = atoi(M_GetNextParm());

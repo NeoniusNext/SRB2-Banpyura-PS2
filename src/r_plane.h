@@ -75,6 +75,9 @@ extern fixed_t *yslope;
 extern lighttable_t **planezlight;
 
 void R_ClearPlanes(void);
+#if defined(PS2) || defined(PS2_PROFILE)
+void R_ReleaseVisplanes(void); // PS2-179: P_LoadLevel
+#endif
 void R_ClearFFloorClips (void);
 
 void R_DrawPlanes(void);
