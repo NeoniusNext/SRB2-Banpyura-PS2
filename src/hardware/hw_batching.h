@@ -36,6 +36,11 @@ void HWR_ReleaseBatching(void); // PS2-HW-79: gives the batch arrays back on a l
 #endif
 void HWR_SetCurrentTexture(GLMipmap_t *texture);
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader, boolean horizonSpecial);
+int HWR_FrPolyOutside(const FOutVector *v, unsigned int n); // OPT12 HWFRONT (hw_front.inc): all vertices outside one side of the view volume
+#ifdef PS2_HWDETAIL
+extern int hwr_fr_src; // OPT12: what the BSP walk is making (hw_front.inc census): 1 wall, 2 plane
+void HWR_FrCensusPoly(const FOutVector *v, unsigned int n); // OPT12 HWFRONT (hw_front.inc)
+#endif
 void HWR_RenderBatches(void);
 #ifdef PS2_PROFILE
 // OPT11 (GEOM, PS2-HW-80): the geometry cache (hw_gcache.inc, included by hw_main.c). While a seg or a plane is calculated for the cache, the three

@@ -516,6 +516,7 @@ UINT32 hwr_geo_off;
 
 static void HWR_GCacheParse(void)
 {
+	HWR_FrInit(); // OPT12 (hw_front.inc): -hwfr
 	if (M_CheckParm("-hwgo") && M_IsNextParm())
 		hwr_geo_off = (UINT32)atoi(M_GetNextParm());
 	gc.mode_set = true;
