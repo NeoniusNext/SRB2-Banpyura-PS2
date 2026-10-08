@@ -39,6 +39,7 @@ def main():
     ap.add_argument('--crop', default='')
     ap.add_argument('--pcargs', default='')
     ap.add_argument('--addon', default='', help='a PWAD/pk3 loaded with -file on both sides (tools/ps2/make_fxflat.py)')
+    ap.add_argument('--tree', default='', help='a directory copied into the home of the PC engine and next to the PS2 ELF (models.dat, models/*.md3: tools/ps2/make_fxmodel.py)')
     ap.add_argument('--hwargs', default='')
     ap.add_argument('--zreserve', default='1536')
     ap.add_argument('--timeout', type=float, default=900)
@@ -68,6 +69,8 @@ def main():
             cmd += ['--cmd', a.cmd]
         if a.pcsw:
             cmd += ['--sw']
+        if a.tree:
+            cmd += ['--tree', str(Path(a.tree).resolve())]
         pcx = a.pcargs.split() + (['-file', str(Path(a.addon).resolve())] if a.addon else [])
         if pcx:
             cmd += ['--'] + pcx
@@ -80,6 +83,8 @@ def main():
         cmd = [sys.executable, str(T / 'hf_run.py'), runname, '--elf', a.elf, '--timeout', str(a.timeout), '--cfg', a.cfg]
         if a.addon:
             cmd += ['--files', str(Path(a.addon).resolve())]
+        if a.tree:
+            cmd += ['--tree', str(Path(a.tree).resolve())]
         if a.emu:
             cmd += ['--emu', a.emu]
         cmd += ['--', '-skipintro', '-warp', a.map, '-renderer', 'Hardware', '-zreserve', a.zreserve, '-vidshot', spec, '-hwfbh', '200', '-hwlt', str(a.lt if a.lt >= 0 else a.tick + 1)]

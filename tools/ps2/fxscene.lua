@@ -25,16 +25,16 @@ addHook("MapLoad", function()
 	if not (p and p.valid and p.mo and p.mo.valid) then return end
 	local ang = p.mo.angle
 	for i, v in ipairs(variants) do
-		local row = (i - 1) / 4
-		local col = (i - 1) % 4
+		local row = (i - 1) / 6
+		local col = (i - 1) % 6
 		local dist = 230 * FRACUNIT
-		local side = (col - 1) * 64 * FRACUNIT - 32 * FRACUNIT
+		local side = (col * 44 - 110) * FRACUNIT
 		local x = p.mo.x + FixedMul(dist, cos(ang)) + FixedMul(side, cos(ang - ANGLE_90))
 		local y = p.mo.y + FixedMul(dist, sin(ang)) + FixedMul(side, sin(ang - ANGLE_90))
-		local mo = P_SpawnMobj(x, y, p.mo.z + (6 + row * 48) * FRACUNIT, MT_GFZFLOWER1)
+		local mo = P_SpawnMobj(x, y, p.mo.z + (6 + row * 56) * FRACUNIT, MT_GFZFLOWER1)
 		if mo and mo.valid then
 			mo.flags = MF_NOGRAVITY | MF_NOBLOCKMAP | MF_NOCLIP | MF_SCENERY
-			mo.scale = FRACUNIT * 3 / 2
+			mo.scale = FRACUNIT * 6 / 5
 			mo.angle = ang + ANGLE_180
 			v[2](mo)
 		end

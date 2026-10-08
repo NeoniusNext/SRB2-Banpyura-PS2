@@ -52,12 +52,15 @@ def main():
     ap.add_argument('--exe', default='')
     ap.add_argument('--timeout', type=float, default=240)
     ap.add_argument('--size', default='320x200')
+    ap.add_argument('--tree', default='', help='a directory copied into the home of the engine (models.dat, models/*.md3 ...)')
     ap.add_argument('--nogrid', action='store_true', help='do not check that the picture was made with palette rendering (the default look); a run without it is repeated')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     o = Path(a.out).resolve() / a.name
     shutil.rmtree(o, ignore_errors=True)
     (o / 'home/.srb2').mkdir(parents=True)
+    if a.tree:
+        shutil.copytree(a.tree, o / 'home/.srb2', dirs_exist_ok=True)
     cfg = ''.join(x.strip() + '\n' for x in a.cfg.split(';') if x.strip())
     (o / 'home/.srb2/reference.cfg').write_text('fpscap "35"\nfullscreen "Off"\nshowfps "No"\nshowping "Off"\nrollingdemos "Off"\n' + cfg)
     w, h = a.size.split('x')
