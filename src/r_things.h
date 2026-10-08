@@ -62,6 +62,7 @@ extern INT16 negonearray[MAXVIDWIDTH];
 extern INT16 screenheightarray[MAXVIDWIDTH];
 
 fixed_t R_GetShadowZ(mobj_t *thing, pslope_t **shadowslope);
+fixed_t R_GetShadowZInterp(mobj_t *thing, const interpmobjstate_t *interp, pslope_t **shadowslope); // PS2-HW-242: with the interpolated state at hand
 
 //SoM: 6/5/2000: Light sprites correctly!
 void R_AddSprites(sector_t *sec, INT32 lightlevel);

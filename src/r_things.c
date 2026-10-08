@@ -1590,16 +1590,6 @@ static void R_SplitSprite(vissprite_t *sprite)
 //
 fixed_t R_GetShadowZ(mobj_t *thing, pslope_t **shadowslope)
 {
-	fixed_t halfHeight;
-	boolean isflipped = thing->eflags & MFE_VERTICALFLIP;
-	fixed_t floorz;
-	fixed_t ceilingz;
-	fixed_t z, groundz = isflipped ? INT32_MAX : INT32_MIN;
-	pslope_t *slope, *groundslope = NULL;
-	msecnode_t *node;
-	sector_t *sector;
-	ffloor_t *rover;
-
 	// for frame interpolation
 	interpmobjstate_t interp = {0};
 
@@ -1612,9 +1602,23 @@ fixed_t R_GetShadowZ(mobj_t *thing, pslope_t **shadowslope)
 		R_InterpolateMobjState(thing, FRACUNIT, &interp);
 	}
 
+	return R_GetShadowZInterp(thing, &interp, shadowslope);
+}
+
+// R_GetShadowZ with the interpolated state of the thing at hand (PS2-HW-242: the hardware renderer's drop shadow has it already). The floor (the ceiling of a
+// flipped thing) under the thing is looked up where it is used, at the end.
+fixed_t R_GetShadowZInterp(mobj_t *thing, const interpmobjstate_t *iptr, pslope_t **shadowslope)
+{
+	const interpmobjstate_t interp = *iptr;
+	fixed_t halfHeight;
+	boolean isflipped = thing->eflags & MFE_VERTICALFLIP;
+	fixed_t z, groundz = isflipped ? INT32_MAX : INT32_MIN;
+	pslope_t *slope, *groundslope = NULL;
+	msecnode_t *node;
+	sector_t *sector;
+	ffloor_t *rover;
+
 	halfHeight = interp.z + (interp.height >> 1);
-	floorz = P_GetFloorZ(thing, interp.subsector->sector, interp.x, interp.y, NULL);
-	ceilingz = P_GetCeilingZ(thing, interp.subsector->sector, interp.x, interp.y, NULL);
 
 #define CHECKZ (isflipped ? z > halfHeight && z < groundz : z < halfHeight && z > groundz)
 
@@ -1676,11 +1680,25 @@ fixed_t R_GetShadowZ(mobj_t *thing, pslope_t **shadowslope)
 		}
 	}
 
-	if (isflipped ? (ceilingz < groundz - (!groundslope ? 0 : FixedMul(abs(groundslope->zdelta), interp.radius*3/2)))
-		: (floorz > groundz + (!groundslope ? 0 : FixedMul(abs(groundslope->zdelta), interp.radius*3/2))))
+	if (isflipped)
 	{
-		groundz = isflipped ? ceilingz : floorz;
-		groundslope = NULL;
+		const fixed_t ceilingz = P_GetCeilingZ(thing, interp.subsector->sector, interp.x, interp.y, NULL);
+
+		if (ceilingz < groundz - (!groundslope ? 0 : FixedMul(abs(groundslope->zdelta), interp.radius*3/2)))
+		{
+			groundz = ceilingz;
+			groundslope = NULL;
+		}
+	}
+	else
+	{
+		const fixed_t floorz = P_GetFloorZ(thing, interp.subsector->sector, interp.x, interp.y, NULL);
+
+		if (floorz > groundz + (!groundslope ? 0 : FixedMul(abs(groundslope->zdelta), interp.radius*3/2)))
+		{
+			groundz = floorz;
+			groundslope = NULL;
+		}
 	}
 
 	if (shadowslope != NULL)
