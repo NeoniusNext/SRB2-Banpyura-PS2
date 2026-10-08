@@ -8,7 +8,7 @@ Builds four host decoders from tools/ps2/ee_tests/vorbis_host.c (x86-64 gcc, -ff
   twin     the vendored units with PS2_VORBIS_VU0 + PS2A_MODEL: the vector structure with the C twins of the VU0 kernels.
 Decodes N stock music tracks of /opt/srb2-assets/music.pk3 (12 s each, half rate, as ps2_music.c) and compares the PCM sample by sample. Round to
 nearest and, with --mode trunc/both, round toward zero (what VU0 does).  With --prev GITREF a fourth decoder is built from the vendored files of that commit and must give the same PCM as the current vendored files
-(for changes that must not alter the result: entropy decode, tables).  Pass = vendored and twin are bit-identical (the data flow, the tables and
+(for changes that must not alter the result: entropy decode, tables).  Pass = generic (no PS2_VORBIS_FAST), vendored (fast Huffman paths) and twin (fast paths + the vector structure of the VU0 kernels) are bit-identical (the data flow, the tables and
 the operation order of the vector structure equal the scalar code); stock is listed for information: the system libvorbis is built with -ffast-math,
 so it differs from the vendored code by a few samples of 1 LSB (this host test is x86 and says nothing about the EE).
 """
@@ -69,11 +69,12 @@ def main():
     for rz in ([False, True] if a.mode == 'both' else [a.mode == 'trunc']):
         exes = {
             'stock': build('stock', [], [], rz),
-            'vendored': build('vendored', [], UNITS, rz),
-            'twin': build('twin', ['-DPS2_VORBIS_VU0', '-DPS2A_MODEL'], UNITS, rz),
+            'generic': build('generic', [], UNITS, rz),
+            'vendored': build('vendored', ['-DPS2_VORBIS_FAST'], UNITS, rz),
+            'twin': build('twin', ['-DPS2_VORBIS_FAST', '-DPS2_VORBIS_VU0', '-DPS2A_MODEL'], UNITS, rz),
         }
         if prevdir:
-            exes['prev'] = build('prev', ['-DPS2_VORBIS_VU0', '-DPS2A_MODEL'], UNITS, rz, prevdir)
+            exes['prev'] = build('prev', ['-DPS2_VORBIS_FAST', '-DPS2_VORBIS_VU0', '-DPS2A_MODEL'], UNITS, rz, prevdir)
         print('rounding:', 'toward zero' if rz else 'nearest')
         import numpy as np
         for f in files:
@@ -83,14 +84,14 @@ def main():
                 r = subprocess.run([str(e), str(f), str(a.sec), '-dump', str(raw)], capture_output=True, text=True)
                 pcm[k] = np.fromfile(raw, dtype='<i2').astype(np.int32) if r.returncode == 0 else None
                 raw.unlink(missing_ok=True)
-            same = pcm['vendored'] is not None and pcm['twin'] is not None and np.array_equal(pcm['vendored'], pcm['twin'])
+            same = pcm['vendored'] is not None and pcm['twin'] is not None and np.array_equal(pcm['vendored'], pcm['twin']) and np.array_equal(pcm['generic'], pcm['twin'])
             if 'prev' in pcm:
                 same = same and pcm['prev'] is not None and np.array_equal(pcm['prev'], pcm['twin'])
             bad += not same
             st = pcm['stock']
             m = min(len(st), len(pcm['vendored']))
             nd = int((st[:m] != pcm['vendored'][:m]).sum())
-            print('  %-10s vendored==twin%s: %s;  stock vs vendored: %d of %d samples differ (max %d LSB)' % (f.stem, '==prev' if 'prev' in pcm else '', 'yes' if same else 'NO', nd, m,
+            print('  %-10s generic==fast==twin%s: %s;  stock vs vendored: %d of %d samples differ (max %d LSB)' % (f.stem, '==prev' if 'prev' in pcm else '', 'yes' if same else 'NO', nd, m,
                   int(np.abs(st[:m] - pcm['vendored'][:m]).max())))
     print('tracks %d, differing %d' % (len(files), bad))
     return 1 if bad else 0

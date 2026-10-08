@@ -298,21 +298,60 @@ STIN long decode_packed_entry_number(codebook *book, oggpack_buffer *b){
   long lok;
 
 #if defined(PS2_VORBIS_FAST)
-  /* PS2-311: the first-stage table lookup without the two calls into libogg (oggpack_look, oggpack_adv). With 8 readable bytes at ptr
-     the look-ahead of dec_firsttablen (<= 8) bits is the little-endian word shifted by endbit, and a hit advances by its code length
-     (<= 8) so no byte-boundary overflow can occur: the same bits, the same position as the generic path below. At the end of the packet
-     (fewer than 8 bytes left, or ptr cleared by an overflow) and for codes longer than the first-stage table the generic path runs. */
-  if(b->endbyte+8<=b->storage){
-    ogg_uint64_t w;
-    long entry;
-    __builtin_memcpy(&w,b->ptr,8);
-    entry=book->dec_firsttable[(w>>b->endbit)&((1UL<<book->dec_firsttablen)-1)];
-    if(!(entry&0x80000000UL)){
-      int bits=b->endbit+book->dec_codelengths[entry-1];
-      b->ptr+=bits>>3;
-      b->endbyte+=bits>>3;
-      b->endbit=bits&7;
-      return(entry-1);
+  /* PS2-311: the first-stage table lookup without the two calls into libogg (oggpack_look, oggpack_adv). The look-ahead of dec_firsttablen
+     (<= 8) bits is the little-endian word at ptr shifted by endbit, and a hit advances by its code length (<= 8): the same bits, the same position
+     as the generic path below.
+     PS2-313: (1) the last 8 bytes of the packet are no longer left to the generic path: the word is assembled from the bytes that are there (the
+     rest zero) and used only for as many bits as remain (oggpack_look fails when fewer than `bits` remain); (2) a code longer than the first-stage
+     table is bisected here on the same look-ahead bits (dec_maxlength of them, which must remain), without oggpack_look / oggpack_adv. Everything
+     else (fewer bits left than needed, the end-of-packet cases and their return values) takes the generic path. */
+  {
+    long avail=b->storage-b->endbyte;
+    if(avail>0 && b->ptr){
+      ogg_uint64_t w;
+      long entry;
+      long remain;
+      if(avail>=8){
+        __builtin_memcpy(&w,b->ptr,8);
+        remain=64-b->endbit;
+      }else{
+        long k;
+        w=0;
+        for(k=0;k<avail;k++)w|=(ogg_uint64_t)b->ptr[k]<<(8*k);
+        remain=avail*8-b->endbit;
+      }
+      w>>=b->endbit;
+      if(remain>=book->dec_firsttablen){
+        entry=book->dec_firsttable[w&((1UL<<book->dec_firsttablen)-1)];
+        if(!(entry&0x80000000UL)){
+          int bits=b->endbit+book->dec_codelengths[entry-1];
+          b->ptr+=bits>>3;
+          b->endbyte+=bits>>3;
+          b->endbit=bits&7;
+          return(entry-1);
+        }else if(remain>=read){
+          lo=(entry>>15)&0x7fff;
+          hi=book->used_entries-(entry&0x7fff);
+          {
+            ogg_uint32_t testword=bitreverse((ogg_uint32_t)(w&(read>=32?0xffffffffUL:((1UL<<read)-1))));
+            int bbits;
+            while(hi-lo>1){
+              long p=(hi-lo)>>1;
+              long test=book->codelist[lo+p]>testword;
+              lo+=p&(test-1);
+              hi-=p&(-test);
+            }
+            if(book->dec_codelengths[lo]<=read){
+              bbits=b->endbit+book->dec_codelengths[lo];
+              b->ptr+=bbits>>3; b->endbyte+=bbits>>3; b->endbit=bbits&7;
+              return(lo);
+            }
+            bbits=b->endbit+read;
+            b->ptr+=bbits>>3; b->endbyte+=bbits>>3; b->endbit=bbits&7;
+            return(-1);
+          }
+        }
+      }
     }
   }
 #endif
@@ -543,46 +582,201 @@ long vorbis_book_decodevv_add(codebook *book,float **a,long offset,int ch,
 
 /* PS2-313 ---------------------------------------------------------------------------------------------------------------------------------- */
 ps2_fastbook *ps2_fastbook_build(const codebook *book){
-  int tlen=book->dec_firsttablen,k;
-  unsigned n;
+  /* The table is indexed by up to 10 bits of look-ahead (the books of the stream have first tables of only 5..8 bits: a third of the symbols of a
+     stream at normal quality were longer than that and went through the bisect of the general path).  Same construction as vorbis_book_init_decode:
+     every codeword of length <= tlen fills all its suffix extensions. */
+  int tlen,i;
+  unsigned n,j;
   ps2_fastbook *fb;
-  if(book->used_entries<=0 || !book->dec_firsttable || !book->dec_codelengths || tlen<1 || tlen>8)return(NULL);
+  if(book->used_entries<=0 || !book->dec_codelengths || !book->codelist || book->dec_maxlength<1)return(NULL);
   if(book->valuelist && (unsigned long)book->used_entries*(unsigned long)book->dim*sizeof(float)>=(1UL<<26))return(NULL);
   if(!book->valuelist && (!book->dec_index || book->entries>=(1L<<26)))return(NULL);
+  tlen=book->dec_maxlength<10?book->dec_maxlength:10;
   n=1u<<tlen;
   fb=_ogg_malloc(sizeof(*fb)+sizeof(ogg_uint32_t)*n);
   if(!fb)return(NULL);
+  memset(fb->ft,0,sizeof(ogg_uint32_t)*n);
   fb->mask=n-1;
   fb->dim=book->dim;
-  for(k=0;k<(int)n;k++){
-    ogg_uint32_t e=book->dec_firsttable[k];
-    if(e==0 || (e&0x80000000UL)){
-      fb->ft[k]=0;
+  if(book->used_entries==1 && book->dec_maxlength==1){
+    /* the single entry book: one bit, always entry 0 (the table of the general path is {1,1}) */
+    for(i=0;i<(int)n;i++)fb->ft[i]=1;
+    if(book->valuelist){
+      const float *t=book->valuelist;
+      long q;
+      int z=1;
+      for(q=0;q<book->dim;q++)if(t[q]!=0.f)z=0;
+      for(i=0;i<(int)n;i++)fb->ft[i]=(z?16u:0u)|1u;
     }else{
-      long idx=(long)e-1;
-      int len=book->dec_codelengths[idx];
+      for(i=0;i<(int)n;i++)fb->ft[i]=((ogg_uint32_t)book->dec_index[0]<<5)|1u;
+    }
+    return(fb);
+  }
+  for(i=0;i<book->used_entries;i++){
+    int len=book->dec_codelengths[i];
+    if(len<=tlen){
+      ogg_uint32_t orig=bitreverse(book->codelist[i]),word;
       if(book->valuelist){
-        const float *t=book->valuelist+idx*book->dim;
+        const float *t=book->valuelist+(long)i*book->dim;
         long q;
         int z=1;
         for(q=0;q<book->dim;q++)if(t[q]!=0.f)z=0;
-        fb->ft[k]=((ogg_uint32_t)(idx*book->dim*(long)sizeof(float))<<5)|(z?16u:0u)|(ogg_uint32_t)len;
+        word=((ogg_uint32_t)((long)i*book->dim*(long)sizeof(float))<<5)|(z?16u:0u)|(ogg_uint32_t)len;
       }else{
-        fb->ft[k]=((ogg_uint32_t)book->dec_index[idx]<<5)|(ogg_uint32_t)len;
+        word=((ogg_uint32_t)book->dec_index[i]<<5)|(ogg_uint32_t)len;
       }
+      for(j=0;j<(1u<<(tlen-len));j++)fb->ft[orig|(j<<len)]=word;
     }
   }
   return(fb);
 }
 
+#if defined(_EE) && defined(PS2_VORBIS_FAST)
+/* PS2-313: the hot loop of the fast residue decode in assembly.  Runs symbols while the first-stage table hits, the packet has at least 8 more
+   bytes and the whole vector (HALF pairs) lies before `alim`; leaves at the first symbol that needs the general path (the caller decodes it).
+   The operations on the data are the C ones (one add.s per element, same order); nothing but the speed differs.
+   a0 / a1: pointers to the current element of the two channels, bp: bit position. */
+#define PS2_RUN_HEAD \
+  "1:\n" \
+  "sltu %[t0], %[bp], %[bplim]\n" \
+  "beqz %[t0], 9f\n" \
+  " srl %[t1], %[bp], 3\n" \
+  "addu %[t1], %[t1], %[base]\n" \
+  "ldl %[t2], 7(%[t1])\n" \
+  "ldr %[t2], 0(%[t1])\n" \
+  "andi %[t3], %[bp], 7\n" \
+  "dsrlv %[t2], %[t2], %[t3]\n" \
+  "and %[t2], %[t2], %[mask]\n" \
+  "sll %[t2], %[t2], 2\n" \
+  "addu %[t2], %[t2], %[ft]\n" \
+  "lw %[t4], 0(%[t2])\n" \
+  "beqz %[t4], 9f\n" \
+  " andi %[t5], %[t4], 15\n" \
+  "addu %[bp], %[bp], %[t5]\n" \
+  "andi %[t6], %[t4], 16\n" \
+  "bnez %[t6], 2f\n" \
+  " srl %[t7], %[t4], 5\n" \
+  "addu %[t7], %[t7], %[vl]\n"
+#define PS2_RUN_TAIL(STEP) \
+  "2:\n" \
+  "addiu %[a0], %[a0], " STEP "\n" \
+  "addiu %[a1], %[a1], " STEP "\n" \
+  "sltu %[t0], %[a0], %[alim]\n" \
+  "bnez %[t0], 1b\n" \
+  " nop\n" \
+  "9:\n"
+#define PS2_RUN_OPERANDS \
+  : [a0] "+&r"(a0), [a1] "+&r"(a1), [bp] "+&r"(bp), \
+    [t0] "=&r"(t0), [t1] "=&r"(t1), [t2] "=&r"(t2), [t3] "=&r"(t3), [t4] "=&r"(t4), [t5] "=&r"(t5), [t6] "=&r"(t6), [t7] "=&r"(t7) \
+  : [base] "r"(base), [ft] "r"(ft), [mask] "r"(mask), [vl] "r"(vl), [alim] "r"(alim), [bplim] "r"(bplim) \
+  : "memory", "$f0", "$f1", "$f2", "$f3", "$f4", "$f5", "$f6", "$f7", "$f8", "$f9", "$f10", "$f11", "$f12", "$f13", "$f14", "$f15"
+
+static void ps2_run1(float **pa0,float **pa1,unsigned long *pbp,const unsigned char *base,const ogg_uint32_t *ft,unsigned mask,
+                     const char *vl,const float *alim,unsigned long bplim){
+  float *a0=*pa0,*a1=*pa1;
+  unsigned long bp=*pbp;
+  long t0,t1,t2,t3,t4,t5,t6,t7;
+  __asm__ volatile(
+    ".set push\n.set noreorder\n"
+    PS2_RUN_HEAD
+    "lwc1 $f0, 0(%[t7])\n"
+    "lwc1 $f1, 4(%[t7])\n"
+    "lwc1 $f2, 0(%[a0])\n"
+    "lwc1 $f3, 0(%[a1])\n"
+    "add.s $f2, $f2, $f0\n"
+    "add.s $f3, $f3, $f1\n"
+    "swc1 $f2, 0(%[a0])\n"
+    "swc1 $f3, 0(%[a1])\n"
+    PS2_RUN_TAIL("4")
+    ".set pop\n"
+    PS2_RUN_OPERANDS);
+  *pa0=a0; *pa1=a1; *pbp=bp;
+}
+static void ps2_run2(float **pa0,float **pa1,unsigned long *pbp,const unsigned char *base,const ogg_uint32_t *ft,unsigned mask,
+                     const char *vl,const float *alim,unsigned long bplim){
+  float *a0=*pa0,*a1=*pa1;
+  unsigned long bp=*pbp;
+  long t0,t1,t2,t3,t4,t5,t6,t7;
+  __asm__ volatile(
+    ".set push\n.set noreorder\n"
+    PS2_RUN_HEAD
+    "lwc1 $f0, 0(%[t7])\n"
+    "lwc1 $f1, 4(%[t7])\n"
+    "lwc1 $f2, 8(%[t7])\n"
+    "lwc1 $f3, 12(%[t7])\n"
+    "lwc1 $f4, 0(%[a0])\n"
+    "lwc1 $f5, 4(%[a0])\n"
+    "lwc1 $f6, 0(%[a1])\n"
+    "lwc1 $f7, 4(%[a1])\n"
+    "add.s $f4, $f4, $f0\n"
+    "add.s $f6, $f6, $f1\n"
+    "add.s $f5, $f5, $f2\n"
+    "add.s $f7, $f7, $f3\n"
+    "swc1 $f4, 0(%[a0])\n"
+    "swc1 $f6, 0(%[a1])\n"
+    "swc1 $f5, 4(%[a0])\n"
+    "swc1 $f7, 4(%[a1])\n"
+    PS2_RUN_TAIL("8")
+    ".set pop\n"
+    PS2_RUN_OPERANDS);
+  *pa0=a0; *pa1=a1; *pbp=bp;
+}
+static void ps2_run4(float **pa0,float **pa1,unsigned long *pbp,const unsigned char *base,const ogg_uint32_t *ft,unsigned mask,
+                     const char *vl,const float *alim,unsigned long bplim){
+  float *a0=*pa0,*a1=*pa1;
+  unsigned long bp=*pbp;
+  long t0,t1,t2,t3,t4,t5,t6,t7;
+  __asm__ volatile(
+    ".set push\n.set noreorder\n"
+    PS2_RUN_HEAD
+    "lwc1 $f0, 0(%[t7])\n"
+    "lwc1 $f1, 4(%[t7])\n"
+    "lwc1 $f2, 8(%[t7])\n"
+    "lwc1 $f3, 12(%[t7])\n"
+    "lwc1 $f4, 16(%[t7])\n"
+    "lwc1 $f5, 20(%[t7])\n"
+    "lwc1 $f6, 24(%[t7])\n"
+    "lwc1 $f7, 28(%[t7])\n"
+    "lwc1 $f8, 0(%[a0])\n"
+    "lwc1 $f9, 4(%[a0])\n"
+    "lwc1 $f10, 8(%[a0])\n"
+    "lwc1 $f11, 12(%[a0])\n"
+    "lwc1 $f12, 0(%[a1])\n"
+    "lwc1 $f13, 4(%[a1])\n"
+    "lwc1 $f14, 8(%[a1])\n"
+    "lwc1 $f15, 12(%[a1])\n"
+    "add.s $f8, $f8, $f0\n"
+    "add.s $f12, $f12, $f1\n"
+    "add.s $f9, $f9, $f2\n"
+    "add.s $f13, $f13, $f3\n"
+    "add.s $f10, $f10, $f4\n"
+    "add.s $f14, $f14, $f5\n"
+    "add.s $f11, $f11, $f6\n"
+    "add.s $f15, $f15, $f7\n"
+    "swc1 $f8, 0(%[a0])\n"
+    "swc1 $f12, 0(%[a1])\n"
+    "swc1 $f9, 4(%[a0])\n"
+    "swc1 $f13, 4(%[a1])\n"
+    "swc1 $f10, 8(%[a0])\n"
+    "swc1 $f14, 8(%[a1])\n"
+    "swc1 $f11, 12(%[a0])\n"
+    "swc1 $f15, 12(%[a1])\n"
+    PS2_RUN_TAIL("16")
+    ".set pop\n"
+    PS2_RUN_OPERANDS);
+  *pa0=a0; *pa1=a1; *pbp=bp;
+}
+#endif
+
 /* The interleaved two-channel decode of vorbis_book_decodevv_add_lim (ch == 2, even dim) with the bit reader in registers and no per-element
    tests when the whole vector lies inside the transformed bins.  Bits are consumed exactly as by decode_packed_entry_number (a code longer than the
    first table, and the last 8 bytes of the packet, take that function).  Vectors that are all zero are not added (adding +-0 changes at most the
-   sign of a zero). */
+   sign of a zero).  On the EE the loop over the symbols that hit the first table is assembly (ps2_run1/2/4). */
 long ps2_book_decodevv2_add(const ps2_fastbook *fb,codebook *book,float **a,long offset,
                             oggpack_buffer *b,int n,long lim){
   long i=offset>>1,m=(offset+n)>>1;
   const long dim=fb->dim,half=dim>>1;
+  const long mi=m<lim?m:lim;   /* a vector is added without per-element tests while it ends at or before mi */
   float *a0=a[0],*a1=a[1];
   const char *vl=(const char *)book->valuelist;
   const unsigned char *base=b->buffer;
@@ -595,6 +789,17 @@ long ps2_book_decodevv2_add(const ps2_fastbook *fb,codebook *book,float **a,long
     ogg_uint32_t e=0;
     long off;
     int zero=0;
+#if defined(_EE) && defined(PS2_VORBIS_FAST)
+    if(i+half<=mi && (half==1 || half==2 || half==4)){
+      float *p0=a0+i,*p1=a1+i;
+      const float *alim=a0+(mi-half+1);   /* another vector starts while p0 < alim */
+      if(half==1)ps2_run1(&p0,&p1,&bp,base,ft,mask,vl,alim,bplim);
+      else if(half==2)ps2_run2(&p0,&p1,&bp,base,ft,mask,vl,alim,bplim);
+      else ps2_run4(&p0,&p1,&bp,base,ft,mask,vl,alim,bplim);
+      i=p0-a0;
+      if(i>=m)break;
+    }
+#endif
     if(bp<bplim){
       ogg_uint64_t w;
       __builtin_memcpy(&w,base+(bp>>3),8);
@@ -614,26 +819,13 @@ long ps2_book_decodevv2_add(const ps2_fastbook *fb,codebook *book,float **a,long
       }
       off=entry*dim*(long)sizeof(float);
     }
-    if(i+half<=m && i+half<=lim){
+    if(i+half<=mi){
       if(!zero){
         const float *t=(const float *)(vl+off);
         long k;
-        if(half==1){
-          a0[i]+=t[0];
-          a1[i]+=t[1];
-        }else if(half==2){
-          a0[i]+=t[0]; a1[i]+=t[1];
-          a0[i+1]+=t[2]; a1[i+1]+=t[3];
-        }else if(half==4){
-          a0[i]+=t[0]; a1[i]+=t[1];
-          a0[i+1]+=t[2]; a1[i+1]+=t[3];
-          a0[i+2]+=t[4]; a1[i+2]+=t[5];
-          a0[i+3]+=t[6]; a1[i+3]+=t[7];
-        }else{
-          for(k=0;k<half;k++){
-            a0[i+k]+=t[2*k];
-            a1[i+k]+=t[2*k+1];
-          }
+        for(k=0;k<half;k++){
+          a0[i+k]+=t[2*k];
+          a1[i+k]+=t[2*k+1];
         }
       }
       i+=half;

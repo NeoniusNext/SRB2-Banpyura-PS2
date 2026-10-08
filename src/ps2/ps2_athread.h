@@ -87,6 +87,8 @@ typedef struct
 	volatile ps2e_u32 music_hash_dec, music_hash_cons, hash_errors;   // per-block check of the decoder -> mixer transport
 	volatile ps2e_u32 mix_cycles_max, mix_cycles_blocks;       // COP0 cycles of one PS2E_Render (EE only)
 	volatile ps2e_u64 mix_cycles_total;
+	volatile ps2e_u64 dec_cycles_total;                            // COP0 cycles inside PS2E_DecodeStep (decoder thread; includes preemption by the mixer thread)
+	volatile ps2e_u32 dec_steps_silent;                            // decode steps that skipped the decoder because the music was muted (PS2-317)
 	volatile ps2e_u32 main_gap_max_ms, main_gaps_over_100ms;   // game thread: longest time between two I_UpdateSound calls
 } ps2e_stats;
 

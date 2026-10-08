@@ -396,8 +396,10 @@ static void DecoderThread(void *arg)
 	while (!eng.quit)
 	{
 		UINT64 t0 = GetTimerSystemTime();
+		UINT32 c0 = CopCount();
 		int work = PS2E_DecodeStep(&eng);
 		UINT32 us = (UINT32)((GetTimerSystemTime() - t0) * 1000000 / kBUSCLK);
+		if (work) eng.st.dec_cycles_total += (UINT32)(CopCount() - c0);
 		if (us > eng.st.dec_max_us) eng.st.dec_max_us = us;
 		if (!work) DelayThread(4000);
 		else if (PS2E_SlotsFilled(&eng) >= 6) DelayThread(600); // leave the game thread some time between blocks
@@ -495,13 +497,14 @@ static void StatLine(const char *tag)
 	const ps2e_stats *s = &eng.st;
 	I_OutputMsg("ASTAT %s mode=%s cap=%u target=%u underruns=%u emptyobs=%u gapmax_ms=%u gaptotal_ms=%u pumps=%u "
 		"maxint_ms=%u minq_ms=%d blocks=%u sent=%u mstarve=%u hmis=%u decslots=%u decmax_us=%u cmdfull=%u dcmdfull=%u "
-		"fdec=%u fcons=%u hdec=%08x hcons=%08x herr=%u maingap_ms=%u gaps100=%u mixavg_cyc=%u mixmax_cyc=%u flushblk=%u shortw=%u rpcs=%u rpckcyc=%u pumps_all=%u pumpkcyc=%u\n",
+		"fdec=%u fcons=%u hdec=%08x hcons=%08x herr=%u maingap_ms=%u gaps100=%u mixavg_cyc=%u mixmax_cyc=%u flushblk=%u shortw=%u rpcs=%u rpckcyc=%u pumps_all=%u pumpkcyc=%u deckcyc=%u mixkcyc=%u decsilent=%u\n",
 		tag, threaded ? "thread" : "single", (unsigned)ring_bytes, (unsigned)queue_target, s->underruns, s->empty_obs,
 		s->gap_max_ms, s->gap_total_ms, s->pumps, s->max_interval_ms, s->min_queue_ms == 0xffffffffu ? -1 : (int)s->min_queue_ms,
 		s->blocks, s->bytes_sent, s->music_starved, s->handle_mismatch, s->dec_slots, s->dec_max_us, s->cmd_full,
 		s->dcmd_full, s->music_frames_dec, s->music_frames_cons, s->music_hash_dec, s->music_hash_cons, s->hash_errors, s->main_gap_max_ms,
 		s->main_gaps_over_100ms, s->mix_cycles_blocks ? (unsigned)(s->mix_cycles_total / s->mix_cycles_blocks) : 0u, s->mix_cycles_max,
-		s->flush_blocks, s->short_writes, s->rpc_calls, (unsigned)(s->rpc_cycles / 1000), s->pump_calls, (unsigned)(s->pump_cycles / 1000));
+		s->flush_blocks, s->short_writes, s->rpc_calls, (unsigned)(s->rpc_cycles / 1000), s->pump_calls, (unsigned)(s->pump_cycles / 1000),
+		(unsigned)(s->dec_cycles_total / 1000), (unsigned)(s->mix_cycles_total / 1000), s->dec_steps_silent);
 #ifdef _EE
 	if (threaded)
 		I_OutputMsg("ASTAT %s threads prio main=%d (was %d) mixer=%d decoder=%d stack_used mixer=%u/%u decoder=%u/%u\n", tag,
