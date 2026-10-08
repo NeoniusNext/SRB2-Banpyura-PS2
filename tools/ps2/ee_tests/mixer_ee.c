@@ -6,7 +6,11 @@
 #include <string.h>
 #include <stdint.h>
 #include <kernel.h>
+#ifdef MIXER_SRC
+#include MIXER_SRC   // e.g. -DMIXER_SRC='"/path/ps2_audio_old.c"': the mixer of an earlier commit, to compare cycles and hashes
+#else
 #include "../../../src/ps2/ps2_audio.c"
+#endif
 
 static inline unsigned CopCount(void) { unsigned v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
 static int16_t music[1024] __attribute__((aligned(64))), out[1024] __attribute__((aligned(64)));

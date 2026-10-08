@@ -81,7 +81,7 @@ def main(argv):
             print('%s: negative control %s' % (name, 'DETECTED (as required)' if ok else 'NOT DETECTED -- the test is blind'))
             rc |= 0 if ok else 1
     if 'equiv' in want and (ROOT / 'tools/ps2/audio_equiv_hosttest.c').exists():
-        rc |= run('equiv', build('equiv', ['src/ps2/ps2_audio.c', 'tools/ps2/audio_equiv_hosttest.c']))
+        rc |= run('equiv', build('equiv', ['src/ps2/ps2_audio.c', 'src/ps2/ps2_music.c', 'src/ps2/ps2_midi.c', 'tools/ps2/audio_equiv_hosttest.c']))
     return rc
 
 

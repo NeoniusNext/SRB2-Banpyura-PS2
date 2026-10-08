@@ -23,7 +23,7 @@ SCEN = {
     'd1_nomusic': ('DEMO_001', [], ['-nomusic']),
     'd1_stop': ('DEMO_001', [], ['-acmd', '300', 'tunes -none']),
     'd1_vol0': ('DEMO_001', [], ['-acmd', '300', 'digmusicvolume 0']),
-    'd1_mute': ('DEMO_001', [], ['-acmd', '300', 'digmusicvolume 0', '-acmd', '700', 'digmusicvolume 31']),
+    'd1_mute': ('DEMO_001', [], ['-acmd', '300', 'digmusicvolume 0', '-acmd', '700', 'digmusicvolume 16']),
     'd1_track': ('DEMO_001', [], ['-acmd', '300', 'tunes 5', '-acmd', '600', 'tunes 8']),
     'd2_off': ('DEMO_002', OFF, []),
     'd2_mus': ('DEMO_002', [], []),
@@ -33,7 +33,7 @@ SCEN = {
     'd1_off_hw': ('DEMO_001', OFF, ['-renderer', 'Hardware']),
     # no demo: the player stands still in MAP01 (a pause, then a track change; no SFX of its own)
     'm1_ref': ('MAP:MAP01', [], []),
-    'm1_mute': ('MAP:MAP01', [], ['-acmd', '200', 'digmusicvolume 0', '-acmd', '500', 'digmusicvolume 31']),
+    'm1_mute': ('MAP:MAP01', [], ['-acmd', '200', 'digmusicvolume 0', '-acmd', '500', 'digmusicvolume 16']),
     'm1_pause': ('MAP:MAP01', [], ['-acmd', '300', 'pause', '-acmd', '600', 'pause']),
     'm1_none': ('MAP:MAP01', [], ['-acmd', '300', 'tunes -none']),
 }

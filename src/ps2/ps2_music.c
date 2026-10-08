@@ -191,11 +191,11 @@ int PS2_MusicSpeed(ps2_music *m, float speed)
 	m->step = (uint32_t)((float)m->rate * (65536.0f / PS2_AUDIO_RATE) * speed); return 1;
 }
 
-int PS2_MusicSeek(ps2_music *m, uint32_t ms)
+// Seek to a source frame (ms is the same position in milliseconds, for the MIDI player and the length check).  PS2-317: the resynchronisation
+// after a skipped stretch (PS2_MusicRender) seeks by FRAME; going through whole milliseconds put the music up to 22 frames early (0.9 ms at 22050 Hz).
+static int SeekFrame(ps2_music *m, uint64_t frame, uint32_t ms)
 {
-	uint64_t frame;
 	if (!m || (m->length_ms && ms > m->length_ms)) return 0;
-	frame = (uint64_t)ms * m->rate / 1000;
 	if (m->type == PS2_MUSIC_WAV)
 	{ if (frame > m->pcm.frames) return 0; }
 	else if (m->type == PS2_MUSIC_MIDI)
@@ -215,6 +215,11 @@ int PS2_MusicSeek(ps2_music *m, uint32_t ms)
 	else return 0;
 	m->position = m->decoded = frame;
 	m->buffered = m->cursor = m->fraction = m->error = m->skipped = 0; return 1;
+}
+int PS2_MusicSeek(ps2_music *m, uint32_t ms)
+{
+	if (!m) return 0;
+	return SeekFrame(m, (uint64_t)ms * m->rate / 1000, ms);
 }
 int PS2_MusicPlay(ps2_music *m, int loop)
 {
@@ -337,7 +342,7 @@ size_t PS2_MusicRender(ps2_music *m, int16_t *out, size_t frames)
 		// the position was moved by PS2_MusicSkip: bring the decoder there (a sample exact seek)
 		uint64_t pos = m->position;
 		m->skipped = 0;
-		if (!PS2_MusicSeek(m, (uint32_t)(pos * 1000 / m->rate))) { m->error = 1; return 0; }
+		if (!SeekFrame(m, pos, (uint32_t)(pos * 1000 / m->rate))) { m->error = 1; return 0; }
 	}
 	if (m->step == 65536 && !m->fraction)
 	{
