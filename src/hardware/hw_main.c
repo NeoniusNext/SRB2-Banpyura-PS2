@@ -161,7 +161,7 @@ static boolean HWR_IsWireframeMode(void)
 
 #ifdef PS2_PROFILE
 // OPT11 round 2 (PS2-HW-205): the light table of the default colormap and whether palette rendering is on do not change inside a view; they are asked once per view (validcount is
-// the view's) and again after the light tables were cleared (HWR_GCacheFlush bumps hwr_lt_epoch). -hwgo 128: asked for every surface, as before.
+// the view's) and again after the light tables were cleared (HWR_GCacheFlush bumps hwr_lt_epoch). -hwgo 2048: asked for every surface, as before.
 static UINT32 hwr_lt_epoch;
 static INT32 hl_view = -1;
 static UINT32 hl_epoch, hl_id;
@@ -184,7 +184,7 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 		Surface->LightInfo.light_level = light_level;
 		Surface->LightInfo.fade_start = 0;
 		Surface->LightInfo.fade_end = 31;
-		if (hwr_geo_off & 128)
+		if (hwr_geo_off & 2048)
 			Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
 		else
 		{
@@ -2345,10 +2345,10 @@ static void HWR_ProcessSegC(void)
 #ifdef PS2_PROFILE
 // OPT11 round 2 (PS2-HW-200): R_FakeFlat makes a copy of the sector only when it has a height sector (water) and no colormap; for all the others it returns the sector itself after
 // working out the two light levels. That is what runs for nearly every call of the BSP walk (a subsector and a two sided seg each), so it is done here without the call.
-// -hwgo 64: R_FakeFlat for all.
+// -hwgo 1024: R_FakeFlat for all.
 static inline sector_t *HWR_FakeFlat(sector_t *sec, sector_t *tempsec, INT32 *floorlightlevel, INT32 *ceilinglightlevel, boolean back)
 {
-	if ((sec->extra_colormap || sec->heightsec == -1) && !(hwr_geo_off & 64))
+	if ((sec->extra_colormap || sec->heightsec == -1) && !(hwr_geo_off & 1024))
 	{
 		if (floorlightlevel)
 			*floorlightlevel = sec->floorlightsec == -1 ?
@@ -2468,10 +2468,10 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 // -----------------+
 #ifdef PS2_PROFILE
 // OPT11 round 2 (PS2-HW-206): R_PointToAngle64 of a vertex of the map once per view (it is a function of the point and of the eye only). The segs of a subsector follow each other,
-// but the vertex is also an end of the segs of the next subsectors and of the other side of the line. -hwgo 256: calculated every time.
+// but the vertex is also an end of the segs of the next subsectors and of the other side of the line. -hwgo 4096: calculated every time.
 static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
 {
-	if (v && gc.on && !(hwr_geo_off & 256))
+	if (v && gc.on && !(hwr_geo_off & 4096))
 	{
 		const size_t i = (size_t)(v - vertexes);
 
@@ -2995,7 +2995,7 @@ static void HWR_Subsector(size_t num)
 	locCeilingHeight  = P_GetSectorCeilingZAt(gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 
 #ifdef PS2_PROFILE
-	if (gl_frontsector->ffloors || (hwr_geo_off & 64)) // OPT11 (PS2-HW-200): the function does nothing for a sector without 3D floors
+	if (gl_frontsector->ffloors || (hwr_geo_off & 1024)) // OPT11 (PS2-HW-200): the function does nothing for a sector without 3D floors
 #endif
 	R_CheckSectorLightLists(sub->sector, gl_frontsector, &floorlightlevel, &ceilinglightlevel, &floorcolormap, &ceilingcolormap);
 

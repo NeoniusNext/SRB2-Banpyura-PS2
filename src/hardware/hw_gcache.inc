@@ -477,8 +477,8 @@ static void HWR_GCacheLevel(void)
 }
 
 // -hwgo N: bits of the OPT11 geometry micro-optimisations that are switched OFF (A/B on one ELF): 1 AddLine angle reuse (PS2-HW-81), 4 QuadHidden two-corner exit (PS2-HW-86),
-// 8 HWR_Lighting fast path (PS2-HW-83), 16 HWR_CalcWallLight memo (PS2-HW-84), 32 RenderBatches shader/scan-direction cache (PS2-HW-85), 64 inline R_FakeFlat / R_CheckSectorLightLists (PS2-HW-200),
-// 128 light table of the default colormap once per view (PS2-HW-205), 256 vertex angle once per view (PS2-HW-206)
+// 8 HWR_Lighting fast path (PS2-HW-83), 16 HWR_CalcWallLight memo (PS2-HW-84), 32 RenderBatches shader/scan-direction cache (PS2-HW-85), 1024 inline R_FakeFlat / R_CheckSectorLightLists (PS2-HW-200),
+// 2048 light table of the default colormap once per view (PS2-HW-205), 4096 vertex angle once per view (PS2-HW-206) (64 and 128 are the VU branch's: HWR_RenderBatchesV2)
 UINT32 hwr_geo_off;
 
 static void HWR_GCacheParse(void)
