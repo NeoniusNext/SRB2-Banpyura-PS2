@@ -110,4 +110,6 @@ src/ps2/vorbis/mapping0.c -O3 -funroll-loops -DHAVE_ALLOCA_H -w -ffp-contract=of
 src/ps2/vorbis/res0.c -O3 -funroll-loops -DHAVE_ALLOCA_H -w -ffp-contract=off
 src/ps2/vorbis/mdct.c -O3 -funroll-loops -DHAVE_ALLOCA_H -DPS2_VORBIS_VU0 -w -ffp-contract=off
 src/ps2/vorbis/synthesis.c -O3 -funroll-loops -DHAVE_ALLOCA_H -w -ffp-contract=off
-src/ps2/ps2_music.c -O3 -funroll-loops
+src/ps2/vorbis/block.c -O3 -funroll-loops -DHAVE_ALLOCA_H -DPS2_VORBIS_VU0 -w -ffp-contract=off
+src/ps2/ps2_music.c -O3 -funroll-loops -DPS2_VORBIS_VU0
+src/ps2/i_sound.c -DPS2_VORBIS_VU0

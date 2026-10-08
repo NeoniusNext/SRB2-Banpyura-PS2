@@ -899,6 +899,28 @@ static void DiagFrame(void)
 // output are decoded in 512-frame blocks on the game thread with the same PS2_MusicRender the decoder thread uses, and the COP0 cycles spent
 // in it are summed. The PCM is hashed (FNV-1a 64) outside the timed section, so two ELFs can be compared bit for bit on the real EE FPU.
 // PS2_FloatToS16 (EE branch-free form) against the reference over every exponent, random mantissas, all k+0.5 boundaries and the extremes.
+static float conv_vbuf[1024] __attribute__((aligned(16)));
+static int16_t conv_vout[2048] __attribute__((aligned(16)));
+static UINT32 conv_vn, conv_vmism, conv_vtotal;
+// the vector path (PS2_FloatsToS16Stereo with VU0) against the reference, 1024 values at a time (mono: l == r)
+static void ConvVecFlush(void)
+{
+	UINT32 i;
+	if (!conv_vn) return;
+	PS2_FloatsToS16Stereo(conv_vout, conv_vbuf, conv_vbuf, conv_vn);
+	for (i = 0; i < conv_vn; i++)
+	{
+		int16_t e = PS2_FloatToS16_ref(conv_vbuf[i]);
+		if (conv_vout[2 * i] != e || conv_vout[2 * i + 1] != e) conv_vmism++;
+	}
+	conv_vtotal += conv_vn;
+	conv_vn = 0;
+}
+static void ConvVecPush(float f)
+{
+	conv_vbuf[conv_vn++] = f;
+	if (conv_vn == 1024) ConvVecFlush();
+}
 static void ConvSelfTest(void)
 {
 	UINT32 rng = 0x12345678u, mism = 0, first_bits = 0;
@@ -912,6 +934,7 @@ static void ConvSelfTest(void)
 			rng = rng * 1664525u + 1013904223u;
 			v.u = ((UINT32)e << 23) | (rng >> 9) | ((rng & 0x100u) ? 0x80000000u : 0);
 			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			if ((e >= 100 && e <= 150) || (i & 7) == 0) ConvVecPush(v.f); // the exponents that matter (|f| from 2^-27 to 2^23), the others thinned
 			n++;
 		}
 	for (k = -32800; k <= 32800; k++)
@@ -920,10 +943,12 @@ static void ConvSelfTest(void)
 			v.f = ((float)k + 0.5f) / 32768.0f;
 			v.u += (UINT32)d;
 			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			ConvVecPush(v.f);
 			n++;
 			v.f = (float)k / 32768.0f;
 			v.u += (UINT32)d;
 			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			ConvVecPush(v.f);
 			n++;
 		}
 	{
@@ -933,11 +958,14 @@ static void ConvSelfTest(void)
 		{
 			v.u = special[k];
 			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			ConvVecPush(v.f);
 			n++;
 		}
 	}
+	ConvVecFlush();
 	I_OutputMsg("ABENCH selftest PS2_FloatToS16 vs reference: %u values, %u mismatches%s\n", (unsigned)n, mism, mism ? " FIRST=" : "");
 	if (mism) I_OutputMsg("ABENCH selftest first mismatch bits %08x\n", first_bits);
+	I_OutputMsg("ABENCH selftest vector conversion (VU0 when available) vs reference: %u values, %u mismatches\n", conv_vtotal, conv_vmism);
 }
 
 #ifdef PS2_SAMPLE

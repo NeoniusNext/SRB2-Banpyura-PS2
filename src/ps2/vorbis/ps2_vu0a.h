@@ -516,4 +516,151 @@ static inline void ps2a_bitrev_dispatch(int vu, const float *x, float *w0, float
 	ps2a_bitrev_c(x, w0, w1, cb, iters);
 }
 
+// ---- kernels LAP / COPY: the overlap/add and the copy of vorbis_synthesis_blockin ----------------------------------------------------------------
+// pcm[i] = pcm[i]*wr[i] + p[i]*w[i] (wr = the window reversed, so pcm[i]*w[n-1-i] of the scalar code); n a multiple of 8, all 16-byte aligned.
+static inline void ps2a_lap_c(float *pcm, const float *p, const float *w, const float *wr, int n)
+{
+	int i;
+	for (i = 0; i < n; i++) pcm[i] = pcm[i] * wr[i] + p[i] * w[i];
+}
+static inline void ps2a_copy_c(float *dst, const float *src, int n)
+{
+	int i;
+	for (i = 0; i < n; i++) dst[i] = src[i];
+}
+#if PS2A_VU0
+static inline void ps2a_lap(float *pcm, const float *p, const float *w, const float *wr, int n)
+{
+	int cnt = n >> 3;
+	if (n & 7) { ps2a_lap_c(pcm, p, w, wr, n); return; }
+	__asm__ volatile(
+		".set push\n.set noreorder\n"
+		"1:\n"
+		"lqc2 $vf1, 0x00(%0)\n"
+		"lqc2 $vf2, 0x00(%3)\n"
+		"lqc2 $vf3, 0x00(%1)\n"
+		"lqc2 $vf4, 0x00(%2)\n"
+		"lqc2 $vf5, 0x10(%0)\n"
+		"lqc2 $vf6, 0x10(%3)\n"
+		"lqc2 $vf7, 0x10(%1)\n"
+		"lqc2 $vf8, 0x10(%2)\n"
+		"vmul $vf9, $vf1, $vf2\n"
+		"vmul $vf10, $vf3, $vf4\n"
+		"vmul $vf11, $vf5, $vf6\n"
+		"vmul $vf12, $vf7, $vf8\n"
+		"vadd $vf9, $vf9, $vf10\n"
+		"vadd $vf11, $vf11, $vf12\n"
+		"addiu %4, %4, -1\n"
+		"sqc2 $vf9, 0x00(%0)\n"
+		"sqc2 $vf11, 0x10(%0)\n"
+		"addiu %1, %1, 0x20\n"
+		"addiu %2, %2, 0x20\n"
+		"addiu %3, %3, 0x20\n"
+		"bgtz %4, 1b\n"
+		"addiu %0, %0, 0x20\n"
+		".set pop\n"
+		: "+&r"(pcm), "+&r"(p), "+&r"(w), "+&r"(wr), "+&r"(cnt) : : "memory");
+}
+// 128-bit moves (MMI lq/sq), 32 bytes per iteration
+static inline void ps2a_copy(float *dst, const float *src, int n)
+{
+	int cnt = n >> 3;
+	long a, b;
+	__asm__ volatile(
+		".set push\n.set noreorder\n"
+		"1:\n"
+		"lq %[a], 0x00(%[s])\n"
+		"lq %[b], 0x10(%[s])\n"
+		"addiu %[c], %[c], -1\n"
+		"sq %[a], 0x00(%[d])\n"
+		"sq %[b], 0x10(%[d])\n"
+		"addiu %[s], %[s], 0x20\n"
+		"bgtz %[c], 1b\n"
+		"addiu %[d], %[d], 0x20\n"
+		".set pop\n"
+		: [d] "+&r"(dst), [s] "+&r"(src), [c] "+&r"(cnt), [a] "=&r"(a), [b] "=&r"(b) : : "memory");
+}
+#endif
+static inline void ps2a_lap_dispatch(int vu, float *pcm, const float *p, const float *w, const float *wr, int n)
+{
+#if PS2A_VU0
+	if (vu == 2) { ps2a_lap(pcm, p, w, wr, n); return; }
+#endif
+	(void)vu;
+	ps2a_lap_c(pcm, p, w, wr, n);
+}
+static inline void ps2a_copy_dispatch(int vu, float *dst, const float *src, int n)
+{
+#if PS2A_VU0
+	if (vu == 2) { ps2a_copy(dst, src, n); return; }
+#endif
+	(void)vu;
+	ps2a_copy_c(dst, src, n);
+}
+
+// ---- kernel CONV: float PCM -> interleaved signed 16 bit (stereo), exactly PS2_FloatToS16_ref (ps2_pcmconv.h) --------------------------------
+// p = f*32768 (exact), clamped to [-32769, 32768]; q = p + 0.5 (exact whenever it matters: for q < 0 it is a multiple of the ulp of p; for q >= 0 the
+// truncation of an inexact sum never crosses an integer); t = trunc(q); floor(q) = t - (q - t < 0); clamp to [-32768, 32767].  Four frames per
+// iteration (16-byte aligned l, r and out; the caller handles the head and the tail with the scalar code).
+#if PS2A_VU0
+static const float ps2a_k_conv[16] __attribute__((aligned(16))) = {
+	32768.0f, 32768.0f, 32768.0f, 32768.0f, -32769.0f, -32769.0f, -32769.0f, -32769.0f,
+	32768.0f, 32768.0f, 32768.0f, 32768.0f, 0.5f, 0.5f, 0.5f, 0.5f};
+static const int ps2a_k_clampw[8] __attribute__((aligned(16))) = {-32768, -32768, -32768, -32768, 32767, 32767, 32767, 32767};
+static inline void ps2a_conv(const float *l, const float *r, int16_t *out, int ngroups)
+{
+	long t0, t1, t2, t3, t4, t5, lo, hi;
+	__asm__ volatile(
+		"lqc2 $vf20, 0x00(%[k])\n"
+		"lqc2 $vf21, 0x10(%[k])\n"
+		"lqc2 $vf22, 0x20(%[k])\n"
+		"lqc2 $vf23, 0x30(%[k])\n"
+		"lq %[lo], 0x00(%[cw])\n"
+		"lq %[hi], 0x10(%[cw])\n"
+		".set push\n.set noreorder\n"
+		"1:\n"
+		"lqc2 $vf1, 0x00(%[l])\n"
+		"lqc2 $vf2, 0x00(%[r])\n"
+		"vmul $vf3, $vf1, $vf20\n"
+		"vmul $vf4, $vf2, $vf20\n"
+		"vmax $vf3, $vf3, $vf21\n"
+		"vmax $vf4, $vf4, $vf21\n"
+		"vmini $vf3, $vf3, $vf22\n"
+		"vmini $vf4, $vf4, $vf22\n"
+		"vadd $vf3, $vf3, $vf23\n"
+		"vadd $vf4, $vf4, $vf23\n"
+		"vftoi0 $vf5, $vf3\n"
+		"vftoi0 $vf6, $vf4\n"
+		"vitof0 $vf7, $vf5\n"
+		"vitof0 $vf8, $vf6\n"
+		"vsub $vf9, $vf3, $vf7\n"
+		"vsub $vf10, $vf4, $vf8\n"
+		"qmfc2 %[t0], $vf5\n"
+		"qmfc2 %[t1], $vf9\n"
+		"qmfc2 %[t2], $vf6\n"
+		"qmfc2 %[t3], $vf10\n"
+		"psraw %[t1], %[t1], 31\n"
+		"psraw %[t3], %[t3], 31\n"
+		"paddw %[t0], %[t0], %[t1]\n"
+		"paddw %[t2], %[t2], %[t3]\n"
+		"pmaxw %[t0], %[t0], %[lo]\n"
+		"pmaxw %[t2], %[t2], %[lo]\n"
+		"pminw %[t0], %[t0], %[hi]\n"
+		"pminw %[t2], %[t2], %[hi]\n"
+		"pextlw %[t4], %[t2], %[t0]\n"
+		"pextuw %[t5], %[t2], %[t0]\n"
+		"ppach %[t4], %[t5], %[t4]\n"
+		"addiu %[n], %[n], -1\n"
+		"sq %[t4], 0x00(%[o])\n"
+		"addiu %[l], %[l], 0x10\n"
+		"addiu %[r], %[r], 0x10\n"
+		"bgtz %[n], 1b\n"
+		"addiu %[o], %[o], 0x10\n"
+		".set pop\n"
+		: [l] "+&r"(l), [r] "+&r"(r), [o] "+&r"(out), [n] "+&r"(ngroups),
+		  [t0] "=&r"(t0), [t1] "=&r"(t1), [t2] "=&r"(t2), [t3] "=&r"(t3), [t4] "=&r"(t4), [t5] "=&r"(t5), [lo] "=&r"(lo), [hi] "=&r"(hi)
+		: [k] "r"(ps2a_k_conv), [cw] "r"(ps2a_k_clampw) : "memory");
+}
+#endif
+
 #endif

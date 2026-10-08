@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <limits.h>
+#include <malloc.h>
 #ifdef PS2_AUDIO_VORBIS
 #define OV_EXCLUDE_STATIC_CALLBACKS
 #include <vorbis/vorbisfile.h>
@@ -33,7 +34,7 @@ struct ps2_music
 	uint32_t rate, length_ms, loop_ms, fraction, step;
 	unsigned channels, playing, paused, looping, error;
 	size_t buffered, cursor;
-	int16_t buffer[DECODE_FRAMES * 2];
+	int16_t buffer[DECODE_FRAMES * 2] __attribute__((aligned(16))); // PS2-316: the VU0 PCM conversion stores 16 bytes at a time
 	uint8_t raw[DECODE_FRAMES * 4];
 };
 
@@ -73,7 +74,8 @@ ps2_music *PS2_MusicOpen(const ps2_audio_input *in)
 	uint8_t h[12];
 	ps2_music *m;
 	if (!in || in->size > INT_MAX || PS2_AudioRead(in, 0, h, 12) != 12) return NULL;
-	m = calloc(1, sizeof *m); if (!m) return NULL;
+	m = memalign(16, sizeof *m); if (!m) return NULL;
+	memset(m, 0, sizeof *m);
 	m->in = *in;
 	if (!memcmp(h, "RIFF", 4))
 	{
