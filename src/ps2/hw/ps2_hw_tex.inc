@@ -2515,6 +2515,8 @@ static void lod_frame_end(void)
 
 // HWTEX line of the window just ended (per-frame averages of the block counts; counts of uploads are window totals)
 static unsigned spr_hid_test, spr_hid_yes; // PS2-HW-72 (ps2_hw_plan.inc)
+static int qh_mode; // PS2-HW-220
+static unsigned qh_diff, qh_near, qh_and, qh_big, qh_nocen, qh_vis;
 
 static void tx_report(void)
 {
@@ -2532,7 +2534,9 @@ static void tx_report(void)
 	ps2hwt_mkpatch_n = ps2hwt_mkpatch_cyc = 0;
 	if (spr_hid_test)
 	{
-		CONS_Printf("HWSPRCULL win=%d tests=%u hidden=%u (per frame %u / %u)\n", win - 1, spr_hid_test, spr_hid_yes, spr_hid_test / f, spr_hid_yes / f);
+		CONS_Printf("HWSPRCULL win=%d tests=%u hidden=%u (per frame %u / %u) | near=%u and=%u big=%u nocentre=%u visible=%u differ=%u\n", win - 1, spr_hid_test, spr_hid_yes, spr_hid_test / f, spr_hid_yes / f,
+			qh_near / f, qh_and / f, qh_big / f, qh_nocen / f, qh_vis / f, qh_diff);
+		qh_near = qh_and = qh_big = qh_nocen = qh_vis = 0;
 		spr_hid_test = spr_hid_yes = 0;
 	}
 	if (TX.split_up || TX.split_poly)

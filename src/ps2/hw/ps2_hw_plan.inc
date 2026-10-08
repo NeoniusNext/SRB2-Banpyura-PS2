@@ -667,7 +667,7 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 
 extern unsigned int hwr_geo_off; // -hwgo (hardware/hw_gcache.inc): the OPT11 engine side optimisations that are switched off
 
-int PS2HWD_QuadHidden(const void *vp)
+static int quad_hidden_ref(const void *vp)
 {
 	const FOutVector *v = (const FOutVector *)vp;
 	float x0 = 1.0e30f, x1 = -1.0e30f, y0 = 1.0e30f, y1 = -1.0e30f, hx, hy, cx, cy;
@@ -727,4 +727,152 @@ int PS2HWD_QuadHidden(const void *vp)
 		return 1; // no pixel centre in the box
 	}
 	return 0;
+}
+
+// ---- PS2-HW-220 (OPT11 round 2, VU2): the four corners on VU0 ----
+// The sprite test of the front end (1100..1300 calls a frame in DEMO_004, two thirds of them "hidden") cost 460 cycles a call: four scalar transforms (the early
+// out of PS2-HW-86 helps only the big visible ones). Here the four corners go through VU0 in macro mode at once: the multiply chains of the four corners, the four
+// clip tests (|x|, |y|, |z| against |w|: the screen frustum, one 24 bit flag history), the clip coordinates back to memory. The matrix lives in vf21..vf24 (the registers
+// of the plans, vf1..vf18, are not touched: the plan of the draw that is going on stays loaded), loaded again only when the transform changed (xf_ver).
+// VU0 arithmetic truncates: a corner that lies on a clip plane within 1e-7 may change sides; the answer is "hidden" only for a quad that holds no pixel centre
+// either way (the box is widened by 0.1 pixel), so no pixel can come from such a quad. -hwqh 1: the scalar test of PS2-HW-72/86; -hwqh 2: both, the answers
+// compared (HWSPRCULL prints the number of differences).
+
+#ifdef HW_VU0
+static u32 qh_ver = ~0u;
+
+static int quad_hidden_vu0(const FOutVector *v)
+{
+	static float in[16] __attribute__((aligned(16))) = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+	static float cl[16] __attribute__((aligned(16)));
+	float hx, hy, cx, cy, nw, x0, x1, y0, y1;
+	float sx, sy, iw;
+	u32 f;
+	int k;
+
+	xf_update();
+	if (qh_ver != xf_ver)
+	{
+		const float *m = H.mvp;
+
+		__asm__ volatile(
+			"lqc2 $vf21, 0x00(%0)\n"
+			"lqc2 $vf22, 0x10(%0)\n"
+			"lqc2 $vf23, 0x20(%0)\n"
+			"lqc2 $vf24, 0x30(%0)\n"
+			: : "r"(m) : "memory");
+		qh_ver = xf_ver;
+	}
+	in[0] = v[0].x;
+	in[1] = v[0].y;
+	in[2] = v[0].z;
+	in[4] = v[1].x;
+	in[5] = v[1].y;
+	in[6] = v[1].z;
+	in[8] = v[2].x;
+	in[9] = v[2].y;
+	in[10] = v[2].z;
+	in[12] = v[3].x;
+	in[13] = v[3].y;
+	in[14] = v[3].z;
+	__asm__ volatile(
+		"lqc2 $vf25, 0x00(%1)\n"
+		"lqc2 $vf26, 0x10(%1)\n"
+		"lqc2 $vf27, 0x20(%1)\n"
+		"lqc2 $vf28, 0x30(%1)\n"
+		"vmulaw $ACC, $vf24, $vf0\n"
+		"vmaddax $ACC, $vf21, $vf25\n"
+		"vmadday $ACC, $vf22, $vf25\n"
+		"vmaddz $vf29, $vf23, $vf25\n"
+		"vmulaw $ACC, $vf24, $vf0\n"
+		"vmaddax $ACC, $vf21, $vf26\n"
+		"vmadday $ACC, $vf22, $vf26\n"
+		"vmaddz $vf30, $vf23, $vf26\n"
+		"vmulaw $ACC, $vf24, $vf0\n"
+		"vmaddax $ACC, $vf21, $vf27\n"
+		"vmadday $ACC, $vf22, $vf27\n"
+		"vmaddz $vf31, $vf23, $vf27\n"
+		"vmulaw $ACC, $vf24, $vf0\n"
+		"vmaddax $ACC, $vf21, $vf28\n"
+		"vmadday $ACC, $vf22, $vf28\n"
+		"vmaddz $vf20, $vf23, $vf28\n"
+		"vclipw.xyz $vf29, $vf29\n"
+		"vclipw.xyz $vf30, $vf30\n"
+		"vclipw.xyz $vf31, $vf31\n"
+		"vclipw.xyz $vf20, $vf20\n"
+		"sqc2 $vf29, 0x00(%2)\n"
+		"sqc2 $vf30, 0x10(%2)\n"
+		"sqc2 $vf31, 0x20(%2)\n"
+		"sqc2 $vf20, 0x30(%2)\n"
+		"cfc2 %0, $vi18\n"
+		: "=&r"(f) : "r"(in), "r"(cl) : "memory");
+	nw = 2.0f * H.near_plane;
+	if (cl[3] < nw || cl[7] < nw || cl[11] < nw || cl[15] < nw)
+	{
+		qh_near++;
+		return 0; // near the eye (or behind it): the clipper decides
+	}
+	if (f & (f >> 6) & (f >> 12) & (f >> 18) & 0x3Fu)
+	{
+		qh_and++;
+		spr_hid_yes++;
+		return 1; // wholly outside the view volume
+	}
+	hx = H.vpw * 0.5f;
+	hy = H.vph * 0.5f;
+	cx = H.vpx + hx - 0.5f;
+	cy = H.vpy + hy - 0.5f;
+	x0 = y0 = 1.0e30f;
+	x1 = y1 = -1.0e30f;
+	for (k = 0; k < 4; k++)
+	{
+		iw = 1.0f / cl[4 * k + 3];
+		sx = cx + cl[4 * k] * iw * hx;
+		sy = cy - cl[4 * k + 1] * iw * hy;
+		x0 = hw_minf(x0, sx);
+		x1 = hw_maxf(x1, sx);
+		y0 = hw_minf(y0, sy);
+		y1 = hw_maxf(y1, sy);
+	}
+	if (x1 - x0 > 8.0f || y1 - y0 > 8.0f)
+	{
+		qh_big++;
+		return 0; // big: it covers a centre for sure
+	}
+	if (quad_no_centre(x0, x1, y0, y1))
+	{
+		qh_nocen++;
+		spr_hid_yes++;
+		return 1; // no pixel centre in the box
+	}
+	qh_vis++;
+	return 0;
+}
+#endif
+
+int PS2HWD_QuadHidden(const void *vp)
+{
+#ifdef HW_VU0
+	if (!(qh_mode & 1) && !(ps2hwd_dbg_flags & 128))
+	{
+		int r;
+
+		if (!H.up || H.vpw < 1.0f || H.vph < 1.0f || (ps2hwd_dbg_flags & HWDBG_NOPLAN))
+			return 0;
+		spr_hid_test++;
+		r = quad_hidden_vu0((const FOutVector *)vp);
+		if (qh_mode & 2)
+		{
+			const unsigned t = spr_hid_test, y = spr_hid_yes;
+			const int ref = quad_hidden_ref(vp);
+
+			spr_hid_test = t;
+			spr_hid_yes = y;
+			if (ref != r)
+				qh_diff++;
+		}
+		return r;
+	}
+#endif
+	return quad_hidden_ref(vp);
 }

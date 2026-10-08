@@ -255,6 +255,8 @@ boolean PS2HWD_Init(void)
 		return true;
 	memset(&H, 0, sizeof H);
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
+	if (M_CheckParm("-hwqh") && M_IsNextParm())
+		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
 	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
 	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
