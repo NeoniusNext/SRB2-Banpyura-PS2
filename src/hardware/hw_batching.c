@@ -161,6 +161,7 @@ static int rcap;
 // the walls, planes, sprites and the batcher that is meant not to change a picture (tools/ps2/gm_polycmp.py compares two logs).
 static int hwr_ph_on = -1;
 static UINT32 hwr_ph_a, hwr_ph_b, hwr_ph_n;
+static UINT32 hwr_ph_wa = 0x811c9dc5u, hwr_ph_wb = 0x9e3779b9u, hwr_ph_wn; // the same for the polygons with a map texture or flat only (-hwpolyhash: w=, nw=)
 static UINT32 hwr_ph_order = 0x811c9dc5u; // OPT11 round 2: the order of the polygons after the sort of HWR_RenderBatches (the numbers of the calls of HWR_ProcessPolygon, all batches of the frame): it must not depend on the memory layout
 static UINT32 hwr_ph_calls, hwr_ph_lo, hwr_ph_hi; // -hwpolyhash 2 LO HI: every polygon of the frames LO..HI is printed with its parts (HWPP lines), to find what differs between two runs
 
@@ -171,26 +172,11 @@ static inline void HWR_PH_W(UINT32 x)
 	hwr_ph_b ^= hwr_ph_b >> 15;
 }
 
-static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader, boolean horizon)
+static void HWR_PolyHashBody(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader, boolean horizon)
 {
 	const UINT32 *w = (const UINT32 *)v;
 	UINT32 i;
 
-	if (hwr_ph_on == 2 && hwr_ph_calls >= hwr_ph_lo && hwr_ph_calls <= hwr_ph_hi)
-	{
-		UINT32 vh = 0x811c9dc5u, k;
-		const UINT32 *vw = (const UINT32 *)v;
-
-		for (k = 0; k < n * 5; k++)
-			vh = (vh ^ vw[k]) * 16777619u;
-		I_OutputMsg("HWPP c=%u i=%u n=%u fl=%x sh=%d tex=%d/%d/%ux%u/%x col=%x/%x/%x lt=%d/%d/%d/%d v=%08x\n", hwr_ph_calls, hwr_ph_n, (unsigned)n, (unsigned)flags, shader,
-			(current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_kind : -1, (current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_id : -1,
-			(current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->width : 0u, (current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->height : 0u,
-			(current_texture && !(flags & PF_NoTexture)) ? (unsigned)(current_texture->flags & 0xFFFFu) : 0u,
-			s ? (unsigned)s->PolyColor.rgba : 0u, s ? (unsigned)s->TintColor.rgba : 0u, s ? (unsigned)s->FadeColor.rgba : 0u,
-			s ? (int)s->LightTableId : 0, s ? (int)s->LightInfo.light_level : 0, s ? (int)s->LightInfo.fade_start : 0, s ? (int)s->LightInfo.fade_end : 0, vh);
-	}
-	hwr_ph_n++;
 	HWR_PH_W(n | ((UINT32)horizon << 16));
 	HWR_PH_W(flags);
 	HWR_PH_W((UINT32)shader);
@@ -220,6 +206,39 @@ static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n,
 		HWR_PH_W(w[i]);
 }
 
+static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader, boolean horizon)
+{
+	if (hwr_ph_on == 2 && hwr_ph_calls >= hwr_ph_lo && hwr_ph_calls <= hwr_ph_hi)
+	{
+		UINT32 vh = 0x811c9dc5u, k;
+		const UINT32 *vw = (const UINT32 *)v;
+
+		for (k = 0; k < n * 5; k++)
+			vh = (vh ^ vw[k]) * 16777619u;
+		I_OutputMsg("HWPP c=%u i=%u n=%u fl=%x sh=%d tex=%d/%d/%ux%u/%x col=%x/%x/%x lt=%d/%d/%d/%d v=%08x\n", hwr_ph_calls, hwr_ph_n, (unsigned)n, (unsigned)flags, shader,
+			(current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_kind : -1, (current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_id : -1,
+			(current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->width : 0u, (current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->height : 0u,
+			(current_texture && !(flags & PF_NoTexture)) ? (unsigned)(current_texture->flags & 0xFFFFu) : 0u,
+			s ? (unsigned)s->PolyColor.rgba : 0u, s ? (unsigned)s->TintColor.rgba : 0u, s ? (unsigned)s->FadeColor.rgba : 0u,
+			s ? (int)s->LightTableId : 0, s ? (int)s->LightInfo.light_level : 0, s ? (int)s->LightInfo.fade_start : 0, s ? (int)s->LightInfo.fade_end : 0, vh);
+	}
+	hwr_ph_n++;
+	HWR_PolyHashBody(s, v, n, flags, shader, horizon);
+	if (current_texture && !(flags & PF_NoTexture) && current_texture->regen_kind) // the world: textures of the map and flats (the sprites of a static view are not the same in two runs: random particles)
+	{
+		const UINT32 sa = hwr_ph_a, sb = hwr_ph_b;
+
+		hwr_ph_a = hwr_ph_wa;
+		hwr_ph_b = hwr_ph_wb;
+		HWR_PolyHashBody(s, v, n, flags, shader, horizon);
+		hwr_ph_wa = hwr_ph_a;
+		hwr_ph_wb = hwr_ph_b;
+		hwr_ph_a = sa;
+		hwr_ph_b = sb;
+		hwr_ph_wn++;
+	}
+}
+
 static void HWR_PolyHashOrder(const UINT32 *idx, UINT32 n) // called by HWR_RenderBatches after the sort
 {
 	UINT32 i, h = hwr_ph_order ^ n;
@@ -245,8 +264,11 @@ void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_v
 	if (!hwr_ph_on)
 		return;
 	hwr_ph_calls++;
-	I_OutputMsg("HWPH f=%d n=%u h=%08x%08x o=%08x\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b, hwr_ph_order);
+	I_OutputMsg("HWPH f=%d n=%u h=%08x%08x o=%08x w=%u:%08x%08x\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b, hwr_ph_order, hwr_ph_wn, hwr_ph_wa, hwr_ph_wb);
 	hwr_ph_order = 0x811c9dc5u;
+	hwr_ph_wa = 0x811c9dc5u;
+	hwr_ph_wb = 0x9e3779b9u;
+	hwr_ph_wn = 0;
 	hwr_ph_a = 0x811c9dc5u;
 	hwr_ph_b = 0x9e3779b9u;
 	hwr_ph_n = 0;
