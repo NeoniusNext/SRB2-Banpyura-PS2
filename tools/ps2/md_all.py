@@ -35,6 +35,7 @@ def main():
     ap.add_argument('--hwargs', default='')
     ap.add_argument('--map', default='1')
     ap.add_argument('--nopc', action='store_true')
+    ap.add_argument('--any', action='store_true', help='sprites no object spawns with are drawn on a frozen Thok (frame A): every model of models.dat')
     a = ap.parse_args()
     names = sprites(a.dat)
     out = ROOT / 'build/mdall'
@@ -47,7 +48,7 @@ def main():
             continue
         f = out / f'set_{b}.lua'
         chunk = names[b * a.batch:(b + 1) * a.batch]
-        f.write_text('rawset(_G, "MDL_SET", {' + ', '.join(f'"{n}"' for n in chunk) + '})\n')
+        f.write_text('rawset(_G, "MDL_SET", {' + ', '.join(f'"{n}"' for n in chunk) + '})\n' + ('rawset(_G, "MDL_ANY", true)\n' if a.any else ''))
         cmd = [sys.executable, str(ROOT / 'tools/ps2/fx_pair.py'), f'mdall_{b}', '--elf', a.elf, '--map', a.map, '--tick', '300', '--cfg', 'chasecam "On"',
                '--cmd', 'gr_models~On;con_hudlines~0', '--addon', f'{f},{ROOT}/tools/ps2/mdlscene.lua']
         cmd += ['--tree', a.tree] if a.tree else ['--pak', str(ROOT / 'build/pak-m')]
@@ -62,7 +63,10 @@ def main():
         if boot.exists():
             txt = boot.read_text(errors='replace')
             m = re.findall(r'HWPROF41[^\n]*', txt)
-            extra = (m[-1] if m else 'no HWPROF41')
+            extra = f'spawned {len(re.findall(r"MDLSCENE spr=", txt))} of {len(chunk)}; ' + (m[-1] if m else 'no HWPROF41')
+            warn = [l for l in txt.splitlines() if 'WARNING' in l and 'mdlscene' in l]
+            if warn:
+                extra += '  !! ' + warn[0][:100]
             bad = [l for l in txt.splitlines() if re.search(r'exception|panic|I_Error|Assert|TLB|Bus error', l, re.I)]
             if bad:
                 extra += '  !! ' + bad[0][:120]

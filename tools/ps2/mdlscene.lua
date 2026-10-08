@@ -10,7 +10,8 @@ local function find_type(spr)
 	local sp = _G["SPR_" .. spr]
 	if sp == nil then return nil end
 	for mt = 0, 799 do
-		local info = mobjinfo[mt]
+		local ok, info = pcall(function() return mobjinfo[mt] end) -- the PS2 engine raises an error for an index past the table (the PC engine gives nil)
+		if not ok then break end
 		if info and info.spawnstate and info.spawnstate ~= S_NULL and states[info.spawnstate].sprite == sp then
 			return mt
 		end
@@ -25,6 +26,11 @@ addHook("MapLoad", function()
 	local n = 0
 	for i, name in ipairs(want) do
 		local mt = find_type(name)
+		local fallback = false
+		if not mt and rawget(_G, "MDL_ANY") and _G["SPR_" .. name] ~= nil then
+			mt = MT_THOK -- a sprite no object spawns with (the frames of bosses, effects): a frozen Thok that wears it (MDL_ANY = true)
+			fallback = true
+		end
 		if mt then
 			local row = n / MDL_ROWS_PER
 			local col = n % MDL_ROWS_PER
@@ -36,6 +42,11 @@ addHook("MapLoad", function()
 			if mo and mo.valid then
 				mo.flags = MF_NOTHINK | MF_NOGRAVITY | MF_NOBLOCKMAP | MF_NOCLIP | MF_NOCLIPHEIGHT | MF_SCENERY
 				mo.angle = ang + ANGLE_180 + (n % 3) * ANGLE_45
+				if fallback then
+					mo.sprite = _G["SPR_" .. name]
+					mo.frame = 0
+					mo.tics = -1
+				end
 				local fx = rawget(_G, "MDL_FX")
 				if fx then fx(mo, n) end
 				print(string.format("MDLSCENE spr=%s mt=%d frame=%d", name, mt, mo.frame & FF_FRAMEMASK))

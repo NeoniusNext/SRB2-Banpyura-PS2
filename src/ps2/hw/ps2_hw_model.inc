@@ -333,6 +333,8 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	const u32 col = ps->col;
 	u32 fogtab[34];
 	int fogknown = 0;
+	const u32 tp0 = cyc();
+	u32 tp1, tp2;
 
 	vu0_need();
 	// 1. every vertex: interpolation, the VU0 transform, the texture coordinates over w
@@ -371,6 +373,8 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 		for (k = 0; k < nv; k++)
 			mv[k].ocl |= (u32)mdl_lidx(na, nb, k, lerp) << 8;
 	G.md_verts += (u32)nv;
+	tp1 = cyc();
+	G.md_c1 += tp1 - tp0;
 
 	// 2. the triangles: flags, cull, class (the colormap row for palette lighting, the darkness class for fog)
 	memset(count, 0, sizeof count);
@@ -414,6 +418,8 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 		count[row]++;
 		nord++;
 	}
+	tp2 = cyc();
+	G.md_c2 += tp2 - tp1;
 	if (!nord)
 		return 1;
 
@@ -512,6 +518,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	ls_close();
 	H.st.verts_out += (u32)nord * 3u;
 	H.gsr.valid &= ~(u32)RV_RGBAQ; // packed vertices changed Q (and the colours) behind the A+D state cache
+	G.md_c3 += cyc() - tp2;
 	return 1;
 }
 #endif // HW_VU0
@@ -625,8 +632,14 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 		if (tiny)
 			m_scale(H.mv, 1.0f / 64.0f, 1.0f / 64.0f, 1.0f / 64.0f);
 		H.mat_dirty = 1;
-		if (!begin_draw(flags, surf))
-			break;
+		{
+			const u32 tb = cyc();
+			const int ok = begin_draw(flags, surf);
+
+			G.md_ctx += cyc() - tb;
+			if (!ok)
+				break;
+		}
 		P.cull = (flipped ^ hflipped ^ pos->flip ^ pos->mirror) ? -1 : 1;
 		if (light)
 		{

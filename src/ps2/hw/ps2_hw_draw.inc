@@ -671,9 +671,6 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	P.wrapx = P.wrapy = 0;
 	P.cutx = P.cuty = 0;
 	P.tsx = P.tsy = 1.0f;
-	if (flags & PF_WireFrame)
-		hw_limit(HW_WIREFRAME, "wireframe flag is not implemented; filled geometry drawn");
-
 	if (textured)
 	{
 		int wms = r->wrapx ? 0 : 1, wmt = r->wrapy ? 0 : 1; // 0 = repeat, 1 = clamp
