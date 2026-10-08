@@ -5494,6 +5494,7 @@ static void HWR_DrawSprites(void)
 		}
 #endif
 		HWP_SPAN_BEGIN(tsd);
+#ifdef PS2_PROFILE
 		if ((spr->ps2_skey & 4) && sprwas && hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPR2 | FX3_NOSHORT | FX2_PRECHECK)))
 		{
 			// PS2-HW-258 (OPT11 round 3, FX3): the plain sprite of the sprite batch (made by HWR_ProjectPlain: no link draw, no skin, no model, no hitbox) goes from the sorted list to its drop shadow and
@@ -5513,7 +5514,9 @@ static void HWR_DrawSprites(void)
 			if (!HWR_DrawSpriteStream(spr))
 				HWR_DrawSprite(spr);
 		}
-		else if (spr->bbox)
+		else
+#endif
+		if (spr->bbox)
 			HWR_DrawBoundingBox(spr);
 		else if (spr->precip)
 			HWR_DrawPrecipitationSprite(spr);
