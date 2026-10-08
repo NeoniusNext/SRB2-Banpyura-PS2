@@ -137,6 +137,38 @@ size_t Z_RenderHeadroom(void); // configured contiguous workspace target, also r
 // 0 = nothing) by calling Z_Free, and may free any number of its own blocks; it must not allocate.
 typedef size_t (*z_reclaim_fn)(size_t want);
 void Z_SetReclaimHook(z_reclaim_fn fn);
+void Z_AddReclaimHook(z_reclaim_fn fn); // PS2-170: further subsystems (the GS renderer's data cache), up to 3, asked after the audio cache gave nothing
+void Z_RemoveReclaimHook(z_reclaim_fn fn);
+
+// PS2-170 (OPT11-STAB): recoverable out-of-memory. Code that can be abandoned half way (the drawing of a frame, the hardware part of a level load) arms a guard:
+//   zguard_t g;
+//   if (Z_GUARD_TRY(&g)) { ...the work...; Z_GuardPop(&g); }
+//   else { Z_GuardLanded(&g); ...g.size/g.tag/g.reason say what happened: free what can be freed, switch renderer, give up the level...; }
+// A Z_Malloc that finds no room (after all evictions) then jumps back instead of ending the program (I_Error). The work that was running is gone half way:
+// whatever it held (locks, flags, partly built tables) must be reset by the landing code; locals that are changed between the arm and the jump and read
+// after it must be volatile. No jump happens while a Lua hook runs (its state cannot be abandoned): the fatal report is as before.
+#include <setjmp.h>
+typedef struct zguard_s
+{
+	jmp_buf jb;
+	struct zguard_s *prev;
+	INT32 lock;       // the render lock count when armed
+	size_t size;      // the failing request (0: a thrown reason)
+	INT32 tag;
+	char reason[96];
+} zguard_t;
+void Z_GuardPush(zguard_t *g);
+#define Z_GUARD_TRY(g) (Z_GuardPush(g), setjmp((g)->jb) == 0)
+void Z_GuardPop(zguard_t *g);
+void Z_GuardLanded(zguard_t *g);
+boolean Z_GuardArmed(void);
+boolean Z_GuardThrow(const char *reason); // false when no guard is armed (or a Lua hook is running): the caller reports the error as before
+UINT32 Z_GuardAllocs(void); // allocations made while a guard was armed (the size of the fault injection test, -zoomnth)
+UINT32 Z_GuardRecovered(void); // how many times the allocator went back to a guard
+void Z_OutOfMemoryFatal(size_t size, INT32 tag, size_t align);
+size_t Z_EmergencyFree(void); // after a frame was abandoned: every cache block, the reclaim hooks; returns the free bytes
+boolean PS2Lua_InCall(void); // a Lua call is running (lua_script.c; false without Lua)
+void PS2Spill_Reset(void); // ps2_spill.c: the libc-to-arena spill bookkeeping after a jump out of an allocation
 #elif defined(PS2_PROFILE)
 // The host profile uses the unchanged host allocator; render lock and frame calls have no effect there.
 static inline void Z_PurgeLock(boolean lock) { (void)lock; }

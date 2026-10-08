@@ -19,6 +19,9 @@ void PS2HWD_FillDriver(struct hwdriver_s *drv);
 // Wait for the GS, drop textures, remove the vblank handler. Safe to call twice.
 void PS2HWD_Shutdown(void);
 
+// PS2-170: drop the half-built frame (the engine left the drawing through a recoverable out-of-memory jump); the driver is then shut down. Safe when idle.
+void PS2HWD_Abort(void);
+
 // The engine's screen size (vid.width x vid.height): the coordinate space of GClipRect. Default 320x200. May be called at any time.
 void PS2HWD_SetScreenSize(INT32 w, INT32 h);
 

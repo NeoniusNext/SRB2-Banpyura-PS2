@@ -25,6 +25,7 @@ void R_StoreWallRange(INT32 start, INT32 stop);
 void R_ClearSegTables(void);
 #ifdef PS2_PROFILE
 void R_AllocDrawSegFrontScale(drawseg_t *ds);
+void R_ReleaseDrawSegScales(void); // PS2-172: P_LoadLevel
 #endif
 
 #endif

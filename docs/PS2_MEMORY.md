@@ -112,3 +112,25 @@ python tools/ps2/build.py --syntax src/ps2/ps2_mem.c src/ps2/i_system.c src/z_zo
 ```
 
 The zone suite covers x86 release/debug headers, randomized independent-model torture, owner/alias lifetimes, long-age LRU, nested render locks, fragmentation traces, budget overflow, actual-stack ceilings, geometric arena backoff, in-place resize peaks/guards, and recoverable exhaustion. Its native host allocator remains preprocessor-identical to the pinned vanilla code in all four checked configurations. Negative controls must fail an assertion/diagnostic, not crash.
+
+## Out of memory is recoverable (OPT11-STAB, PS2-170..173)
+
+`Z_Malloc` that finds no room (after every cache eviction and reclaim hook) no longer has to end the program. Code that can be abandoned half way arms a guard
+(`zguard_t`, `Z_GUARD_TRY`, `src/z_zone.h`): the allocator then `longjmp`s back to it instead of `I_Error`. The guards (`src/ps2/ps2_hwfb.c`):
+
+* **the frame** (`PS2HWFB_Display` around `D_Display`): in the hardware renderer the half drawn frame is dropped (`PS2HWD_Abort`: DMA channels stopped, `GIF_CTRL.RST`, VIF1
+  reset, ring/frame state cleared), the ordinary renderer switch of Options -> Video runs (`SCR_SetMode`) and the game goes on in software for the rest of the level;
+  the map is remembered as "does not fit in hardware"; at the next level the hardware renderer is tried again (unless the map is on the list, or it failed 6 times).
+  In software the caches are emptied (`Z_EmergencyFree`, the free space joins into big blocks again) and the frame is drawn again; the third failure within 12 frames is the
+  usual out-of-memory error. The resource failures of the GS driver (`hw_failure`) take the same way instead of `I_Error`.
+* **the hardware part of a level load** (`PS2HWFB_BuildLevel`, replaces the direct `HWR_LoadLevel`), plus two gates that avoid the failure: a map with >= 14 000 subsectors
+  (MAP11: 15 942) goes to software before anything is loaded, and a level that leaves < 2.5 MB of arena after its plane polygons were built does too.
+* **the level load** (`PS2HWFB_LoadLevel` around `P_LoadLevel`, local games only): a map that does not fit goes back to the title screen with a message.
+* Not taken: while a Lua hook runs (`PS2Lua_InCall`), and in a network game for any allocation that is not a hardware-renderer tag (`NetUpdate` runs inside the frame).
+* Rule for code that allocates: `Z_Free(x); x = Z_Malloc(...)` leaves `x` dangling when the allocation jumps out; allocate first, or clear `x` before. Found with
+  `tools/ps2/oom_inject.py` (`-zoomnth N`: the N-th allocation under a guard fails): `LoadPalette`, `R_ReInitColormaps`.
+* Test switches: `-zoomtest F1,F2,..` (a hardware-tag allocation fails at frame F), `-zoomevery N`, `-zoomany` (any tag), `-zoomnth N -zoomafter F`, `-hwfbtest F` (a throw out of
+  frame F), `-hwnomem` (every other start of the GS driver finds no memory), `ps2_finale N` (console: ending, credits, evaluation, continue, game end, intro).
+
+The hardware driver's big work arrays (`ovq`, `cutbuf`, `plan_info`, `blk_owner`, 230 KB), the link-draw list (172 KB) are zone blocks that exist while the hardware renderer
+runs (`.bss` -500 KB, arena +491 KB for a software game); `R_ReleaseDrawSegScales` gives the scale arrays of the FOF drawsegs (up to 874 KB) back when a level starts.
