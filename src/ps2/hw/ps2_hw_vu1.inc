@@ -1138,7 +1138,7 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 		if (vu_dump_frame && H.frame_no == vu_dump_frame)
 		{
 			vu_poly_seen++;
-			vu_dump(fv, (int)n, light);
+			vu_dump(fv, (int)n, (float)(int)desc[3 * i + 2]);
 		}
 		i++;
 	}
