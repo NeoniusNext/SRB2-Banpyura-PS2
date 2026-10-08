@@ -55,7 +55,7 @@ static int ps2a_window(const float *src,int n,const float **w,const float **wr){
   return 0;
 }
 /* pcm[i] = pcm[i]*w[n-1-i] + p[i]*w[i] */
-static void ps2a_lap(int vu,float *pcm,const float *p,const float *w,int n){
+static void ps2a_lap_blk(int vu,float *pcm,const float *p,const float *w,int n){
   const float *wa,*wr;
   int i;
   if(vu && n>=4 && !(n&3) && !(((uintptr_t)pcm|(uintptr_t)p)&15) && ps2a_window(w,n,&wa,&wr)){
@@ -835,7 +835,7 @@ int vorbis_synthesis_blockin(vorbis_dsp_state *v,vorbis_block *vb){
           float *pcm=v->pcm[j]+prevCenter;
           float *p=vb->pcm[j];
 #ifdef PS2_VORBIS_VU0
-          ps2a_lap(vu,pcm,p,w,n1);
+          ps2a_lap_blk(vu,pcm,p,w,n1);
 #else
           for(i=0;i<n1;i++)
             pcm[i]=pcm[i]*w[n1-i-1] + p[i]*w[i];
@@ -846,7 +846,7 @@ int vorbis_synthesis_blockin(vorbis_dsp_state *v,vorbis_block *vb){
           float *pcm=v->pcm[j]+prevCenter+n1/2-n0/2;
           float *p=vb->pcm[j];
 #ifdef PS2_VORBIS_VU0
-          ps2a_lap(vu,pcm,p,w,n0);
+          ps2a_lap_blk(vu,pcm,p,w,n0);
 #else
           for(i=0;i<n0;i++)
             pcm[i]=pcm[i]*w[n0-i-1] +p[i]*w[i];
@@ -859,7 +859,7 @@ int vorbis_synthesis_blockin(vorbis_dsp_state *v,vorbis_block *vb){
           float *pcm=v->pcm[j]+prevCenter;
           float *p=vb->pcm[j]+n1/2-n0/2;
 #ifdef PS2_VORBIS_VU0
-          ps2a_lap(vu,pcm,p,w,n0);
+          ps2a_lap_blk(vu,pcm,p,w,n0);
           i=n0;
           ps2a_copy_f(vu,pcm+n0,p+n0,n1/2+n0/2-n0);
 #else
@@ -874,7 +874,7 @@ int vorbis_synthesis_blockin(vorbis_dsp_state *v,vorbis_block *vb){
           float *pcm=v->pcm[j]+prevCenter;
           float *p=vb->pcm[j];
 #ifdef PS2_VORBIS_VU0
-          ps2a_lap(vu,pcm,p,w,n0);
+          ps2a_lap_blk(vu,pcm,p,w,n0);
 #else
           for(i=0;i<n0;i++)
             pcm[i]=pcm[i]*w[n0-i-1] +p[i]*w[i];

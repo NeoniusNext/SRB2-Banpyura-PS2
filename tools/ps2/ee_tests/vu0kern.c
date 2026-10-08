@@ -16,6 +16,7 @@
 #define PS2_VORBIS_VU0 1
 #endif
 #include "ps2_vu0a.h"
+#include "../../../src/ps2/ps2_pcmconv.h"
 volatile int ps2a_vu0_busy;
 
 static uint32_t seed = 12345;
@@ -130,6 +131,44 @@ int main(void)
 		h = fnv(h, W, 32 * iters);
 	}
 	printf("EETEST KERN bitrev %016llx\n", (unsigned long long)h);
+	// K5: overlap/add and copy
+	h = NEWHASH;
+	for (it = 0; it < 200; it++)
+	{
+		int n = 8 * (1 + it % 16);
+		static float PC[256] __attribute__((aligned(16))), P[256] __attribute__((aligned(16))), Wf[256] __attribute__((aligned(16))), Wr[256] __attribute__((aligned(16))), Dst[256] __attribute__((aligned(16)));
+		for (i = 0; i < n; i++) { PC[i] = rf(); P[i] = rf(); Wf[i] = rf(); Wr[i] = rf(); Dst[i] = 0; }
+#if PS2A_VU0
+		ps2a_lap(PC, P, Wf, Wr, n);
+		ps2a_copy(Dst, P, n);
+#else
+		ps2a_lap_c(PC, P, Wf, Wr, n);
+		ps2a_copy_c(Dst, P, n);
+#endif
+		h = fnv(h, PC, 4 * n); h = fnv(h, Dst, 4 * n);
+	}
+	printf("EETEST KERN lap_copy %016llx\n", (unsigned long long)h);
+	// K6: float -> s16 (the reference loop on the host, the VU0 kernel on the EE)
+	h = NEWHASH;
+	for (it = 0; it < 400; it++)
+	{
+		int ng = 1 + it % 16;
+		static float L[64] __attribute__((aligned(16))), R[64] __attribute__((aligned(16)));
+		static int16_t O[128] __attribute__((aligned(16)));
+		for (i = 0; i < 4 * ng; i++)
+		{
+			uint32_t m = rnd();
+			L[i] = rf() * (1.0f / 16384.0f);
+			R[i] = (m & 7) == 0 ? ((int)(rnd() % 65536) - 32768) * (1.0f / 32768.0f) + ((m & 8) ? 0.5f / 32768.0f : 0.0f) : rf() * (1.0f / 65536.0f);
+		}
+#if PS2A_VU0
+		ps2a_conv(L, R, O, ng);
+#else
+		for (i = 0; i < 4 * ng; i++) { O[2 * i] = PS2_FloatToS16_ref(L[i]); O[2 * i + 1] = PS2_FloatToS16_ref(R[i]); }
+#endif
+		h = fnv(h, O, 16 * ng);
+	}
+	printf("EETEST KERN conv %016llx\n", (unsigned long long)h);
 #if PS2A_VU0
 	ps2a_vu0_leave(&sv);
 #endif
