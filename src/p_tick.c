@@ -428,6 +428,34 @@ mobj_t *P_SetTarget2(mobj_t **mop, mobj_t *targ
 // Rewritten to delete nodes implicitly, by making currentthinker
 // external and using P_RemoveThinkerDelayed() implicitly.
 //
+#ifdef PS2_TYPECYC // OPT12-CORE diagnostics (host only, x86 rdtsc): calls and cycles of P_MobjThinker per mobj type, printed at exit (tools/ps2/core_typecyc.sh)
+#include <stdio.h>
+#include "deh_tables.h"
+static unsigned long long ps2_tc_cyc[LIMIT_NUMMOBJTYPES], ps2_tc_calls[LIMIT_NUMMOBJTYPES], ps2_tc_other, ps2_tc_otherc;
+static void PS2_TypeCycDump(void)
+{
+	int t, k;
+	unsigned long long tot = ps2_tc_other;
+	unsigned char used[LIMIT_NUMMOBJTYPES];
+	memset(used, 0, sizeof used);
+	for (t = 0; t < NUMMOBJTYPES; t++)
+		tot += ps2_tc_cyc[t];
+	fprintf(stderr, "TYPECYC total %llu cycles, non-mobj thinkers %llu (%llu calls)\n", tot, ps2_tc_other, ps2_tc_otherc);
+	for (k = 0; k < 45; k++)
+	{
+		int best = -1;
+		for (t = 0; t < NUMMOBJTYPES; t++)
+			if (!used[t] && ps2_tc_cyc[t] && (best < 0 || ps2_tc_cyc[t] > ps2_tc_cyc[best]))
+				best = t;
+		if (best < 0)
+			break;
+		used[best] = 1;
+		fprintf(stderr, "TYPECYC %-28s calls %9llu cyc %12llu (%5.1f%%) per call %6.0f\n", MOBJTYPE_LIST[best], ps2_tc_calls[best], ps2_tc_cyc[best], 100.0 * ps2_tc_cyc[best] / tot,
+			(double)ps2_tc_cyc[best] / ps2_tc_calls[best]);
+	}
+}
+#endif
+
 static inline void P_RunThinkers(void)
 {
 	size_t i;
@@ -438,6 +466,31 @@ static inline void P_RunThinkers(void)
 		{
 #ifdef PARANOIA
 			I_Assert(currentthinker->function != NULL);
+#endif
+#ifdef PS2_TYPECYC
+			{
+				static int reg;
+				unsigned long long t0 = __builtin_ia32_rdtsc();
+				if (!reg)
+				{
+					reg = 1;
+					atexit(PS2_TypeCycDump);
+				}
+				if (currentthinker->function == (actionf_p1)P_MobjThinker)
+				{
+					mobjtype_t ty = ((mobj_t *)currentthinker)->type;
+					currentthinker->function(currentthinker);
+					ps2_tc_cyc[ty] += __builtin_ia32_rdtsc() - t0;
+					ps2_tc_calls[ty]++;
+				}
+				else
+				{
+					currentthinker->function(currentthinker);
+					ps2_tc_other += __builtin_ia32_rdtsc() - t0;
+					ps2_tc_otherc++;
+				}
+				continue;
+			}
 #endif
 			currentthinker->function(currentthinker);
 		}

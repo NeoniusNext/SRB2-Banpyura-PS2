@@ -10325,6 +10325,48 @@ static void PS2_TypeStat(int w, mobjtype_t type)
 #define PS2_TYPESTAT_N(w, mo) ((void)0)
 #endif
 
+#ifdef PS2_DORMSTAT // OPT12-CORE diagnostics (host only): for every ZMovement+CheckPosition pair of the thinkers, did the pair change the mobj (or the RNG)? Printed at exit.
+#include <stdio.h>
+static unsigned ps2_dorm_total[2][NUMMOBJTYPES], ps2_dorm_same[2][NUMMOBJTYPES];
+static void PS2_DormStatDump(void)
+{
+	static const char *const what[2] = {"thinker", "scenery"};
+	int w, t, k;
+	for (w = 0; w < 2; w++)
+	{
+		unsigned tot = 0, same = 0;
+		unsigned char used[NUMMOBJTYPES];
+		memset(used, 0, sizeof used);
+		for (t = 0; t < NUMMOBJTYPES; t++)
+			tot += ps2_dorm_total[w][t], same += ps2_dorm_same[w][t];
+		fprintf(stderr, "DORMSTAT %s: pairs %u, unchanged %u (%.1f%%)\n", what[w], tot, same, tot ? 100.0 * same / tot : 0.0);
+		for (k = 0; k < 24; k++)
+		{
+			int best = -1;
+			for (t = 0; t < NUMMOBJTYPES; t++)
+				if (!used[t] && ps2_dorm_total[w][t] && (best < 0 || ps2_dorm_total[w][t] > ps2_dorm_total[w][best]))
+					best = t;
+			if (best < 0)
+				break;
+			used[best] = 1;
+			fprintf(stderr, "DORMSTAT   type %3d: pairs %7u unchanged %7u\n", best, ps2_dorm_total[w][best], ps2_dorm_same[w][best]);
+		}
+	}
+}
+static void PS2_DormNote(int w, mobjtype_t type, const mobj_t *before, UINT32 rngbefore, const mobj_t *after)
+{
+	static int reg;
+	if (!reg)
+	{
+		reg = 1;
+		atexit(PS2_DormStatDump);
+	}
+	ps2_dorm_total[w][type]++;
+	if (!memcmp((const char *)before + sizeof(thinker_t), (const char *)after + sizeof(thinker_t), sizeof(mobj_t) - sizeof(thinker_t)) && P_GetRandSeed() == rngbefore)
+		ps2_dorm_same[w][type]++;
+}
+#endif
+
 #if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK) // (PTICK: lua_mobjhooks_any)
 // PS2-203 (OPT11-CORE): a decoration at rest (flowers, trees, spikes, kelp: 40..60 % of the thinker calls of a crowded level) goes through the thinker preamble
 // of P_MobjThinker, P_MobjSceneryThink (its type switch and the fuse test) and P_SceneryThinker and ends in P_CycleMobjState, with nothing changed on the way but
@@ -10547,11 +10589,18 @@ void P_MobjThinker(mobj_t *mobj)
 		|| P_IsObjectInGoop(mobj))
 	{
 		PS2_TYPESTAT_N(1, mobj);
+#ifdef PS2_DORMSTAT
+		mobj_t dorm_copy = *mobj;
+		UINT32 dorm_rng = P_GetRandSeed();
+#endif
 		if (!P_ZMovement(mobj))
 			return; // mobj was removed
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
 		if (P_MobjWasRemoved(mobj))
 			return;
+#ifdef PS2_DORMSTAT
+		PS2_DormNote(0, mobj->type, &dorm_copy, dorm_rng, mobj);
+#endif
 	}
 	else
 	{
@@ -10765,6 +10814,10 @@ void P_SceneryThinker(mobj_t *mobj)
 		|| P_IsObjectInGoop(mobj))
 	{
 		PS2_TYPESTAT_N(3, mobj);
+#ifdef PS2_DORMSTAT
+		mobj_t dorm_copy = *mobj;
+		UINT32 dorm_rng = P_GetRandSeed();
+#endif
 		if (!P_SceneryZMovement(mobj))
 			return; // mobj was removed
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
@@ -10774,6 +10827,9 @@ void P_SceneryThinker(mobj_t *mobj)
 		mobj->ceilingz = tmceilingz;
 		mobj->floorrover = tmfloorrover;
 		mobj->ceilingrover = tmceilingrover;
+#ifdef PS2_DORMSTAT
+		PS2_DormNote(1, mobj->type, &dorm_copy, dorm_rng, mobj);
+#endif
 	}
 	else
 	{

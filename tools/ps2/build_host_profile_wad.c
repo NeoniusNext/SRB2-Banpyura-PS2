@@ -29,3 +29,5 @@ ps2_httpget_t *PS2HttpGet_Open(const char *url, long stall_seconds, int maxredir
 int PS2HttpGet_Step(ps2_httpget_t *g, ps2curl_write_fn write_fn, void *userdata, long *status, long *total, long *got, char *errbuf, size_t errsize) { (void)g; (void)write_fn; (void)userdata; (void)status; (void)total; (void)got; (void)errbuf; (void)errsize; return -1; }
 void PS2HttpGet_Close(ps2_httpget_t *g) { (void)g; }
 void StoreLuaFileCallback(INT32 id) { (void)id; }
+INT32 ps2_fxfrac; // EE: src/ps2/i_video.c (-fxfrac); d_main.c reads it under PS2_PROFILE
+
