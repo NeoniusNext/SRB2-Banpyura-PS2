@@ -107,7 +107,7 @@ stage_addons() {
 	say "-- add-ons: limits (ZF)"
 	run python3 tools/ps2/addon_compare.py --name "$TAG-zf" --files "$ADD/ZF.pk3" --until "FTLUA done" --elf "$ELF"
 	say "-- add-ons: skin/sound/music/Lua (ZS)"
-	run python3 tools/ps2/addon_compare.py --name "$TAG-zs" --files "$ADD/ZS.pk3" --elf "$ELF"
+	run python3 tools/ps2/addon_compare.py --name "$TAG-zs" --files "$ADD/ZS.pk3" --until "FTLUA done" --elf "$ELF"
 	say "-- UDMF map (UM)"
 	run python3 tools/ps2/addon_compare.py --name "$TAG-um" --files "$ADD/UM.pk3" --warp 99 --elf "$ELF"
 	say "-- Lua HUD software"

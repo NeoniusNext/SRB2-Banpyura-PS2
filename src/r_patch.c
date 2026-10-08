@@ -116,7 +116,7 @@ boolean Patch_IsEvictable(const void *p)
 	const patch_t *patch = p;
 	int i;
 
-	if (!patch->embedded || patch->hardware)
+	if (!(patch->embedded & 1) || (patch->embedded & 2) || patch->hardware) // bit 1: a Lua script holds this patch (lua_hudlib.c, PS2-176): it cannot fetch it again
 		return false;
 	for (i = 0; i < 4; i++)
 		if (patch->flats[i])
