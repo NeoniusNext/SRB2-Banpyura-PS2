@@ -988,8 +988,8 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	// the program cuts them at the row steps and loads the CLUT of every piece); the lit plans of the GLSL equations (fog classes) take the general path
 	P.vuok = V.on && V.ready && (P.fast || (P.litfast && P.pal)) && !P.vcol && !(flags & PF_Invisible) && P.pass[0].tex == (u8)textured && !P.oldpath;
 	if (!P.vuok && (P.cutx || P.cuty) && !vu_nocut && V.on && V.ready && P.npass == 1 && !P.water && !P.pass[0].ramp && !(flags & PF_Ripple) && !P.vcol && !(flags & PF_Invisible) && P.pass[0].tex == (u8)textured
-		&& !P.oldpath && !(ps2hwd_dbg_flags & 64) && (P.lmode == LM_NONE || (P.lmode == LM_BANDS && P.pal)))
-		P.vuok = 1; // PS2-HW-236: a texture with a side that is not a power of two: the polygons are cut at the repeats in object space (vu_cut_blk) and the program draws the pieces
+		&& !P.oldpath && !(ps2hwd_dbg_flags & 64) && (P.lmode == LM_NONE || (P.lmode == LM_BANDS && P.pal && r && (r->clut == 2 || (r->clut == 1 && H.rec[img_of(H.cur_tex)].shareable && !H.rec[img_of(H.cur_tex)].has255)))))
+		P.vuok = 1; // PS2-HW-236 (a lit plan only with the keyed rows of its light table, as vu_plan_setup chooses them: the plain rows of the other kind are another 32 CLUT images a table, and the 124 of the CLUT cache do not hold four such sets): a texture with a side that is not a power of two: the polygons are cut at the repeats in object space (vu_cut_blk) and the program draws the pieces
 	P.serial = H.serial - 1; // the first polygon sets the state up
 	xf_update();
 	P.zmax = PS2HWD_ZMAX;

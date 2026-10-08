@@ -1456,15 +1456,46 @@ static int vu_poly_blk(const qw_t *b)
 			return 0;
 	}
 	if (P.cutx || P.cuty)
-		return vu_cut_blk(b); // a texture side that is not a power of two: every polygon has its own repeat base, and the cuts
-	if (P.textured && (P.wrapx || P.wrapy) && ((P.wrapx && b[1].f[2] * (float)P.r->w > UV_EXTENT) || (P.wrapy && b[1].f[3] * (float)P.r->h > UV_EXTENT)))
-		return vu_cut_blk(b); // cut at whole repeats
-	if (P.textured && (P.wrapx || P.wrapy))
 	{
+		// a texture side that is not a power of two: every polygon has its own repeat base; one that lies inside one repeat (with a margin) of every such axis is one piece (a wall of a
+		// 128x48 texture: sb = 0, tb = the whole repeats of t), the others are cut
 		const float smin = b[1].f[0], tmin = b[1].f[1];
+		int one = n <= VU_MAXVERT;
 
-		sb = (P.wrapx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
-		tb = (P.wrapy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
+		if (P.cutx)
+		{
+			sb = floorf(smin);
+			one &= ((smin - sb) + b[1].f[2]) < 0.9999f;
+		}
+		else
+		{
+			sb = (P.wrapx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f;
+			one &= !(P.wrapx && b[1].f[2] * (float)P.r->w > UV_EXTENT);
+		}
+		if (P.cuty)
+		{
+			tb = floorf(tmin);
+			one &= ((tmin - tb) + b[1].f[3]) < 0.9999f;
+		}
+		else
+		{
+			tb = (P.wrapy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
+			one &= !(P.wrapy && b[1].f[3] * (float)P.r->h > UV_EXTENT);
+		}
+		if (!one)
+			return vu_cut_blk(b);
+	}
+	else
+	{
+		if (P.textured && (P.wrapx || P.wrapy) && ((P.wrapx && b[1].f[2] * (float)P.r->w > UV_EXTENT) || (P.wrapy && b[1].f[3] * (float)P.r->h > UV_EXTENT)))
+			return vu_cut_blk(b); // cut at whole repeats
+		if (P.textured && (P.wrapx || P.wrapy))
+		{
+			const float smin = b[1].f[0], tmin = b[1].f[1];
+
+			sb = (P.wrapx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
+			tb = (P.wrapy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
+		}
 	}
 	if (n > VU_MAXVERT)
 	{
