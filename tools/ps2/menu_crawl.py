@@ -22,16 +22,34 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run_once(name, elf, first, hw, extra, timeout, keep_args, warp):
+def run_once(name, elf, first, hw, extra, timeout, keep_args, warp, cfg=()):
     cmd = [sys.executable, str(ROOT / 'tools/ps2/netui_run.py'), '--name', name, '--elf', elf, '--timeout', str(timeout), '--until', 'MHCRAWL done', '--stall', 'MHC=75', '--', '-skipintro', '-menuhintscheck']
     if hw:
         cmd += ['-renderer', 'Hardware', '-zreserve', '1536']
     if warp:
         cmd += ['-warp', str(warp)]
     cmd += keep_args + extra
+    for line in cfg:
+        cmd[cmd.index('--') :cmd.index('--')] = ['--cfg', line]
     cmd += ['-netcmd', '%d:ps2_menucrawl %d' % (150 if warp else 60, first)]
     subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL)
     return (ROOT / 'build/runs' / name / 'boot.txt').read_text(errors='replace')
+
+
+CONTROLS = ['forward', 'backward', 'strafeleft', 'straferight', 'turnleft', 'turnright', 'weaponnext', 'weaponprev'] + ['weapon%d' % i for i in range(1, 11)] + \
+           ['fire', 'firenormal', 'tossflag', 'spin', 'camtoggle', 'camreset', 'lookup', 'lookdown', 'centerview', 'mouseaiming', 'talkkey', 'teamtalkkey', 'scores', 'jump',
+            'console', 'pause', 'systemmenu', 'screenshot', 'recordgif', 'viewpoint', 'viewpointprev', 'custom1', 'custom2', 'custom3']
+
+
+def stress_lines():
+    """setcontrol lines: a long key name and a pad button of every kind (the 11 px shoulder buttons and the 7 px ones, the D-pad)"""
+    keys = ['right arrow', 'left arrow', 'down arrow', 'up arrow', 'keypad enter', 'lshift', 'rshift', 'rctrl', 'space', 'backspace', 'tab', 'keypad 4']
+    pads = ['joy11', 'joy12', 'joy5', 'joy6', 'joy9', 'joy10', 'joy7', 'joy8', 'joy1', 'joy2', 'joy3', 'joy4', 'hatup', 'hatdown', 'hatleft', 'hatright']
+    out = []
+    for i, c in enumerate(CONTROLS):
+        out.append('setcontrol "%s" "%s" "%s"' % (c, keys[i % len(keys)], pads[i % len(pads)]))
+        out.append('setcontrol2 "%s" "%s" "%s"' % (c, keys[(i + 5) % len(keys)], 'sec_' + pads[(i + 3) % len(pads)]))
+    return out
 
 
 def parse(text, menus):
@@ -49,10 +67,17 @@ def parse(text, menus):
         if m and cur is not None:
             rest = m.group(8)
             pm = re.search(r'(\d+)x(\d+) menu_pixels=(\d+) under=(\d+) within2=(\d+) (ok|OVERLAP)', rest)
+            im = re.search(r'icons=(\d+) on_text=(\d+) icon_icon=(\d+) text_on_icon=(\d+)(?: ink=(\d+) touch=(\d+))? (iconok|ICONOVERLAP)', rest)
             plates = re.findall(r'\[(-?\d+),(-?\d+),(\d+)x(\d+)\]', rest)
             cur['checks'].append({'item': int(m.group(2)), 'kind': int(m.group(4)), 'how': m.group(5) + m.group(6), 'plates': [tuple(map(int, p)) for p in plates],
                                   'size': (int(pm.group(1)), int(pm.group(2))) if pm else None, 'pixels': int(pm.group(3)) if pm else None,
-                                  'under': int(pm.group(4)) if pm else None, 'near': int(pm.group(5)) if pm else None, 'overlap': bool(pm and pm.group(6) == 'OVERLAP')})
+                                  'under': int(pm.group(4)) if pm else None, 'near': int(pm.group(5)) if pm else None, 'overlap': bool(pm and pm.group(6) == 'OVERLAP'),
+                                  'icons': int(im.group(1)) if im else 0, 'icon_bad': bool(im and im.group(7) == 'ICONOVERLAP'), 'hints': 0, 'dups': 0})
+            continue
+        m = re.match(r'HINTCHK menu=(\d+) item=(\d+)/(\d+) hints=(\d+) dup=(\d+)', line)
+        if m and cur is not None and cur['checks']:
+            cur['checks'][-1]['hints'] = int(m.group(4))
+            cur['checks'][-1]['dups'] = int(m.group(5))
     return done, cur
 
 
@@ -65,13 +90,16 @@ def main():
     ap.add_argument('--warp', type=int, default=0)
     ap.add_argument('--timeout', type=int, default=420)
     ap.add_argument('--out', default='')
+    ap.add_argument('--cfg', action='append', default=[], help='a line of the config of the run, e.g. \'menuhints "Off"\'')
+    ap.add_argument('--stress-controls', action='store_true', help='every control of Setup Controls gets a long keyboard name and a pad button of the widest kind (both players)')
     a = ap.parse_args()
     keep = a.args.split()
+    cfg = list(a.cfg) + (stress_lines() if a.stress_controls else [])
     menus = OrderedDict()
     skipped = []
     first = 0
     for attempt in range(40):
-        text = run_once('crawl-' + a.label, a.elf, first, a.hw, [], a.timeout, keep, a.warp)
+        text = run_once('crawl-' + a.label, a.elf, first, a.hw, [], a.timeout, keep, a.warp, cfg)
         done, cur = parse(text, menus)
         lastidx = max(menus) if menus else -1
         if done:
@@ -99,17 +127,24 @@ def main():
                     cnt[h] += 1
             ov += 1 if c['overlap'] else 0
         n = len(m['checks'])
-        sizes = sorted({c['size'] for c in m['checks'] if c['size']})
+        ic = sum(c['icons'] for c in m['checks'])
+        icbad = sum(1 for c in m['checks'] if c['icon_bad'])
+        hn = sum(c['hints'] for c in m['checks'])
+        hd = sum(1 for c in m['checks'] if c['dups'])
         totals['items'] += n
         totals['overlap'] += ov
+        totals['icons'] = totals.get('icons', 0) + ic
+        totals['icon_bad'] = totals.get('icon_bad', 0) + icbad
+        totals['hints'] = totals.get('hints', 0) + hn
+        totals['dups'] = totals.get('dups', 0) + hd
         for k in cnt:
             totals[k] += cnt[k]
-        rows.append((idx, m['name'], n, cnt, ov))
-    lines = ['| # | menu | items | one line | raised | stacked | icons | moved | hidden | overlaps |', '|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|']
-    for idx, name, n, cnt, ov in rows:
+        rows.append((idx, m['name'], n, cnt, ov, ic, icbad, hn, hd))
+    lines = ['| # | menu | items | one line | raised | stacked | icons | moved | hidden | overlaps | icons in text | icon overlaps | hints | duplicates |', '|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|']
+    for idx, name, n, cnt, ov, ic, icbad, hn, hd in rows:
         verdict = ('%d/%d' % (ov, n)) if n else 'not drawn'
-        lines.append('| %d | %s | %d | %d | %d | %d | %d | %d | %d | %s |' % (idx, name, n, cnt['L'], cnt['R'], cnt['S'], cnt['I'], cnt['M'], cnt['-'], verdict))
-    lines.append('| | **all** | %d | %d | %d | %d | %d | %d | %d | **%d/%d** |' % (totals['items'], totals['L'], totals['R'], totals['S'], totals['I'], totals['M'], totals['-'], totals['overlap'], totals['items']))
+        lines.append('| %d | %s | %d | %d | %d | %d | %d | %d | %d | %s | %d | %s | %d | %s |' % (idx, name, n, cnt['L'], cnt['R'], cnt['S'], cnt['I'], cnt['M'], cnt['-'], verdict, ic, ('%d/%d' % (icbad, n)) if n else '-', hn, ('%d/%d' % (hd, n)) if n else '-'))
+    lines.append('| | **all** | %d | %d | %d | %d | %d | %d | %d | **%d/%d** | %d | **%d/%d** | %d | **%d/%d** |' % (totals['items'], totals['L'], totals['R'], totals['S'], totals['I'], totals['M'], totals['-'], totals['overlap'], totals['items'], totals.get('icons', 0), totals.get('icon_bad', 0), totals['items'], totals.get('hints', 0), totals.get('dups', 0), totals['items']))
     if skipped:
         lines.append('')
         lines.append('not drawn by the crawler (hang / crash): ' + ', '.join('%d %s' % s for s in skipped))
@@ -117,7 +152,7 @@ def main():
     print(out)
     if a.out:
         Path(a.out).write_text('<!-- menu_crawl.py --label %s -->\n' % a.label + out + '\n')
-    return 0 if totals['overlap'] == 0 else 1
+    return 0 if totals['overlap'] == 0 and totals.get('icon_bad', 0) == 0 and totals.get('dups', 0) == 0 else 1
 
 
 if __name__ == '__main__':

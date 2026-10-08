@@ -12,6 +12,7 @@
 
 #include "ps2_osk.h"
 #include "ps2_uiicons.h"
+#include "ps2_menuhints.h"
 
 #define OSK_COLS 10
 #define OSK_ROWS 5
@@ -194,5 +195,10 @@ void PS2OSK_Draw(void)
 		V_DrawCenteredString(x + 23, y, V_ALLOWLOWERCASE | (cur ? V_YELLOWMAP : 0), cmd_names[c]);
 	}
 	// PS2-336: the buttons by their icons (thin font: the five labels and icons fit the 252 px of the panel)
-	V_DrawCenteredThinString(160, y0 + 78, V_ALLOWLOWERCASE, PS2I_CROSS " type  " PS2I_SQUARE " shift  " PS2I_TRIANGLE " del  " PS2I_START " ok  " PS2I_CIRCLE " close");
+	{
+		static const char hint[] = PS2I_CROSS " type  " PS2I_SQUARE " shift  " PS2I_TRIANGLE " del  " PS2I_START " ok  " PS2I_CIRCLE " close";
+
+		PS2MenuHints_Log("osk", hint); // PS2-341: the check for hints said twice
+		V_DrawCenteredThinString(160, y0 + 78, V_ALLOWLOWERCASE, hint);
+	}
 }

@@ -30,6 +30,7 @@ static UINT32 heap_before, heap_after;
 // the library's own: ps2ipInit(), libcglue_ps2ip_getconfig("sm0") / _setconfig(), NetManIoctl(GET_LINK_STATUS). What was printed before is printed as before
 // (tools/ps2/net_session.py and the test scenarios wait for "PS2 net: address").
 typedef enum { NB_OK, NB_CANCEL, NB_ADAPTER, NB_LINK, NB_DHCP, NB_CONFIG } nb_t;
+static INT32 fakelink_ms = -1;
 
 static boolean modules_up, stack_up;
 static eeip_network_config_t netcfg; // the static configuration is read through the whole bring-up
@@ -150,9 +151,11 @@ static nb_t Bringup(void)
 	PS2NetUI_Step(NETUI_STEP_LINK, netcfg.timeout_seconds);
 	Phase("Waiting for the Ethernet link...");
 	t0 = I_GetPreciseTime();
+	if (fakelink_ms < 0) // -netfakelink SECONDS (a test: the emulator always has a link): the link is taken as down for that long, 999 = never
+		fakelink_ms = (M_CheckParm("-netfakelink") && M_IsNextParm()) ? atoi(M_GetNextParm()) * 1000 : 0;
 	for (;;)
 	{
-		if (NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0) == NETMAN_NETIF_ETH_LINK_STATE_UP)
+		if (MsSince(t0) >= fakelink_ms && NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0) == NETMAN_NETIF_ETH_LINK_STATE_UP)
 			break;
 		if (MsSince(t0) >= limit_ms)
 			return NB_LINK;

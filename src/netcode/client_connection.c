@@ -89,13 +89,19 @@ static const char *GetChatColorFromVideoFlag(INT32 flag)
 // Cross = Enter, Circle = Escape, Square = Space, D-pad = the arrows. Elsewhere the hints are what they always were.
 #ifdef PS2
 #include "../ps2/ps2_uiicons.h"
-#define HINT_ABORT PS2I_CIRCLE " Abort"
-#define HINT_CANCEL PS2I_CIRCLE " Cancel"
-#define HINT_BACK PS2I_CIRCLE " Back"
-#define HINT_SCROLL PS2I_DPAD_UD " Scroll list"
-#define HINT_DOWNLOAD PS2I_CROSS " Download"
-#define HINT_JOIN PS2I_CROSS " Join"
-#define HINT_SWITCH(what) va(PS2I_SQUARE " %s", what)
+#include "../ps2/ps2_menuhints.h" // PS2-340: the check of the icons of a frame
+static const char *HintLog(const char *s) // PS2-341: the hints of a frame go to the check for hints said twice (ps2_menuhints.c)
+{
+	PS2MenuHints_Log("connect", s);
+	return s;
+}
+#define HINT_ABORT HintLog(PS2I_CIRCLE " Abort")
+#define HINT_CANCEL HintLog(PS2I_CIRCLE " Cancel")
+#define HINT_BACK HintLog(PS2I_CIRCLE " Back")
+#define HINT_SCROLL HintLog(PS2I_DPAD_UD " Scroll list")
+#define HINT_DOWNLOAD HintLog(PS2I_CROSS " Download")
+#define HINT_JOIN HintLog(PS2I_CROSS " Join")
+#define HINT_SWITCH(what) HintLog(va(PS2I_SQUARE " %s", what))
 #else
 #define HINT_ABORT "Press ESC to abort"
 #define HINT_CANCEL va("%sESC%s - Cancel", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
@@ -1970,10 +1976,16 @@ static boolean CL_ServerConnectionTicker(const char *tmpsave, tic_t *oldtic, tic
 				F_TitleScreenTicker(true);
 				F_TitleScreenDrawer();
 			}
+#ifdef PS2
+			PS2MenuHints_FrameBegin(); // PS2-340: -iconcheck, the icons of this frame against its text
+#endif
 			CL_DrawConnectionStatus();
 			I_lock_mutex(&m_menu_mutex);
 			M_Drawer(); //Needed for drawing messageboxes on the connection screen
 			I_unlock_mutex(m_menu_mutex);
+#ifdef PS2
+			PS2MenuHints_FrameEnd(va("connect-mode-%d", (int)cl_mode));
+#endif
 			I_UpdateNoVsync(); // page flip or blit buffer
 			if (moviemode)
 				M_SaveFrame();

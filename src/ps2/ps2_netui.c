@@ -25,6 +25,7 @@
 #include "../v_video.h"
 #include "../z_zone.h"
 #include "ps2_hwfb.h"
+#include "ps2_menuhints.h"
 #include "ps2_netui.h"
 #include "ps2_uiicons.h"
 
@@ -226,6 +227,7 @@ static void DrawProgress(void)
 	}
 	if (tip && ms >= 3000)
 		V_DrawCenteredThinString(BASEVIDWIDTH/2, 122, V_ALLOWLOWERCASE, tip);
+	PS2MenuHints_Log("netscreen", PS2I_CIRCLE " Cancel"); // PS2-341: the check for hints said twice
 	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, va("%s %s", PS2I_CIRCLE, M_GetText("Cancel")));
 	DrawBar(96, true);
 }
@@ -243,6 +245,7 @@ static void DrawReady(void)
 		V_DrawString(TEXT_X + 16, 98 + i * 11, MENUCOLOR|MENUCAPS, M_GetText(names[i]));
 		V_DrawString(TEXT_X + 88, 98 + i * 11, 0, vals[i][0] ? vals[i] : "-");
 	}
+	PS2MenuHints_Log("netscreen", PS2I_CROSS " Continue");
 	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, va("%s %s", PS2I_CROSS, M_GetText("Continue")));
 	DrawBar(96, false);
 }
@@ -283,6 +286,7 @@ static void DrawFailed(void)
 		snprintf(keys, sizeof keys, "%s%s %s\x80      %s%s %s\x80", mc, PS2I_CROSS, M_GetText("Try again"), mc, PS2I_CIRCLE, M_GetText("Back"));
 	else
 		snprintf(keys, sizeof keys, "%s%s %s\x80", mc, PS2I_CIRCLE, M_GetText("Back"));
+	PS2MenuHints_Log("netscreen", keys);
 	snprintf(msg, sizeof msg, "%s%s\x80\n\n\x85%s\x80\n\n%s\n\n%s", mc, M_GetText("The network is not available"), reason, hint, keys);
 	x = (INT32)((BASEVIDWIDTH - V_StringWidth(msg, 0) - 32) / 2);
 	y = (INT32)((BASEVIDHEIGHT - V_StringHeight(msg, V_RETURN8)) / 2);
@@ -293,6 +297,7 @@ static void DrawFailed(void)
 static void DrawFrame(void)
 {
 	ui.gs_saved = gamestate;
+	PS2MenuHints_FrameBegin(); // -iconcheck: the icons of this frame against its text (ps2_menuhints.c)
 	DrawBackground();
 	switch (ui.mode)
 	{
@@ -300,6 +305,7 @@ static void DrawFrame(void)
 		case UI_FAILED: DrawFailed(); break;
 		default: DrawProgress(); break;
 	}
+	PS2MenuHints_FrameEnd(ui.mode == UI_READY ? "netscreen-ready" : ui.mode == UI_FAILED ? "netscreen-failed" : "netscreen-progress");
 	ui.frame++;
 	I_UpdateNoVsync(); // page flip or blit buffer (-vidshot nN takes its picture in there)
 }

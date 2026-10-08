@@ -274,3 +274,64 @@ def build():
     for d in ('LEFT', 'RIGHT', 'DOWN', 'UP'):
         icons['ARROW_' + d] = arrow(d)
     return icons
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------
+# The SMALL set: the same buttons for the lines of text (7 px tall: the cap height of the menu font; the lines of the menus are 8 px apart). Drawn by hand on odd grids
+# (7x7, 9x5 .. 11x7) with the centre on a pixel; the 3x3 symbols of the face buttons are explicit masks. NOT a reduction of the large icons.
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------
+SMALL_SYMBOLS = {
+    'CROSS': ['U.U', '.U.', 'U.U'],
+    'CIRCLE': ['.R.', 'R.R', '.R.'],
+    'SQUARE': ['PPP', 'P.P', 'PPP'],
+    'TRIANGLE': ['.G.', 'G.G', 'GGG'],
+}
+PLAY = ['W..', 'WW.', 'WWW', 'WW.', 'W..']  # the arrow of Start (3x5)
+
+
+def plus7():
+    """a plus with arms three pixels wide: the D-pad"""
+    return shape_icon(7, 7, lambda x, y: 0 <= x < 7 and 0 <= y < 7 and (abs(x - 3) <= 1 or abs(y - 3) <= 1))
+
+
+def dpad_small(dirs):
+    c = plus7()
+    if 'U' in dirs:
+        c.mask_set(3, 1, ['W', 'W'])
+    if 'D' in dirs:
+        c.mask_set(3, 4, ['W', 'W'])
+    if 'L' in dirs:
+        c.mask_set(1, 3, ['WW'])
+    if 'R' in dirs:
+        c.mask_set(4, 3, ['WW'])
+    return c
+
+
+def build_small():
+    """-> dict name -> Canvas (names of build(): only the icons that the text tokens and the key names use, plus the two sticks)"""
+    icons = {}
+    for n, sym in SMALL_SYMBOLS.items():
+        c = disc(7)
+        c.mask_set(2, 2, sym)
+        icons[n] = c
+    for n, cut in (('L1', 1), ('R1', 1), ('L2', 2), ('R2', 2)):
+        c = round_rect(11, 7, cut)
+        c.text(2, 1, n)
+        icons[n] = c
+    for n in ('L3', 'R3'):
+        c = round_rect(11, 7, 2)
+        c.text(2, 1, n)
+        icons[n] = c
+    for n in ('LSTICK', 'RSTICK'):
+        c = disc(7)
+        c.text(2, 1, n[0])
+        icons[n] = c
+    c = round_rect(9, 7, 2)
+    c.mask_set(3, 1, PLAY)
+    icons['START'] = c
+    c = round_rect(9, 5, 2)
+    c.mask_set(3, 2, ['WWW'])
+    icons['SELECT'] = c
+    for tag, d in (('UP', 'U'), ('DOWN', 'D'), ('LEFT', 'L'), ('RIGHT', 'R'), ('UD', 'UD'), ('LR', 'LR')):
+        icons['DPAD_' + tag] = dpad_small(d)
+    return icons

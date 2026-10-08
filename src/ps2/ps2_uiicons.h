@@ -47,10 +47,18 @@ typedef enum
 
 // the icon of a control character of a string, or -1 (an ordinary character)
 INT32 PS2UI_TokenIcon(UINT8 c);
-// the icon as a patch (created on first use, kept), NULL when there is no room for it
-patch_t *PS2UI_Patch(INT32 icon);
+// The icons come in two sizes (ps2_uiicons_data.inc): the LARGE ones (13..15 px, for the plates of the corner hints, the network screen and fonts with tall letters)
+// and the SMALL ones (7 px: the cap height of the menu fonts, whose lines are 8 px apart; tools/ps2/ui_icons_pixel.py build_small). A string takes the small ones unless
+// ps2ui_bigicons is set or the font's capital letters are 13 px or more (PS2UI_SmallFor), so that an icon is never taller than the line it stands in.
+extern boolean ps2ui_bigicons;   // set while a string with room for large icons is drawn (the corner hints, the network screen)
+extern boolean ps2ui_hideicons;  // set by the check of ps2_menuhints.c: an icon takes its room in the string but is not drawn
+boolean PS2UI_SmallFor(INT32 capheight);
+// the icon as a patch (created on first use, kept), NULL when there is no room for it; the small one when `small` and there is one
+patch_t *PS2UI_PatchSized(INT32 icon, boolean small);
+patch_t *PS2UI_Patch(INT32 icon); // the large one
 // the width in pixels that a token takes in a string (the icon and a pixel of air)
-INT32 PS2UI_TokenWidth(UINT8 c);
+INT32 PS2UI_TokenWidthSized(UINT8 c, boolean small);
+INT32 PS2UI_TokenWidth(UINT8 c); // the large one
 // the icon of a joystick key number of the engine (KEY_JOY1+n / KEY_HAT1+n, also the second pad), or -1; the text token of it ("" when none)
 INT32 PS2UI_KeyIcon(INT32 keynum);
 const char *PS2UI_KeyToken(INT32 keynum);

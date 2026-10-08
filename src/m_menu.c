@@ -325,7 +325,7 @@ static void M_ConnectMenuModChecks(INT32 choice);
 static void M_RejoinMenuModChecks(INT32 choice);
 static void M_Refresh(INT32 choice);
 #ifdef PS2
-#define PS2_PRESS_ESC_EXIT (PS2I_CIRCLE " Exit") // PS2-336
+#define PS2_PRESS_ESC_EXIT (PS2MenuHints_Shows(PS2UI_CIRCLE) ? "" : (PS2MenuHints_Log("native:exit", PS2I_CIRCLE " Exit"), PS2I_CIRCLE " Exit")) // PS2-336, PS2-341: one hint, one place
 #else
 #define PS2_PRESS_ESC_EXIT M_GetText("Press ESC to exit")
 #endif
@@ -6447,6 +6447,9 @@ static void M_DrawMessageMenu(void)
 
 	M_DrawTextBox(currentMenu->x, currentMenu->y - 8, 2+V_StringWidth(msg, 0)/8, V_StringHeight(msg, V_RETURN8)/8);
 	V_DrawCenteredString(BASEVIDWIDTH/2, currentMenu->y, V_ALLOWLOWERCASE|V_RETURN8, msg);
+#ifdef PS2
+	PS2MenuHints_Log("message", msg); // PS2-341: the check for hints said twice
+#endif
 }
 
 // default message handler
@@ -13839,6 +13842,67 @@ static const char *M_ControlKeyName(INT32 key)
 }
 
 // Draws the Customise Controls menu
+#ifdef PS2
+// PS2-340: the names of the keys of a control for the column on the right of Setup Controls ("SPACE or <Cross>"). The column is measured with the icons in it (V_StringWidth knows them) and
+// has to end 24 px from the edge (the overscan of a television) and leave 8 px to the name of the control: when "A or B" is too wide the long key names are cut short
+// (LEFT ARROW -> LEFT, LSHIFT -> LSHFT, KEYPAD 4 -> KP4 ...), and when that is still too wide only the first key is shown.
+static const char *M_ShortKeyName(const char *name, char *buf, size_t n)
+{
+	static const struct { const char *from, *to; } cut[] =
+	{
+		{"LEFT ARROW", "LEFT"}, {"RIGHT ARROW", "RIGHT"}, {"UP ARROW", "UP"}, {"DOWN ARROW", "DOWN"}, {"LSHIFT", "LSHFT"}, {"RSHIFT", "RSHFT"}, {"LCTRL", "LCTL"}, {"RCTRL", "RCTL"},
+		{"SPACE", "SPC"}, {"BACKSPACE", "BKSP"}, {"ENTER", "ENTR"}, {"ESCAPE", "ESC"}, {"MOUSE WHEEL ", "WHL "}, {"WHEEL ", "WHL "},
+	};
+	size_t i;
+
+	if (!strncmp(name, "KEYPAD ", 7))
+	{
+		snprintf(buf, n, "KP%s", name + 7);
+		return buf;
+	}
+	for (i = 0; i < sizeof cut / sizeof cut[0]; i++)
+		if (!strncmp(name, cut[i].from, strlen(cut[i].from)))
+		{
+			snprintf(buf, n, "%s%s", cut[i].to, name + strlen(cut[i].from));
+			return buf;
+		}
+	return name;
+}
+
+static void M_PS2ControlText(char *dst, size_t n, const INT32 keys[2], const char *label, INT32 x)
+{
+	const INT32 avail = (BASEVIDWIDTH - x) - (x + V_StringWidth(label, MENUCAPS) + 8);
+	INT32 pass, k;
+
+	if (keys[0] == KEY_NULL && keys[1] == KEY_NULL)
+	{
+		strlcpy(dst, "---", n);
+		return;
+	}
+	for (pass = 0; pass < 3; pass++) // 0: the names, 1: short names, 2: the first key only
+	{
+		char short0[24], short1[24];
+
+		dst[0] = '\0';
+		for (k = 0; k < 2; k++)
+		{
+			const char *name;
+
+			if (keys[k] == KEY_NULL || (pass == 2 && k == 1 && keys[0] != KEY_NULL))
+				continue;
+			name = M_ControlKeyName(keys[k]);
+			if (pass >= 1 && !(*name && (UINT8)*name < 0x16))
+				name = M_ShortKeyName(name, k ? short1 : short0, sizeof short0);
+			if (dst[0])
+				strlcat(dst, " or ", n);
+			strlcat(dst, name, n);
+		}
+		if (V_StringWidth(dst, V_YELLOWMAP|MENUCAPS) <= avail)
+			return;
+	}
+}
+#endif
+
 static void M_DrawControl(void)
 {
 	char     tmp[50];
@@ -13900,11 +13964,28 @@ static void M_DrawControl(void)
 			V_DrawCenteredString(BASEVIDWIDTH/2, 30, MENUCAPS, "Exit the Tutorial to change the controls");
 	}
 	else
+#ifdef PS2
+	{
+		// PS2-336 (the menu keys of the pad: Cross = Enter, Square = Backspace); PS2-341: one hint, one place - what the corner hints say (Assign, Clear) is not said here again
+		char line[40] = "";
+
+		if (setupcontrols_secondaryplayer)
+			strcpy(line, "Set controls for secondary player");
+		else
+		{
+			if (!PS2MenuHints_Shows(PS2UI_CROSS))
+				strcat(line, PS2I_CROSS " Change");
+			if (!PS2MenuHints_Shows(PS2UI_SQUARE))
+				strcat(line, line[0] ? "     " PS2I_SQUARE " Clear" : PS2I_SQUARE " Clear");
+			if (line[0])
+				PS2MenuHints_Log("native:controls", line);
+		}
+		if (line[0])
+			V_DrawCenteredString(BASEVIDWIDTH/2, 30, MENUCAPS, line);
+	}
+#else
 		V_DrawCenteredString(BASEVIDWIDTH/2, 30, MENUCAPS,
 		    (setupcontrols_secondaryplayer ? "Set controls for secondary player" :
-#ifdef PS2
-		                                     PS2I_CROSS " Change     " PS2I_SQUARE " Clear")); // PS2-336 (the menu keys of the pad: Cross = Enter, Square = Backspace)
-#else
 		                                     "Press Enter to change, Backspace to clear"));
 #endif
 
@@ -13928,6 +14009,9 @@ static void M_DrawControl(void)
 			keys[1] = setupcontrols[currentMenu->menuitems[i].alphaKey][1];
 
 			tmp[0] ='\0';
+#ifdef PS2
+			M_PS2ControlText(tmp, sizeof tmp, keys, currentMenu->menuitems[i].text, x); // PS2-340: the column is measured with the icons in it
+#else
 			if (keys[0] == KEY_NULL && keys[1] == KEY_NULL)
 			{
 				strcpy(tmp, "---");
@@ -13945,6 +14029,7 @@ static void M_DrawControl(void)
 
 
 			}
+#endif
 			V_DrawRightAlignedString(BASEVIDWIDTH-currentMenu->x, y, V_YELLOWMAP|MENUCAPS, tmp);
 		}
 		/*else if (currentMenu->menuitems[i].status == IT_GRAYEDOUT2)
@@ -14067,8 +14152,13 @@ static void M_ChangeControl(INT32 choice)
 		return;
 
 	controltochange = currentMenu->menuitems[choice].alphaKey;
+#ifdef PS2
+	// PS2-341: every button of the pad is taken as the new control (Circle too: M_ChangecontrolResponse gets the raw event), so the pad cannot cancel here: the box does not promise it
+	sprintf(tmp, "Press a button for\n%s", currentMenu->menuitems[choice].text);
+#else
 	sprintf(tmp, M_GetText("Hit the new key for\n%s\nESC for Cancel"),
 		currentMenu->menuitems[choice].text);
+#endif
 	strlcpy(controltochangetext, currentMenu->menuitems[choice].text, 33);
 
 	M_StartMessage(tmp, M_ChangecontrolResponse, MM_EVENTHANDLER);
@@ -14301,12 +14391,28 @@ static void M_DrawVideoMode(void)
 			va("Previewing mode %c%dx%d",
 				(SCR_IsAspectCorrect(vid.width, vid.height)) ? 0x83 : 0x80,
 				vid.width, vid.height));
+#ifdef PS2
+		// PS2-336 / PS2-341: the buttons of the pad, and not said again when the corner hints say them
+		if (!PS2MenuHints_Shows(PS2UI_CROSS))
+		{
+			PS2MenuHints_Log("native:vmode", "Press " PS2I_CROSS " again to keep this mode");
+			V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 138, MENUCAPS, "Press " PS2I_CROSS " again to keep this mode");
+		}
+		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 150, MENUCAPS,
+			va("Wait %d second%s", testtime, (testtime > 1) ? "s" : ""));
+		if (!PS2MenuHints_Shows(PS2UI_CIRCLE))
+		{
+			PS2MenuHints_Log("native:vmode", "or press " PS2I_CIRCLE " to return");
+			V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 158, MENUCAPS, "or press " PS2I_CIRCLE " to return");
+		}
+#else
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 138, MENUCAPS,
 			"Press ENTER again to keep this mode");
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 150, MENUCAPS,
 			va("Wait %d second%s", testtime, (testtime > 1) ? "s" : ""));
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 158, MENUCAPS,
 			"or press ESC to return");
+#endif
 	}
 	else
 	{
@@ -14743,6 +14849,8 @@ INT32 M_PS2MenuKind(void)
 	}
 	if (currentMenu == &MainDef)
 		return PS2MH_MAIN;
+	if (currentMenu == &OP_VideoModeDef && vidm_testingmode > 0)
+		return PS2MH_VMCONFIRM;
 	if (currentMenu->drawroutine == M_DrawImageDef)
 		return PS2MH_NONE; // a picture over the whole screen: the hints would stand on it
 	if (itemOn < 0 || itemOn >= currentMenu->numitems)
@@ -14873,6 +14981,7 @@ INT32 M_PS2MenuList(INT32 i, menu_t **menu, const char **name)
 	E(OP_AddonsOptionsDef),
 #endif
 	E(OP_EraseDataDef),
+	{&OP_ChangeControlsDef, "OP_ChangeControlsDef P2"}, // the same list, for the second player (the keys of the second pad)
 	{&MessageDef, "MessageDef short"}, {&MessageDef, "MessageDef long"}, {&MessageDef, "MessageDef yes/no"}, {&MessageDef, "MessageDef capture"}
 	};
 #undef E
@@ -14913,6 +15022,12 @@ INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
 	size_t i;
 
 	hidetitlemap = false; // (the character select sets it: the title map would stay hidden behind the next menus)
+	if (m == &OP_ChangeControlsDef && index == total - 5)
+	{
+		M_Setup2PControlsMenu(0);
+		currentMenu = m;
+		return 1;
+	}
 	if (m == &MessageDef)
 	{
 		static const char *const texts[4] =

@@ -43,6 +43,7 @@ typedef enum
 	PS2MH_ADDONS,     // the file list of the Add-ons menu
 	PS2MH_VIDEOMODE,  // the video mode list
 	PS2MH_CHANGE,     // an item that left / right change (a play style, a character, a page, a skin or a colour)
+	PS2MH_VMCONFIRM,  // the video mode that is being tried: Enter keeps it, Escape returns
 	PS2MH_NONE,       // nothing: the menu is a picture over the whole screen
 	PS2MH_NUMKINDS
 } ps2mh_kind_t;
@@ -65,6 +66,11 @@ boolean PS2MenuHints_NoteRect(INT32 x, INT32 y, INT32 w, INT32 h, INT32 flags); 
 void PS2MenuHints_Frame(void);                       // once per displayed frame (ps2_net.c PS2Net_Frame): the crawler's step; the -menuhintscheck options are read here
 void PS2MenuHints_SeqTick(void);                     // i_video.c Impl_VidShot, once per displayed frame: -menuseq SPACING,M:I,... brings up menus for a series of -vidshot m<N>
 INT32 PS2MenuHints_SeqFrame(void);                   // the frame of that series
+void PS2MenuHints_IconDraw(boolean on);              // v_video.c: the patch that follows is an icon of a string (the check of the icons)
+void PS2MenuHints_FrameBegin(void);                  // a screen that is not a menu (ps2_netui.c, client_connection.c): the check of the icons of its frame -iconcheck
+void PS2MenuHints_FrameEnd(const char *screen);
+boolean PS2MenuHints_Shows(INT32 icon);               // one hint, one place: the corner hints of the last frame of this menu include the button `icon` (PS2UI_*): the menu's own line for it is not drawn
+void PS2MenuHints_Log(const char *source, const char *text); // the hints of a frame (a text with button icons: "<Cross> OK  <Circle> Back") for the check for duplicates
 boolean PS2MenuHints_Checking(void);                 // M_Drawer is being run for the check: nothing is drawn or noted
 
 #endif
