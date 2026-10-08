@@ -43,9 +43,15 @@ typedef struct { UINT32 a, b; } gcfp_t;
 
 typedef struct
 {
-	UINT32 id, id2, off;
+	UINT32 off;
 	UINT16 len, gen;
-} gcent_t;
+} gcent_t; // 8 bytes: where the record of a seg or plane is (an offset in the arena), how long it is, the generation of the half it was made in (0: none)
+
+typedef struct
+{
+	UINT32 id, id2;
+	gcent_t e;
+} gchent_t; // the hashed table (the planes of 3D floors: their id is the subsector, the side of the plane and the control sector); segs and the planes of the sectors themselves have a place of their own
 
 // a record in the arena: this header, keyw words of key (the inputs the result was made from; compared word by word with the live ones), then the ops
 typedef struct { UINT16 keyw, opsoff, npoly, nvert, nwall, flags; GLMipmap_t *last; } gcrh_t; // (npoly, nvert, nwall: what the replay adds to the batch arrays and the list of transparent walls; flags bit 0: the function set the texture, `last` is the one it ended with = current_texture after the replay)
@@ -58,7 +64,9 @@ static struct
 	UINT32 kb;
 	void *blk; // the zone block that holds everything below
 	size_t blk_bytes;
-	gcent_t *tab;
+	gchent_t *tab; // hashed (planes of 3D floors)
+	gcent_t *segent, *plent; // by the number of the seg / by 2 * the number of the subsector + (ceiling ? 1 : 0)
+	UINT32 nsegent, nplent;
 	gcfp_t *bfp, *ffp; // per sector: the fingerprint of the sector alone / with its 3D floors and light list
 	UINT32 *bst, *fst; // ... and the view they were made in
 	angle_t *vang; // per vertex of the map: R_PointToAngle64 of it in the view vst says (HWR_VertAngle: a vertex belongs to the segs of several subsectors and to both sides of its lines)
@@ -319,7 +327,6 @@ static inline __attribute__((always_inline)) int gc_seg_words(const seg_t *sg, c
 	UINT32 *const kend = kbase + GC_KEYMAX;
 	const side_t *sd = sg->sidedef;
 	const line_t *ld = sg->linedef;
-	INT32 tt, bt, mt;
 
 	GC_SECW(fs);
 	if (bs)
@@ -327,12 +334,9 @@ static inline __attribute__((always_inline)) int gc_seg_words(const seg_t *sg, c
 	GCW((bothceilingssky ? 1u : 0u) | (bothfloorssky ? 2u : 0u) | ((UINT32)(UINT16)ld->flags << 8) | ((UINT32)(UINT16)ld->special << 16));
 	GCW(ld->alpha);
 	GCW(ld->blendmode);
-	tt = R_GetTextureNum(sd->toptexture);
-	bt = R_GetTextureNum(sd->bottomtexture);
-	mt = R_GetTextureNum(sd->midtexture);
-	GCW((UINT32)tt | (tt ? HWR_PS2_TexTransparent(tt) << 31 : 0u));
-	GCW((UINT32)bt | (bt ? HWR_PS2_TexTransparent(bt) << 31 : 0u));
-	GCW((UINT32)mt | (mt ? HWR_PS2_TexTransparent(mt) << 31 : 0u));
+	GCW(HWR_PS2_SideTexWord(sd->toptexture));
+	GCW(HWR_PS2_SideTexWord(sd->bottomtexture));
+	GCW(HWR_PS2_SideTexWord(sd->midtexture));
 	GCW(sd->textureoffset);
 	GCW(sd->rowoffset);
 	GCW(sd->repeatcnt);
@@ -443,7 +447,11 @@ static void gc_advance(UINT32 n)
 	if (g > 65000u) // the numbers are used up: the table is emptied
 	{
 		if (gc.tab)
-			memset(gc.tab, 0, (size_t)gc.nsets * GC_WAYS * sizeof(gcent_t));
+			memset(gc.tab, 0, (size_t)gc.nsets * GC_WAYS * sizeof(gchent_t));
+		if (gc.segent)
+			memset(gc.segent, 0, (size_t)gc.nsegent * sizeof(gcent_t));
+		if (gc.plent)
+			memset(gc.plent, 0, (size_t)gc.nplent * sizeof(gcent_t));
 		g = 2;
 		gc.hbase = 0;
 	}
@@ -570,25 +578,21 @@ static const gcrh_t *gc_promote(gcent_t *e, const gcrh_t *rh)
 
 static boolean gc_alloc_block(void)
 {
-	UINT32 want = 2048u;
-	size_t tab_b;
+	UINT32 want = 1024u;
+	size_t tab_b, seg_b, pl_b;
 	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32)) + (size_t)numvertexes * (sizeof(angle_t) + sizeof(UINT32));
 	size_t ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
 	size_t total;
+	UINT8 *p;
 
-	// the table: a set for every subsector (a seg of it, its floor, its ceiling ...), 2 ways, at least 2048 and at most 8192 sets: 16 bytes an entry. A table that is smaller than what
-	// a run looks at evicts entries it needs (D1 with 2048 sets: 84 segs and planes a frame calculated that a table of 4096 sets kept: -0.2 M cycles)
-	{
-		const UINT32 items = (gc.mode & 4) ? (UINT32)numsegs : (UINT32)numsegs + 2u * (UINT32)numsubsectors; // (what can be cached: the walls, the planes)
-
-		while (want < items / 2u && want < 8192u)
-			want <<= 1;
-	}
+	// the places of the records: a seg and a plane of a sector have one of their own (8 bytes: no hashing, no ways, nothing to evict but by the arena), the planes of 3D floors
+	// (a few for each subsector with floors) share a small hashed table of 2 ways (16 bytes an entry)
 	if (gc.nsets_user)
 		want = gc.nsets_user; // (-hwgcsets)
-	tab_b = (size_t)want * GC_WAYS * sizeof(gcent_t);
-	total = tab_b + sec_b + ar_b + 64;
-	UINT8 *p;
+	tab_b = (size_t)want * GC_WAYS * sizeof(gchent_t);
+	seg_b = ((size_t)numsegs * sizeof(gcent_t) + 15u) & ~(size_t)15u;
+	pl_b = (gc.mode & 4) ? 0 : (((size_t)addsubsector * 2u * sizeof(gcent_t) + 15u) & ~(size_t)15u);
+	total = tab_b + seg_b + pl_b + sec_b + ar_b + 64;
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
 #ifdef PS2
@@ -606,8 +610,14 @@ static boolean gc_alloc_block(void)
 	Z_AddReclaimHook(HWR_GCacheReclaim); // (a second call is ignored)
 #endif
 	gc.nsets = want;
-	gc.tab = (gcent_t *)p;
+	gc.tab = (gchent_t *)p;
 	p += tab_b;
+	gc.segent = (gcent_t *)p;
+	gc.nsegent = (UINT32)numsegs;
+	p += seg_b;
+	gc.plent = pl_b ? (gcent_t *)p : NULL;
+	gc.nplent = pl_b ? (UINT32)addsubsector * 2u : 0;
+	p += pl_b;
 	gc.bfp = (gcfp_t *)p;
 	p += (size_t)numsectors * sizeof(gcfp_t);
 	gc.ffp = (gcfp_t *)p;
@@ -633,6 +643,9 @@ static boolean gc_alloc_block(void)
 	gc.ar_used = 0;
 	gc.nsec = (UINT32)numsectors;
 	memset(gc.tab, 0, tab_b);
+	memset(gc.segent, 0, seg_b);
+	if (pl_b)
+		memset(gc.plent, 0, pl_b);
 	memset(gc.bst, 0, (size_t)numsectors * sizeof(UINT32));
 	memset(gc.fst, 0, (size_t)numsectors * sizeof(UINT32));
 	memset(gc.bver, 0, (size_t)numsectors * sizeof(UINT32));
@@ -720,30 +733,31 @@ static boolean HWR_GCacheFrame(void)
 	return true;
 }
 
-static gcent_t *gc_find(UINT32 id, UINT32 id2, boolean *hit)
+// the hashed table (the planes of 3D floors)
+static gcent_t *gc_find_h(UINT32 id, UINT32 id2, boolean *hit)
 {
 	UINT32 h = id * 2654435761u + (id2 >> 3) * 40503u;
-	gcent_t *set, *victim;
+	gchent_t *set, *victim;
 	UINT32 w;
 
 	h = (h ^ (h >> 15)) * 2246822519u;
 	set = &gc.tab[((h >> 8) & (gc.nsets - 1)) * GC_WAYS];
 	for (w = 0; w < GC_WAYS; w++)
-		if (set[w].id == id && set[w].id2 == id2 && gc_live(set[w].gen))
+		if (set[w].id == id && set[w].id2 == id2 && gc_live(set[w].e.gen))
 		{
 			*hit = true;
-			return &set[w];
+			return &set[w].e;
 		}
 	*hit = false;
 	victim = &set[0];
 	for (w = 0; w < GC_WAYS; w++)
 	{
-		if (!gc_live(set[w].gen))
-			return &set[w];
-		if (set[w].gen != gc.gen)
+		if (!gc_live(set[w].e.gen))
+			return &set[w].e;
+		if (set[w].e.gen != gc.gen)
 			victim = &set[w]; // (one of the old half before one of the current)
 	}
-	return victim;
+	return &victim->e;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -1006,8 +1020,13 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const c
 		}
 		return;
 	}
-	e->id = id;
-	e->id2 = id2;
+	if (id2)
+	{
+		gchent_t *he = (gchent_t *)((UINT8 *)e - offsetof(gchent_t, e)); // (a place in the hashed table: it holds the ids)
+
+		he->id = id;
+		he->id2 = id2;
+	}
 	e->off = gc.rec_start;
 	e->len = (UINT16)(gc.rec_pos - gc.rec_start);
 	e->gen = gc.gen;

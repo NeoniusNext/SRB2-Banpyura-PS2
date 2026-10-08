@@ -640,7 +640,17 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 		gcid = ((UINT32)(xsub - extrasubsectors) * 2u + (isceiling ? 1u : 0u)) * 2u + 1u;
 		gcid2 = (UINT32)(uintptr_t)FOFsector;
-		gce = gc_find(gcid, gcid2, &hit);
+		if (FOFsector)
+			gce = gc_find_h(gcid, gcid2, &hit);
+		else
+		{
+			const UINT32 pi = (UINT32)(xsub - extrasubsectors) * 2u + (isceiling ? 1u : 0u);
+
+			gce = pi < gc.nplent ? &gc.plent[pi] : NULL;
+			hit = gce && gc_live(gce->gen);
+			if (!gce)
+				goto gc_plane_nocache; // (a subsector the table does not know: made without the cache)
+		}
 		if (hit)
 		{
 			const gcrh_t *rh = (const gcrh_t *)(gc.ar + gce->off);
@@ -653,7 +663,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 				{
 					const UINT32 t1 = ps2hwp_now();
 
-					if (HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+					if ((rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize)
+						|| HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
 					{
 						rh = gc_promote(gce, rh);
 						gc_replay(rh, (UINT32)gce->len);
@@ -2268,14 +2279,13 @@ static void HWR_ProcessSegC(void)
 	else
 	{
 		UINT32 gckey[GC_KEYMAX];
-		gcent_t *e;
-		boolean hit, check = false;
+		const UINT32 id = (UINT32)(sg - segs);
+		gcent_t *e = &gc.segent[id]; // (a place of its own: no hashing)
+		boolean check = false;
 		int kn;
-		const UINT32 id = (UINT32)(sg - segs) * 2u;
 		const UINT32 t0 = ps2hwp_now();
 
-		e = gc_find(id, 0, &hit);
-		if (hit)
+		if (gc_live(e->gen))
 		{
 			const gcrh_t *rh = (const gcrh_t *)(gc.ar + e->off);
 
@@ -2285,7 +2295,8 @@ static void HWR_ProcessSegC(void)
 			{
 				const UINT32 t1 = ps2hwp_now();
 
-				if (!HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+				if (!(rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize) // (room, no allocation: the usual case)
+					&& !HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
 				{
 					HWR_ProcessSeg(); // (the allocation took the cache's memory: this seg is made the long way)
 					HWP_SPAN_END(t, HWP_SEG);
@@ -2329,7 +2340,7 @@ static void HWR_ProcessSegC(void)
 
 			gc_rec_begin(check, gckey, kn);
 			HWR_ProcessSeg();
-			gc_rec_end(e, id, 0, check, "seg", (UINT32)(sg - segs));
+			gc_rec_end(e, id, 0, check, "seg", id);
 			{
 				const UINT32 cyc = ps2hwp_now() - t1;
 				const UINT32 bk = cyc >> 9 < 9 ? cyc >> 9 : 9;
