@@ -12,7 +12,6 @@
 #define FX2_NOSORTKEY 0x4 // PS2-HW-241: the sort keys of the sprites are read from the mobjs (as before)
 #define FX2_NOSHADOW 0x8 // PS2-HW-242: the drop shadows as before
 #define FX2_NOSKY 0x10 // PS2-HW-244: the sky dome without the sphere test of its quads
-#define FX2_NOSPRITE 0x20 // PS2-HW-243: a sprite with a drop shadow whose own quad is hidden is drawn all the same (as before)
 #define FX2_NOINTERP 0x40 // PS2-HW-245: the interpolated state of a thing is made as before (the full R_InterpolateMobjState, again for the shadow and the aim rotation)
 #define FX2_NOWATER 0x100 // PS2-HW-246: the sky box view plans the water ripple as the main view does
 #define FX2_NOVIS 0x400 // PS2-HW-248: R_ThingVisible for every thing (as before)

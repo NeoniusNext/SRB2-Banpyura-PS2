@@ -3184,7 +3184,6 @@ static UINT16 hwr_fx_ext_wads;
 static boolean hwr_fx_interp; // R_UsingFrameInterpolation() && !paused, once per view (HWR_ClearSprites)
 static boolean hwr_fx_lerp; // this frame's things are drawn between two tics (rendertimefrac < 1): their positions are bounded by the old ones
 static patch_t *hwr_fx_dshadow; // the picture of the drop shadow of this frame (PS2-HW-242)
-static const ps2cull_t *hwr_fx_cs; // the view's sphere test data while HWR_AddSprites runs (NULL: no sphere test of the sprites that have a drop shadow)
 static boolean hwr_fx_blok; // R_BlendLevelVisible(AST_TRANSLUCENT, 0) (a thing of full alpha and the default blend mode), made once per view
 static boolean hwr_fx_viewok; // the view's object has not been removed (R_ThingVisible asks for every thing)
 static mobj_t *hwr_fx_follow; // ... and the object that follows the view's player
@@ -4140,11 +4139,6 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 	if (!spr->mobj->subsector)
 		return;
-
-#ifdef PS2_PROFILE
-	if (spr->ps2_hid == 2) // PS2-HW-243: the quad of this sprite shows no pixel; its drop shadow was drawn by HWR_DrawSprites
-		return;
-#endif
 
 	if (spr->mobj->subsector->sector->numlights && !splat)
 	{
@@ -5381,17 +5375,6 @@ static void HWR_FX_ExtMake(UINT32 spr, hwr_fx_ext_t *e)
 	e->vr = vr;
 }
 
-// the quad of a sprite (HWR_ProjectSprite's x1 .. gzt, before the aim rotation) lies in a sphere that is outside the view: nothing of the sprite is drawn
-static inline boolean HWR_FX_QuadSphereHidden(const ps2cull_t *cs, float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
-{
-	const float X = (x1 + x2) * 0.5f, Z = (z1 + z2) * 0.5f, Y = (gz + gzt) * 0.5f;
-	float R = (fabsf(x2 - x1) + fabsf(z2 - z1) + fabsf(gzt - gz)) * 0.5f + 0.05f * (float)abs(dispoffset);
-
-	if (aim) // (the corners turn around the foot: each moves by at most twice its height above it)
-		R += 2.0f * (fabsf(Y - basey) + fabsf(gzt - gz) * 0.5f);
-	return HWR_FX_SphereHidden(cs, X, Y, Z, R * 1.002f + 1.0f);
-}
-
 static inline boolean HWR_FX_ThingHidden(const mobj_t *thing, const ps2cull_t *cs)
 {
 	hwr_fx_ext_t *e;
@@ -5467,14 +5450,12 @@ static void HWR_AddSprites(sector_t *sec)
 #ifdef PS2_PROFILE
 	{
 		// PS2-HW-240: a thing whose sprite cannot put a pixel on the screen (a sphere around it is outside the view volume) is not projected at all
-		const ps2cull_t *csb = ((ps2hwd_fx2 & (FX2_NOPRE | FX2_NOSPRITE)) == (FX2_NOPRE | FX2_NOSPRITE)) ? NULL : PS2HWD_CullSetup();
-		const ps2cull_t *cs = (ps2hwd_fx2 & FX2_NOPRE) ? NULL : csb;
+		const ps2cull_t *cs = (ps2hwd_fx2 & FX2_NOPRE) ? NULL : PS2HWD_CullSetup();
 
 		const boolean boxes = cv_renderhitbox.value != 0; // (R_ThingBoundingBoxVisible answers "no" for every thing when the hitboxes are off)
 
 		if (cs && !cs->valid)
 			cs = NULL;
-		hwr_fx_cs = (csb && csb->valid && !(ps2hwd_fx2 & FX2_NOSPRITE)) ? csb : NULL; // (HWR_ProjectSprite: the sprites that have a drop shadow)
 		for (thing = sec->thinglist; thing; thing = thing->snext)
 		{
 			HWD_ADD(HWC_FX_THINGS);
@@ -6066,34 +6047,12 @@ static void HWR_ProjectSprite(mobj_t *thing)
 
 	// PS2-HW-72: no pixel centre inside the quad (or the quad outside the view): nothing would be drawn, nothing is made of it. Not for the sprites that have
 	// more to draw than the quad (the drop shadow, the model, the link draw hack), nor the floor sprites.
-	// PS2-HW-243 (FX2): a sprite that has a drop shadow keeps its vissprite (the shadow may be on the screen) but its own quad is tested as well: when it is hidden the
-	// vissprite is marked (ps2_hid 2) and HWR_DrawSprite makes nothing of it (the polygon, the batch entry, the plan of the texture it would only have thrown away)
-	if (!splat && !cv_glmodels.value && !((thing->flags2 & MF2_LINKDRAW) && thing->tracer) && !HWR_PS2_NoCull()
-		&& (!(cv_shadow.value && thing->shadowscale) || (!(ps2hwd_fx2 & FX2_NOSPRITE) && !thing->subsector->sector->numlights && !(ps2hwd_dbg_flags & 0x1000000))))
+	if (!splat && !cv_glmodels.value && !((thing->flags2 & MF2_LINKDRAW) && thing->tracer) && !(cv_shadow.value && thing->shadowscale) && !HWR_PS2_NoCull())
 	{
 		const boolean aim = cv_glspritebillboarding.value && !papersprite && fabsf(gl_viewludcos) > 1.0e-6f; // as HWR_RotateSpritePolyToAim: not for a view that looks level
 		const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-		if (cv_shadow.value && thing->shadowscale)
-		{
-			// the sphere around the quad (60 cycles; the exact test of the driver is 340 and no better for a quad that is not tiny): the sprite is only marked, the vissprite
-			// stays for the shadow
-			const ps2cull_t *cs = hwr_fx_cs;
-
-			if (cs && HWR_FX_QuadSphereHidden(cs, x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
-			{
-				HWD_ADD(HWC_FX_QHID);
-				if (!(ps2hwd_fx2 & FX2_PRECHECK))
-					ps2_hidden = 2; // only the shadow is drawn
-				else if (!HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim)) // check mode: the exact test must agree
-				{
-					static unsigned bad;
-
-					CONS_Printf("HWC sprite sphere MISMATCH %u\n", ++bad);
-				}
-			}
-		}
-		else if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+		if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
 		{
 			HWD_ADD(HWC_FX_QHID);
 			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds

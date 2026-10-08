@@ -92,7 +92,7 @@ typedef struct gl_vissprite_s
 	patch_t *gpatch;
 	mobj_t *mobj; // NOTE: This is a precipmobj_t if precip is true !!! Watch out.
 #ifdef PS2_PROFILE
-	UINT8 ps2_hid; // PS2-HW-72 check mode (-hwdbg 16777216): the sprite would have been culled; HWR_DrawSprite checks its quad against that (2, PS2-HW-243: only the drop shadow is drawn)
+	UINT8 ps2_hid; // PS2-HW-72 check mode (-hwdbg 16777216): the sprite would have been culled; HWR_DrawSprite checks its quad against that
 	// PS2-HW-245: the interpolated state of the thing HWR_ProjectSprite worked with: the drop shadow and the aim rotation of the same frame use it (it was made again,
 	// 600 cycles each between two tics)
 	UINT8 ps2_skey; // PS2-HW-241: what HWR_SortVisSprites reads of the mobj: bit 0 transparent (MF2_SHADOW or a translucency frame), bit 1 not a plain sprite (a hitbox or a link draw pair)
