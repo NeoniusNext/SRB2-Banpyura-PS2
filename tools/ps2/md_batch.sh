@@ -25,9 +25,10 @@ for step in "$@"; do
 		python3 tools/ps2/fx_pair.py ${TAG}_split --map 1 --shot 'k20=hf_split~1,k300' --cfg 'chasecam "Off"' --cmd 'gr_models~On;con_hudlines~0' --addon tools/ps2/mdlscene.lua --pak build/pak-m --elf "$ELF" 2>&1 | tail -1 ;;
 	anim)
 		python3 tools/ps2/fx_pair.py ${TAG}_anim --map 1 --shot 'k300,k301,k302,k303,k304,k305' --all --cfg 'chasecam "On"' --cmd 'gr_models~On;con_hudlines~0' --addon tools/ps2/mdlset_anim.lua,tools/ps2/mdlscene.lua --pak build/pak-m --elf "$ELF" 2>&1 | tail -8 ;;
+	skydome) tools/ps2/md_matrix.sh "$ELF" skydome_on_up skydome_off ;;
 	scenes) tools/ps2/md_scenes.sh "$ELF" ${TAG}s ;;
 	matrixx) tools/ps2/md_matrix.sh "$ELF" fakecontrast_on_wall smoothcontrast_wall palettedepth_24 solvetjoin_off shadow_off shadow_sprite shear_third 2>&1 ;;
-	anim3) for t in 301 303 307; do python3 tools/ps2/fx_pair.py ${TAG}_anim$t --map 1 --tick $t --cfg 'chasecam "On"' --cmd 'gr_models~On;con_hudlines~0' --addon tools/ps2/mdlset_anim.lua,tools/ps2/mdlscene.lua --pak build/pak-m --elf "$ELF" 2>&1 | tail -1; done ;;
+	anim3) for t in 301 303 307; do cp $SRB2_PCWADDIR/reference.default $SRB2_PCWADDIR/reference.cfg; python3 tools/ps2/fx_pair.py ${TAG}_anim$t --map 1 --tick $t --cfg 'chasecam "On"' --cmd 'gr_models~On;con_hudlines~0' --addon tools/ps2/mdlset_anim.lua,tools/ps2/mdlscene.lua --pak build/pak-m --elf "$ELF" 2>&1 | tail -1; done ;;
 	oom) tools/ps2/md_oom.sh "$ELF" ${TAG}oom ;;
 	maps) tools/ps2/md_maps.sh "$ELF" ${TAG}map ;;
 	any) python3 tools/ps2/md_all.py "$ELF" --batch 20 --any ;;
