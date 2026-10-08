@@ -19,6 +19,7 @@
 #define FX3_NODRAW 0x2000
 #define FX3_NOSPR 0x40000 // PS2-HW-255 (FX3): the sprite stream (VU1 sprite program) is off: sprites and shadows go through the batch as before
 #define FX3_NOLEAN2 0x100000 // PS2-HW-257 (FX3): the projection of a thing as before (the exact quad test, W_CachePatchNum, R_GetTranslationForThing for every thing)
+#define FX3_NOSHADOW2 0x1000000 // PS2-HW-259 (FX3): the drop shadow of a plain sprite goes through HWR_DrawDropShadow and the polygon hook as before
 #define FX3_NOSHORT 0x800000 // PS2-HW-258 (FX3): the plain sprite of the sprite batch takes the whole way through HWR_DrawSprites / HWR_DrawSprite as before
 #define FX3_NOPCACHE 0x200000 // PS2-HW-257a (measurement): the patch of a sprite lump is asked for by every vissprite (W_CachePatchNum), not once per view
 #define FX3_NOSPHERE 0x400000 // PS2-HW-257b (measurement): the exact quad test of the sprite (PS2HWD_ParaHidden), not the sphere of the view
@@ -46,6 +47,7 @@ typedef struct
 	FSurfaceInfo surf;
 } __attribute__((aligned(16))) ps2spr_t;
 
+extern int PS2HWD_SprNote(int what); // statistics of the shadow builder (HWPROF45), returns 0
 extern ps2spr_t *PS2HWD_SprSlot(int is_shadow);
 extern int PS2HWD_SprCommit(int is_shadow);
 // the four vertices of a sprite polygon (FOutVector x, y, z, s, t) as a record; 0 = it is not the parallelogram of a sprite

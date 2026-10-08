@@ -43,6 +43,7 @@ static struct
 	u32 cur_vw[16];
 	// statistics
 	u32 st_why[8], st_kw[8];
+	u32 st_note[8];
 	u32 st_kept, st_flush, st_plans, st_fb, st_uploads, st_rj_gate, st_rj_tex, st_rj_para, st_rj_geom, st_rj_full;
 } SPR;
 
@@ -442,6 +443,12 @@ static inline int spr_geom_ok(const float *p0, const float *r, const float *u)
 	return fabsf(cy) + cs->ny * R <= gyw;
 }
 
+int PS2HWD_SprNote(int what)
+{
+	SPR.st_note[what & 7]++;
+	return 0;
+}
+
 // the slot of the next record of a list (the engine fills it), NULL: the stream is off or the list is full
 ps2spr_t *PS2HWD_SprSlot(int is_shadow)
 {
@@ -543,6 +550,9 @@ void PS2HWD_SprProf(unsigned int frames)
 		(unsigned)(G.spr_cyc / frames));
 	I_OutputMsg("HWPROF43 plan made because: invalid=%u serial=%u cgen=%u epoch=%u palgen=%u consts=%u key=%u\n", SPR.st_why[0] / frames, SPR.st_why[1] / frames, SPR.st_why[2] / frames, SPR.st_why[3] / frames, SPR.st_why[4] / frames, SPR.st_why[5] / frames, SPR.st_why[6] / frames);
 	I_OutputMsg("HWPROF44 key words that differ: flags=%u shader=%u colour=%u tint=%u fade+table=%u fade-range=%u kind=%u\n", SPR.st_kw[0] / frames, SPR.st_kw[1] / frames, SPR.st_kw[2] / frames, SPR.st_kw[3] / frames, SPR.st_kw[4] / frames, SPR.st_kw[5] / frames, SPR.st_kw[6] / frames);
+	I_OutputMsg("HWPROF45 shadow builder: built=%u not_for_it=%u patch=%u colormap=%u heightsec=%u slope=%u far=%u hidden=%u\n", SPR.st_note[0] / frames, SPR.st_note[1] / frames, SPR.st_note[2] / frames, SPR.st_note[3] / frames,
+		SPR.st_note[4] / frames, SPR.st_note[5] / frames, SPR.st_note[6] / frames, SPR.st_note[7] / frames);
+	memset(SPR.st_note, 0, sizeof SPR.st_note);
 	memset(SPR.st_kw, 0, sizeof SPR.st_kw);
 	memset(SPR.st_why, 0, sizeof SPR.st_why);
 	SPR.st_kept = SPR.st_flush = SPR.st_plans = SPR.st_fb = SPR.st_uploads = SPR.st_rj_gate = SPR.st_rj_tex = SPR.st_rj_para = SPR.st_rj_geom = SPR.st_rj_full = 0;
@@ -561,6 +571,12 @@ ps2spr_t *PS2HWD_SprSlot(int is_shadow)
 int PS2HWD_SprCommit(int is_shadow)
 {
 	(void)is_shadow;
+	return 0;
+}
+
+int PS2HWD_SprNote(int what)
+{
+	(void)what;
 	return 0;
 }
 
