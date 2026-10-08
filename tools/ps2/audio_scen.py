@@ -21,7 +21,7 @@ SCEN = {
     'd1_mus': ('DEMO_001', [], []),
     'd1_off': ('DEMO_001', OFF, []),
     'd1_nomusic': ('DEMO_001', [], ['-nomusic']),
-    'd1_stop': ('DEMO_001', [], ['-acmd', '300', 'stopmusic']),
+    'd1_stop': ('DEMO_001', [], ['-acmd', '300', 'tunes -none']),
     'd1_vol0': ('DEMO_001', [], ['-acmd', '300', 'digmusicvolume 0']),
     'd1_track': ('DEMO_001', [], ['-acmd', '300', 'tunes 5', '-acmd', '600', 'tunes 8']),
     'd2_off': ('DEMO_002', OFF, []),
@@ -30,6 +30,9 @@ SCEN = {
     'd4_off_hw': ('DEMO_004', OFF, ['-renderer', 'Hardware']),
     'd4_mus_hw': ('DEMO_004', [], ['-renderer', 'Hardware']),
     'd1_off_hw': ('DEMO_001', OFF, ['-renderer', 'Hardware']),
+    # no demo: the player stands still in MAP01 (a pause, then a track change; no SFX of its own)
+    'm1_pause': ('MAP:MAP01', [], ['-acmd', '300', 'pause', '-acmd', '600', 'pause']),
+    'm1_none': ('MAP:MAP01', [], ['-acmd', '300', 'tunes -none']),
 }
 
 
@@ -37,7 +40,7 @@ def run(elf, tag, name, out, timeout, frames, dump):
     demo, cfg, extra = SCEN[name]
     run_name = '%s_%s' % (tag, name)
     cmd = [sys.executable, str(ROOT / 'tools/ps2/opt_run.py'), '--name', run_name, '--elf', str(elf), '--pak', PAK, '--out', str(out),
-           '--demo', demo, '--no-ref', '--timeout', str(timeout), '--until', 'ASTAT trace']
+           *(['--map', demo[4:]] if demo.startswith('MAP:') else ['--demo', demo]), '--no-ref', '--timeout', str(timeout), '--until', 'ASTAT trace']
     for c in cfg:
         cmd += ['--cfg', c]
     cmd += ['--', '-adump', str(dump), '-atrace', '60000', '-aquit', str(frames)] + extra

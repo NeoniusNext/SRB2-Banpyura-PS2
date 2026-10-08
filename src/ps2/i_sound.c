@@ -113,6 +113,8 @@ static void (*fade_callback)(void);
 static UINT32 diag_stall_ms, diag_reload_at = 0xffffffffu, diag_quit_at = 0xffffffffu, diag_levelframes;
 static boolean diag_reloaded, diag_restarted, diag_parsed, diag_hash_flag, diag_nothread;
 static UINT32 diag_restart_at = 0xffffffffu;
+static const char *diag_bench;             // -abench <lump,lump,...> [-abenchsec N]: decode tracks on the game thread, COP0 cycles + PCM hash (PS2-3xx optimisation A/B)
+static UINT32 diag_bench_sec = 10;
 static int16_t *dump_buf;
 static size_t dump_frames, dump_max;
 // -atrace <records>: a journal of every audsrv write and every read of the IOP ring (tools/ps2/audio_ring_sim.py replays it)
@@ -706,6 +708,8 @@ void I_StartupSound(void)
 			dump_max = (size_t)atoi(M_GetNextParm());
 			dump_buf = dump_max ? malloc(dump_max * 4) : NULL; dump_frames = 0;
 		}
+		if (M_CheckParm("-abench") && M_IsNextParm()) diag_bench = M_GetNextParm();
+		if (M_CheckParm("-abenchsec") && M_IsNextParm()) diag_bench_sec = (UINT32)atoi(M_GetNextParm());
 		if (M_CheckParm("-atrace") && M_IsNextParm())
 		{
 			trace_max = (UINT32)atoi(M_GetNextParm());
@@ -851,6 +855,57 @@ static void DiagFrame(void)
 }
 #endif
 
+
+#ifdef _EE
+// ---- decoder benchmark (diagnostic) --------------------------------------------------------------------------------------------
+// -abench O_GFZ1,O_ACZ1,... [-abenchsec N]: each named music lump is opened exactly like I_LoadSong does (private pack reader), N seconds of
+// output are decoded in 512-frame blocks on the game thread with the same PS2_MusicRender the decoder thread uses, and the COP0 cycles spent
+// in it are summed. The PCM is hashed (FNV-1a 64) outside the timed section, so two ELFs can be compared bit for bit on the real EE FPU.
+static void BenchTracks(void)
+{
+	char names[256], *tok, *save = NULL;
+	if (!diag_bench) return;
+	strncpy(names, diag_bench, sizeof names - 1); names[sizeof names - 1] = 0;
+	diag_bench = NULL;
+	for (tok = strtok_r(names, ",", &save); tok; tok = strtok_r(NULL, ",", &save))
+	{
+		lumpnum_t lump = W_CheckNumForName(tok);
+		pack_reader *rd = NULL;
+		audio_source src;
+		ps2_audio_input in;
+		ps2_music *m;
+		size_t len, frames = 0, target = (size_t)diag_bench_sec * PS2_AUDIO_RATE;
+		UINT64 cycles = 0, hash = 14695981039346656037ull;
+		int16_t buf[PS2_AUDIO_BLOCK * 2];
+		if (lump == LUMPERROR) { I_OutputMsg("ABENCH %s: no such lump\n", tok); continue; }
+		len = W_LumpLength(lump);
+		memset(&src, 0, sizeof src); src.lump = lump;
+		rd = PackOpen(lump, &wadfiles[WADFILENUM(lump)]->lumpinfo[LUMPNUM(lump)]);
+		if (!rd) { I_OutputMsg("ABENCH %s: cannot open the pack\n", tok); continue; }
+		src.rd = rd; in.user = &src; in.size = len; in.read_at = ReadSource;
+		m = PS2_MusicOpen(&in);
+		if (!m || !PS2_MusicPlay(m, 0)) { I_OutputMsg("ABENCH %s: cannot open/play\n", tok); if (m) PS2_MusicClose(m); PackClose(rd); continue; }
+		while (frames < target)
+		{
+			UINT32 c0 = CopCount();
+			size_t n = PS2_MusicRender(m, buf, PS2_AUDIO_BLOCK), i;
+			cycles += (UINT32)(CopCount() - c0);
+			if (!n) break;
+			{
+				const uint8_t *p = (const uint8_t *)buf;
+				for (i = 0; i < n * 4; i++) hash = (hash ^ p[i]) * 1099511628211ull;
+			}
+			frames += n;
+		}
+		I_OutputMsg("ABENCH %s type=%d rate=%u frames=%u cycles=%u cyc_per_frame=%u fnv=%08x%08x\n", tok, (int)PS2_MusicType(m),
+			(unsigned)PS2_AUDIO_RATE, (unsigned)frames, (unsigned)cycles, frames ? (unsigned)(cycles / frames) : 0u,
+			(unsigned)(hash >> 32), (unsigned)hash);
+		PS2_MusicClose(m); PackClose(rd);
+	}
+	I_OutputMsg("ABENCH done\n");
+}
+#endif
+
 void I_UpdateSound(void)
 {
 	FadeTick();
@@ -867,6 +922,7 @@ void I_UpdateSound(void)
 		main_last = now;
 	}
 #ifdef _EE
+	if (diag_bench) BenchTracks();
 	DiagFrame();
 #endif
 	if (!threaded && !audio_failure)
