@@ -3,7 +3,7 @@
 # the memory the models take (HWPROF41) and their cost (HWPROF40). usage: md_maps.sh PROF_ELF TAG "01 02 ..."
 ELF=$1
 TAG=$2
-MAPS=${3:-"01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 22 23 25 26 30 31 32 33 40 41 42"}
+MAPS=${3:-"01 02 04 05 07 08 10 11 13 14 16 22 25 30 32 33 40"}
 cd "$(dirname "$0")/../.."
 for m in $MAPS; do
 	python3 tools/ps2/hf_run.py "${TAG}_$m" --elf "$ELF" --pak build/pak-m --cfg 'gr_models "On";chasecam "On"' --timeout 900 \

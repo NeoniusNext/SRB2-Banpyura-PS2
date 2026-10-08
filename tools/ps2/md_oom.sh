@@ -5,7 +5,7 @@
 # usage: md_oom.sh ELF TAG "N N N ..."
 ELF=$1
 TAG=$2
-POINTS=${3:-"1 2 3 4 5 6 8 10 13 17 21 28 34 45 55 70 89 120 144 200 233 300 400"}
+POINTS=${3:-"1 2 3 5 8 13 21 34 55 89 144 233"}
 cd "$(dirname "$0")/../.."
 SET=build/mdall/set_oom.lua
 mkdir -p build/mdall

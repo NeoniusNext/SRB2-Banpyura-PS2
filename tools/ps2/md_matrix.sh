@@ -28,6 +28,12 @@ add smoothcontrast_wall "con_hudlines~0" "teleport~-nop~-ang~90"
 add fakecontrast_off "gr_fakecontrast~Off;con_hudlines~0" ""
 add slopecontrast_on "gr_slopecontrast~On;con_hudlines~0" ""
 add batching_off    "gr_batching~Off;con_hudlines~0" ""
+add fakecontrast_on_wall "gr_fakecontrast~On;con_hudlines~0" "teleport~-nop~-ang~90"
+add palettedepth_24 "gr_palettedepth~24;con_hudlines~0" ""
+add solvetjoin_off  "gr_solvetjoin~Off;con_hudlines~0" ""
+add shadow_off      "shadow~Off;con_hudlines~0" ""
+add shadow_sprite   "shadow~Sprite;con_hudlines~0" ""
+add shear_third     "gr_shearing~Third-person;con_hudlines~0" "teleport~-nop~-aim~-35"
 for n in "${@:-${ORDER[@]}}"; do
 	[ -z "${CMD[$n]}" ] && { echo "unknown scene $n"; continue; }
 	cp "$SRB2_PCWADDIR/reference.default" "$SRB2_PCWADDIR/reference.cfg"  # the PC engine saves every CV_SAVE variable there at exit: the option of the previous scene must not stay (-ps2ref-cmd takes 160 chars only)
