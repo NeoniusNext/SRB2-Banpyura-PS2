@@ -19,6 +19,7 @@
 #include "../ps2/hw/ps2_hwd.h"
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
+#include "../m_argv.h" // -hwpolyhash
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 #else
 #include "../ps2/hw/ps2_hw_prof.h" // no-op profiling macros for the PC build
@@ -30,6 +31,7 @@ GLMipmap_t *current_texture = NULL;
 
 boolean currently_batching = false;
 #ifdef PS2_PROFILE
+boolean hwr_grec_on = false; // OPT11: the geometry cache is recording (hw_gcache.inc)
 boolean hwr_sprite_batch = false;
 boolean hwr_sprite_shadow = false;
 #endif
@@ -79,26 +81,141 @@ int unsortedVertexArrayAllocSize = 65536;
 // texture or flat number) first, the rest of the state below it. The direction of the scan alternates from frame to frame: the textures
 // that stay in the pool at the end of a frame (the ones drawn last) are then the ones drawn first in the next, the best a cyclic scan can
 // do when the pool is smaller than the set. The state change test below compares the real state, so equal keys of different states are safe.
+// OPT11 (PS2-HW-85): what HWR_ProcessPolygon asked of the driver and the shader table for every polygon, once per batch (a frame's parity and the table of shader
+// targets do not change while polygons are collected). -hwgo 32: asked for every polygon, as before.
+static UINT32 hwr_scan_dir;
+static int hwr_shader_of[NUMSHADERTARGETS];
+static UINT16 hwr_shader_have;
+
+static inline int HWR_ShaderOfTarget(int shader_target)
+{
+	if (shader_target == SHADER_NONE)
+		return shader_target;
+	if (hwr_geo_off & 32)
+		return HWR_GetShaderFromTarget(shader_target);
+	if (!(hwr_shader_have & (1u << shader_target)))
+	{
+		hwr_shader_of[shader_target] = HWR_GetShaderFromTarget(shader_target);
+		hwr_shader_have |= (UINT16)(1u << shader_target);
+	}
+	return hwr_shader_of[shader_target];
+}
+
+#define HWR_PS2_NOTEX_ID 0xFFFFFFFFu
+static UINT32 HWR_PS2_TextureId(const GLMipmap_t *t) // OPT11: the part of the order that does not depend on the frame (the geometry cache keeps it)
+{
+	if (!t)
+		return HWR_PS2_NOTEX_ID;
+	if (t->regen_kind == 1)
+		return (UINT32)t->regen_id & 0x1FFFu;
+	if (t->regen_kind == 2)
+		return 0x2000u | ((UINT32)t->regen_id & 0x1FFFu);
+	return (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18; // patches: any fixed order
+}
+
+static inline UINT32 HWR_PS2_OrderOf(UINT32 id, UINT32 scan_dir)
+{
+	if (id == HWR_PS2_NOTEX_ID)
+		return 0x3FFEu;
+	return scan_dir ? 0x3FFFu - id : id;
+}
+
 static UINT32 HWR_PS2_TextureOrder(const GLMipmap_t *t)
 {
-	UINT32 id;
-	const UINT32 ps2_scan_dir = PS2HWD_ScanDirection(); // the frame's parity, not the batching passes' (a skybox view batches twice per frame)
-
-	if (!t)
-		return 0x3FFEu;
-	if (t->regen_kind == 1)
-		id = (UINT32)t->regen_id & 0x1FFFu;
-	else if (t->regen_kind == 2)
-		id = 0x2000u | ((UINT32)t->regen_id & 0x1FFFu);
-	else
-		id = (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18; // patches: any fixed order
-	return ps2_scan_dir ? 0x3FFFu - id : id;
+	return HWR_PS2_OrderOf(HWR_PS2_TextureId(t), (hwr_geo_off & 32) ? PS2HWD_ScanDirection() : hwr_scan_dir); // the frame's parity, not the batching passes' (a skybox view batches twice per frame)
 }
 #endif
 
 #ifdef PS2
 static UINT32 *rkeys, *rtmpk, *rtmpi; // the scratch of the radix sort of HWR_RenderBatches
 static int rcap;
+#endif
+
+#ifdef PS2_PROFILE
+// OPT11 (GEOM): -hwpolyhash. The polygons that the engine hands to HWR_ProcessPolygon (batched or not, in the order of the calls: their number, flags,
+// shader, the texture's identity, the surface and every vertex) are folded into one hash per frame, printed at the frame's end (HWPH lines). It does not
+// depend on the GS, the plan, VRAM or timing: two builds whose engine side makes the same polygons print the same lines, the test of every change of
+// the walls, planes, sprites and the batcher that is meant not to change a picture (tools/ps2/gm_polycmp.py compares two logs).
+static int hwr_ph_on = -1;
+static UINT32 hwr_ph_a, hwr_ph_b, hwr_ph_n;
+static UINT32 hwr_ph_calls, hwr_ph_lo, hwr_ph_hi; // -hwpolyhash 2 LO HI: every polygon of the frames LO..HI is printed with its parts (HWPP lines), to find what differs between two runs
+
+static inline void HWR_PH_W(UINT32 x)
+{
+	hwr_ph_a = (hwr_ph_a ^ x) * 16777619u;
+	hwr_ph_b = (hwr_ph_b + x) * 0x85ebca6bu;
+	hwr_ph_b ^= hwr_ph_b >> 15;
+}
+
+static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader, boolean horizon)
+{
+	const UINT32 *w = (const UINT32 *)v;
+	UINT32 i;
+
+	if (hwr_ph_on == 2 && hwr_ph_calls >= hwr_ph_lo && hwr_ph_calls <= hwr_ph_hi)
+	{
+		UINT32 vh = 0x811c9dc5u, k;
+		const UINT32 *vw = (const UINT32 *)v;
+
+		for (k = 0; k < n * 5; k++)
+			vh = (vh ^ vw[k]) * 16777619u;
+		I_OutputMsg("HWPP c=%u i=%u n=%u fl=%x sh=%d tex=%d/%d/%ux%u/%x col=%x/%x/%x lt=%d/%d/%d/%d v=%08x\n", hwr_ph_calls, hwr_ph_n, (unsigned)n, (unsigned)flags, shader,
+			(current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_kind : -1, (current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_id : -1,
+			(current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->width : 0u, (current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->height : 0u,
+			(current_texture && !(flags & PF_NoTexture)) ? (unsigned)(current_texture->flags & 0xFFFFu) : 0u,
+			s ? (unsigned)s->PolyColor.rgba : 0u, s ? (unsigned)s->TintColor.rgba : 0u, s ? (unsigned)s->FadeColor.rgba : 0u,
+			s ? (int)s->LightTableId : 0, s ? (int)s->LightInfo.light_level : 0, s ? (int)s->LightInfo.fade_start : 0, s ? (int)s->LightInfo.fade_end : 0, vh);
+	}
+	hwr_ph_n++;
+	HWR_PH_W(n | ((UINT32)horizon << 16));
+	HWR_PH_W(flags);
+	HWR_PH_W((UINT32)shader);
+	if (current_texture && !(flags & PF_NoTexture))
+	{
+		HWR_PH_W((UINT32)current_texture->regen_kind);
+		HWR_PH_W((UINT32)current_texture->regen_id);
+		HWR_PH_W(((UINT32)current_texture->width << 16) | current_texture->height);
+		HWR_PH_W(current_texture->flags & 0xFFFFu);
+	}
+	else
+		HWR_PH_W(0xFFFFFFFFu);
+	if (s)
+	{
+		HWR_PH_W(s->PolyColor.rgba);
+		if (flags & PF_ColorMapped) // (what the driver reads of a surface that is not lit by the shader is the colour only; the rest is stack garbage in some callers: found by -hwpolyhash 2 on DEMO_002)
+		{
+			HWR_PH_W(s->TintColor.rgba);
+			HWR_PH_W(s->FadeColor.rgba);
+			HWR_PH_W(s->LightTableId);
+			HWR_PH_W(s->LightInfo.light_level);
+			HWR_PH_W(s->LightInfo.fade_start);
+			HWR_PH_W(s->LightInfo.fade_end);
+		}
+	}
+	for (i = 0; i < n * 5; i++)
+		HWR_PH_W(w[i]);
+}
+
+void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_video.c)
+{
+	if (hwr_ph_on < 0)
+	{
+		hwr_ph_on = M_CheckParm("-hwpolyhash") ? 1 : 0;
+		if (hwr_ph_on && M_IsNextParm() && atoi(M_GetNextParm()) == 2)
+		{
+			hwr_ph_on = 2;
+			hwr_ph_lo = M_IsNextParm() ? (UINT32)atoi(M_GetNextParm()) : 0;
+			hwr_ph_hi = M_IsNextParm() ? (UINT32)atoi(M_GetNextParm()) : 0;
+		}
+	}
+	if (!hwr_ph_on)
+		return;
+	hwr_ph_calls++;
+	I_OutputMsg("HWPH f=%d n=%u h=%08x%08x\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b);
+	hwr_ph_a = 0x811c9dc5u;
+	hwr_ph_b = 0x9e3779b9u;
+	hwr_ph_n = 0;
+}
 #endif
 
 // Enables batching mode. HWR_ProcessPolygon will collect polygons instead of passing them directly to the rendering backend.
@@ -199,6 +316,10 @@ void HWR_StartBatching(void)
 	currently_batching = true;
 #ifdef PS2
 	PS2HWD_BatchBegin();
+#ifdef PS2_PROFILE
+	hwr_scan_dir = PS2HWD_ScanDirection();
+	hwr_shader_have = 0;
+#endif
 #endif
 }
 
@@ -210,6 +331,10 @@ void HWR_SetCurrentTexture(GLMipmap_t *texture)
     if (currently_batching)
     {
         current_texture = texture;
+#ifdef PS2_PROFILE
+		if (hwr_grec_on)
+			HWR_GCRecTex(texture);
+#endif
 #ifdef PS2 // PS2-HW-16: the polygon is drawn after the BSP walk; its texture must not be evicted from the GS pool before that
         PS2HWD_TouchTexture(texture);
 #endif
@@ -228,6 +353,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
     if (iNumPts < 3)
         return; // no triangles; do not advance the fan writer past its allocation
 #ifdef PS2_PROFILE
+	if (hwr_ph_on > 0)
+		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+	if (hwr_grec_on)
+		HWR_GCRecPoly(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // OPT11: the geometry cache records what the BSP walk hands to the batch
 	if (currently_batching && hwr_sprite_batch)
 	{
 		// PS2-HW-52: batched sprite polygons are drawn in texture order, not in depth order. That is the same picture for polygons that write the depth
@@ -280,7 +409,11 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		polygonArray[polygonArraySize].numVerts = iNumPts;
 		polygonArray[polygonArraySize].polyFlags = PolyFlags;
 		polygonArray[polygonArraySize].texture = current_texture;
+#ifdef PS2_PROFILE
+		polygonArray[polygonArraySize].shader = HWR_ShaderOfTarget(shader_target);
+#else
 		polygonArray[polygonArraySize].shader = (shader_target != SHADER_NONE) ? HWR_GetShaderFromTarget(shader_target) : shader_target;
+#endif
 		polygonArray[polygonArraySize].horizonSpecial = horizonSpecial;
 		// default to polygonArraySize so we don't lose order on horizon lines
 		// (yes, it's supposed to be negative, since we're sorting in that direction)
@@ -333,6 +466,78 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		HWD.pfnDrawPolygon(pSurf, pOutVerts, iNumPts, PolyFlags);
 	}
 }
+
+#ifdef PS2_PROFILE
+// OPT11 (PS2-HW-80): the state hash of a polygon of the batch: the same digest as HWR_ProcessPolygon makes, for the geometry cache (it keeps the result with the polygon)
+// KEEP IN STEP with the DIGEST list of HWR_ProcessPolygon (a change there, e.g. the PalLit condition of the light level, must be made here as well; -hwgc 2 finds a difference)
+UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIELD PolyFlags, int shader_target)
+{
+	UINT32 hash = 0x811c9dc5u;
+
+#define DIGEST(h, x) h ^= (x); h *= 0x01000193
+	if (tex)
+	{
+		DIGEST(hash, (UINT32)(uintptr_t)tex);
+	}
+	DIGEST(hash, PolyFlags);
+	DIGEST(hash, pSurf->PolyColor.rgba);
+	if (cv_glshaders.value && gl_shadersavailable)
+	{
+		DIGEST(hash, shader_target);
+		DIGEST(hash, pSurf->TintColor.rgba);
+		DIGEST(hash, pSurf->FadeColor.rgba);
+		DIGEST(hash, pSurf->LightInfo.light_level);
+		DIGEST(hash, pSurf->LightInfo.fade_start);
+		DIGEST(hash, pSurf->LightInfo.fade_end);
+	}
+#undef DIGEST
+	return (hash ^ (hash >> 16)) & 0xFFFFu;
+}
+
+UINT32 HWR_GCTexId(const GLMipmap_t *tex)
+{
+	return HWR_PS2_TextureId(tex);
+}
+
+// HWR_ProcessPolygon of a polygon the geometry cache made before (batching, not sprites): what the digest and the sort key need is in the record
+void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial, UINT32 texid, UINT32 h16, UINT32 scan_dir)
+{
+	PolygonArrayEntry *pe;
+
+	HWC_ADD(HWC_PROC);
+	HWC_ADD(HWC_PROC_BATCH);
+	if (hwr_ph_on > 0)
+		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+	if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
+		I_Error("Hardware batch geometry exceeds addressable storage");
+	if (polygonArraySize == polygonArrayAllocSize)
+	{
+		polygonArrayAllocSize = HWR_BatchCapacity(polygonArrayAllocSize, polygonArraySize + 1, sizeof(PolygonArrayEntry));
+		polygonArray = HWR_BatchResize(polygonArray, (size_t)polygonArrayAllocSize * sizeof(PolygonArrayEntry));
+		polygonIndexArray = HWR_BatchResize(polygonIndexArray, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+	}
+	if (unsortedVertexArraySize + (int)iNumPts > unsortedVertexArrayAllocSize)
+	{
+		unsortedVertexArrayAllocSize = HWR_BatchCapacity(unsortedVertexArrayAllocSize, unsortedVertexArraySize + (int)iNumPts, sizeof(FOutVector));
+		unsortedVertexArray = HWR_BatchResize(unsortedVertexArray, (size_t)unsortedVertexArrayAllocSize * sizeof(FOutVector));
+	}
+	pe = &polygonArray[polygonArraySize];
+	pe->surf = *pSurf;
+	pe->vertsIndex = unsortedVertexArraySize;
+	pe->numVerts = iNumPts;
+	pe->polyFlags = PolyFlags;
+	pe->texture = current_texture;
+	pe->shader = HWR_ShaderOfTarget(shader_target);
+	pe->horizonSpecial = horizonSpecial;
+	if (!(PolyFlags & PF_NoTexture) && !horizonSpecial)
+		pe->hash = (INT32)((HWR_PS2_OrderOf(texid, scan_dir) << 16) | h16);
+	else
+		pe->hash = -polygonArraySize; // (to stay in order on horizon lines)
+	polygonArraySize++;
+	memcpy(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts * sizeof(FOutVector));
+	unsortedVertexArraySize += iNumPts;
+}
+#endif
 
 #ifndef PS2
 static int comparePolygons(const void *p1, const void *p2)
