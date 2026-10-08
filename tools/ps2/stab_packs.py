@@ -39,7 +39,7 @@ def damaged_copy(d, name, how):
     src = GOOD / name
     if how == 'trunc':
         with open(src, 'rb') as a, open(dst, 'wb') as b:
-            b.write(a.read(20 << 20))
+            b.write(a.read(min(20 << 20, src.stat().st_size // 2)))  # at most 20 MB, and always shorter than the pack
     else:
         shutil.copy2(src, dst)
         size = dst.stat().st_size
@@ -78,6 +78,8 @@ VARIANTS = {
     'body-zones': lambda d: (link_all(d, skip=['ZONES.PAK']), damaged_copy(d, 'ZONES.PAK', 'body')),
     'zero-zones': lambda d: (link_all(d, skip=['ZONES.PAK']), damaged_copy(d, 'ZONES.PAK', 'zero')),
     'trunc-chars': lambda d: (link_all(d, skip=['CHARS.PAK']), damaged_copy(d, 'CHARS.PAK', 'trunc')),
+    'trunc-music': lambda d: (link_all(d, skip=['MUSIC.PAK']), damaged_copy(d, 'MUSIC.PAK', 'trunc')),
+    'trunc-zones': lambda d: (link_all(d, skip=['ZONES.PAK']), damaged_copy(d, 'ZONES.PAK', 'trunc')),
     'magic-music': lambda d: (link_all(d, skip=['MUSIC.PAK']), damaged_copy(d, 'MUSIC.PAK', 'magic')),
     'body-music': lambda d: (link_all(d, skip=['MUSIC.PAK']), damaged_copy(d, 'MUSIC.PAK', 'body')),
 }

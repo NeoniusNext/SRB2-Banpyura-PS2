@@ -236,42 +236,61 @@ void PS2HWFB_Display(void (*display)(void))
 	FrameLanded(&g);
 }
 
-// G_DoLoadLevel: a map of a local game (single player, split screen, demo, title map) that does not fit in memory is not an error of the program: the
-// level is dropped, the message says why, the caller goes back to the title screen (as for any map that fails to load). A network game does not take
-// this path: its clients and server must load the map the others play.
+// One attempt to load the map under the guard: false = the allocator jumped (g says what and how much), true = P_LoadLevel returned (*ok its result)
+static boolean TryLoadLevel(zguard_t *g, boolean *ok)
+{
+	if (Z_GUARD_TRY(g))
+	{
+		*ok = P_LoadLevel(false, false);
+		Z_GuardPop(g);
+		return true;
+	}
+	Z_GuardLanded(g);
+	return false;
+}
+
+// G_DoLoadLevel: a map of a local game (single player, split screen, demo, title map) that does not fit in memory is not an error of the program. The load is
+// abandoned (P_AbandonLevelLoad: no array of the half built level stays reachable), everything that can be rebuilt is given back (the caches, the sound samples,
+// the hardware renderer's memory) and the map is loaded ONCE more: the arena's holes are the usual reason (a long-lived block that was created in the middle of
+// the last level splits the free space), and without the caches and samples between them the holes join. When this fails too, the message says why and the
+// caller goes back to the title screen (as for any map that fails to load). A network game does not take this path: its clients and server must load the map
+// the others play.
 boolean PS2HWFB_LoadLevel(void)
 {
 	zguard_t g;
+	boolean ok = false;
+	int attempt;
 
 	if (netgame || hwfb_off)
 		return P_LoadLevel(false, false);
-	if (Z_GUARD_TRY(&g))
-	{
-		const boolean ok = P_LoadLevel(false, false);
-
-		Z_GuardPop(&g);
-		return ok;
-	}
-	Z_GuardLanded(&g);
+	for (attempt = 0; attempt < 2; attempt++)
 	{
 		char why[128];
 
+		if (TryLoadLevel(&g, &ok))
+			return ok;
 		if (g.size)
 			snprintf(why, sizeof why, "%lu bytes (%s)", (unsigned long)g.size, PS2Mem_TagName(g.tag));
 		else
 			snprintf(why, sizeof why, "%s", g.reason);
 		snprintf(hwfb_last, sizeof hwfb_last, "map %d does not fit: %.100s", (int)gamemap, why);
-		CONS_Alert(CONS_ERROR, "Not enough memory to load map %s: %s. Back to the title screen.\n", G_BuildMapName(gamemap), why);
-		I_OutputMsg("ps2_hwfb: LEVEL LOAD FAILED map %d: %s\n", (int)gamemap, why);
-	}
-	hwfb_levelfails++;
-	levelloading = false;
-	P_MapEnd();
-	P_AbandonLevelLoad(); // the half built level and the freed one before it: no array may be walked again (LUA_InvalidateLevel of the next load)
+		hwfb_levelfails++;
+		levelloading = false;
+		P_MapEnd();
+		P_AbandonLevelLoad(); // the half built level and the freed one before it: no array may be walked again (LUA_InvalidateLevel of the next load)
 #ifdef HWRENDER
-	if (rendermode == render_opengl)
-		ForceSoftware("the level did not fit", true); // the title screen and the next map get the memory of the hardware renderer
+		if (rendermode == render_opengl)
+			ForceSoftware("the level did not fit", true); // the next try and the title screen get the memory of the hardware renderer
 #endif
+		if (attempt == 0)
+		{
+			I_OutputMsg("ps2_hwfb: LEVEL LOAD FAILED map %d: %s; loading it again after the caches and samples were given back (%lu KB free)\n", (int)gamemap, why,
+				(unsigned long)(Z_EmergencyFree() >> 10));
+			continue;
+		}
+		CONS_Alert(CONS_ERROR, "Not enough memory to load map %s: %s. Back to the title screen.\n", G_BuildMapName(gamemap), why);
+		I_OutputMsg("ps2_hwfb: LEVEL LOAD FAILED map %d: %s (second try)\n", (int)gamemap, why);
+	}
 	return false;
 }
 

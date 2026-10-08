@@ -7023,6 +7023,10 @@ void HWR_Shutdown(void)
 	Z_Free(linkdrawlist); // PS2-171
 	linkdrawlist = NULL;
 	linkdrawcap = linkdrawcount = 0;
+	// PS2-HW-140 (OPT11-STAB): a frame abandoned by an out-of-memory jump (ps2_hwfb.c) leaves the lists of transparent walls and planes filled (they are emptied at the end of
+	// HWR_CreateDrawNodes): the next hardware frame then sorted old entries (freed levels' pointers) with duplicate drawcounts: "CompareDrawNodes: diff is zero"
+	numwalls = numplanes = numpolyplanes = 0;
+	drawcount = 0;
 	gl_maploaded = false;
 	// Keep model/shader CPU initialization; their owners remain valid across GS reacquisition.
 #endif
