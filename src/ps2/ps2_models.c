@@ -63,6 +63,40 @@ static void Opts(void)
 		m_budget = (size_t)atoi(M_GetNextParm()) * 1024u;
 }
 
+// fault injection (-hwmodelfail N[,K]): the N-th (and the K - 1 following) allocation of the model code fails as if the zone were full: a model, a texture, a work area
+// must then be a sprite / the plain texture for a while, never an error (tools/ps2/md_oom.sh)
+static int inj_n, inj_k = 1, inj_count;
+static UINT32 st_injected;
+
+void *PS2Models_TryAlloc(size_t size, INT32 tag, void *user, INT32 alignbits)
+{
+	static boolean inj_init;
+
+	if (!inj_init)
+	{
+		inj_init = true;
+		if (M_CheckParm("-hwmodelfail") && M_IsNextParm())
+		{
+			const char *a = M_GetNextParm();
+
+			inj_n = atoi(a);
+			while (*a && *a != ',')
+				a++;
+			if (*a == ',')
+				inj_k = atoi(a + 1);
+			if (inj_k < 1)
+				inj_k = 1;
+		}
+	}
+	inj_count++;
+	if (inj_n > 0 && inj_count >= inj_n && inj_count < inj_n + inj_k)
+	{
+		st_injected++;
+		return NULL;
+	}
+	return Z_TryMallocAlign(size, tag, user, alignbits);
+}
+
 static const lumpinfo_t *PK_Find(const char *rel)
 {
 	UINT16 i;
@@ -438,7 +472,7 @@ boolean PS2Models_LoadTexture(const char *rel, GLMipmap_t *mm)
 	n = (size_t)w * h;
 	if (!w || !h || w > 1024 || h > 1024 || l->size != 16 + n)
 		return false;
-	data = Z_TryMallocAlign(n, PU_HWRMODELTEXTURE_UNLOCKED, &mm->data, 4);
+	data = PS2Models_TryAlloc(n, PU_HWRMODELTEXTURE_UNLOCKED, &mm->data, 4);
 	if (!data)
 	{
 		st_fail_mem++;
@@ -484,7 +518,7 @@ boolean PS2Models_LoadBlend(const char *rel, ps2_blend_t *out)
 	memset(out, 0, sizeof *out);
 	if (!PK_Open() || !(l = PK_Find(rel)) || l->size < 20)
 		return false;
-	b = Z_TryMallocAlign(l->size, PU_STATIC, NULL, 4);
+	b = PS2Models_TryAlloc(l->size, PU_STATIC, NULL, 4);
 	if (!b)
 	{
 		st_fail_mem++;
@@ -614,7 +648,7 @@ model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 		Z_AddReclaimHook(Reclaim);
 		hook_added = true;
 	}
-	base = Z_TryMallocAlign(need, PU_STATIC, owner, 4); // alignbits: log2 (16 bytes)
+	base = PS2Models_TryAlloc(need, PU_STATIC, owner, 4); // alignbits: log2 (16 bytes)
 	if (!base)
 	{
 		*why = 1;
@@ -752,6 +786,7 @@ void PS2Models_Stats(unsigned int *out)
 	out[4] = st_reclaims;
 	out[5] = st_fail_mem;
 	out[6] = st_fail_bad;
+	out[9] = st_injected;
 	out[7] = st_load_cyc;
 	out[8] = st_load_max;
 }
@@ -763,9 +798,9 @@ void PS2Models_Report(void)
 	for (i = 0; i < MAXLIVE; i++)
 		if (live[i].model)
 			n++;
-	CONS_Printf("models: pack %s, %d alive (%u KiB), loads %u, frees %u, reclaims %u, no memory %u, damaged %u, budget %u KiB, reserve %u KiB\n",
+	CONS_Printf("models: pack %s, %d alive (%u KiB), loads %u, frees %u, reclaims %u, no memory %u, damaged %u, budget %u KiB, reserve %u KiB, injected failures %u\n",
 		PK.state > 0 ? "open" : PK.state < 0 ? "absent" : "unopened", n, (unsigned)(live_bytes / 1024), st_loads, st_frees, st_reclaims, st_fail_mem, st_fail_bad,
-		(unsigned)(m_budget / 1024), (unsigned)(m_reserve / 1024));
+		(unsigned)(m_budget / 1024), (unsigned)(m_reserve / 1024), st_injected);
 	(void)st_reload_same_frame;
 }
 

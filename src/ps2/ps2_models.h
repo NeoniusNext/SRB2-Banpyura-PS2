@@ -28,6 +28,9 @@ char *PS2Models_Dat(size_t *size);
 // NULL when there is no cooked model or no room (*why = 0 none, 1 no memory, 2 damaged, 3 too many models were read in this frame: ask again in the next one): never an I_Error.
 model_t *PS2Models_Load(const char *rel, void **owner, int *why);
 
+// Z_TryMallocAlign of the model code, with the fault injection of -hwmodelfail N[,K] (the N-th allocation and the K - 1 after it return NULL)
+void *PS2Models_TryAlloc(size_t size, INT32 tag, void *user, INT32 alignbits);
+
 // A model of the pack is in use this frame (not a candidate for the reclaim hook until the next frame)
 void PS2Models_Touch(model_t *model);
 
@@ -71,7 +74,7 @@ void PS2Models_FreeBlend(ps2_blend_t *b);
 // Does the pack hold a blend map for `rel` (without loading it)
 boolean PS2Models_HasBlend(const char *rel);
 
-// statistics: alive, KiB alive, loads, frees, reclaims, loads refused for memory, damaged, cycles of all loads, cycles of the longest load
+// statistics: alive, KiB alive, loads, frees, reclaims, loads refused for memory, damaged, cycles of all loads, cycles of the longest load, injected failures (10 values)
 void PS2Models_Stats(unsigned int *out);
 void PS2Models_Report(void);
 

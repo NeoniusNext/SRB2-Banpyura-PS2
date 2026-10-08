@@ -71,7 +71,7 @@ static int mdl_gen_get(void)
 {
 	if (mdlg)
 		return 1;
-	mdlg = (mdlgen_t *)Z_TryMallocAlign(sizeof *mdlg, PU_STATIC, NULL, 6);
+	mdlg = (mdlgen_t *)PS2Models_TryAlloc(sizeof *mdlg, PU_STATIC, NULL, 6);
 	if (!mdlg)
 	{
 		hw_limit(HW_INVALID, "no memory for the model work area; the mesh is not drawn");
@@ -102,17 +102,17 @@ static int mdl_fast_get(u32 nv, u32 nt)
 		Z_Free(mdlf_blk); // the old one first: both would not fit at the sizes that matter
 		mdlf_blk = NULL;
 		mdlf_cv = mdlf_ct = 0;
-		blk = Z_TryMallocAlign(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
+		blk = PS2Models_TryAlloc(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
 		if (!blk)
 		{
 			cv = ocv; // the area there was
 			ct = oct;
-			blk = Z_TryMallocAlign(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
+			blk = PS2Models_TryAlloc(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
 		}
 	}
 	else
 	{
-		blk = Z_TryMallocAlign(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
+		blk = PS2Models_TryAlloc(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
 	}
 	if (!blk)
 		return 0;

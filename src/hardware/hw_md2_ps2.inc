@@ -41,7 +41,7 @@ static boolean HWR_CreateBlendedTexture(GLMipmap_t *basemip, const ps2_blend_t *
 	}
 	if (!basemip->data || (bl && (bl->w != w || bl->h != h)))
 		return false;
-	out = Z_TryMallocAlign(size, PU_HWRMODELTEXTURE_UNLOCKED, &grMipmap->data, 4);
+	out = PS2Models_TryAlloc(size, PU_HWRMODELTEXTURE_UNLOCKED, &grMipmap->data, 4);
 	if (!out)
 		return false;
 	src = basemip->data; // used this frame: the allocation above did not take it (checked again below)

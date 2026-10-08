@@ -95,10 +95,10 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF17 band_sweep: polys=%u pieces=%u ripple_planes=%u\n", G.wf_polys / frames, G.wf_pieces / frames, G.wf_bands / frames);
 	I_OutputMsg("HWPROF40 models: draws=%u meshes=%u tris=%u verts=%u slow=%u lod=%u over=%u cyc=%u c1=%u c2=%u c3=%u ctx=%u\n", G.md_draws / frames, G.md_meshes / frames, G.md_tris / frames, G.md_verts / frames, G.md_slow / frames, G.md_lod / frames, G.md_over / frames, G.md_cyc / frames, G.md_c1 / frames, G.md_c2 / frames, G.md_c3 / frames, G.md_ctx / frames);
 	{
-		unsigned int ms[9];
+		unsigned int ms[10];
 
 		PS2Models_Stats(ms);
-		I_OutputMsg("HWPROF41 model memory: alive=%u (%u KiB) loads=%u frees=%u reclaims=%u refused(memory)=%u damaged=%u load cycles total=%u max=%u\n", ms[0], ms[1], ms[2], ms[3], ms[4], ms[5], ms[6], ms[7], ms[8]);
+		I_OutputMsg("HWPROF41 model memory: alive=%u (%u KiB) loads=%u frees=%u reclaims=%u refused(memory)=%u damaged=%u load cycles total=%u max=%u injected=%u\n", ms[0], ms[1], ms[2], ms[3], ms[4], ms[5], ms[6], ms[7], ms[8], ms[9]);
 	}
 	HWR_GCacheProf(frames);
 	I_OutputMsg("HWPROF37 HWR_RenderPlane parts: setup=%u buffer+flat=%u vertices=%u lightlevel=%u lighting=%u flags+shader=%u polygon=%u (the last, the sum of the two before it, is what HWR_ProcessPolygon takes)\n", (unsigned)(ps2hwp_cyc[HWP_PL_A] / frames),
