@@ -28,6 +28,8 @@ typedef long long ps2e_s64;
 #define PS2E_DCMDS 64        // game -> D ring (power of two)
 #define PS2E_SLOTS 24        // decoded music blocks: 24 * 512 frames = 557 ms
 #define PS2E_SLOT_FRAMES PS2_AUDIO_BLOCK
+#define PS2E_MUTE_STEPS 8    // PS2-317: decode steps with the music gain at 0 before an Ogg/MP3 song is skipped instead of decoded
+#define PS2E_MUTE_AHEAD 4    // blocks decoded ahead while skipping (the lookahead of the normal decode is PS2E_SLOTS)
 
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -124,6 +126,7 @@ typedef struct ps2_engine
 	ps2_music *d_song;
 	ps2e_u32 d_epoch, d_hash;
 	int d_playing;
+	ps2e_u32 d_mute_steps;            // PS2-317: consecutive decode steps with the music gain at 0
 	// ---- M-owned music state
 	int m_flowing;                    // at least one slot of the current epoch was consumed
 	ps2e_u32 m_epoch_seen, m_hash;

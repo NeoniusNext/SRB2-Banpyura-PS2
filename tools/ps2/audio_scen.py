@@ -23,6 +23,7 @@ SCEN = {
     'd1_nomusic': ('DEMO_001', [], ['-nomusic']),
     'd1_stop': ('DEMO_001', [], ['-acmd', '300', 'tunes -none']),
     'd1_vol0': ('DEMO_001', [], ['-acmd', '300', 'digmusicvolume 0']),
+    'd1_mute': ('DEMO_001', [], ['-acmd', '300', 'digmusicvolume 0', '-acmd', '700', 'digmusicvolume 31']),
     'd1_track': ('DEMO_001', [], ['-acmd', '300', 'tunes 5', '-acmd', '600', 'tunes 8']),
     'd2_off': ('DEMO_002', OFF, []),
     'd2_mus': ('DEMO_002', [], []),

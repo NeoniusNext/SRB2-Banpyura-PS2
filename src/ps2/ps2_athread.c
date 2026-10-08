@@ -316,9 +316,24 @@ int PS2E_DecodeStep(ps2_engine *e)
 	head = e->slot_head;
 	if (head - e->slot_tail >= PS2E_SLOTS) return work;
 	slot = &e->slots[head % PS2E_SLOTS];
+	// PS2-317: muted for PS2E_MUTE_STEPS decode steps in a row: an Ogg/MP3 song is not decoded, its position advances in silent blocks (kept
+	// only PS2E_MUTE_AHEAD blocks ahead, so that unmuting is heard within ~93 ms); PS2_MusicRender resynchronises the decoder by a seek
+	if (e->music_gain == 0) { if (e->d_mute_steps < 0xffffu) e->d_mute_steps++; } else e->d_mute_steps = 0;
+	if (e->d_mute_steps >= PS2E_MUTE_STEPS && PS2_MusicCanSkip(e->d_song))
+	{
+		if (head - e->slot_tail >= PS2E_MUTE_AHEAD) return work;
+		slot->epoch = e->d_epoch;
+		slot->pos0_ms = PS2_MusicPosition(e->d_song);
+		n = PS2_MusicSkip(e->d_song, PS2E_SLOT_FRAMES);
+		memset(slot->pcm, 0, sizeof slot->pcm);
+		e->st.dec_steps_silent++;
+	}
+	else
+	{
 	slot->epoch = e->d_epoch;
 	slot->pos0_ms = PS2_MusicPosition(e->d_song);
 	n = PS2_MusicRender(e->d_song, slot->pcm, PS2E_SLOT_FRAMES);
+	}
 	slot->flags = 0;
 	if (!PS2_MusicPlaying(e->d_song)) { slot->flags |= PS2E_SLOT_END; e->d_playing = 0; }
 	if (PS2_MusicError(e->d_song)) slot->flags |= PS2E_SLOT_ERROR;

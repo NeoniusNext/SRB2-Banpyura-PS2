@@ -34,6 +34,7 @@ struct ps2_music
 	uint32_t rate, length_ms, loop_ms, fraction, step;
 	unsigned channels, playing, paused, looping, error;
 	size_t buffered, cursor;
+	unsigned skipped;                  // PS2-317: the position moved without decoding; the decoder is behind (resynchronised by PS2_MusicRender)
 	int16_t buffer[DECODE_FRAMES * 2] __attribute__((aligned(16))); // PS2-316: the VU0 PCM conversion stores 16 bytes at a time
 	uint8_t raw[DECODE_FRAMES * 4];
 };
@@ -213,7 +214,7 @@ int PS2_MusicSeek(ps2_music *m, uint32_t ms)
 #endif
 	else return 0;
 	m->position = m->decoded = frame;
-	m->buffered = m->cursor = m->fraction = m->error = 0; return 1;
+	m->buffered = m->cursor = m->fraction = m->error = m->skipped = 0; return 1;
 }
 int PS2_MusicPlay(ps2_music *m, int loop)
 {
@@ -295,11 +296,49 @@ static int Ensure(ps2_music *m)
 	m->playing = m->paused = 0; return 0;
 }
 
+int PS2_MusicCanSkip(const ps2_music *m)
+{
+	return m && m->playing && !m->paused && !m->error && (m->type == PS2_MUSIC_OGG || m->type == PS2_MUSIC_MP3)
+		&& m->length_ms && m->step == 65536 && !m->fraction;
+}
+
+size_t PS2_MusicSkip(ps2_music *m, size_t frames)
+{
+	uint64_t end;
+	if (!PS2_MusicCanSkip(m)) return 0;
+	end = (uint64_t)m->length_ms * m->rate / 1000;
+	m->skipped = 1;
+	m->buffered = m->cursor = 0;
+	m->position += frames;
+	if (m->position >= end)
+	{
+		if (m->looping)
+		{
+			uint64_t loop = (uint64_t)m->loop_ms * m->rate / 1000, span = end > loop ? end - loop : 0;
+			m->position = span ? loop + (m->position - end) % span : loop;
+		}
+		else
+		{
+			frames -= (size_t)(m->position - end);
+			m->position = end; m->playing = m->paused = 0;
+		}
+	}
+	m->decoded = m->position;
+	return frames;
+}
+
 size_t PS2_MusicRender(ps2_music *m, int16_t *out, size_t frames)
 {
 	size_t f;
 	memset(out, 0, frames * 2 * sizeof *out);
 	if (!m || !m->playing || m->paused) return 0;
+	if (m->skipped)
+	{
+		// the position was moved by PS2_MusicSkip: bring the decoder there (a sample exact seek)
+		uint64_t pos = m->position;
+		m->skipped = 0;
+		if (!PS2_MusicSeek(m, (uint32_t)(pos * 1000 / m->rate))) { m->error = 1; return 0; }
+	}
 	if (m->step == 65536 && !m->fraction)
 	{
 		// source rate == output rate at normal speed: one source frame per output frame, straight copies
