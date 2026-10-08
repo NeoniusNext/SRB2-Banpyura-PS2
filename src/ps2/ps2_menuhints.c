@@ -48,6 +48,14 @@ static const hintset_t hintsets[PS2MH_NUMKINDS] =
 	[PS2MH_YESNO]      = {PS2I_CROSS " Yes", PS2I_CIRCLE " No"},
 	[PS2MH_MESSAGE]    = {PS2I_CROSS " OK", PS2I_CIRCLE " Close"},
 	[PS2MH_SERVER]     = {PS2I_DPAD_UD " Select   " PS2I_CROSS " Join", PS2I_CIRCLE " Back"},
+	[PS2MH_PLATTER]    = {PS2I_DPAD_UD PS2I_DPAD_LR " Select   " PS2I_CROSS " OK", PS2I_CIRCLE " Back"},
+	[PS2MH_LOADSAVE]   = {PS2I_DPAD_LR " Select   " PS2I_CROSS " OK", PS2I_CIRCLE " Back"},
+	[PS2MH_CHOOSEPLAYER] = {PS2I_DPAD_UD " Character   " PS2I_CROSS " OK", PS2I_CIRCLE " Back"},
+	[PS2MH_SOUNDTEST]  = {PS2I_DPAD_UD " Select   " PS2I_CROSS " Play", PS2I_SQUARE " Stop   " PS2I_CIRCLE " Back"},
+	[PS2MH_SCROLL]     = {PS2I_DPAD_UD " Scroll", PS2I_CIRCLE " Back"},
+	[PS2MH_ADDONS]     = {PS2I_DPAD_UD " Select   " PS2I_CROSS " Open", PS2I_CIRCLE " Back"},
+	[PS2MH_VIDEOMODE]  = {PS2I_DPAD_UD PS2I_DPAD_LR " Select   " PS2I_CROSS " Set", PS2I_CIRCLE " Back"},
+	[PS2MH_CHANGE]     = {PS2I_DPAD_UD " Select   " PS2I_DPAD_LR " Change", PS2I_CROSS " OK   " PS2I_CIRCLE " Back"},
 	[PS2MH_NONE]       = {NULL, NULL},
 };
 
@@ -267,6 +275,24 @@ static boolean Fits(const char *s, boolean right, INT32 row, INT32 *x0, INT32 *y
 	return PlateFree(*x0 - PLATE_PAD, *y - 1, *w + 2 * PLATE_PAD, PLATE_H);
 }
 
+// the nearest free place for the text s along a row, from the corner on towards the middle of the screen (2 px steps); false: none
+static boolean Slide(const char *s, boolean right, INT32 row, INT32 *x0, INT32 *y, INT32 *w)
+{
+	INT32 x;
+
+	*w = V_ThinStringWidth(s, V_ALLOWLOWERCASE);
+	*y = ROW0_Y - row * ROW_PITCH;
+	for (x = EDGE_X; x + *w <= BASEVIDWIDTH - EDGE_X; x += 2)
+	{
+		*x0 = right ? BASEVIDWIDTH - EDGE_X - *w - (x - EDGE_X) : x;
+		if (*x0 < EDGE_X || (right ? *x0 < BASEVIDWIDTH / 2 : *x0 + *w > BASEVIDWIDTH / 2))
+			break; // each group keeps to its own half of the screen
+		if (PlateFree(*x0 - PLATE_PAD, *y - 1, *w + 2 * PLATE_PAD, PLATE_H))
+			return true;
+	}
+	return false;
+}
+
 // splits a group at its first three spaces; false: it has no halves
 static boolean Halves(const char *s, char *a, char *b)
 {
@@ -303,6 +329,7 @@ static char PlaceGroup(const char *s, boolean right)
 	INT32 x0, y, w, x1, y1, w1, row;
 	char a[160], b[160], icons[80];
 
+	icons[0] = '\0';
 	for (row = 0; row < NUMROWS; row++)
 		if (Fits(s, right, row, &x0, &y, &w))
 		{
@@ -323,6 +350,20 @@ static char PlaceGroup(const char *s, boolean right)
 			{
 				Commit(icons, x0, y, w);
 				return 'I';
+			}
+	// the corner is taken in every row: the nearest free place along the bottom rows, towards the middle of the screen (the text first, then the icons)
+	for (row = 0; row < NUMROWS; row++)
+		if (Slide(s, right, row, &x0, &y, &w))
+		{
+			Commit(s, x0, y, w);
+			return 'M';
+		}
+	if (icons[0])
+		for (row = 0; row < NUMROWS; row++)
+			if (Slide(icons, right, row, &x0, &y, &w))
+			{
+				Commit(icons, x0, y, w);
+				return 'm';
 			}
 	return '-';
 }
@@ -528,6 +569,69 @@ static void Command_Crawl_f(void)
 	CONS_Printf("MHCRAWL start: %d menus\n", (int)crawl_n);
 }
 
+// ps2_menugo MENU [ITEM]: bring up menu number MENU of the crawler's list with the cursor on ITEM (for pictures: -netcmd 60:ps2_menugo~51~3 -vidshot f200)
+static void Command_Go_f(void)
+{
+	menu_t *m = NULL;
+	const char *name = "";
+	const INT32 n = M_PS2MenuList(-1, NULL, NULL), idx = COM_Argc() > 1 ? atoi(COM_Argv(1)) : 0;
+
+	if (idx < 0 || idx >= n)
+		return;
+	M_PS2MenuList(idx, &m, &name);
+	M_PS2MenuEnter(m, idx, n);
+	menuactive = true;
+	M_PS2MenuCursor(COM_Argc() > 2 ? atoi(COM_Argv(2)) : 0);
+	CONS_Printf("MHGO %d %s item %d\n", (int)idx, name, (int)M_PS2MenuCursor(-1));
+}
+
+// -menuseq SPACING,M:I,M:I,...: a picture series for -vidshot: from the 20th displayed frame on, every SPACING frames the next menu M of the crawler's list is brought up
+// with the cursor on item I (Command_Go_f); -vidshot m<N> takes the picture at the N-th frame of the series (the pace is that of displayed frames: a screen wipe or a slow
+// game tic does not move it)
+static const char *seqspec;
+static INT32 seqframe, seqcalls;
+
+void PS2MenuHints_SeqTick(void)
+{
+	static boolean parsed;
+
+	if (!parsed)
+	{
+		parsed = true;
+		if (M_CheckParm("-menuseq") && M_IsNextParm())
+			seqspec = M_GetNextParm();
+	}
+	if (!seqspec || ++seqcalls < 20)
+		return;
+	seqframe++;
+	{
+		const INT32 spacing = atoi(seqspec) > 0 ? atoi(seqspec) : 30;
+		const INT32 want = (seqframe - 1) / spacing;
+		const char *p = strchr(seqspec, ','), *colon, *next;
+		INT32 k;
+
+		if ((seqframe - 1) % spacing)
+			return;
+		for (k = 0; p && k < want; k++)
+			p = strchr(p + 1, ',');
+		if (!p)
+			return;
+		colon = strchr(p + 1, ':');
+		next = strchr(p + 1, ',');
+		{
+			char cmd[48];
+
+			snprintf(cmd, sizeof cmd, "ps2_menugo %d %d\n", atoi(p + 1), (colon && (!next || colon < next)) ? atoi(colon + 1) : 0);
+			COM_BufAddText(cmd);
+		}
+	}
+}
+
+INT32 PS2MenuHints_SeqFrame(void)
+{
+	return seqframe;
+}
+
 static boolean Selectable(const menuitem_t *it)
 {
 	const UINT16 st = it->status;
@@ -545,6 +649,7 @@ void PS2MenuHints_Frame(void)
 	{
 		parsed = true;
 		COM_AddCommand("ps2_menucrawl", Command_Crawl_f, 0);
+		COM_AddCommand("ps2_menugo", Command_Go_f, 0);
 		if (M_CheckParm("-menuhintscheck"))
 			opt_check = true;
 		opt_debug = M_CheckParm("-menuhintsdebug") != 0;

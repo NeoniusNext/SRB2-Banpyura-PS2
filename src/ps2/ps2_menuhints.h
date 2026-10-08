@@ -35,6 +35,14 @@ typedef enum
 	PS2MH_YESNO,      // a Yes / No message box
 	PS2MH_MESSAGE,    // a message box that Enter / Escape / Space / N / Y / Delete close
 	PS2MH_SERVER,     // a line of the server list
+	PS2MH_PLATTER,    // a level platter: the D-pad moves over the levels
+	PS2MH_LOADSAVE,   // the save slots: left / right pick a slot
+	PS2MH_CHOOSEPLAYER, // the character select: up / down scroll the characters
+	PS2MH_SOUNDTEST,  // the sound test
+	PS2MH_SCROLL,     // a list that only scrolls (Extras checklist, Statistics)
+	PS2MH_ADDONS,     // the file list of the Add-ons menu
+	PS2MH_VIDEOMODE,  // the video mode list
+	PS2MH_CHANGE,     // an item that left / right change (a play style, a character, a page, a skin or a colour)
 	PS2MH_NONE,       // nothing: the menu is a picture over the whole screen
 	PS2MH_NUMKINDS
 } ps2mh_kind_t;
@@ -55,6 +63,8 @@ boolean PS2MenuHints_NotePatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vsc
 boolean PS2MenuHints_NoteCropped(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vscale, INT32 scrn, const patch_t *patch, fixed_t w, fixed_t h); // v_video.c (true: do not draw)
 boolean PS2MenuHints_NoteRect(INT32 x, INT32 y, INT32 w, INT32 h, INT32 flags);                                         // v_video.c
 void PS2MenuHints_Frame(void);                       // once per displayed frame (ps2_net.c PS2Net_Frame): the crawler's step; the -menuhintscheck options are read here
+void PS2MenuHints_SeqTick(void);                     // i_video.c Impl_VidShot, once per displayed frame: -menuseq SPACING,M:I,... brings up menus for a series of -vidshot m<N>
+INT32 PS2MenuHints_SeqFrame(void);                   // the frame of that series
 boolean PS2MenuHints_Checking(void);                 // M_Drawer is being run for the check: nothing is drawn or noted
 
 #endif

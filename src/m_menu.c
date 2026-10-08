@@ -4833,7 +4833,11 @@ static void M_DrawControlsDefMenu(void)
 	V_DrawRightAlignedString(BASEVIDWIDTH - currentMenu->x, currentMenu->y + 80, MENUCOLOR|MENUCAPS, PlaystyleNames[opt]);
 }
 
+#ifdef PS2
+#define scrollareaheight 68 // PS2-339: one row less (8 px), so that the button hints have the bottom of the screen to themselves
+#else
 #define scrollareaheight 72
+#endif
 
 // note that alphakey is multiplied by 2 for scrolling menus to allow greater usage in UINT8 range.
 static void M_DrawGenericScrollMenu(void)
@@ -14756,11 +14760,33 @@ INT32 M_PS2MenuKind(void)
 		case IT_ARROWS:
 			return PS2MH_ARROWS;
 		case IT_KEYHANDLER:
-			if ((void *)it->itemaction == (void *)M_HandleConnectIP)
+		{
+			const void *h = (const void *)it->itemaction; // the handler tells what the buttons do here
+
+			if (h == (void *)M_HandleConnectIP)
 				return PS2MH_ADDRESS;
-			if ((void *)it->itemaction == (void *)M_HandleSetupMultiPlayer && itemOn == 0)
-				return PS2MH_PLAYERNAME;
+			if (h == (void *)M_HandleSetupMultiPlayer)
+				return itemOn == 0 ? PS2MH_PLAYERNAME : PS2MH_CHANGE;
+			if (h == (void *)M_HandleLevelPlatter)
+				return PS2MH_PLATTER;
+			if (h == (void *)M_HandleLoadSave)
+				return PS2MH_LOADSAVE;
+			if (h == (void *)M_HandleChoosePlayerMenu)
+				return PS2MH_CHOOSEPLAYER;
+			if (h == (void *)M_HandleSoundTest)
+				return PS2MH_SOUNDTEST;
+			if (h == (void *)M_HandleChecklist || h == (void *)M_HandleLevelStats)
+				return PS2MH_SCROLL;
+#ifdef HAS_ADDONS
+			if (h == (void *)M_HandleAddons)
+				return PS2MH_ADDONS;
+#endif
+			if (h == (void *)M_HandleVideoMode)
+				return PS2MH_VIDEOMODE;
+			if (h == (void *)M_HandlePlaystyleMenu || h == (void *)M_HandleTimeAttackLevelSelect || h == (void *)M_HandleMarathonChoosePlayer || h == (void *)M_HandleServerPage)
+				return PS2MH_CHANGE;
 			return PS2MH_SELECT;
+		}
 		default:
 			return PS2MH_SELECT;
 	}
@@ -14862,12 +14888,19 @@ INT32 M_PS2MenuList(INT32 i, menu_t **menu, const char **name)
 
 // PS2-339: the crawler brings a menu up the way the game does (the entry function of the item that leads to it, which sets up what the drawing needs: the list of
 // saves, the level platter, the player skins), then makes it the current one whatever the entry did. MessageDef has four variants.
+static void M_PS2EnterLoad(INT32 choice) // M_LoadGame asks about the tutorial first when the game was never started: the list of saves is what the menu needs
+{
+	(void)choice;
+	M_ReadSaveStrings();
+	M_SetupNextMenu(&SP_LoadDef);
+}
+
 INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
 {
 	static const struct { menu_t *menu; void (*entry)(INT32); } entries[] =
 	{
 		{&SR_PandoraDef, M_PandorasBox}, {&SR_MainDef, M_SecretsMenu}, {&SR_LevelSelectDef, M_CustomLevelSelect}, {&SR_SoundTestDef, M_SoundTest},
-		{&SR_EmblemHintDef, M_EmblemHints}, {&SP_MainDef, M_SinglePlayerMenu}, {&SP_LoadDef, M_LoadGame}, {&SP_LevelSelectDef, M_LoadGameLevelSelect},
+		{&SR_EmblemHintDef, M_EmblemHints}, {&SP_MainDef, M_SinglePlayerMenu}, {&SP_LoadDef, M_PS2EnterLoad}, {&SP_LevelSelectDef, M_LoadGameLevelSelect},
 		{&SP_PauseLevelSelectDef, M_PauseLevelSelect}, {&SP_LevelStatsDef, M_Statistics}, {&SP_TimeAttackLevelSelectDef, M_TimeAttackLevelSelect},
 		{&SP_TimeAttackDef, M_TimeAttack}, {&SP_NightsAttackLevelSelectDef, M_NightsAttackLevelSelect}, {&SP_NightsAttackDef, M_NightsAttack},
 		{&SP_MarathonDef, M_Marathon}, {&SP_PlayerDef, M_SetupChoosePlayer}, {&MP_SplitServerDef, M_StartSplitServerMenu}, {&MP_ServerDef, M_StartServerMenu},
@@ -14879,6 +14912,7 @@ INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
 	};
 	size_t i;
 
+	hidetitlemap = false; // (the character select sets it: the title map would stay hidden behind the next menus)
 	if (m == &MessageDef)
 	{
 		static const char *const texts[4] =

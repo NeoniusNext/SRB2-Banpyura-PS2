@@ -4,7 +4,8 @@ usage: python3 tools/ps2/menu_crawl.py --elf build/out1/SRB2.ELF --label sw-320x
 The engine (src/ps2/ps2_menuhints.c) has the console command ps2_menucrawl: it brings up each menu definition the way the game does (m_menu.c M_PS2MenuEnter), moves the
 cursor over every selectable item and prints one MHCHECK line per item:
   MHCHECK menu=ID item=I/N kind=K how=LR plates=P [x,y,wxh]... WxH menu_pixels=M under=U within2=W ok|OVERLAP
-how: how the left and the right group were placed (L one line at the bottom, R one line higher, S two stacked lines, I icons only, - not drawn).
+how: how the left and the right group were placed (L one line at the bottom corner, R one line higher in the corner, S two stacked lines, I icons only, M moved along
+the row towards the middle, m icons moved, - not drawn).
 menu_pixels / under / within2 are measured on the real pixels of the frame (software renderer only): the menu is drawn on a flat colour without the hints and the pixels
 it covers are counted inside the plates (under) and within 2 px of them (within2). The hardware renderer has the same layout code but no pixel readback here.
 A menu whose drawing hangs or crashes the emulator (a draw routine that needs state that its entry function sets) is skipped and the walk goes on with the next one:
@@ -87,12 +88,13 @@ def main():
         print('run %d stopped in menu %d (%s): go on with %d' % (attempt, lastidx, last['name'], first), file=sys.stderr)
     # the report
     rows = []
-    totals = {'items': 0, 'overlap': 0, 'L': 0, 'R': 0, 'S': 0, 'I': 0, '-': 0}
+    totals = {'items': 0, 'overlap': 0, 'L': 0, 'R': 0, 'S': 0, 'I': 0, 'M': 0, '-': 0}
     for idx, m in menus.items():
-        cnt = {'L': 0, 'R': 0, 'S': 0, 'I': 0, '-': 0}
+        cnt = {'L': 0, 'R': 0, 'S': 0, 'I': 0, 'M': 0, '-': 0}
         ov = 0
         for c in m['checks']:
             for h in c['how']:
+                h = 'M' if h == 'm' else h
                 if h in cnt:
                     cnt[h] += 1
             ov += 1 if c['overlap'] else 0
@@ -103,11 +105,11 @@ def main():
         for k in cnt:
             totals[k] += cnt[k]
         rows.append((idx, m['name'], n, cnt, ov))
-    lines = ['| # | menu | items | one line | raised | stacked | icons | hidden | overlaps |', '|--:|---|--:|--:|--:|--:|--:|--:|--:|']
+    lines = ['| # | menu | items | one line | raised | stacked | icons | moved | hidden | overlaps |', '|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|']
     for idx, name, n, cnt, ov in rows:
         verdict = ('%d/%d' % (ov, n)) if n else 'not drawn'
-        lines.append('| %d | %s | %d | %d | %d | %d | %d | %d | %s |' % (idx, name, n, cnt['L'], cnt['R'], cnt['S'], cnt['I'], cnt['-'], verdict))
-    lines.append('| | **all** | %d | %d | %d | %d | %d | %d | **%d/%d** |' % (totals['items'], totals['L'], totals['R'], totals['S'], totals['I'], totals['-'], totals['overlap'], totals['items']))
+        lines.append('| %d | %s | %d | %d | %d | %d | %d | %d | %d | %s |' % (idx, name, n, cnt['L'], cnt['R'], cnt['S'], cnt['I'], cnt['M'], cnt['-'], verdict))
+    lines.append('| | **all** | %d | %d | %d | %d | %d | %d | %d | **%d/%d** |' % (totals['items'], totals['L'], totals['R'], totals['S'], totals['I'], totals['M'], totals['-'], totals['overlap'], totals['items']))
     if skipped:
         lines.append('')
         lines.append('not drawn by the crawler (hang / crash): ' + ', '.join('%d %s' % s for s in skipped))
