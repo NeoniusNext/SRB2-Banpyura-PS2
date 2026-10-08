@@ -16,27 +16,33 @@
 
 #define SPR_MAXENT 512 // entries of the list of the sprites, SPR_MAXSHD of the shadows; a full list is drawn at once
 #define SPR_MAXSHD 160
+#define SPR_NGROUP 16 // plans (groups of equal surface) of a list that are told apart; the entries of the last group may differ
 
 typedef ps2spr_t spr_ent_t;
 
-#define SPR_KW 8 // words of the surface key of a record
+typedef struct
+{
+	u64 k[4];
+} sprkey_t; // what of a record and of its texture makes the plan of the stream: four doublewords
 
 static struct
 {
 	spr_ent_t *ent[2]; // [0] shadows, [1] sprites (zone blocks, PS2HWD_Init)
 	u32 n[2], cap[2];
+	u8 gid[512]; // the group of every entry of the list being drawn (0xFF: skipped, 0xFE: the way of the single draws)
 	int in_flush; // diagnostics: PS2HWD_SprFlush is running
 	// the plan the sprite chunk is in
 	int valid;
-	u32 kw[SPR_KW]; // the surface key of the plan
+	sprkey_t kw; // the surface key of the plan
 	u32 vw[16]; // the view key of the plan
 	u32 serial, cgen, epoch, palgen;
+	texrec_t *touched; // the record of the texture the last record of the stream was written for (its LRU touch and draw mark are made)
 	u32 alpha_var; // the plan takes the alpha of the vertices from the record (every blend but Subtractive)
 	u32 fixed_alpha; // else: the alpha of the plan's colour
 	// the view of the flush in progress
 	u32 cur_vw[16];
 	// statistics
-	u32 st_why[8];
+	u32 st_why[8], st_kw[8];
 	u32 st_kept, st_flush, st_plans, st_fb, st_uploads, st_rj_gate, st_rj_tex, st_rj_para, st_rj_geom, st_rj_full;
 } SPR;
 
@@ -101,20 +107,16 @@ static inline u32 spr_pcol(u32 flags, const FSurfaceInfo *s)
 	return s->PolyColor.rgba & 0x00FFFFFFu; // the alpha of the polygon is the alpha of the vertices (col_lut), taken from the record
 }
 
-static inline void spr_key_make(u32 *k, const spr_ent_t *e, u32 kind)
+static inline void spr_key_make(sprkey_t *k, const spr_ent_t *e, u32 kind)
 {
-	k[0] = e->flags;
-	k[1] = spr_pcol(e->flags, &e->surf);
-	k[2] = e->surf.TintColor.rgba;
-	k[3] = e->surf.FadeColor.rgba;
-	k[4] = e->surf.LightTableId;
-	k[5] = (u32)e->surf.LightInfo.fade_start | ((u32)e->surf.LightInfo.fade_end << 8) | ((u32)e->shader << 16);
-	k[6] = kind;
-	k[7] = 0;
+	k->k[0] = (u64)e->flags | ((u64)(u32)e->shader << 32);
+	k->k[1] = (u64)spr_pcol(e->flags, &e->surf) | ((u64)e->surf.TintColor.rgba << 32);
+	k->k[2] = (u64)e->surf.FadeColor.rgba | ((u64)e->surf.LightTableId << 32);
+	k->k[3] = (u64)((u32)e->surf.LightInfo.fade_start | ((u32)e->surf.LightInfo.fade_end << 8)) | ((u64)kind << 32);
 }
 
 // the plan of the stream for this record (begin_draw with its surface and the texture of r, the constants of the VU1 programs, the GS state of the plan). 0: the stream cannot take it
-static int spr_plan_make(const spr_ent_t *e, texrec_t *r, const u32 *kw)
+static int spr_plan_make(const spr_ent_t *e, texrec_t *r, const sprkey_t *kw)
 {
 	pass_t *ps;
 
@@ -134,7 +136,8 @@ static int spr_plan_make(const spr_ent_t *e, texrec_t *r, const u32 *kw)
 	if (!vu_plan_setup())
 		return 0;
 	SPR.valid = 1;
-	memcpy(SPR.kw, kw, sizeof SPR.kw);
+	SPR.touched = NULL;
+	SPR.kw = *kw;
 	memcpy(SPR.vw, SPR.cur_vw, sizeof SPR.vw);
 	SPR.serial = H.serial;
 	SPR.cgen = VU.cgen;
@@ -146,14 +149,30 @@ static int spr_plan_make(const spr_ent_t *e, texrec_t *r, const u32 *kw)
 	return 1;
 }
 
-// the record of one sprite into the open chunk of the sprite program
-static void spr_record(const spr_ent_t *e, const texrec_t *r)
+// the records of a flush are written straight into the ring: the position and the room live in locals of the loop, and are counted into the chunk when the loop leaves it
+typedef struct
 {
-	qw_t *o;
-	u32 alpha;
-	u64 t0, cl;
-	int wms = r->wrapx ? 0 : 1, wmt = r->wrapy ? 0 : 1;
-	const float sx = r->sxs, sy = r->sys;
+	qw_t *o; // the next record, NULL: no chunk of ours is open
+	u32 cnt, cap; // written since the chunk was last counted, room for so many more
+} sprw_t;
+
+static inline void spr_w_sync(sprw_t *w)
+{
+	if (w->cnt)
+	{
+		H.wr += w->cnt * 6;
+		VU.chunk_n += w->cnt * 6;
+		VU.npoly += w->cnt;
+		H.st.polys += w->cnt;
+		H.st.verts_in += w->cnt * 4;
+		w->cnt = 0;
+	}
+	w->o = NULL;
+}
+
+static void spr_w_open(sprw_t *w)
+{
+	u32 a, b;
 
 	if (VU.open && (VU.kind != 1 || VU.chunk_n + 6 > VU_CHUNK_QW || H.wr + 6 + 3 > BUF_QW))
 		vu_chunk_end();
@@ -163,39 +182,11 @@ static void spr_record(const spr_ent_t *e, const texrec_t *r)
 			pk_flush();
 		vu_chunk_open(1);
 	}
-	if (e->flags & PF_ForceWrapX)
-		wms = 0;
-	if (e->flags & PF_RemoveYWrap)
-		wmt = 1;
-	if (e->flags & PF_ForceWrapY)
-		wmt = 0;
-	cl = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34);
-	t0 = (u64)r->blk | ((u64)r->tbw << 14) | ((u64)r->psm << 20) | ((u64)r->tw << 26) | ((u64)r->th << 30) | ((u64)(r->notcc ? 0 : 1) << 34); // (the CLUT: loaded by the program; no decal)
-	alpha = SPR.alpha_var ? (u32)col_lut[e->surf.PolyColor.s.alpha] : SPR.fixed_alpha;
-	o = H.ring[H.cur] + H.wr;
-	o[0].w[0] = 1;
-	o[0].f[1] = (float)(int)e->surf.LightInfo.light_level;
-	o[0].w[2] = alpha;
-	o[0].f[3] = e->sl * sx;
-	o[1].f[0] = e->p0[0];
-	o[1].f[1] = e->p0[1];
-	o[1].f[2] = e->p0[2];
-	o[1].f[3] = e->tt * sy;
-	o[2].f[0] = e->r[0];
-	o[2].f[1] = e->r[1];
-	o[2].f[2] = e->r[2];
-	o[2].f[3] = e->sr * sx;
-	o[3].f[0] = e->u[0];
-	o[3].f[1] = e->u[1];
-	o[3].f[2] = e->u[2];
-	o[3].f[3] = e->tb * sy;
-	ad_set(&o[4], t0, GSR_TEX0_1);
-	ad_set(&o[5], cl, GSR_CLAMP_1);
-	H.wr += 6;
-	VU.chunk_n += 6;
-	VU.npoly++;
-	H.st.polys++;
-	H.st.verts_in += 4;
+	w->o = H.ring[H.cur] + H.wr;
+	w->cnt = 0;
+	a = (VU_CHUNK_QW - VU.chunk_n) / 6;
+	b = (BUF_QW - 3 - H.wr) / 6;
+	w->cap = a < b ? a : b;
 }
 
 // a record the stream cannot draw: the way of the single draws (the plan of the stream is gone)
@@ -216,85 +207,183 @@ static void spr_fallback(const spr_ent_t *e)
 		v[k].t = (k >= 2) ? e->tt : e->tb;
 	}
 	SPR.valid = 0;
+	SPR.touched = NULL;
 	SPR.st_fb++;
 	H.shader = e->shader;
 	settex_now(e->tex);
 	hw_DrawPolygon(&surf, v, 4, e->flags);
 }
 
-// draws a list: the records in the order they came
+// draws a list: the entries are grouped by plan (the surface of the sector: the colours of its colormap, its light table; a frame has a few) and drawn group by group, the
+// entries of a group in the order they came: they are opaque sprites or drop shadows, the order of the groups does not matter to the picture (the depth buffer decides) and a plan
+// per group is a few thousand cycles where a plan for every change of sector (the list is in the depth order) was two of three entries
 static void spr_flush_list(int which)
 {
-	spr_ent_t *e = SPR.ent[which];
+	spr_ent_t *e0 = SPR.ent[which];
 	const u32 n = SPR.n[which];
-	u32 i;
+	sprw_t w;
+	sprkey_t gk[SPR_NGROUP];
+	u8 *gid = SPR.gid;
+	u32 ng = 0, g, i;
+	texrec_t *lr = NULL; // the record of the texture of the last entry, and what the records of it need
+	u64 t0 = 0, cl = 0;
+	float sx = 1.0f, sy = 1.0f;
 
 	if (!n)
 		return;
 	SPR.n[which] = 0;
 	SPR.st_flush += n;
+	SPR.touched = NULL;
 	spr_view_make(SPR.cur_vw);
 	if (SPR.valid && memcmp(SPR.vw, SPR.cur_vw, sizeof SPR.vw))
 		SPR.valid = 0;
 	// the textures first: every one of the list resident before the first record is written. A texture that is still to be drawn weighs 60 against eviction (hw: evict_weight, batch
 	// phase 2), the others at most 31: the uploads of this loop take the room of the textures that are not pending, and what the loop below draws is never uploaded again (a patch whose
-	// data the zone dropped after its upload cannot be made again here: it would be skipped)
+	// data the zone dropped after its upload cannot be made again here: it would be skipped). The same pass sorts the entries into groups of one plan.
 	for (i = 0; i < n; i++)
 	{
-		if (!rec_of(e[i].tex))
+		const spr_ent_t *e = &e0[i];
+		texrec_t *r = rec_of((const GLMipmap_t *)e->tex);
+		sprkey_t k;
+
+		if (!r)
 		{
+			SPR.st_uploads++;
+			settex_now((GLMipmap_t *)e->tex);
+			r = rec_of((const GLMipmap_t *)e->tex);
+			if (r)
+				H.rec[img_of((int)(r - H.rec))].done = 0; // (settex_now marked it drawn: it is not yet)
+		}
+		if (!r)
+		{
+			gid[i] = 0xFF; // not resident (no room or no data): the draw is skipped, as the batch skips it
+			continue;
+		}
+		if (r->psm != PSM_T8 || (r->clut != 1 && r->clut != 2) || r->screen || r->wrapx || r->wrapy || (e->flags & (PF_ForceWrapX | PF_ForceWrapY | PF_RemoveYWrap)))
+		{
+			gid[i] = 0xFE; // not for the stream: the way of the single draws (below)
+			continue;
+		}
+		spr_key_make(&k, e, spr_kind(r));
+		for (g = 0; g < ng; g++)
+			if (!((k.k[0] ^ gk[g].k[0]) | (k.k[1] ^ gk[g].k[1]) | (k.k[2] ^ gk[g].k[2]) | (k.k[3] ^ gk[g].k[3])))
+				break;
+		if (g == ng)
+		{
+			if (ng < SPR_NGROUP)
+				gk[ng++] = k;
+			else
+				g = SPR_NGROUP - 1; // (too many plans: the last group changes its plan whenever its entries differ)
+		}
+		gid[i] = (u8)g;
+	}
+	w.o = NULL;
+	w.cnt = w.cap = 0;
+	for (g = 0; g < ng; g++)
+	{
+		const int multi = g == SPR_NGROUP - 1 && ng == SPR_NGROUP; // the entries of this group may have different plans
+		int plan_ok = 0;
+
+		for (i = 0; i < n; i++)
+		{
+			const spr_ent_t *e = &e0[i];
 			texrec_t *r;
 
-			SPR.st_uploads++;
-			settex_now(e[i].tex);
-			r = rec_of(e[i].tex);
-			if (r)
+			if (gid[i] != g)
+				continue;
+			r = rec_of((const GLMipmap_t *)e->tex);
+			if (!r)
+				continue;
+			if (!plan_ok || multi)
 			{
-				H.rec[img_of((int)(r - H.rec))].done = 0; // (settex_now marked it drawn: it is not yet)
-			}
-			else
-			{
-				static unsigned nmsg;
+				sprkey_t k;
+				const sprkey_t *pk = &gk[g];
 
-				if (nmsg++ < 12)
-					CONS_Printf("HWSPR not resident: list %d entry %u of %u tex=%p dl_now=%u data=%p fmt=%d %ux%u frame=%u phase=%d\n", which, i, n, e[i].tex, (unsigned)((GLMipmap_t *)e[i].tex)->downloaded,
-						(void *)((GLMipmap_t *)e[i].tex)->data, (int)((GLMipmap_t *)e[i].tex)->format, (unsigned)((GLMipmap_t *)e[i].tex)->width, (unsigned)((GLMipmap_t *)e[i].tex)->height, (unsigned)H.frame_no, batch_phase);
+				if (multi)
+				{
+					spr_key_make(&k, e, spr_kind(r));
+					pk = &k;
+				}
+				if (!(SPR.valid && SPR.serial == H.serial && SPR.cgen == VU.cgen && SPR.epoch == H.clut_epoch && SPR.palgen == H.pal_gen && VU.consts_ok
+					&& !((pk->k[0] ^ SPR.kw.k[0]) | (pk->k[1] ^ SPR.kw.k[1]) | (pk->k[2] ^ SPR.kw.k[2]) | (pk->k[3] ^ SPR.kw.k[3]))))
+				{
+					const int idx = (int)(r - H.rec);
+					int ok;
+
+					SPR.st_why[!SPR.valid ? 0 : SPR.serial != H.serial ? 1 : SPR.cgen != VU.cgen ? 2 : SPR.epoch != H.clut_epoch ? 3 : SPR.palgen != H.pal_gen ? 4 : !VU.consts_ok ? 5 : 6]++;
+					spr_w_sync(&w);
+					ok = spr_plan_make(e, r, pk);
+					lr = NULL; // (the plan may have written to the ring and the record table)
+					if (ok < 0)
+						continue;
+					if (!ok)
+					{
+						spr_fallback(e);
+						continue;
+					}
+					r = &H.rec[idx];
+					SPR.touched = NULL;
+				}
+				plan_ok = 1;
+			}
+			if (r != lr)
+			{
+				// another texture than the last entry's: what its records carry
+				const int idx = (int)(r - H.rec);
+
+				sx = r->sxs;
+				sy = r->sys;
+				cl = (u64)((r->region & 1) ? 2 : 1) | ((u64)((r->region & 2) ? 2 : 1) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34); // (a patch is clamped)
+				t0 = (u64)r->blk | ((u64)r->tbw << 14) | ((u64)r->psm << 20) | ((u64)r->tw << 26) | ((u64)r->th << 30) | ((u64)(r->notcc ? 0 : 1) << 34); // (the CLUT: loaded by the program; no decal)
+				lr = r;
+				if (r != SPR.touched)
+				{
+					H.cur_tex = idx;
+					plan_tex_touch(r);
+					H.rec[img_of(idx)].done = H.frame_no + 1;
+					SPR.touched = r;
+				}
+			}
+			if (!w.o || w.cnt >= w.cap)
+			{
+				spr_w_sync(&w);
+				spr_w_open(&w);
+			}
+			{
+				qw_t *o = w.o;
+				const u32 alpha = SPR.alpha_var ? (u32)col_lut[e->surf.PolyColor.s.alpha] : SPR.fixed_alpha;
+
+				o[0].w[0] = 1;
+				o[0].f[1] = (float)(int)e->surf.LightInfo.light_level;
+				o[0].w[2] = alpha;
+				o[0].f[3] = e->sl * sx;
+				o[1].f[0] = e->p0[0];
+				o[1].f[1] = e->p0[1];
+				o[1].f[2] = e->p0[2];
+				o[1].f[3] = e->tt * sy;
+				o[2].f[0] = e->r[0];
+				o[2].f[1] = e->r[1];
+				o[2].f[2] = e->r[2];
+				o[2].f[3] = e->sr * sx;
+				o[3].f[0] = e->u[0];
+				o[3].f[1] = e->u[1];
+				o[3].f[2] = e->u[2];
+				o[3].f[3] = e->tb * sy;
+				ad_set(&o[4], t0, GSR_TEX0_1);
+				ad_set(&o[5], cl, GSR_CLAMP_1);
+				w.o = o + 6;
+				w.cnt++;
 			}
 		}
 	}
-	for (i = 0; i < n; i++, e++)
+	spr_w_sync(&w);
+	for (i = 0; i < n; i++)
 	{
-		texrec_t *r = rec_of(e->tex);
-		u32 kw[SPR_KW];
-		int idx;
-
-		if (!r)
-			continue; // not resident (no room or no data): the draw is skipped, as the batch skips it
-		idx = (int)(r - H.rec);
-		if (r->psm != PSM_T8 || (r->clut != 1 && r->clut != 2) || r->screen || r->wrapx || r->wrapy)
+		if (gid[i] == 0xFE)
 		{
-			spr_fallback(e);
-			continue;
+			spr_fallback(&e0[i]);
+			SPR.touched = NULL;
 		}
-		spr_key_make(kw, e, spr_kind(r));
-		if (!SPR.valid || SPR.serial != H.serial || SPR.cgen != VU.cgen || SPR.epoch != H.clut_epoch || SPR.palgen != H.pal_gen || !VU.consts_ok || memcmp(SPR.kw, kw, sizeof kw))
-		{
-			SPR.st_why[!SPR.valid ? 0 : SPR.serial != H.serial ? 1 : SPR.cgen != VU.cgen ? 2 : SPR.epoch != H.clut_epoch ? 3 : SPR.palgen != H.pal_gen ? 4 : !VU.consts_ok ? 5 : 6]++;
-			const int ok = spr_plan_make(e, r, kw);
-
-			if (ok < 0)
-				continue;
-			if (!ok)
-			{
-				spr_fallback(e);
-				continue;
-			}
-			r = &H.rec[idx];
-		}
-		H.cur_tex = idx;
-		plan_tex_touch(r);
-		H.rec[img_of(idx)].done = H.frame_no + 1;
-		spr_record(e, r);
 	}
 }
 
@@ -453,6 +542,8 @@ void PS2HWD_SprProf(unsigned int frames)
 		SPR.st_plans / frames, SPR.st_fb / frames, SPR.st_uploads / frames, VU.stat_sprchunks / frames, SPR.st_rj_gate / frames, SPR.st_rj_tex / frames, SPR.st_rj_para / frames, SPR.st_rj_geom / frames, SPR.st_rj_full / frames,
 		(unsigned)(G.spr_cyc / frames));
 	I_OutputMsg("HWPROF43 plan made because: invalid=%u serial=%u cgen=%u epoch=%u palgen=%u consts=%u key=%u\n", SPR.st_why[0] / frames, SPR.st_why[1] / frames, SPR.st_why[2] / frames, SPR.st_why[3] / frames, SPR.st_why[4] / frames, SPR.st_why[5] / frames, SPR.st_why[6] / frames);
+	I_OutputMsg("HWPROF44 key words that differ: flags=%u shader=%u colour=%u tint=%u fade+table=%u fade-range=%u kind=%u\n", SPR.st_kw[0] / frames, SPR.st_kw[1] / frames, SPR.st_kw[2] / frames, SPR.st_kw[3] / frames, SPR.st_kw[4] / frames, SPR.st_kw[5] / frames, SPR.st_kw[6] / frames);
+	memset(SPR.st_kw, 0, sizeof SPR.st_kw);
 	memset(SPR.st_why, 0, sizeof SPR.st_why);
 	SPR.st_kept = SPR.st_flush = SPR.st_plans = SPR.st_fb = SPR.st_uploads = SPR.st_rj_gate = SPR.st_rj_tex = SPR.st_rj_para = SPR.st_rj_geom = SPR.st_rj_full = 0;
 	VU.stat_sprchunks = 0;

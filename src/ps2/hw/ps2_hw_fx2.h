@@ -18,6 +18,7 @@
 // OPT11 round 3 (FX3), measurement only: bit 13 (0x2000) draws no sprites and no shadows (HWR_DrawSprites does nothing): the difference of two runs is what the drawing costs
 #define FX3_NODRAW 0x2000
 #define FX3_NOSPR 0x40000 // PS2-HW-255 (FX3): the sprite stream (VU1 sprite program) is off: sprites and shadows go through the batch as before
+#define FX3_NOLEAN2 0x100000 // PS2-HW-257 (FX3): the projection of a thing as before (the exact quad test, W_CachePatchNum, R_GetTranslationForThing for every thing)
 #define FX3_NOSPR2 0x80000 // PS2-HW-256 (FX3): the sprite stream takes the polygon of HWR_DrawSprite (no builder straight from the vissprite)
 #define FX3_NOPLAIN 0x20000 // PS2-HW-254 (FX3): HWR_ProjectSprite for every thing (the plain sprite path is off)
 #define FX3_NOLEAN 0x10000 // PS2-HW-253 (FX3): the lean paths of the sprite batch (planner call, collect, sort) are off, as before

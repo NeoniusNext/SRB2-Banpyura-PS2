@@ -3198,6 +3198,10 @@ static FSurfaceInfo hwr_fx_lm_surf;
 static int hwr_fx_spr_shader; // the shader slot of SHADER_SPRITE (what HWR_ProcessPolygon asks of HWR_ShaderOfTarget)
 static ps2spr_t hwr_fx_chk; // check mode (-hwfx 2): what the stream's builder made of the sprite, HWR_DrawSprite compares it with the polygon it makes
 static boolean hwr_fx_chk_ok;
+static boolean hwr_fx_cheap; // PS2-HW-257 on for this view
+static const ps2cull_t *hwr_fx_cs; // the view of the driver for the sphere tests of this sector's things (HWR_AddSprites), NULL: not valid
+static UINT32 hwr_fx_view; // counts the views (HWR_ClearSprites): the patch cache below is made again in every view
+static struct { lumpnum_t ln; UINT32 view; patch_t *p; } hwr_fx_pc[256]; // the patches of the sprite lumps of this view (W_CachePatchNum is two calls and a tag change: 150 cycles for each of the 300 sprites of a frame)
 
 // PS2-HW-248: R_ThingVisible with what does not change in a view made once per view (it was 70 cycles for each of the 1771 things of a DEMO_004 frame)
 static inline boolean HWR_FX_ThingVisible(mobj_t *thing)
@@ -3287,6 +3291,8 @@ static void HWR_ClearSprites(void)
 	hwr_fx_lerp = hwr_fx_interp && rendertimefrac != FRACUNIT; // (PS2-HW-240)
 	hwr_fx_plain = !cv_glmodels.value && r_renderthings && !(ps2hwd_fx2 & FX3_NOPLAIN); // PS2-HW-254
 	hwr_fx_lm_ok = false;
+	hwr_fx_cheap = !(ps2hwd_fx2 & FX3_NOLEAN2);
+	hwr_fx_view++;
 	hwr_fx_spr_shader = HWR_GetShaderFromTarget(SHADER_SPRITE);
 	hwr_fx_rsin = FIXED_TO_FLOAT(FINESINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
 	hwr_fx_rcos = FIXED_TO_FLOAT(FINECOSINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
@@ -5727,6 +5733,9 @@ static void HWR_AddSprites(sector_t *sec)
 
 		if (cs && !cs->valid)
 			cs = NULL;
+		hwr_fx_cs = cs ? cs : PS2HWD_CullSetup();
+		if (!hwr_fx_cs->valid)
+			hwr_fx_cs = NULL;
 		for (thing = sec->thinglist; thing; thing = thing->snext)
 		{
 			HWD_ADD(HWC_FX_THINGS);
@@ -5923,6 +5932,49 @@ static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, floa
 
 #ifdef PS2_PROFILE
 // --------------------------------------------------------------------------
+// PS2-HW-257 (OPT11 round 3, FX3): what the sprite stream makes cheaper in the projection of a thing (-hwfx 1048576 = FX3_NOLEAN2: as before)
+//  * the exact test of the quad (PS2HWD_ParaHidden: no pixel centre inside it, 600 cycles) is replaced by the sphere test of the view (60 cycles): a sprite the VU1 program throws out for
+//    nothing costs the EE a record (the sprite is not drawn either way: the stream draws what the GS rasterises, and the GS draws nothing for a quad without a pixel centre);
+//  * the patch of a sprite lump is looked up once in a view (W_CachePatchNum: the tag of the block is changed once, the pointer is kept for the other sprites of the lump);
+//  * the colour map of a thing that has none (no skin colour, no translation, not a player sprite, not flashing) is not asked for.
+// --------------------------------------------------------------------------
+static inline boolean HWR_FX_SpriteHiddenCheap(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey)
+{
+	float R, lo, hi;
+
+	if (!hwr_fx_cs)
+		return false;
+	// a sphere around the quad that holds every corner of it, whatever the aim rotation (about the foot at basey) and the display offset do to the corners
+	lo = fabsf(gz - basey);
+	hi = fabsf(gzt - basey);
+	R = 0.5f * (fabsf(x2 - x1) + fabsf(z2 - z1)) + 2.0f * (lo > hi ? lo : hi) + 0.05f * (float)abs(dispoffset);
+	return HWR_FX_SphereHidden(hwr_fx_cs, 0.5f * (x1 + x2), 0.5f * (gz + gzt), 0.5f * (z1 + z2), R * 1.002f + 1.0f);
+}
+
+static inline patch_t *HWR_FX_SpritePatch(lumpnum_t ln)
+{
+	const UINT32 h = (UINT32)(ln ^ (ln >> 8)) & 255u;
+
+	if (hwr_fx_pc[h].view == hwr_fx_view && hwr_fx_pc[h].ln == ln && hwr_fx_pc[h].p)
+		return hwr_fx_pc[h].p;
+	{
+		patch_t *p = (patch_t *)W_CachePatchNum(ln, PU_SPRITE);
+
+		hwr_fx_pc[h].view = hwr_fx_view;
+		hwr_fx_pc[h].ln = ln;
+		hwr_fx_pc[h].p = p;
+		return p;
+	}
+}
+
+static inline UINT8 *HWR_FX_ThingTranslation(mobj_t *thing)
+{
+	if (thing->color == SKINCOLOR_NONE && thing->translation == 0 && thing->sprite != SPR_PLAY && !R_ThingIsFlashing(thing))
+		return NULL; // (what R_GetTranslationForThing ends with for such a thing)
+	return R_GetTranslationForThing(thing, thing->color, thing->translation);
+}
+
+// --------------------------------------------------------------------------
 // PS2-HW-254 (OPT11 round 3, FX3): HWR_ProjectSprite for the plain sprite: no skin, no overlay, no link draw, no floor or paper sprite, no roll, no absolute offsets, no shadow
 // effects, no model. What the full function does for such a thing, in the same arithmetic and the same order of the checks, without what it is there for the others (the
 // skin and rotation sprite paths, the tracer of a link draw, the floor sprite, the caster of a shadow effect), with the per-view values made once (HWR_ClearSprites).
@@ -6117,7 +6169,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 			const boolean aim = cv_glspritebillboarding.value && fabsf(gl_viewludcos) > 1.0e-6f;
 			const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-			if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+			if ((hwr_fx_cheap && !(ps2hwd_fx2 & FX3_NOSPR)) ? HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
 			{
 				HWD_ADD(HWC_FX_QHID);
 				if (!(ps2hwd_dbg_flags & 0x1000000))
@@ -6156,9 +6208,9 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 	vis->spritexoffset = FIXED_TO_FLOAT(spr_offset);
 	vis->spriteyoffset = FIXED_TO_FLOAT(spr_topoffset);
 	vis->rotated = false;
-	vis->gpatch = (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
+	vis->gpatch = hwr_fx_cheap ? HWR_FX_SpritePatch(sprframe->lumppat[rot]) : (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
 	vis->mobj = thing;
-	vis->colormap = R_GetTranslationForThing(thing, thing->color, thing->translation);
+	vis->colormap = hwr_fx_cheap ? HWR_FX_ThingTranslation(thing) : R_GetTranslationForThing(thing, thing->color, thing->translation);
 	vis->gzt = gzt;
 	vis->gz = gz;
 	vis->vflip = vflip;
@@ -6692,7 +6744,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		const boolean aim = cv_glspritebillboarding.value && !papersprite && fabsf(gl_viewludcos) > 1.0e-6f; // as HWR_RotateSpritePolyToAim: not for a view that looks level
 		const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-		if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+		if ((hwr_fx_cheap && !(ps2hwd_fx2 & FX3_NOSPR)) ? HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
 		{
 			HWD_ADD(HWC_FX_QHID);
 			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds
