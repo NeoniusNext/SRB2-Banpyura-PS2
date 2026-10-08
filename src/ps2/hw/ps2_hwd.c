@@ -1611,9 +1611,7 @@ static void hw_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 	}
 	else if (IdState == HWD_SET_MODEL_LIGHTING)
 	{
-		H.model_light = Value;
-		if (Value)
-			hw_limit(HW_MODEL_LIGHT, "model normal lighting is not implemented; sector modulation used");
+		H.model_light = Value; // OPT11-MODEL (PS2-HW-264): the vertex light factor of the OpenGL model shader is implemented (ps2_hw_model.inc)
 	}
 	else if (IdState == HWD_SET_SHADERS)
 	{

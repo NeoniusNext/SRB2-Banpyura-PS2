@@ -33,6 +33,10 @@ typedef struct
 	boolean     noblendfile; // true if blend texture file was not found
 	boolean     found;
 	boolean     error;
+#ifdef PS2_PROFILE
+	UINT32      ps2_retry; // OPT11-MODEL: frame number before which a model that did not fit in memory is not asked for again
+	UINT32      ps2_pal; // hash of the texture palette the 8 bit texture was made for (0 = none)
+#endif
 } md2_t;
 
 #ifdef PS2_DYNLIMITS

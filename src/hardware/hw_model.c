@@ -288,6 +288,14 @@ void LoadModelInterpolationSettings(model_t *model)
 	#undef GET_OFFSET
 }
 
+#ifdef PS2_PROFILE
+// OPT11-MODEL (PS2-HW-263): with the dynamic limits NUMPLAYERSPRITES is 1025 (4.2 MB per skin table in the engine): these two tables were 1.05 MB EACH per player model, on a console
+// with 2.5 MB to spare. The tables only need the sprite 2 names that exist (free_spr2) and never more than the limit in force.
+#define MODEL_SPR2_TABLE ((int)(free_spr2 > LIMIT_NUMPLAYERSPRITES ? free_spr2 : LIMIT_NUMPLAYERSPRITES))
+#else
+#define MODEL_SPR2_TABLE NUMPLAYERSPRITES
+#endif
+
 void LoadModelSprite2(model_t *model)
 {
 	INT32 i;
@@ -340,13 +348,13 @@ void LoadModelSprite2(model_t *model)
 					if (!memcmp(spr2names[spr2idx], name, 4))
 					{
 						if (!spr2frames)
-							spr2frames = (modelspr2frames_t*)Z_Calloc(sizeof(modelspr2frames_t)*NUMPLAYERSPRITES, PU_STATIC, NULL);
+							spr2frames = (modelspr2frames_t*)Z_Calloc(sizeof(modelspr2frames_t)*MODEL_SPR2_TABLE, PU_STATIC, NULL);
 						frames = spr2frames;
 
 						if (super)
 						{
 							if (!superspr2frames)
-								superspr2frames = (modelspr2frames_t*)Z_Calloc(sizeof(modelspr2frames_t)*NUMPLAYERSPRITES, PU_STATIC, NULL);
+								superspr2frames = (modelspr2frames_t*)Z_Calloc(sizeof(modelspr2frames_t)*MODEL_SPR2_TABLE, PU_STATIC, NULL);
 							frames = superspr2frames;
 						}
 
