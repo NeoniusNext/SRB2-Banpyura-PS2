@@ -91,6 +91,29 @@ int main(void)
 				}
 			}
 			printf("EETEST mixer edge cases (voices ending inside blocks, odd start/pan/gain)   hash %016llx\n", (unsigned long long)h);
+			/* the pitch changes between blocks: the voice reaches step 2.0 with a non-zero fraction and leaves it again */
+			h = 14695981039346656037ull;
+			for (it = 0; it < 300; it++)
+			{
+				ps2_sample sm[6];
+				int hd[6];
+				PS2_MixerInit(&mixer);
+				for (v = 0; v < 6; v++)
+				{
+					sm[v] = (v & 1) ? d16 : d8;
+					st = st * 1664525u + 1013904223u; sm[v].pcm.frames = 500 + (st >> 8) % 6000;
+					st = st * 1664525u + 1013904223u; sm[v].bytes = (const uint8_t *)(v & 1 ? (const uint8_t *)buf16 + 2 * ((st >> 8) % 200) : buf8 + (st >> 8) % 200);
+					st = st * 1664525u + 1013904223u;
+					hd[v] = PS2_MixerStart(&mixer, &sm[v], v, 1 + (st >> 8) % 255, (st >> 4) % 256, 100 + (st >> 20) % 29);
+				}
+				for (k = 0; k < 8; k++)
+				{
+					for (v = 0; v < 6; v++) { st = st * 1664525u + 1013904223u; PS2_MixerParams(&mixer, hd[v], 1 + (st >> 8) % 255, (st >> 4) % 256, (st >> 20) % 3 ? 128 : 100 + (st >> 12) % 29); }
+					PS2_MixerRender(&mixer, out, NULL, 512, 0);
+					h = fnv(h, out, 2048);
+				}
+			}
+			printf("EETEST mixer pitch changes (step 2.0 reached with a fraction)              hash %016llx\n", (unsigned long long)h);
 		}
 	}
 	printf("EETEST DONE\n");

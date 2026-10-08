@@ -411,6 +411,38 @@ static __attribute__((noinline)) size_t MixDec2Mono16(int32_t *accum, const uint
 #undef MMI_DIV256_ABCD
 #endif
 
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+// PS2-318: a mono voice with step exactly 2.0 (44.1 kHz source at normal pitch): the fraction never changes and the source frame advances by 2 per
+// output frame, so the MMI kernel takes whole groups (16 frames for 8-bit, 8 for 16-bit) while all 2*group source frames are inside the sample,
+// then a scalar loop finishes the rest and ends the voice at the right frame (the same arithmetic as the generic loop of MixVoice).
+static __attribute__((noinline)) void MixDec2Voice(ps2_voice *v, int32_t *accum, size_t block, const uint8_t *data,
+	uint32_t frames, int bits, int left, int right)
+{
+	uint32_t frame = v->frame;
+	const size_t want = bits == 8 ? 16 : 8;
+	const size_t cap = frame < frames ? (size_t)((frames - frame) / (2 * want)) * want : 0;
+	const size_t n = block < cap ? block : cap;
+	size_t f = 0;
+	if (n >= want)
+	{
+		f = bits == 8 ? MixDec2Mono8(accum, data + (size_t)frame, n, left, right) : MixDec2Mono16(accum, data + (size_t)frame * 2, n, left, right);
+		frame += (uint32_t)(2 * f);
+	}
+	for (; f < block; f++, frame += 2)
+	{
+		int l;
+		if (frame >= frames) { v->sample = NULL; break; }
+		if (bits == 8) { l = (int)data[frame] - 128; accum[f*2] += l * left; accum[f*2+1] += l * right; }
+		else
+		{
+			l = (int16_t)(data[(size_t)frame * 2] | (unsigned)data[(size_t)frame * 2 + 1] << 8);
+			accum[f*2] += Div256(l * left); accum[f*2+1] += Div256(l * right);
+		}
+	}
+	v->frame = frame;
+}
+#endif
+
 // One voice into the accumulator for up to `block` output frames. Same arithmetic as PS2_PCMValue + the per-sample
 // cursor update, with the cursor in registers: nothing is re-read through the voice after each store.
 // bits: 8 or 16 (constant at each call site), stereo: source has two channels, aligned: 16-bit data is 2-byte aligned.
@@ -447,20 +479,9 @@ static ALWAYS_INLINE void MixVoice(ps2_voice *v, int32_t *accum, size_t block, c
 		return;
 	}
 #if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
-	// PS2-318: step exactly 2.0 (44.1 kHz source): the even source frames, sixteen (8 bit) / eight (16 bit) output frames at a time while all 2*want
-	// source frames of the group are inside the sample; the scalar loop below finishes the rest (and ends the voice at the right frame)
-	if (step == 131072 && !stereo)
-	{
-		const size_t want = bits == 8 ? 16 : 8;
-		const size_t cap = frame < frames ? (size_t)((frames - frame) / (2 * want)) * want : 0;
-		const size_t n = block < cap ? block : cap;
-		if (n >= want)
-		{
-			size_t done = bits == 8 ? MixDec2Mono8(accum, data + (size_t)frame, n, left, right)
-				: MixDec2Mono16(accum, data + (size_t)frame * 2, n, left, right);
-			frame += (uint32_t)(2 * done); accum += done * 2; block -= done;
-		}
-	}
+	// PS2-318: step exactly 2.0 (44.1 kHz mono source): a function of its own, so that the generic loop below keeps the code GCC made of it
+	// before this step (with the pre-pass inside, its loop got a second counter and ran 10 % slower)
+	if (step == 131072 && !stereo) { MixDec2Voice(v, accum, block, data, frames, bits, left, right); return; }
 #endif
 	for (f = 0; f < block; f++)
 	{
