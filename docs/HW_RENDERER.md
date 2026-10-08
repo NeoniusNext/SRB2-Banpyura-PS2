@@ -141,7 +141,7 @@ Details, numbers and what was not reached: `docs/GATES/g1/opt11-FX.md` section 6
 
 ## OPT11 round 2, GEOM2 (2026-10-08): the engine side of the walk - geometry cache of walls, determinism tools
 
-Details, numbers, commands: `docs/GATES/g1/opt11-GEOM.md` (round 2, R2.1..R2.7; registry PS2-HW-200..219).
+Details, numbers, commands: `docs/GATES/g1/opt11-GEOM.md` (round 2, R2.1..R2.9; registry PS2-HW-200..215).
 
 * **Geometry cache of the walls** (`hw_gcache.inc`, on by default): the polygons a seg makes (`HWR_ProcessSeg`) are recorded as the calls the function makes to the three sinks of the walk and made again when the key - plain words, the inputs of the function (sector versions, line and side words, texture numbers, ...) - is the same; exact, no hashing. Planes are cached with `-hwgc 1` (no gain after the block collection of PS2-HW-233: a hit costs about what the calculation does). 3D floors with an animated texture hit (the record is patched to the texture of the moment: PS2-HW-213). The arena (640 KB) doubles while it is full and the zone has room; the zone can take it back (`Z_AddReclaimHook`).
 * **Determinism tools**: `-hwpolyhash` (HWPH line: `h=` all polygons, `w=` the polygons of the world only, `s=` heights/lights/flats of all sectors, `v=` the view), `tools/ps2/gm_polycmp.py A B [--world]`; `-singletics` on a map makes one tic for every frame drawn (PS2-HW-208: two runs of a map show the same frames); `-hwgc 2` calculates every hit again and compares; `build/mapcamp3.sh` (15 maps against the reference stream) in the worktree.
