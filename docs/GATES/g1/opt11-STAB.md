@@ -168,3 +168,11 @@ Software и Hardware: `PS2 pad: joystick 1 is port 1 / joystick 2 is port 2`, `-
 
 ### 9.7 `net` (начало, m10): список сценариев исправлен, ПК-сервер → PS2-клиент
 Два первых сценария `stab_run.sh net` (`ps2srv-pccli`, `pcsrv-ps2cli`) падали за 0 с: их спеки пишет `net_specs.py`, а этап вызывал только `net_specs9.py` (`FileNotFoundError`). Этап исправлен (оба генератора, актуальный список: режимы, аддоны, меню, обрывы, выход хоста, соак, HW). До остановки сессии прошли режимы ПК-сервер → PS2-клиент: Match, CTF, Race, Tag, Co-op: по 98–106 с, 63 общих отсчёта `NETSYNC` (gametic 35..2205), **0 отличий** у всех пяти.
+
+## 10. Прогон m11 (HEAD 369aa2b: слитая основная ветка (в ней после m9 только `assets/ps2ui`), исправления 8.2/8.4, выравнивание заголовка патча в `R_StreamTextureToFlat`, периодические строки lint; ELF `build/elf-m11.ELF`, 10 904 596 Б; лог `build/logs/stab-m11.txt`, прогоны `build/runs/m11-*`)
+Команда: `bash tools/ps2/stab_run.sh build/elf-m11.ELF m11 demos net interp files packs hwfb lint flats leak ui video split addons chainhw chainsw inject coldsw coldhw soak`. Сборка PS2 — 184/184 файлов, ПК-сборка (`build/pc-net`, `ninja`) собирается; правки общих файлов (`r_textures.c/.h`, `p_setup.c`, `z_zone.c`) — под `PS2`/`PS2_PROFILE`.
+
+### 10.1 `demos` — четыре демо до конца (PS2REF-ELF из того же дерева), в том числе проверка, что потоковая загрузка текстур не меняет software
+* **software: тики идентичны эталону ПК на 1050 строках ×4; кадры побитно против `golden/ps2-head` — 0 различий на всех четырёх (по 30 кадров)** (против ПК-снимков 2 / 1 / 4 / 4 кадра с 2 / 1 / 35 / 94 пикселями — как на m1 и m9).
+* **hardware: тики идентичны ПК на 1050 строках ×4, DEMO_003 доходит до конца (`Out of memory` и откатов нет)**; кадры отличаются от software ожидаемо (другой рендерер).
+* **hardware с отказом выделения каждые 200 кадров (`-zoomevery 200`): тики идентичны ×4**, по одному `OOM (recoverable)` на демо (кадры 414 / 516 / 201 / 203), все обработаны.
