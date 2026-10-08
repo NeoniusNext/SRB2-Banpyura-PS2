@@ -3187,6 +3187,10 @@ static patch_t *hwr_fx_dshadow; // the picture of the drop shadow of this frame 
 static boolean hwr_fx_blok; // R_BlendLevelVisible(AST_TRANSLUCENT, 0) (a thing of full alpha and the default blend mode), made once per view
 static boolean hwr_fx_viewok; // the view's object has not been removed (R_ThingVisible asks for every thing)
 static mobj_t *hwr_fx_follow; // ... and the object that follows the view's player
+static boolean hwr_fx_plain; // PS2-HW-254: HWR_ProjectPlain may be tried (this view draws sprites, not models)
+static float hwr_fx_rsin, hwr_fx_rcos; // the right vector of the view (sprites that face the viewer), made once per view
+static boolean HWR_ProjectPlain(mobj_t *thing);
+static void HWR_FX_ProjectChecked(mobj_t *thing);
 
 // PS2-HW-248: R_ThingVisible with what does not change in a view made once per view (it was 70 cycles for each of the 1771 things of a DEMO_004 frame)
 static inline boolean HWR_FX_ThingVisible(mobj_t *thing)
@@ -3274,6 +3278,9 @@ static void HWR_ClearSprites(void)
 	hwr_fx_follow = (hwr_fx_viewok && r_viewmobj->player) ? r_viewmobj->player->followmobj : NULL;
 	hwr_fx_interp = R_UsingFrameInterpolation() && !paused; // PS2-HW-245: asked once per view (the answer costs 100 cycles: the refresh rate of the display mode is looked up), not by every thing
 	hwr_fx_lerp = hwr_fx_interp && rendertimefrac != FRACUNIT; // (PS2-HW-240)
+	hwr_fx_plain = !cv_glmodels.value && r_renderthings && !(ps2hwd_fx2 & FX3_NOPLAIN); // PS2-HW-254
+	hwr_fx_rsin = FIXED_TO_FLOAT(FINESINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
+	hwr_fx_rcos = FIXED_TO_FLOAT(FINECOSINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
 	if (hwr_fx_ext_lumps != numspritelumps || hwr_fx_ext_wads != numwadfiles)
 	{
 		memset(hwr_fx_ext, 0, sizeof hwr_fx_ext); // the sprite pictures have changed (an add-on): the reaches are made again
@@ -5534,7 +5541,9 @@ static void HWR_AddSprites(sector_t *sec)
 							}
 						}
 					}
-					else
+					else if (hwr_fx_plain && (ps2hwd_fx2 & FX2_PRECHECK))
+						HWR_FX_ProjectChecked(thing);
+					else if (!(hwr_fx_plain && HWR_ProjectPlain(thing)))
 						HWR_ProjectSprite(thing);
 				}
 
@@ -5684,6 +5693,296 @@ static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, floa
 			}
 		}
 		return h;
+	}
+}
+#endif
+
+#ifdef PS2_PROFILE
+// --------------------------------------------------------------------------
+// PS2-HW-254 (OPT11 round 3, FX3): HWR_ProjectSprite for the plain sprite: no skin, no overlay, no link draw, no floor or paper sprite, no roll, no absolute offsets, no shadow
+// effects, no model. What the full function does for such a thing, in the same arithmetic and the same order of the checks, without what it is there for the others (the
+// skin and rotation sprite paths, the tracer of a link draw, the floor sprite, the caster of a shadow effect), with the per-view values made once (HWR_ClearSprites).
+// Returns false (nothing was done) for any other thing: HWR_ProjectSprite then makes it. -hwfx 131072 (FX3_NOPLAIN): always the full function.
+// --------------------------------------------------------------------------
+static boolean HWR_ProjectPlain(mobj_t *thing)
+{
+	gl_vissprite_t *vis;
+	interpmobjstate_t interp;
+	spritedef_t *sprdef;
+	spriteframe_t *sprframe;
+	size_t lumpoff;
+	unsigned rot;
+	UINT16 flip;
+	float tr_x, tr_y, tz, x1, x2, z1, z2, gz, gzt;
+	float this_scale, spritexscale, spriteyscale, this_xscale, this_yscale;
+	fixed_t spr_width, spr_height, spr_offset, spr_topoffset;
+	INT32 dispoffset, heightsec, phs;
+	boolean vflip, hflip;
+	const boolean lerp = hwr_fx_lerp && !(ps2hwd_fx2 & FX2_NOINTERP);
+	const INT32 frame = thing->frame;
+
+	if (thing->skin || thing->type == MT_OVERLAY || (thing->flags2 & (MF2_LINKDRAW | MF2_SPLAT)) || (frame & (FF_PAPERSPRITE | FF_FLOORSPRITE))
+		|| (thing->renderflags & (RF_PAPERSPRITE | RF_FLOORSPRITE | RF_ABSOLUTEOFFSETS | RF_SHADOWEFFECTS)) || thing->spriteroll || thing->old_spriteroll)
+		return false;
+	if ((UINT32)thing->sprite >= (UINT32)numsprites)
+		return false;
+	sprdef = &sprites[thing->sprite];
+	rot = (unsigned)(frame & FF_FRAMEMASK);
+	if (rot >= sprdef->numframes)
+		return false; // (the error path of the full function)
+	sprframe = &sprdef->spriteframes[rot];
+
+	// the visibility by the blend mode
+	if (frame & FF_TRANSMASK)
+	{
+		const INT32 blendmode = (frame & FF_BLENDMASK) ? ((frame & FF_BLENDMASK) >> FF_BLENDSHIFT) + 1 : thing->blendmode;
+
+		if (!R_BlendLevelVisible(blendmode, (frame & FF_TRANSMASK) >> FF_TRANSSHIFT))
+			return true;
+	}
+	dispoffset = thing->dispoffset;
+
+	if (lerp)
+	{
+		R_InterpolateMobjStateLite(thing, rendertimefrac, &interp);
+	}
+	else if (hwr_fx_interp && rendertimefrac != FRACUNIT)
+	{
+		R_InterpolateMobjState(thing, rendertimefrac, &interp);
+	}
+	else
+	{
+		interp.x = thing->x;
+		interp.y = thing->y;
+		interp.z = thing->z;
+		interp.scale = thing->scale;
+		interp.radius = thing->radius;
+		interp.height = thing->height;
+		interp.subsector = thing->subsector;
+		interp.angle = thing->player ? thing->player->drawangle : thing->angle;
+		interp.spritexscale = thing->spritexscale;
+		interp.spriteyscale = thing->spriteyscale;
+		interp.spritexoffset = thing->spritexoffset;
+		interp.spriteyoffset = thing->spriteyoffset;
+	}
+	if (interp.spritexscale < 1 || interp.spriteyscale < 1)
+		return true;
+
+	this_scale = FIXED_TO_FLOAT(interp.scale);
+	spritexscale = FIXED_TO_FLOAT(interp.spritexscale);
+	spriteyscale = FIXED_TO_FLOAT(interp.spriteyscale);
+
+	tr_x = FIXED_TO_FLOAT(interp.x) - gl_viewx;
+	tr_y = FIXED_TO_FLOAT(interp.y) - gl_viewy;
+	tz = (tr_x * gl_viewcos) + (tr_y * gl_viewsin);
+	if (tz < ZCLIP_PLANE)
+	{
+		HWD_ADD(HWC_FX_BEHIND);
+		return true;
+	}
+	tr_x = FIXED_TO_FLOAT(interp.x);
+	tr_y = FIXED_TO_FLOAT(interp.y);
+
+	vflip = (!(thing->eflags & MFE_VERTICALFLIP) != !R_ThingVerticallyFlipped(thing));
+	hflip = (!R_ThingHorizontallyFlipped(thing) != !thing->mirrored);
+
+	if (sprframe->rotate == SRF_SINGLE)
+	{
+		rot = 0;
+		lumpoff = sprframe->lumpid[0];
+		flip = sprframe->flip;
+	}
+	else
+	{
+		angle_t ang = R_PointToAngle(interp.x, interp.y) - interp.angle;
+
+		if (thing->mirrored)
+			ang = InvAngle(ang);
+		if ((sprframe->rotate & SRF_RIGHT) && (ang < ANGLE_180))
+			rot = 6;
+		else if ((sprframe->rotate & SRF_LEFT) && (ang >= ANGLE_180))
+			rot = 2;
+		else if (sprframe->rotate & SRF_3DGE)
+		{
+			rot = (ang + ANGLE_180 + ANGLE_11hh) >> 28;
+			rot = ((rot & 1) << 3) | (rot >> 1);
+		}
+		else
+			rot = (ang + ANGLE_202h) >> 29;
+		lumpoff = sprframe->lumpid[rot];
+		flip = sprframe->flip & (1 << rot);
+	}
+
+	spr_width = spritecachedinfo[lumpoff].width;
+	spr_height = spritecachedinfo[lumpoff].height;
+	spr_offset = spritecachedinfo[lumpoff].offset;
+	spr_topoffset = spritecachedinfo[lumpoff].topoffset;
+	{
+		SINT8 flipoffset = 1;
+
+		if ((thing->renderflags & RF_FLIPOFFSETS) && flip)
+			flipoffset = -1;
+		spr_offset += interp.spritexoffset * flipoffset;
+		spr_topoffset += interp.spriteyoffset * flipoffset;
+	}
+	flip = !flip != !hflip;
+
+	this_xscale = spritexscale * this_scale;
+	this_yscale = spriteyscale * this_scale;
+	if (flip)
+	{
+		x1 = (FIXED_TO_FLOAT(spr_width - spr_offset) * this_xscale);
+		x2 = (FIXED_TO_FLOAT(spr_offset) * this_xscale);
+	}
+	else
+	{
+		x1 = (FIXED_TO_FLOAT(spr_offset) * this_xscale);
+		x2 = (FIXED_TO_FLOAT(spr_width - spr_offset) * this_xscale);
+	}
+	z1 = tr_y + x1 * hwr_fx_rsin;
+	z2 = tr_y - x2 * hwr_fx_rsin;
+	x1 = tr_x + x1 * hwr_fx_rcos;
+	x2 = tr_x - x2 * hwr_fx_rcos;
+	if (vflip)
+	{
+		gz = FIXED_TO_FLOAT(interp.z + interp.height) - (FIXED_TO_FLOAT(spr_topoffset) * this_yscale);
+		gzt = gz + (FIXED_TO_FLOAT(spr_height) * this_yscale);
+	}
+	else
+	{
+		gzt = FIXED_TO_FLOAT(interp.z) + (FIXED_TO_FLOAT(spr_topoffset) * this_yscale);
+		gz = gzt - (FIXED_TO_FLOAT(spr_height) * this_yscale);
+	}
+
+	if (thing->subsector->sector->cullheight)
+	{
+		if (HWR_DoCulling(thing->subsector->sector->cullheight, viewsector->cullheight, gl_viewz, gz, gzt))
+			return true;
+	}
+	heightsec = thing->subsector->sector->heightsec;
+	if (viewplayer->mo && viewplayer->mo->subsector)
+		phs = viewplayer->mo->subsector->sector->heightsec;
+	else
+		phs = -1;
+	if (heightsec != -1 && phs != -1) // only clip things which are in special sectors
+	{
+		const float top = gzt;
+		const float bottom = FIXED_TO_FLOAT(interp.z);
+
+		if (gl_viewz < FIXED_TO_FLOAT(sectors[phs].floorheight) ?
+		bottom >= FIXED_TO_FLOAT(sectors[heightsec].floorheight) :
+		top < FIXED_TO_FLOAT(sectors[heightsec].floorheight))
+			return true;
+		if (gl_viewz > FIXED_TO_FLOAT(sectors[phs].ceilingheight) ?
+		top < FIXED_TO_FLOAT(sectors[heightsec].ceilingheight) && gl_viewz >= FIXED_TO_FLOAT(sectors[heightsec].ceilingheight) :
+		bottom >= FIXED_TO_FLOAT(sectors[heightsec].ceilingheight))
+			return true;
+	}
+
+	{
+		UINT8 ps2_hidden = 0;
+
+		// PS2-HW-72: no pixel centre inside the quad (or the quad outside the view): nothing would be drawn, nothing is made of it
+		if (!(cv_shadow.value && thing->shadowscale) && !HWR_PS2_NoCull())
+		{
+			const boolean aim = cv_glspritebillboarding.value && fabsf(gl_viewludcos) > 1.0e-6f;
+			const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
+
+			if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+			{
+				HWD_ADD(HWC_FX_QHID);
+				if (!(ps2hwd_dbg_flags & 0x1000000))
+					return true;
+				ps2_hidden = 1;
+			}
+		}
+		HWD_ADD(HWC_FX_VIS);
+		vis = HWR_NewVisSprite();
+		vis->ps2_hid = ps2_hidden;
+	}
+	vis->ps2_skey = (UINT8)(((thing->flags2 & MF2_SHADOW) || (frame & FF_TRANSMASK)) ? 1 : 0);
+	vis->ps2_iok = !(ps2hwd_fx2 & FX2_NOINTERP);
+	vis->ps2_ix = interp.x;
+	vis->ps2_iy = interp.y;
+	vis->ps2_iz = interp.z;
+	vis->ps2_ih = interp.height;
+	vis->ps2_ir = interp.radius;
+	vis->ps2_isub = interp.subsector;
+	vis->x1 = x1;
+	vis->x2 = x2;
+	vis->z1 = z1;
+	vis->z2 = z2;
+	vis->tz = tz;
+	vis->tracertz = 0.0f;
+	vis->renderflags = thing->renderflags;
+	vis->rotateflags = sprframe->rotate;
+	vis->shadowheight = 1.0f;
+	vis->shadowscale = 1.0f;
+	vis->dispoffset = dispoffset;
+	vis->flip = flip;
+	vis->scale = this_scale;
+	vis->spritexscale = spritexscale;
+	vis->spriteyscale = spriteyscale;
+	vis->spritexoffset = FIXED_TO_FLOAT(spr_offset);
+	vis->spriteyoffset = FIXED_TO_FLOAT(spr_topoffset);
+	vis->rotated = false;
+	vis->gpatch = (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
+	vis->mobj = thing;
+	vis->colormap = R_GetTranslationForThing(thing, thing->color, thing->translation);
+	vis->gzt = gzt;
+	vis->gz = gz;
+	vis->vflip = vflip;
+	vis->precip = false;
+	vis->bbox = false;
+	vis->angle = interp.angle;
+	return true;
+}
+#endif
+
+#ifdef PS2_PROFILE
+// check mode (-hwfx 2): the plain projection and the full one make the same vissprite (or both none) for the same thing; the full one's is kept
+static void HWR_FX_ProjectChecked(mobj_t *thing)
+{
+	static unsigned chk, bad;
+	const UINT32 n0 = gl_visspritecount;
+	gl_vissprite_t a;
+	boolean made = false, handled;
+
+	handled = HWR_ProjectPlain(thing);
+	if (handled && gl_visspritecount > n0)
+	{
+		a = *HWR_GetVisSprite(n0);
+		made = true;
+	}
+	gl_visspritecount = n0;
+	HWR_ProjectSprite(thing);
+	if (!handled)
+		return;
+	chk++;
+	{
+		const boolean made2 = gl_visspritecount > n0;
+		boolean same = made == made2;
+
+		if (same && made)
+		{
+			const gl_vissprite_t *b = HWR_GetVisSprite(n0);
+
+#define FXC(f) (same = same && !memcmp(&a.f, &b->f, sizeof a.f))
+			FXC(x1); FXC(x2); FXC(z1); FXC(z2); FXC(tz); FXC(tracertz); FXC(renderflags); FXC(rotateflags); FXC(shadowheight); FXC(shadowscale); FXC(dispoffset); FXC(flip);
+			FXC(scale); FXC(spritexscale); FXC(spriteyscale); FXC(spritexoffset); FXC(spriteyoffset); FXC(rotated); FXC(gpatch); FXC(mobj); FXC(colormap); FXC(gzt); FXC(gz);
+			FXC(vflip); FXC(precip); FXC(bbox); FXC(angle); FXC(ps2_hid); FXC(ps2_skey); FXC(ps2_iok); FXC(ps2_ix); FXC(ps2_iy); FXC(ps2_iz); FXC(ps2_ih); FXC(ps2_ir); FXC(ps2_isub);
+#undef FXC
+		}
+		if (!same)
+		{
+			bad++;
+			if (bad <= 20)
+				CONS_Printf("HWC plain MISMATCH %u of %u (sprite %s, made %d / %d)\n", bad, chk, (UINT32)thing->sprite < NUMSPRITES ? sprnames[thing->sprite] : "?", (int)made, (int)made2);
+		}
+		else if (!(chk & 4095))
+		{
+			CONS_Printf("HWC plain check: %u things, %u differ\n", chk, bad);
+		}
 	}
 }
 #endif
