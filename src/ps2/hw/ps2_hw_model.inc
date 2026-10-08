@@ -16,12 +16,14 @@
 
 typedef struct
 {
-	s32 xi, yi, zi; // GS X, Y (x16 + 2048), Z24 (the layout of pv_t: VU0 stores the result of the projection here)
+	s32 xi, yi, zi; // GS X, Y (x16 + 2048), Z24 (the layout of pv_t: VU0 stores the result of the projection here); zi is shifted by 4 for the XYZF formats
 	float q; // 1 / w
+	qw_t stq; // the ST + Q quadword of the GIF packet: s * tsx * q, t * tsy * q, q (made once per vertex, copied once per triangle corner)
 	float w; // eye depth
-	float sq, tq; // s * tsx * q, t * tsy * q
-	u32 ocl; // outcode (bits 0..5) | index into mdl_lf of the light factor << 8
-} __attribute__((aligned(16))) mdl_v_t;
+	u32 ocl; // outcode (bits 0..5)
+	u32 pad[2];
+	qw_t col4; // gr_modellighting: the RGBAQ quadword of the vertex (the colour of the pass scaled by the light factor of the vertex)
+} __attribute__((aligned(64))) mdl_v_t; // 64 bytes: a cache line
 
 typedef struct
 {
@@ -182,20 +184,11 @@ static void mdl_mesh_corners(const mesh_t *mesh, int fi, int ni, float lerp, int
 }
 
 #ifdef HW_VU0
-// vu0_xform2 of ps2_hw_vu0.inc with the vertices as floats: p0, p1 = x, y, z; c0, c1 = 16 byte aligned scratch for the clip coordinates (only w is read back)
-static inline void mdl_xform2(const float *p0, const float *p1, float *c0, float *c1, void *o0, void *o1, int *oc0, int *oc1)
+// vu0_xform2 of ps2_hw_vu0.inc with the vertices as floats: in = x, y, z, 1, x, y, z, 1 (16 byte aligned, made by the caller); c0, c1 = 16 byte aligned scratch for the clip coordinates (only w is read back)
+static inline void mdl_xform2(const float *in, float *c0, float *c1, void *o0, void *o1, int *oc0, int *oc1)
 {
-	float in[8] __attribute__((aligned(16)));
 	u32 f, fa, fb;
 
-	in[0] = p0[0];
-	in[1] = p0[1];
-	in[2] = p0[2];
-	in[3] = 1.0f;
-	in[4] = p1[0];
-	in[5] = p1[1];
-	in[6] = p1[2];
-	in[7] = 1.0f;
 	__asm__ volatile(
 		"lqc2 $vf5, 0(%1)\n"
 		"lqc2 $vf14, 16(%1)\n"
@@ -271,44 +264,61 @@ static void mdl_tri_general(const mesh_t *mesh, int fi, int ni, float lerp, int 
 	G.md_slow++;
 }
 
-// one vertex as GIF data: ST + Q, the colour (fmt 6: scaled by the light factor of the vertex), XYZ (fmt 0) or XYZF (fmt 1, 6)
-static inline qw_t *mdl_put_v(qw_t *o, const mdl_v_t *m, u32 col, u32 fog, int fmt)
+// one vertex as GIF data (3 quadwords): ST + Q, the colour (fmt 6: the vertex's own, else the pass's), XYZ (fmt 0) or XYZF (fmt 1, 6; zi was shifted by 4 when the vertex was made, fog4 = F << 4)
+static inline __attribute__((always_inline)) qw_t *mdl_put_v(qw_t *o, const mdl_v_t *m, const qw_t *colqw, u32 fog4, const int fmt)
 {
-	o->f[0] = m->sq;
-	o->f[1] = m->tq;
-	o->f[2] = m->q;
-	o->w[3] = 0;
-	o++;
-	if (fmt == 6)
-	{
-		const float lf = mdl_lf[(m->ocl >> 8) & 255];
+	o[0] = m->stq;
+	o[1] = fmt == 6 ? m->col4 : *colqw;
+	o[2].d[0] = (u64)(u32)m->xi | ((u64)(u32)m->yi << 32);
+	o[2].d[1] = (u64)(u32)m->zi | ((u64)fog4 << 32);
+	return o + 3;
+}
 
-		o->w[0] = (u32)((float)(col & 255) * lf + 0.5f);
-		o->w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
-		o->w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
-		o->w[3] = col >> 24;
+// the triangles of `list` (n of them), one GIF run: the vertices of every triangle from mv, the colour and F as given
+static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, const int fmt)
+{
+	u32 i;
+
+	for (i = 0; i < n; i++)
+	{
+		const unsigned tt = list[i];
+		qw_t *o = ls_reserve(9);
+
+		o = mdl_put_v(o, &mv[ix[tt * 3]], colqw, fog4, fmt);
+		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], colqw, fog4, fmt);
+		mdl_put_v(o, &mv[ix[tt * 3 + 2]], colqw, fog4, fmt);
+		LS.n += 3;
 	}
+}
+
+static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, int fmt)
+{
+	if (fmt == 6)
+		mdl_emit_list(mv, ix, list, n, colqw, fog4, 6);
+	else if (fmt == 1)
+		mdl_emit_list(mv, ix, list, n, colqw, fog4, 1);
 	else
+		mdl_emit_list(mv, ix, list, n, colqw, fog4, 0);
+}
+
+// the GS state of a row of the colormap (palette lighting), or of the plain plan
+static void mdl_set_row(int row, int pal)
+{
+	if (pal)
 	{
-		o->w[0] = col & 255;
-		o->w[1] = (col >> 8) & 255;
-		o->w[2] = (col >> 16) & 255;
-		o->w[3] = col >> 24;
+		if (row != P.pal_row || P.serial != H.serial)
+		{
+			P.pass[0].clut_param = pal_param(row);
+			pass_setup(0, 0);
+			P.serial = H.serial;
+			P.pal_row = row;
+		}
 	}
-	o++;
-	o->w[0] = (u32)m->xi;
-	o->w[1] = (u32)m->yi;
-	if (fmt == 0)
+	else if (P.serial != H.serial)
 	{
-		o->w[2] = (u32)m->zi;
-		o->w[3] = 0;
+		pass_setup(0, 0);
+		P.serial = H.serial;
 	}
-	else
-	{
-		o->w[2] = (u32)m->zi << 4;
-		o->w[3] = fog << 4;
-	}
-	return o + 1;
 }
 
 // 1 = the mesh was drawn (every triangle went through one of the two ways)
@@ -327,106 +337,191 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	u32 count[34], start[34];
 	int k, t, minrow = 255, maxrow = -1, nord = 0;
 	static float clip0[4] __attribute__((aligned(16))), clip1[4] __attribute__((aligned(16)));
+	static float in[8] __attribute__((aligned(16))) = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
 	const pass_t *ps = &P.pass[0];
 	const int fmt = light ? 6 : ((bands && !pal && ps->fog) ? 1 : 0);
 	const float cull = (float)P.cull;
 	const u32 col = ps->col;
 	u32 fogtab[34];
-	int fogknown = 0;
+	int fogknown = 0, uni = 1, urow = 0, ucls = 0;
+	u32 nrej = 0, nclip = 0;
+	float wmin = 1e30f, wmax = -1e30f;
+	qw_t colqw;
 	const u32 tp0 = cyc();
 	u32 tp1, tp2;
 
+	colqw.w[0] = col & 255;
+	colqw.w[1] = (col >> 8) & 255;
+	colqw.w[2] = (col >> 16) & 255;
+	colqw.w[3] = col >> 24;
 	vu0_need();
-	// 1. every vertex: interpolation, the VU0 transform, the texture coordinates over w
-	for (k = 0; k + 1 < nv; k += 2)
+	// 1. every vertex: interpolation, the VU0 transform, the GIF quadwords (ST + Q, the colour with the light factor, zi for the format)
+	for (k = 0; k < nv; k += 2)
 	{
-		float p0[3], p1[3];
-		int o0, o1;
-		mdl_v_t *m0 = &mv[k], *m1 = &mv[k + 1];
+		int o0, o1, lane;
+		mdl_v_t *m0 = &mv[k], *m1 = &mv[k + 1]; // (the spare entry takes the second lane of an odd last vertex)
 
-		mdl_pos(pa + k * 3, pb + k * 3, lerp, p0);
-		mdl_pos(pa + k * 3 + 3, pb + k * 3 + 3, lerp, p1);
-		mdl_xform2(p0, p1, clip0, clip1, m0, m1, &o0, &o1);
-		m0->w = clip0[3];
-		m1->w = clip1[3];
-		m0->sq = uv[k * 2] * tsx * m0->q;
-		m0->tq = uv[k * 2 + 1] * tsy * m0->q;
-		m1->sq = uv[k * 2 + 2] * tsx * m1->q;
-		m1->tq = uv[k * 2 + 3] * tsy * m1->q;
-		m0->ocl = (u32)o0;
-		m1->ocl = (u32)o1;
-	}
-	if (nv & 1)
-	{
-		float p0[3];
-		int o0, o1;
-		mdl_v_t *m0 = &mv[nv - 1], *m1 = &mv[nv]; // the spare entry takes the second lane
+		mdl_pos(pa + k * 3, pb + k * 3, lerp, in);
+		if (k + 1 < nv)
+			mdl_pos(pa + k * 3 + 3, pb + k * 3 + 3, lerp, in + 4);
+		else
+			memcpy(in + 4, in, 3 * sizeof(float));
+		mdl_xform2(in, clip0, clip1, m0, m1, &o0, &o1);
+		for (lane = 0; lane < 2; lane++)
+		{
+			mdl_v_t *m = lane ? m1 : m0;
+			const int kk = k + lane;
+			const float w = lane ? clip1[3] : clip0[3];
+			const int oc = lane ? o1 : o0;
+			const float q = m->q;
 
-		mdl_pos(pa + (nv - 1) * 3, pb + (nv - 1) * 3, lerp, p0);
-		mdl_xform2(p0, p0, clip0, clip1, m0, m1, &o0, &o1);
-		m0->w = clip0[3];
-		m0->sq = uv[(nv - 1) * 2] * tsx * m0->q;
-		m0->tq = uv[(nv - 1) * 2 + 1] * tsy * m0->q;
-		m0->ocl = (u32)o0;
+			if (kk >= nv)
+				break;
+			m->w = w;
+			m->ocl = (u32)oc;
+			m->stq.f[0] = uv[kk * 2] * tsx * q;
+			m->stq.f[1] = uv[kk * 2 + 1] * tsy * q;
+			m->stq.f[2] = q;
+			m->stq.w[3] = 0;
+			if (fmt != 0)
+				m->zi <<= 4;
+			if (oc == 0)
+			{
+				if (w < wmin)
+					wmin = w;
+				if (w > wmax)
+					wmax = w;
+			}
+			if (light)
+			{
+				const float lf = mdl_lf[mdl_lidx(na, nb, kk, lerp)];
+
+				m->col4.w[0] = (u32)((float)(col & 255) * lf + 0.5f);
+				m->col4.w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
+				m->col4.w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
+				m->col4.w[3] = col >> 24;
+			}
+		}
 	}
-	if (light)
-		for (k = 0; k < nv; k++)
-			mv[k].ocl |= (u32)mdl_lidx(na, nb, k, lerp) << 8;
 	G.md_verts += (u32)nv;
 	tp1 = cyc();
 	G.md_c1 += tp1 - tp0;
 
-	// 2. the triangles: flags, cull, class (the colormap row for palette lighting, the darkness class for fog)
-	memset(count, 0, sizeof count);
-	for (t = 0; t < nt; t++)
+	// 2. the light class: when every vertex inside the view is in one darkness class (the class is a non-decreasing function of the depth) the mesh has one row
+	if (bands && wmin <= wmax)
 	{
-		const mdl_v_t *a = &mv[ix[t * 3]], *b = &mv[ix[t * 3 + 1]], *c = &mv[ix[t * 3 + 2]];
-		const u32 oa = a->ocl & 0x3F, ob = b->ocl & 0x3F, oc = c->ocl & 0x3F;
-		float area;
-		int row = 0;
-
-		rowof[t] = 255;
-		H.st.polys++;
-		if (oa & ob & oc)
-		{
-			H.st.rejected++;
-			continue;
-		}
-		if (oa | ob | oc)
-		{
-			H.st.clipped++;
-			mdl_tri_general(mesh, fi, ni, lerp, light, ix[t * 3], ix[t * 3 + 1], ix[t * 3 + 2]);
-			continue;
-		}
-		area = (float)(b->xi - a->xi) * (float)(c->yi - a->yi) - (float)(c->xi - a->xi) * (float)(b->yi - a->yi); // screen space, y down: the opposite sign of the clip space test of emit_tris
-		if (area * cull >= 0.0f)
-		{
-			H.st.rejected++;
-			continue;
-		}
-		if (bands)
-		{
-			const int cls = lf_class_w((a->w + b->w + c->w) * (1.0f / 3.0f));
-
-			row = pal ? pal_row_of(cls) : cls;
-		}
-		rowof[t] = (u8)row;
-		if (row < minrow)
-			minrow = row;
-		if (row > maxrow)
-			maxrow = row;
-		count[row]++;
-		nord++;
+		ucls = lf_class_w(wmin);
+		uni = ucls == lf_class_w(wmax);
+		urow = pal ? pal_row_of(ucls) : ucls;
 	}
+	// 3. the triangles: flags, cull, (class)
+	if (uni)
+	{
+		for (t = 0; t < nt; t++)
+		{
+			const mdl_v_t *a = &mv[ix[t * 3]], *b = &mv[ix[t * 3 + 1]], *c = &mv[ix[t * 3 + 2]];
+			const u32 oa = a->ocl, ob = b->ocl, oc = c->ocl;
+			float area;
+
+			if (oa & ob & oc)
+			{
+				nrej++;
+				continue;
+			}
+			if (oa | ob | oc)
+			{
+				nclip++;
+				mdl_tri_general(mesh, fi, ni, lerp, light, ix[t * 3], ix[t * 3 + 1], ix[t * 3 + 2]);
+				continue;
+			}
+			area = (float)(b->xi - a->xi) * (float)(c->yi - a->yi) - (float)(c->xi - a->xi) * (float)(b->yi - a->yi); // screen space, y down: the opposite sign of the clip space test of emit_tris
+			if (area * cull >= 0.0f)
+			{
+				nrej++;
+				continue;
+			}
+			ord[nord++] = (u16)t;
+		}
+		minrow = maxrow = urow;
+	}
+	else
+	{
+		memset(count, 0, sizeof count);
+		for (t = 0; t < nt; t++)
+		{
+			const mdl_v_t *a = &mv[ix[t * 3]], *b = &mv[ix[t * 3 + 1]], *c = &mv[ix[t * 3 + 2]];
+			const u32 oa = a->ocl, ob = b->ocl, oc = c->ocl;
+			float area;
+			int row;
+
+			rowof[t] = 255;
+			if (oa & ob & oc)
+			{
+				nrej++;
+				continue;
+			}
+			if (oa | ob | oc)
+			{
+				nclip++;
+				mdl_tri_general(mesh, fi, ni, lerp, light, ix[t * 3], ix[t * 3 + 1], ix[t * 3 + 2]);
+				continue;
+			}
+			area = (float)(b->xi - a->xi) * (float)(c->yi - a->yi) - (float)(c->xi - a->xi) * (float)(b->yi - a->yi);
+			if (area * cull >= 0.0f)
+			{
+				nrej++;
+				continue;
+			}
+			{
+				const int cls = lf_class_w((a->w + b->w + c->w) * (1.0f / 3.0f));
+
+				row = pal ? pal_row_of(cls) : cls;
+			}
+			rowof[t] = (u8)row;
+			if (row < minrow)
+				minrow = row;
+			if (row > maxrow)
+				maxrow = row;
+			count[row]++;
+			nord++;
+		}
+	}
+	H.st.polys += (u32)nt;
+	H.st.rejected += nrej;
+	H.st.clipped += nclip;
 	tp2 = cyc();
 	G.md_c2 += tp2 - tp1;
 	if (!nord)
 		return 1;
 
-	// 3. the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
-	if (pal && minrow != maxrow)
+	// 4. the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
+	ls_close();
+	if (uni)
+	{
+		u32 fog4 = 0;
+
+		if (fmt != 0)
+		{
+			u32 fog = 255;
+
+			if (!pal)
+			{
+				int on;
+				const u32 f = lf_fog(ucls, &on);
+
+				fog = on ? f : 255;
+			}
+			fog4 = fog << 4;
+		}
+		mdl_set_row(pal ? urow : 0, pal);
+		LS.nreg = 3;
+		LS.fmt = fmt;
+		mdl_emit_fmt(mv, ix, ord, (u32)nord, &colqw, fog4, fmt);
+	}
+	else if (pal)
 	{
 		u32 s = 0;
+		const u32 fog4 = fmt != 0 ? 255u << 4 : 0;
 
 		for (k = minrow; k <= maxrow; k++)
 		{
@@ -439,48 +534,17 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 		for (k = minrow, s = 0; k <= maxrow; s += count[k], k++)
 			if (count[k])
 			{
-				u32 n = count[k], i;
-
 				ls_close();
-				if (k != P.pal_row || P.serial != H.serial)
-				{
-					P.pass[0].clut_param = pal_param(k);
-					pass_setup(0, 0);
-					P.serial = H.serial;
-					P.pal_row = k;
-				}
+				mdl_set_row(k, 1);
 				LS.nreg = 3;
 				LS.fmt = fmt;
-				for (i = 0; i < n; i++)
-				{
-					const unsigned tt = ord[s + i];
-					qw_t *o = ls_reserve(9);
-
-					o = mdl_put_v(o, &mv[ix[tt * 3]], col, 0, fmt);
-					o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], col, 0, fmt);
-					mdl_put_v(o, &mv[ix[tt * 3 + 2]], col, 0, fmt);
-					LS.n += 3;
-				}
+				mdl_emit_fmt(mv, ix, ord + s, count[k], &colqw, fog4, fmt);
 			}
 	}
 	else
 	{
-		ls_close();
-		if (pal)
-		{
-			if (minrow != P.pal_row || P.serial != H.serial)
-			{
-				P.pass[0].clut_param = pal_param(minrow);
-				pass_setup(0, 0);
-				P.serial = H.serial;
-				P.pal_row = minrow;
-			}
-		}
-		else if (P.serial != H.serial)
-		{
-			pass_setup(0, 0);
-			P.serial = H.serial;
-		}
+		// fog classes (palette rendering off): F per triangle
+		mdl_set_row(0, 0);
 		LS.nreg = 3;
 		LS.fmt = fmt;
 		for (t = 0; t < nt; t++)
@@ -490,7 +554,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 
 			if (rowof[t] == 255)
 				continue;
-			if (fmt != 0 && !pal)
+			if (fmt != 0)
 			{
 				const int cls = rowof[t];
 
@@ -509,9 +573,18 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 				fog = fogtab[cls];
 			}
 			o = ls_reserve(9);
-			o = mdl_put_v(o, &mv[ix[t * 3]], col, fog, fmt);
-			o = mdl_put_v(o, &mv[ix[t * 3 + 1]], col, fog, fmt);
-			mdl_put_v(o, &mv[ix[t * 3 + 2]], col, fog, fmt);
+			if (fmt == 6)
+			{
+				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 6);
+				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 6);
+				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 6);
+			}
+			else
+			{
+				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 1);
+				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 1);
+				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 1);
+			}
 			LS.n += 3;
 		}
 	}
