@@ -147,7 +147,7 @@ static boolean IsLetter(char c)
 }
 
 // The text of a message box (M_StartMessage) for the console: the key names that a pad has no key for become icons (PS2-336).
-// "ESC" -> Circle, "ENTER" -> Cross as whole words ("Press ESC", "Press ENTER to continue\nor ESC to cancel."), "Press a key" -> "Press any button".
+// "ESC" -> Circle, "ENTER" -> Cross as whole words ("Press ESC", "Press ENTER to continue\nor ESC to cancel."), "Press a key" -> "Press <Cross> or <Circle>" (the buttons that close a box).
 // A copy in a zone block (PU_STATIC), the caller frees it with Z_Free.
 char *PS2UI_Message(const char *src)
 {

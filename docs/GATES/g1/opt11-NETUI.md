@@ -62,6 +62,56 @@
   (`Patch_TryCreateFromDoomPatch`, тег `PU_STATIC`; нет места — иконка не рисуется, текст вокруг остаётся), `PS2UI_KeyToken()` (кнопка пада → токен: JOY1..12 = Cross, Circle, Square, Triangle, L1, R1, Select, Start, L3, R3, L2, R2; hat 0 = ↑↓←→; оба пада; раскладка прочитана из `ps2_padmap.c`).
 * **Иконки в тексте (PS2-334):** управляющие символы 0x01..0x15 (`PS2I_CROSS "\x01"` ...: Cross, Circle, Square, Triangle, L1, R1, L2, R2, Start, Select, D-pad ↑ ↓ ← →, L3, R3, D-pad ↑↓, D-pad ←→; остальные иконки через `PS2UI_Patch(PS2UI_*)`) понимают `V_DrawString`/`V_Draw*AlignedString` (рисует иконку как букву, по центру строки шрифта),
   `V_StringWidth` и `V_WordWrap` (`v_video.c`, только `#ifdef PS2`, проверка `(UINT8)c < 0x16` на символ). Строки без токенов работают как раньше.
-* Где используются: **экран сети** (Cancel / Continue / Try again / Back), **подсказки экранов подключения к серверу** (`client_connection.c`: Abort/Cancel/Back/Scroll list/Download/Join/Players-Addons, макросы `HINT_*`, остальным платформам тексты прежние), **окна-сообщения** (`M_StartMessage`: «Press ESC» → «Press ○», «Press ENTER ... or ESC» → «Press ✕ ... ○», «(Press a key)» → «(Press any button)», `PS2UI_Message`),
+* Где используются: **экран сети** (Cancel / Continue / Try again / Back), **подсказки экранов подключения к серверу** (`client_connection.c`: Abort/Cancel/Back/Scroll list/Download/Join/Players-Addons, макросы `HINT_*`, остальным платформам тексты прежние), **окна-сообщения** (`M_StartMessage`: «Press ESC» → «Press ○», «Press ENTER ... or ESC» → «Press ✕ ... ○», «Press a key» → «Press ✕ or ○» (закрывают окно Enter, Esc, Space, N, Y, Del: из кнопок пада Cross, Circle, Triangle=N; «any button» было бы неверно), `PS2UI_Message`),
   **экранная клавиатура** (`ps2_osk.c`: «✕ type ▢ shift △ del ▶ ok ○ close»), **Setup Controls** (`M_ControlKeyName`: кнопка пада в списке привязок — иконка; заголовок «✕ Change ▢ Clear» вместо «Press Enter to change, Backspace to clear»), **«Press ESC to exit»** в Record/NiGHTS Attack.
 * Тестовая карта: консоль `ps2_icons 1` (все иконки на тёмном и светлом фоне, подсказки обычным и тонким шрифтом, окно сообщения), `ps2_icons 2` (экранная клавиатура без поля ввода): `icons-card-sw.jpg`, `icons-card-hw.jpg`, `icons-osk-sw.jpg`, `icons-osk-hw.jpg` — **Software и Hardware дают одну картинку**, края и прозрачность чистые (патчи — обычные `patch_t`, HW делает текстуру штатно, nearest).
+
+## 5. Подсказки кнопок в углах меню (PS2-338, PS2-339) — проверено запуском
+
+**Что это.** Внизу экрана любого меню (кроме экранной клавиатуры, у неё своя строка, и картинок-справки) две группы подсказок с иконками кнопок: **слева внизу — навигация** («▲▼ Select ✕ OK»),
+**справа внизу — назад/дополнительно** («□ Default ○ Back»). Какие кнопки показаны, зависит от пункта под курсором. Одна точка вызова: `PS2MenuHints_Draw()` в конце `M_Drawer` (`m_menu.c`, `#ifdef PS2`)
+и `PS2MenuHints_MenuStart()` в его начале; всё остальное — `src/ps2/ps2_menuhints.c/.h`. Таблица подсказок — данные (`hintsets[]`: вид пункта → левая и правая группы, три пробела делят группу пополам). Меню и рендереры (Software / Hardware) пользуются одним кодом: подсказки — обычные вызовы
+`V_DrawFill` / `V_DrawThinString`, поэтому картинка одинакова (раздел «Проверка»). Не рисуются, когда меню не активно (`menuactive`), при открытой экранной клавиатуре и при `menuhints Off`.
+
+**Cvar `menuhints`** (On/Off, по умолчанию On, сохраняется в конфиге): Options → Banpyura Options → Console → «Menu Button Hints». Off: ничего не рисуется и не запоминается (хуки в `v_video.c` проверяют флаг `ps2mh_recording`, он тогда не включается).
+
+**Откуда взято, что делает кнопка** (прочитано, не угадано): `ps2_padmap.c` (Cross=JOY1, Circle=JOY2, Square=JOY3, Triangle=JOY4, D-pad = hat 0 = ↑↓←→), `M_Responder` (`m_menu.c`): Cross = Enter, Circle = Escape (назад), Square = Backspace (сбросить привязку / вернуть значение по умолчанию /
+стереть букву), Triangle = `n` (на текстовом поле открывает экранную клавиатуру, `M_PS2TextFieldActive`), D-pad = стрелки; окна-сообщения закрываются на Enter/Esc/Space/N/Y/Del; `M_ChangecontrolResponse` берёт любую кнопку. Вид пункта выбирает `M_PS2MenuKind()` по `menuitem_t.status`
+(`IT_CVAR` + `IT_CV_STRING` = текст, `IT_CVAR` / `IT_ARROWS` = значение, `IT_CONTROL` = привязка, `IT_KEYHANDLER` = по обработчику `itemaction`: адрес сервера, имя игрока, платформа уровней, слоты сохранений, выбор персонажа, звуковой тест, список аддонов, видеорежимы, смена ←→ и т. д.),
+`MessageDef.menuitems[0].alphaKey` (`MM_YESNO`, `MM_EVENTHANDLER`, `MM_NOTHING`), `currentMenu == &MainDef`, строка списка серверов `MP_ConnectDef`.
+
+**Подсказки по видам пунктов** (`hintsets[]`; слева | справа; ▲▼ = D-pad вверх/вниз, ◄► = влево/вправо, ✕ ○ □ △ = Cross, Circle, Square, Triangle):
+
+| Вид пункта | Где | Слева | Справа |
+|---|---|---|---|
+| SELECT (вызов, подменю) | большинство пунктов | ▲▼ Select ✕ OK | ○ Back |
+| MAIN | главное меню | ▲▼ Select ✕ OK | ○ Back |
+| ARROWS (значение, ползунок, переключатель) | `IT_CVAR`, `IT_ARROWS` | ▲▼ Select ◄► Change | □ Default ○ Back |
+| TEXT (строковый cvar) | Options: имена, адреса | ▲▼ Select △ Keyboard | □ Delete ○ Back |
+| ADDRESS | Multiplayer: «Specify server address» | ✕ Connect △ Keyboard | □ Delete ○ Back |
+| PLAYERNAME | Player setup: имя | ▲▼ Select △ Keyboard | □ Delete ○ Back |
+| CONTROL | Setup Controls: привязка | ▲▼ Select ✕ Assign | □ Clear ○ Back |
+| CAPTURE | ожидание новой кнопки (`MM_EVENTHANDLER`) | «Press the button to assign» | — |
+| YESNO | окно Да/Нет (`MM_YESNO`) | ✕ Yes | ○ No |
+| MESSAGE | окно-сообщение | ✕ OK | ○ Close |
+| SERVER | строка списка серверов | ▲▼ Select ✕ Join | ○ Back |
+| PLATTER | выбор уровня | ▲▼◄► Select ✕ OK | ○ Back |
+| LOADSAVE | слоты сохранений | ◄► Select ✕ OK | ○ Back |
+| CHOOSEPLAYER | выбор персонажа | ▲▼ Character ✕ OK | ○ Back |
+| SOUNDTEST | звуковой тест | ▲▼ Select ✕ Play | □ Stop ○ Back |
+| SCROLL | Extras checklist, Statistics | ▲▼ Scroll | ○ Back |
+| ADDONS | список файлов | ▲▼ Select ✕ Open | ○ Back |
+| VIDEOMODE | видеорежимы | ▲▼◄► Select ✕ Set | ○ Back |
+| CHANGE | стиль управления, скин/цвет, страница сервера, персонаж Marathon | ▲▼ Select ◄► Change | ✕ OK ○ Back |
+| NONE | страницы справки (картинка на весь экран) | — | — |
+
+**Размещение без перекрытий (PS2-339).** Каждый 2D-вызов кадра от HUD (уровень) или от начала `M_Drawer` (титул) запоминается в битовой карте 320×200: `V_DrawFill`, `V_DrawFlatFill`, `V_DrawFadeFill`, `V_DrawStretchyFixedPatch` (все буквы и картинки), `V_DrawCroppedPatch`
+(хуки `if (ps2mh_recording && PS2MenuHints_Note…())` в `v_video.c`, пять мест; геометрия как в самих функциях: масштаб `dup`, центрирование 320×200 в большем экране, `V_SNAPTO*`, `V_NOSCALESTART`, `V_NOSCALEPATCH`/`SMALL`/`MED`, +1 пиксель на округление цикла колонок).
+Прямоугольник, закрывающий весь экран (фон, затемнение), в карту не заносится: подсказки по замыслу стоят на фоне. Группа подсказок рисуется на плашке цвета меню (`cv_menubgcolor`, полупрозрачная), высота 15 пикселей;
+плашка + **поле 2 px со всех сторон** обязаны быть пустыми в карте и лежать в **безопасной зоне** (6 px от краёв по горизонтали — оверскан телевизора, 4 px от нижнего края). Порядок вариантов для каждой из двух групп:
+1. одна строка в углу, нижний ряд (`L`); 2. та же строка на ряд или два выше, в том же углу (`R`; три ряда по 17 px); 3. две строки друг над другом: половины группы (по «   » в тексте) (`S`); 4. только иконки (`I`);
+5. сдвиг вдоль ряда к середине экрана, сначала весь текст, затем иконки (`M`/`m`; каждая группа остаётся в своей половине экрана); 6. **не рисовать** (`-`). Ничего никогда не рисуется поверх содержимого.
+Ширина строки с иконками считается `V_ThinStringWidth` (иконки входят в ширину, PS2-334), перенос слов иконку не разрывает (проверено в разделе 4).
+Меню `MainDef` в 320×200: строка версии слева внизу занимает нижний ряд — левая группа встаёт на ряд выше (`R`); при 640×480 строка версии вне рамки 320×200 (под ней) и группы стоят в нижнем ряду.
+Крупные меню на PS2 слегка укорочены, чтобы низ экрана остался свободным: Setup Controls (`controlheight` 18 → 16 строк), все прокручиваемые меню (`scrollareaheight` 72 → 68, на одну строку меньше).
+

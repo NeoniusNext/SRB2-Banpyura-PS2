@@ -26,6 +26,7 @@ def main():
     ap.add_argument('--scale', type=float, default=1.0)
     ap.add_argument('--cols', type=int, default=2)
     ap.add_argument('--sheet', default='')
+    ap.add_argument('--strips', default='', help='OUT.png: the bottom 44 rows of every picture, enlarged x3, one under the other (the corners with the hints)')
     ap.add_argument('--step', type=int, default=30, help='display frames between two pictures')
     ap.add_argument('--extra-engine', default='')
     ap.add_argument('menus', nargs='+')
@@ -65,6 +66,21 @@ def main():
             sheet = sheet.resize((int(sheet.width * a.scale), int(sheet.height * a.scale)), Image.NEAREST)
         sheet.save(a.sheet)
         print('sheet', a.sheet, sheet.size)
+    if a.strips and pics:
+        w, h = pics[0][1].size
+        dup = max(1, min(w // 320, h // 200))
+        oy = (h - 200 * dup) // 2
+        top = oy + 156 * dup
+        bot = min(h, oy + 200 * dup + 0)
+        rows = [im.crop((0, top, w, bot)).resize((w * 3, (bot - top) * 3), Image.NEAREST) for _, im in pics]
+        strip = Image.new('RGB', (w * 3, sum(r.height + 4 for r in rows)), (255, 255, 255))
+        yy = 0
+        for (lab, _), r in zip(pics, rows):
+            strip.paste(r, (0, yy))
+            ImageDraw.Draw(strip).text((4, yy + 3), lab, fill=(255, 255, 0))
+            yy += r.height + 4
+        strip.save(a.strips)
+        print('strips', a.strips, strip.size)
     return 0
 
 

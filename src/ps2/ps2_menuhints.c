@@ -11,6 +11,7 @@
 #include "../r_main.h" // cv_menubgcolor
 #include "../screen.h"
 #include "../v_video.h"
+#include "../w_wad.h"
 #include "../z_zone.h"
 
 #include "ps2_menuhints.h"
@@ -71,11 +72,13 @@ static const hintset_t hintsets[PS2MH_NUMKINDS] =
 
 boolean ps2mh_recording;
 static UINT8 occ[BASEVIDHEIGHT][BASEVIDWIDTH / 8]; // 1 bit per pixel of the 320x200 picture
+static UINT8 occ_pre[BASEVIDHEIGHT][BASEVIDWIDTH / 8]; // the map as it was when the groups were placed (the check draws the menu again and notes it again)
 static boolean begun;                               // the HUD of a level frame started the note already
 static boolean checking;                            // -menuhintscheck: M_Drawer is run again to find what the menu covers
 static boolean opt_check, opt_debug, opt_dump;
 static boolean crawling, check_armed; // the crawler moved the cursor: the next frame is checked once
-static UINT32 check_sig;               // -menuhintscheck on its own: checked again when the menu, the item or the plates change
+static UINT32 check_sig, occ_hash_last;
+static INT32 stable_wait;               // -menuhintscheck on its own: checked again when the menu, the item or the plates change
 
 static void OccSet(INT32 x0, INT32 y0, INT32 x1, INT32 y1) // [x0, x1) x [y0, y1)
 {
@@ -120,6 +123,8 @@ static INT32 FloorDiv(INT32 a, INT32 b)
 // scaling by dup, the centring of the 320x200 picture in a bigger screen, the V_SNAPTO flags, V_NOSCALESTART), then converted to the 320x200 picture that the groups of
 // hints are placed in (the centred box: what is outside it, as the HUD that snaps to a corner of a wider screen, cannot meet a group).
 // x, y, w, h: fixed point, in the units of the call (base units, or real pixels with V_NOSCALESTART for the position); posdup / sizedup scale position and size.
+static INT32 last_note[4]; // the last rectangle noted, in the 320x200 picture (the geometry self test)
+
 static boolean NoteGeom(fixed_t x, fixed_t y, fixed_t w, fixed_t h, INT32 flags, INT32 posdup, INT32 sizedup, boolean center)
 {
 	const INT32 dup = vid.dup > 0 ? vid.dup : 1;
@@ -153,16 +158,20 @@ static boolean NoteGeom(fixed_t x, fixed_t y, fixed_t w, fixed_t h, INT32 flags,
 			}
 		}
 	}
-	rw = (INT32)((((INT64)w * sizedup) + FRACUNIT - 1) >> FRACBITS);
-	rh = (INT32)((((INT64)h * sizedup) + FRACUNIT - 1) >> FRACBITS);
+	rw = (INT32)((((INT64)w * sizedup) + FRACUNIT - 1) >> FRACBITS) + 1; // + 1 real pixel: the column / row loops of the patch drawing round up (found by ps2_mhgeom)
+	rh = (INT32)((((INT64)h * sizedup) + FRACUNIT - 1) >> FRACBITS) + 1;
 	if (rw <= 0 || rh <= 0)
 		return false;
-	if (rw >= vid.width - 4 * dup && rh >= vid.height - 4 * dup)
+	if (rw >= (BASEVIDWIDTH - 4) * dup && rh >= (BASEVIDHEIGHT - 4) * dup)
 		return checking; // a background over the whole screen: the hints stand on it by design; the check leaves it out of the picture of the menu (true: do not draw it)
 	bx0 = FloorDiv(rx - ox, dup);
 	by0 = FloorDiv(ry - oy, dup);
 	bx1 = -FloorDiv(-(rx + rw - ox), dup); // rounded up
 	by1 = -FloorDiv(-(ry + rh - oy), dup);
+	last_note[0] = bx0;
+	last_note[1] = by0;
+	last_note[2] = bx1;
+	last_note[3] = by1;
 	OccSet(bx0, by0, bx1, by1);
 	return false;
 }
@@ -408,6 +417,7 @@ static void Check(void)
 	INT32 oy = (vid.height - BASEVIDHEIGHT * dup) / 2, ox = (vid.width - BASEVIDWIDTH * dup) / 2; // the 320x200 picture is centred in a bigger one
 	const boolean pixels = rendermode == render_soft && screens[0] && currentMenu;
 	INT32 first[3][2], nfirst = 0;
+	fixed_t saved_rdt;
 
 	if (!currentMenu)
 		return;
@@ -429,8 +439,11 @@ static void Check(void)
 		memcpy(chk_save, screens[0], chk_size);
 		checking = true;
 		ps2mh_recording = true; // the draws are looked at (backgrounds over the whole screen are left out)
+		saved_rdt = renderdeltatics;
+		renderdeltatics = 0; // the animations of the menus (the save slots that scroll, the character select) stand still while it is drawn again
 		MenuMask(0xFE, chk_mask);
 		MenuMask(0x01, chk_mask); // twice, on two colours: a menu pixel that happens to have the colour of the background is not lost
+		renderdeltatics = saved_rdt;
 		// the plates and their margin as pixel masks
 		for (p = 0; p < numplates; p++)
 		{
@@ -484,6 +497,26 @@ static void Check(void)
 					}
 				fclose(f);
 			}
+			snprintf(path, sizeof path, "%s/mhocc-%d.ppm", I_GetEnv("HOME") ? I_GetEnv("HOME") : ".", (int)dumps - 1); // the map of what the hooks noted, 320x200: occupied = white, plates red
+			f = fopen(path, "wb");
+			if (f)
+			{
+				fprintf(f, "P6\n%d %d\n255\n", (int)BASEVIDWIDTH, (int)BASEVIDHEIGHT);
+				for (y = 0; y < BASEVIDHEIGHT; y++)
+					for (x = 0; x < BASEVIDWIDTH; x++)
+					{
+						INT32 q, inplate = 0;
+						UINT8 px[3];
+
+						for (q = 0; q < numplates; q++)
+							inplate |= x >= plates[q].x && x < plates[q].x + plates[q].w && y >= plates[q].y && y < plates[q].y + plates[q].h;
+						px[0] = (UINT8)((occ_pre[y][x >> 3] & (1u << (x & 7))) || inplate ? 255 : 0);
+						px[1] = (UINT8)((occ_pre[y][x >> 3] & (1u << (x & 7))) && !inplate ? 255 : 0);
+						px[2] = px[1];
+						fwrite(px, 1, 3, f);
+					}
+				fclose(f);
+			}
 		}
 	}
 	CONS_Printf("MHCHECK menu=%u item=%d/%d kind=%d how=%c%c plates=%d", (unsigned)currentMenu->menuid, (int)M_PS2MenuCursor(-1), (int)currentMenu->numitems, (int)M_PS2MenuKind(), how[0], how[1], (int)numplates);
@@ -505,7 +538,158 @@ static void Check(void)
 	chk_save = chk_mask = NULL;
 }
 
+// ps2_mhgeom: does the rectangle that the hooks note contain every pixel that the draw really changes? (software renderer; the noted rectangle is the one the groups of
+// hints keep clear of.) Draws a few patches / fills with and without scaling and snapping on a flat colour, finds the changed pixels and compares.
+static void Command_Geom_f(void)
+{
+	static const char *const pnames[] = {"BLANKLVL", "BLACXLVL", "CHARBG", "SAVEBACK", "SAVENONE", "ULTIMATE", "GAMEDONE", "STLIVEX"};
+	static const struct { fixed_t scale; INT32 flags; const char *name; } modes[] =
+	{
+		{FRACUNIT, 0, "scaled"}, {FRACUNIT / 2, 0, "half"}, {FRACUNIT, V_SNAPTOLEFT | V_SNAPTOTOP, "snap left top"}, {FRACUNIT, V_SNAPTORIGHT | V_SNAPTOBOTTOM, "snap right bottom"},
+		{FRACUNIT, V_NOSCALEPATCH, "noscale patch"}, {FRACUNIT, V_SMALLSCALEPATCH, "small scale patch"}, {FRACUNIT * 3 / 4, 0, "3/4"},
+	};
+	static const INT32 xs[] = {0, 13, 150, 230}, ys[] = {0, 7, 60, 150};
+	const INT32 dup = vid.dup > 0 ? vid.dup : 1;
+	const INT32 ox = (vid.width - BASEVIDWIDTH * dup) / 2, oy = (vid.height - BASEVIDHEIGHT * dup) / 2;
+	INT32 bad = 0, total = 0, pi, mi, xi, yi, k;
+
+	if (rendermode != render_soft || !screens[0])
+	{
+		CONS_Printf("MHGEOM: software renderer only\n");
+		return;
+	}
+	chk_size = (size_t)vid.rowbytes * (size_t)vid.height;
+	chk_save = malloc(chk_size);
+	if (!chk_save)
+		return;
+	memcpy(chk_save, screens[0], chk_size);
+	for (pi = 0; pi < (INT32)(sizeof pnames / sizeof pnames[0]); pi++)
+	{
+		patch_t *patch = W_CachePatchName(pnames[pi], PU_PATCH);
+
+		for (mi = 0; mi < (INT32)(sizeof modes / sizeof modes[0]); mi++)
+			for (xi = 0; xi < 4; xi++)
+				for (yi = 0; yi < 4; yi++)
+				{
+					INT32 x0 = vid.width, y0 = vid.height, x1 = -1, y1 = -1, px, py;
+					const INT32 x = xs[xi], y = ys[yi];
+
+					ClearScreen(0x01);
+					last_note[0] = last_note[1] = last_note[2] = last_note[3] = -999;
+					checking = false;
+					ps2mh_recording = true;
+					V_DrawStretchyFixedPatch((fixed_t)x << FRACBITS, (fixed_t)y << FRACBITS, modes[mi].scale, modes[mi].scale, modes[mi].flags, patch, NULL);
+					ps2mh_recording = false;
+					for (py = 0; py < vid.height; py++)
+						for (px = 0; px < vid.width; px++)
+							if (screens[0][(size_t)py * vid.rowbytes + px] != 0x01)
+							{
+								x0 = min(x0, px);
+								y0 = min(y0, py);
+								x1 = max(x1, px);
+								y1 = max(y1, py);
+							}
+					if (x1 < 0)
+						continue; // off the screen
+					total++;
+					{
+						const INT32 ax0 = FloorDiv(x0 - ox, dup), ay0 = FloorDiv(y0 - oy, dup), ax1 = FloorDiv(x1 - ox, dup) + 1, ay1 = FloorDiv(y1 - oy, dup) + 1;
+
+						if (last_note[0] > ax0 || last_note[1] > ay0 || last_note[2] < ax1 || last_note[3] < ay1)
+						{
+							bad++;
+							if (bad <= 12)
+								CONS_Printf("MHGEOM MISMATCH %s %s at %d,%d: drawn [%d,%d)-[%d,%d) noted [%d,%d)-[%d,%d)\n", pnames[pi], modes[mi].name, (int)x, (int)y, (int)ax0, (int)ay0, (int)ax1, (int)ay1,
+									(int)last_note[0], (int)last_note[1], (int)last_note[2], (int)last_note[3]);
+						}
+					}
+				}
+	}
+	// fills
+	for (mi = 0; mi < 4; mi++)
+		for (xi = 0; xi < 4; xi++)
+			for (yi = 0; yi < 4; yi++)
+			{
+				static const INT32 fl[4] = {0, V_SNAPTOLEFT | V_SNAPTOTOP, V_SNAPTORIGHT | V_SNAPTOBOTTOM, V_SNAPTOLEFT | V_SNAPTOBOTTOM};
+				INT32 x0 = vid.width, y0 = vid.height, x1 = -1, y1 = -1, px, py;
+
+				ClearScreen(0x01);
+				last_note[0] = last_note[1] = last_note[2] = last_note[3] = -999;
+				ps2mh_recording = true;
+				V_DrawFill(xs[xi], ys[yi], 37, 21, fl[mi] | 0xFE);
+				ps2mh_recording = false;
+				for (py = 0; py < vid.height; py++)
+					for (px = 0; px < vid.width; px++)
+						if (screens[0][(size_t)py * vid.rowbytes + px] != 0x01)
+						{
+							x0 = min(x0, px);
+							y0 = min(y0, py);
+							x1 = max(x1, px);
+							y1 = max(y1, py);
+						}
+				if (x1 < 0)
+					continue;
+				total++;
+				{
+					const INT32 ax0 = FloorDiv(x0 - ox, dup), ay0 = FloorDiv(y0 - oy, dup), ax1 = FloorDiv(x1 - ox, dup) + 1, ay1 = FloorDiv(y1 - oy, dup) + 1;
+
+					if (last_note[0] > ax0 || last_note[1] > ay0 || last_note[2] < ax1 || last_note[3] < ay1)
+					{
+						bad++;
+						if (bad <= 12)
+							CONS_Printf("MHGEOM MISMATCH fill flags %x at %d,%d: drawn [%d,%d)-[%d,%d) noted [%d,%d)-[%d,%d)\n", (unsigned)fl[mi], (int)xs[xi], (int)ys[yi], (int)ax0, (int)ay0, (int)ax1, (int)ay1,
+								(int)last_note[0], (int)last_note[1], (int)last_note[2], (int)last_note[3]);
+					}
+				}
+			}
+	(void)k;
+	memcpy(screens[0], chk_save, chk_size);
+	free(chk_save);
+	chk_save = NULL;
+	CONS_Printf("MHGEOM %dx%d: %d draws, %d noted too small\n", (int)vid.width, (int)vid.height, (int)total, (int)bad);
+}
+
 // ---- the end of the frame ------------------------------------------------------------------------------------------------------------------------------
+// ps2_mhplace N (1..7): the placement of the left group of the "select" hints against a made-up obstacle in the bottom rows, to see (and for the log to say) every way
+// that a group can be placed: 1 nothing in the way (L), 2 the corner of the lowest row blocked (R), 3 the corner blocked in every row (M), 4 the middle of the left
+// half blocked so that the line is too long for the room (S), 5 less room still (I), 6 the whole left half blocked (-), 7 the safe area of the screen is taken
+// all along the bottom. 0 = off. Each draws the obstacle as a red block under the hints.
+static INT32 place_test;
+static const struct { INT32 x0, y0, x1, y1; char want; } place_cases[] =
+{
+	{0, 0, 0, 0, 'L'}, {0, 176, 40, 200, 'R'}, {0, 140, 30, 200, 'M'}, {75, 140, 160, 200, 'S'}, {45, 140, 160, 200, 'I'}, {0, 140, 160, 200, '-'},
+};
+
+static void Command_Place_f(void)
+{
+	place_test = COM_Argc() > 1 ? atoi(COM_Argv(1)) : 0;
+	if (place_test > (INT32)(sizeof place_cases / sizeof place_cases[0]))
+		place_test = 0;
+	menuactive = true;
+}
+
+static void PlaceTest(void)
+{
+	const hintset_t *set = &hintsets[PS2MH_SELECT];
+	const INT32 c = place_test - 1;
+	static INT32 last_logged;
+
+	memset(occ, 0, sizeof occ);
+	numplates = 0;
+	if (place_cases[c].x1 > place_cases[c].x0)
+	{
+		V_DrawFill(place_cases[c].x0, place_cases[c].y0, place_cases[c].x1 - place_cases[c].x0, place_cases[c].y1 - place_cases[c].y0, 35);
+		OccSet(place_cases[c].x0, place_cases[c].y0, place_cases[c].x1, place_cases[c].y1);
+	}
+	how[0] = PlaceGroup(set->left, false);
+	how[1] = PlaceGroup(set->right, true);
+	if (last_logged != place_test)
+	{
+		last_logged = place_test;
+		CONS_Printf("MHPLACE-TEST %d: left group placed '%c' (expected '%c'), right group '%c' %s\n", (int)place_test, how[0], place_cases[c].want, how[1], how[0] == place_cases[c].want ? "ok" : "WRONG");
+	}
+}
+
 void PS2MenuHints_Draw(void)
 {
 	const hintset_t *set;
@@ -517,6 +701,11 @@ void PS2MenuHints_Draw(void)
 	begun = false;
 	numplates = 0;
 	how[0] = how[1] = ' ';
+	if (place_test)
+	{
+		PlaceTest();
+		return;
+	}
 	if (!cv_menuhints.value || !menuactive || PS2OSK_Active()) // the keyboard has its own line of hints
 		return;
 	kind = M_PS2MenuKind();
@@ -535,10 +724,24 @@ void PS2MenuHints_Draw(void)
 
 		for (p = 0; p < numplates; p++)
 			sig = sig * 31u + (UINT32)(plates[p].x + plates[p].y * 400 + plates[p].w * 7);
-		if (crawling ? check_armed : sig != check_sig)
+		// a menu that is still moving (the save slots sliding in, a list scrolling) is drawn differently by every frame, and some draw routines change their state
+		// even when the time stands still: the check, which draws the frame again, waits for two frames with the same picture of the menu (40 frames at most)
+		UINT32 hash = 2166136261u;
+		size_t q;
+		boolean stable;
+
+		for (q = 0; q < sizeof occ; q++)
+			hash = (hash ^ ((const UINT8 *)occ)[q]) * 16777619u;
+		stable = hash == occ_hash_last || stable_wait >= 40;
+		occ_hash_last = hash;
+		if (!stable)
+			stable_wait++;
+		else if (crawling ? check_armed : sig != check_sig)
 		{
+			memcpy(occ_pre, occ, sizeof occ);
 			check_armed = false;
 			check_sig = sig;
+			stable_wait = 0;
 			Check();
 		}
 	}
@@ -569,6 +772,22 @@ static void Command_Crawl_f(void)
 	CONS_Printf("MHCRAWL start: %d menus\n", (int)crawl_n);
 }
 
+// The menus of the record attack and the like put the game into another state (GS_TIMEATTACK) when they are entered, and the next menu would be drawn in it: every menu
+// of the crawler and of -menuseq starts from the state of the first call (the title screen), without a screen wipe.
+static void BaseState(void)
+{
+	static boolean have;
+	static gamestate_t base;
+
+	if (!have)
+	{
+		have = true;
+		base = gamestate;
+		return;
+	}
+	gamestate = wipegamestate = base;
+}
+
 // ps2_menugo MENU [ITEM]: bring up menu number MENU of the crawler's list with the cursor on ITEM (for pictures: -netcmd 60:ps2_menugo~51~3 -vidshot f200)
 static void Command_Go_f(void)
 {
@@ -579,13 +798,16 @@ static void Command_Go_f(void)
 	if (idx < 0 || idx >= n)
 		return;
 	M_PS2MenuList(idx, &m, &name);
+	BaseState();
 	M_PS2MenuEnter(m, idx, n);
 	menuactive = true;
 	M_PS2MenuCursor(COM_Argc() > 2 ? atoi(COM_Argv(2)) : 0);
-	CONS_Printf("MHGO %d %s item %d\n", (int)idx, name, (int)M_PS2MenuCursor(-1));
+	if (COM_Argc() > 3) // ps2_menugo MENU ITEM HINTS: the cvar menuhints on / off (pictures of the same menu with and without the hints)
+		CV_StealthSetValue(&cv_menuhints, atoi(COM_Argv(3)) ? 1 : 0);
+	CONS_Printf("MHGO %d %s item %d hints %d\n", (int)idx, name, (int)M_PS2MenuCursor(-1), (int)cv_menuhints.value);
 }
 
-// -menuseq SPACING,M:I,M:I,...: a picture series for -vidshot: from the 20th displayed frame on, every SPACING frames the next menu M of the crawler's list is brought up
+// -menuseq SPACING,M:I[:HINTS],P<N>,...: (P<N> = ps2_mhplace N) a picture series for -vidshot: from the 20th displayed frame on, every SPACING frames the next menu M of the crawler's list is brought up
 // with the cursor on item I (Command_Go_f); -vidshot m<N> takes the picture at the N-th frame of the series (the pace is that of displayed frames: a screen wipe or a slow
 // game tic does not move it)
 static const char *seqspec;
@@ -618,10 +840,20 @@ void PS2MenuHints_SeqTick(void)
 			return;
 		colon = strchr(p + 1, ':');
 		next = strchr(p + 1, ',');
+		if (p[1] == 'P') // P3: ps2_mhplace 3 (the placement test patterns)
+		{
+			char cmd[32];
+
+			snprintf(cmd, sizeof cmd, "ps2_mhplace %d\n", atoi(p + 2));
+			COM_BufAddText(cmd);
+			return;
+		}
 		{
 			char cmd[48];
 
-			snprintf(cmd, sizeof cmd, "ps2_menugo %d %d\n", atoi(p + 1), (colon && (!next || colon < next)) ? atoi(colon + 1) : 0);
+			const char *colon2 = (colon && (!next || colon < next)) ? strchr(colon + 1, ':') : NULL;
+
+			snprintf(cmd, sizeof cmd, "ps2_menugo %d %d %d\n", atoi(p + 1), (colon && (!next || colon < next)) ? atoi(colon + 1) : 0, (colon2 && (!next || colon2 < next)) ? atoi(colon2 + 1) : (int)cv_menuhints.value);
 			COM_BufAddText(cmd);
 		}
 	}
@@ -650,6 +882,8 @@ void PS2MenuHints_Frame(void)
 		parsed = true;
 		COM_AddCommand("ps2_menucrawl", Command_Crawl_f, 0);
 		COM_AddCommand("ps2_menugo", Command_Go_f, 0);
+		COM_AddCommand("ps2_mhgeom", Command_Geom_f, 0);
+		COM_AddCommand("ps2_mhplace", Command_Place_f, 0);
 		if (M_CheckParm("-menuhintscheck"))
 			opt_check = true;
 		opt_debug = M_CheckParm("-menuhintsdebug") != 0;
@@ -681,6 +915,7 @@ void PS2MenuHints_Frame(void)
 		if (crawl_i < 0)
 		{
 			CONS_Printf("MHCRAWL menu %d/%d %s id=%u items=%d title=%s\n", (int)crawl_m, (int)crawl_n, name, (unsigned)m->menuid, (int)m->numitems, m->menutitlepic ? m->menutitlepic : "-");
+			BaseState();
 			M_PS2MenuEnter(m, crawl_m, crawl_n);
 			menuactive = true;
 			crawl_i = 0;
