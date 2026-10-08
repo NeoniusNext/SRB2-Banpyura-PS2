@@ -493,7 +493,10 @@ UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIEL
 		DIGEST(hash, shader_target);
 		DIGEST(hash, pSurf->TintColor.rgba);
 		DIGEST(hash, pSurf->FadeColor.rgba);
-		DIGEST(hash, pSurf->LightInfo.light_level);
+		if (!PS2HWD_PalLit(pSurf, PolyFlags, tex, shader_target)) // PS2-HW-106: as in HWR_ProcessPolygon
+		{
+			DIGEST(hash, pSurf->LightInfo.light_level);
+		}
 		DIGEST(hash, pSurf->LightInfo.fade_start);
 		DIGEST(hash, pSurf->LightInfo.fade_end);
 	}
