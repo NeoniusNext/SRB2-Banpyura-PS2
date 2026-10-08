@@ -90,7 +90,7 @@ enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH,
 	HWC_SR_POLY, HWC_SR_FFLOORS, HWC_SR_SLOPE, HWC_SR_HEIGHTSEC, HWC_SR_LIGHTS, HWC_SR_MID, HWC_SR_BACK,
 	HWC_AL_CALLS, HWC_AL_BACK, HWC_AL_CLIP, HWC_AL_EMPTY, HWC_AL_BOX, HWC_AL_BOXREJ,
 	// OPT11 round 2 (FX2): the sprites of a frame (HWPROF40, --hwdetail): things of the sectors, ProjectSprite calls, behind the view, quad hidden, vissprites, shadows, shadows hidden
-	HWC_FX_THINGS, HWC_FX_PROJ, HWC_FX_BEHIND, HWC_FX_QHID, HWC_FX_VIS, HWC_FX_SHADOW, HWC_FX_SHQHID, HWC_FX_PRE, HWC_FX_SPRHID, HWC_FX_SPRSH, HWC_NUM };
+	HWC_FX_THINGS, HWC_FX_PROJ, HWC_FX_BEHIND, HWC_FX_QHID, HWC_FX_VIS, HWC_FX_SHADOW, HWC_FX_SHQHID, HWC_FX_PRE, HWC_FX_SPRHID, HWC_FX_SPRSH, HWC_FX_ROLL, HWC_FX_NOEXT, HWC_NUM };
 extern unsigned int ps2hwp_cnt[HWC_NUM];
 extern int ps2hwp_skyview; // 1 while HWR_RenderSkyboxView runs (the counters of the driver are split by view)
 #define HWC_ADD(i) (ps2hwp_cnt[i]++)

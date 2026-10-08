@@ -5469,6 +5469,10 @@ static void HWR_AddSprites(sector_t *sec)
 				if (vis0)
 				{
 					HWD_ADD(HWC_FX_PROJ);
+					if (thing->spriteroll || thing->old_spriteroll)
+						HWD_ADD(HWC_FX_ROLL); // (measurement: the things the sphere test leaves out because their picture is rotated)
+					if (thing->skin || (thing->flags2 & MF2_LINKDRAW) || (thing->frame & (FF_PAPERSPRITE | FF_FLOORSPRITE)) || (thing->renderflags & (RF_PAPERSPRITE | RF_FLOORSPRITE | RF_ABSOLUTEOFFSETS | RF_SHADOWEFFECTS)) || thing->type == MT_OVERLAY || (cv_shadow.value && thing->shadowscale))
+						HWD_ADD(HWC_FX_NOEXT);
 					if (cs && HWR_FX_ThingHidden(thing, cs))
 					{
 						HWD_ADD(HWC_FX_PRE);
