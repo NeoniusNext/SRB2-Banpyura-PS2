@@ -91,13 +91,13 @@ int HWR_FrPolyOutside(const FOutVector *v, unsigned int n)
 {
 	// exact: the polygon is clipped by the five planes (Sutherland-Hodgman) and nothing is left of it. (A polygon with some corners behind the near plane and some beside the side planes is wholly
 	// outside the volume but no single plane has all its corners: the outcode test of the driver draws it, clips it away.)
-	float a[32][3], b[32][3];
+	float a[160][3], b[160][3];
 	unsigned int cnt = n, k, i;
 	float (*in)[3] = a, (*out)[3] = b;
 
 	if (!frv.on)
 		return 0;
-	if (n > 24)
+	if (n > 64)
 		return 0;
 	for (i = 0; i < n; i++)
 	{
@@ -129,7 +129,7 @@ int HWR_FrPolyOutside(const FOutVector *v, unsigned int n)
 				out[m][2] = p[2] + (q[2] - p[2]) * t;
 				m++;
 			}
-			if (m > 28)
+			if (m > 150)
 				return 0;
 		}
 		{

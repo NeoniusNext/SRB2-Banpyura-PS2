@@ -3190,10 +3190,21 @@ static void HWR_Subsector(size_t num)
 
 	floorcolormap = ceilingcolormap = gl_frontsector->extra_colormap;
 
+#ifdef PS2_PROFILE
+	// OPT12 PS2-HW-404: a sector without slopes (nearly all of them) has its heights in the sector: the four calls (P_GetSector*ZAt: a call, a test of the slope, a load) are the loads and two tests
+	if (!(hwr_fr_off & 128u) && !gl_frontsector->f_slope && !gl_frontsector->c_slope)
+	{
+		cullFloorHeight = locFloorHeight = gl_frontsector->floorheight;
+		cullCeilingHeight = locCeilingHeight = gl_frontsector->ceilingheight;
+	}
+	else
+#endif
+	{
 	cullFloorHeight   = P_GetSectorFloorZAt  (gl_frontsector, viewx, viewy);
 	cullCeilingHeight = P_GetSectorCeilingZAt(gl_frontsector, viewx, viewy);
 	locFloorHeight    = P_GetSectorFloorZAt  (gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 	locCeilingHeight  = P_GetSectorCeilingZAt(gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
+	}
 
 #ifdef PS2_PROFILE
 	if (gl_frontsector->ffloors || (hwr_geo_off & 1024)) // OPT11 (PS2-HW-200): the function does nothing for a sector without 3D floors
@@ -3448,7 +3459,8 @@ static void HWR_Subsector(size_t num)
 // BP: big hack for a test in lighning ref : 1249753487AB
 fixed_t *hwbbox;
 
-static void HWR_RenderBSPNode(INT32 bspnum)
+#ifdef PS2_PROFILE
+static void HWR_RenderBSPNodeOld(INT32 bspnum)
 {
 	node_t *bsp = &nodes[bspnum];
 
@@ -3490,16 +3502,106 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 	hwbbox = bsp->bbox[side];
 
 	// Recursively divide front space.
-	HWR_RenderBSPNode(bsp->children[side]);
+	HWR_RenderBSPNodeOld(bsp->children[side]);
 
 	// Possibly divide back space.
 	if (HWR_CheckBBox(bsp->bbox[side^1]))
 	{
 		// BP: big hack for a test in lighning ref : 1249753487AB
 		hwbbox = bsp->bbox[side^1];
+		HWR_RenderBSPNodeOld(bsp->children[side^1]);
+	}
+}
+
+static inline void HWR_FrLeaf(INT32 sub)
+{
+	HWP_SPAN_BEGIN(tsub);
+#ifdef PS2_HWDETAIL
+	hwr_fr_subpolys = hwr_fr_subvis = 0;
+#endif
+	HWR_Subsector(sub == -1 ? 0 : (size_t)(sub & (~NF_SUBSECTOR)));
+#ifdef PS2_HWDETAIL
+	HWR_FrCensusSub();
+#endif
+	HWP_SPAN_END(tsub, HWP_SUBSEC);
+}
+
+static void HWR_RenderBSPNodeNew(INT32 bspnum)
+{
+	// OPT12 PS2-HW-405: the far child is the loop and a leaf child is not a call (the walk made 1500 calls a frame, each saving and restoring its registers); the first call checks -hwfr 256 (the walk as before)
+	for (;;)
+	{
+		node_t *bsp;
+
+		// Decide which side the view point is on
+		INT32 side, child;
+
+		ps_numbspcalls.value.i++;
+
+		// Found a subsector?
+		if (bspnum & NF_SUBSECTOR)
+		{
+			HWR_FrLeaf(bspnum);
+			return;
+		}
+		bsp = &nodes[bspnum];
+
+		// Decide which side the view point is on.
+		side = R_PointOnSide(viewx, viewy, bsp);
+
+		// BP: big hack for a test in lighning ref : 1249753487AB
+		hwbbox = bsp->bbox[side];
+
+		// Recursively divide front space.
+		child = bsp->children[side];
+		if (child & NF_SUBSECTOR)
+		{
+			ps_numbspcalls.value.i++;
+			HWR_FrLeaf(child);
+		}
+		else
+			HWR_RenderBSPNodeNew(child);
+
+		// Possibly divide back space.
+		if (!HWR_CheckBBox(bsp->bbox[side^1]))
+			return;
+		// BP: big hack for a test in lighning ref : 1249753487AB
+		hwbbox = bsp->bbox[side^1];
+		bspnum = bsp->children[side^1];
+	}
+}
+
+static void HWR_RenderBSPNode(INT32 bspnum)
+{
+	if (hwr_fr_off & 256u)
+		HWR_RenderBSPNodeOld(bspnum);
+	else
+		HWR_RenderBSPNodeNew(bspnum);
+}
+
+#else
+static void HWR_RenderBSPNode(INT32 bspnum)
+{
+	node_t *bsp = &nodes[bspnum];
+	INT32 side;
+
+	ps_numbspcalls.value.i++;
+
+	if (bspnum & NF_SUBSECTOR)
+	{
+		HWR_Subsector(bspnum == -1 ? 0 : (size_t)(bspnum&(~NF_SUBSECTOR)));
+		return;
+	}
+	side = R_PointOnSide(viewx, viewy, bsp);
+	hwbbox = bsp->bbox[side];
+	HWR_RenderBSPNode(bsp->children[side]);
+	if (HWR_CheckBBox(bsp->bbox[side^1]))
+	{
+		hwbbox = bsp->bbox[side^1];
 		HWR_RenderBSPNode(bsp->children[side^1]);
 	}
 }
+#endif
 
 // ==========================================================================
 // gl_things.c
