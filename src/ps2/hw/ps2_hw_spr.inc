@@ -45,6 +45,7 @@ static struct
 	// the view of the flush in progress
 	u32 cur_vw[16];
 	// statistics
+	u32 st_why[8];
 	u32 st_kept, st_flush, st_plans, st_fb, st_uploads, st_rj_gate, st_rj_tex, st_rj_para, st_rj_geom, st_rj_full;
 } SPR;
 
@@ -100,11 +101,11 @@ static void spr_view_make(u32 *w)
 	w[13] = w[14] = w[15] = 0;
 }
 
-// what of a texture decides the plan (the same bits as vu_key_make's word 5)
+// what of a texture decides the plan of the sprite stream: the palette kind (the rows of the CLUT table: with or without a hole at 255) and the filter of TEX1. The rest of what makes the
+// plan of the polygon program (the wrap, the size that is not a power of two, the region, the alpha of the texels) is per sprite here: TEX0 and CLAMP of every record
 static inline u32 spr_kind(const texrec_t *r)
 {
-	return (u32)r->psm | ((u32)r->clut << 6) | ((u32)(r->notcc != 0) << 8) | ((u32)(r->screen != 0) << 9) | ((u32)(r->wrapx != 0) << 10) | ((u32)(r->wrapy != 0) << 11)
-		| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17);
+	return (u32)r->psm | ((u32)r->clut << 6) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17);
 }
 
 static inline u32 spr_pcol(u32 flags, const FSurfaceInfo *s)
@@ -270,7 +271,7 @@ static void spr_flush_list(int which)
 				SPR.serial = H.serial; // the upload wrote the transfer registers and the texture flush only: the GS state of the plan stands
 		}
 		idx = (int)(r - H.rec);
-		if (r->psm != PSM_T8 || (r->clut != 1 && r->clut != 2) || r->screen)
+		if (r->psm != PSM_T8 || (r->clut != 1 && r->clut != 2) || r->screen || r->wrapx || r->wrapy)
 		{
 			spr_fallback(e);
 			continue;
@@ -278,6 +279,7 @@ static void spr_flush_list(int which)
 		spr_key_make(kw, e, spr_kind(r));
 		if (!SPR.valid || SPR.serial != H.serial || SPR.cgen != VU.cgen || SPR.epoch != H.clut_epoch || SPR.palgen != H.pal_gen || !VU.consts_ok || memcmp(SPR.kw, kw, sizeof kw))
 		{
+			SPR.st_why[!SPR.valid ? 0 : SPR.serial != H.serial ? 1 : SPR.cgen != VU.cgen ? 2 : SPR.epoch != H.clut_epoch ? 3 : SPR.palgen != H.pal_gen ? 4 : !VU.consts_ok ? 5 : 6]++;
 			const int ok = spr_plan_make(e, r, kw);
 
 			if (ok < 0)
@@ -427,6 +429,8 @@ void PS2HWD_SprProf(unsigned int frames)
 	I_OutputMsg("HWPROF42 sprite stream (FX3): kept=%u flushed=%u plans=%u fallback=%u uploads=%u chunks=%u | rejected: gate=%u texture=%u shape=%u geometry=%u full=%u | spr cyc=%u\n", SPR.st_kept / frames, SPR.st_flush / frames,
 		SPR.st_plans / frames, SPR.st_fb / frames, SPR.st_uploads / frames, VU.stat_sprchunks / frames, SPR.st_rj_gate / frames, SPR.st_rj_tex / frames, SPR.st_rj_para / frames, SPR.st_rj_geom / frames, SPR.st_rj_full / frames,
 		(unsigned)(G.spr_cyc / frames));
+	I_OutputMsg("HWPROF43 plan made because: invalid=%u serial=%u cgen=%u epoch=%u palgen=%u consts=%u key=%u\n", SPR.st_why[0] / frames, SPR.st_why[1] / frames, SPR.st_why[2] / frames, SPR.st_why[3] / frames, SPR.st_why[4] / frames, SPR.st_why[5] / frames, SPR.st_why[6] / frames);
+	memset(SPR.st_why, 0, sizeof SPR.st_why);
 	SPR.st_kept = SPR.st_flush = SPR.st_plans = SPR.st_fb = SPR.st_uploads = SPR.st_rj_gate = SPR.st_rj_tex = SPR.st_rj_para = SPR.st_rj_geom = SPR.st_rj_full = 0;
 	VU.stat_sprchunks = 0;
 	G.spr_cyc = 0;
