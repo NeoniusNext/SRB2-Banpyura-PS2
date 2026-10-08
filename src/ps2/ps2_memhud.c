@@ -35,7 +35,7 @@ static void showmem_onchange(void);
 consvar_t cv_showmem = CVAR_INIT ("showmem", "Off", CV_SAVE|CV_CALL, showmem_cons_t, showmem_onchange);
 
 #define SAMPLE_TICS 9 // 35 tics a second: the numbers are read about every 0.26 s (the text does not flicker)
-#define RAM_RED_KIB (1024u) // less free RAM than this: red
+#define RAM_RED_KIB (1024u) // less free zone memory than this: red
 #define RAM_YELLOW_KIB (3072u) // less than this: yellow
 #define VRAM_YELLOW_PCT 90u // software renderer: the GS memory is fuller than this (percent): yellow
 #define VRAM_WS_YELLOW_PCT 85u // hardware renderer: the working set of the frame (percent of the texture pool): yellow
@@ -50,14 +50,27 @@ void PS2MemHud_Sample(ps2memhud_t *o)
 	zastats_t st;
 	size_t ram = PS2Mem_RamBytes(), libc, zfree = 0;
 	size_t freeb;
+	int zone = ZA_Ready();
 
 	memset(o, 0, sizeof *o);
-	if (ZA_Ready())
+	if (zone)
 	{
 		ZA_Stats(&st);
 		zfree = st.freebytes;
 		o->zone_big = (unsigned)(st.largestfree >> 10);
 		o->zone_peak = (unsigned)(st.globalpeak >> 10);
+	}
+	{
+		static long bias = -1; // -showmembias KiB: pretend that much of the zone is used (to see the colours of the pressure without filling the memory)
+
+		if (bias < 0)
+			bias = M_CheckParm("-showmembias") && M_IsNextParm() ? atol(M_GetNextParm()) : 0;
+		if (bias && zone)
+		{
+			const size_t b = (size_t)bias << 10;
+
+			zfree = zfree > b ? zfree - b : 0;
+		}
 	}
 	libc = PS2Mem_LibcFree(); // the C heap can still grow to the stack, and holds free chunks: what malloc can still give
 	freeb = zfree + libc;
@@ -68,7 +81,7 @@ void PS2MemHud_Sample(ps2memhud_t *o)
 	o->ram_used = o->ram_total - o->ram_free;
 	o->zone_free = (unsigned)(zfree >> 10);
 	o->libc_free = (unsigned)(libc >> 10);
-	o->ram_level = o->ram_free < RAM_RED_KIB ? 2 : o->ram_free < RAM_YELLOW_KIB ? 1 : 0;
+	o->ram_level = o->zone_free < RAM_RED_KIB ? 2 : o->zone_free < RAM_YELLOW_KIB ? 1 : 0; // the zone is what runs out: the C heap's room does not help a zone allocation
 
 	o->vram_total = 4096;
 #ifdef HWRENDER
@@ -309,6 +322,7 @@ static tic_t last_sample;
 // profile
 static unsigned prof_sample_cyc, prof_sample_n, prof_draw_cyc, prof_draw_n, prof_plate_cyc, prof_compose_cyc, prof_compose_n, prof_fallback_n;
 static int prof_on = -1;
+static unsigned long tot_draw_cyc, tot_draw_n, tot_compose_cyc, tot_compose_n, tot_sample_cyc, tot_sample_n; // since the start (the profile window prints and clears the ones above)
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
 // the picture of the text: both lines are drawn into one small bitmap when the text changes (a few times a second) and shown as ONE patch every
@@ -457,6 +471,8 @@ static int compose(void)
 	{
 		prof_compose_cyc += PS2Mem_Cycles() - c0;
 		prof_compose_n++;
+		tot_compose_cyc += PS2Mem_Cycles() - c0;
+		tot_compose_n++;
 	}
 	if (!np)
 		return 0;
@@ -498,6 +514,8 @@ static void refresh(int mode)
 	{
 		prof_sample_cyc += PS2Mem_Cycles() - c0;
 		prof_sample_n++;
+		tot_sample_cyc += PS2Mem_Cycles() - c0;
+		tot_sample_n++;
 	}
 }
 
@@ -595,6 +613,8 @@ void PS2MemHud_Draw(void)
 	{
 		prof_draw_cyc += PS2Mem_Cycles() - c0;
 		prof_draw_n++;
+		tot_draw_cyc += PS2Mem_Cycles() - c0;
+		tot_draw_n++;
 	}
 }
 
@@ -621,4 +641,7 @@ void PS2MemHud_Check(void)
 	I_OutputMsg("SHOWMEM now (KiB): ram total=%u used=%u free=%u | zone free=%u big=%u peak=%u | libc free=%u | vram total=%u used=%u fb=%u z=%u clut=%u tex=%u/%u ws=%u hw=%d levels=%d/%d\n",
 		m.ram_total, m.ram_used, m.ram_free, m.zone_free, m.zone_big, m.zone_peak, m.libc_free, m.vram_total, m.vram_used, m.vram_fb, m.vram_z, m.vram_clut,
 		m.vram_tex_used, m.vram_tex_total, m.vram_ws, m.hw, m.ram_level, m.vram_level);
+	if (tot_draw_n)
+		I_OutputMsg("SHOWMEM cost (-ps2prof, whole run): drawn %lu frames, %lu cycles a frame on average (the readings and the pictures made inside it included); readings %lu, %lu cycles each; pictures %lu, %lu cycles each\n",
+			tot_draw_n, tot_draw_cyc / tot_draw_n, tot_sample_n, tot_sample_n ? tot_sample_cyc / tot_sample_n : 0, tot_compose_n, tot_compose_n ? tot_compose_cyc / tot_compose_n : 0);
 }

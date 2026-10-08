@@ -535,7 +535,6 @@ static void plan_tex_touch(texrec_t *r)
 
 		r->ws = H.frame_no + 1;
 		H.st.ws_blocks += r->nblk;
-		H.ws_cum += r->nblk; // OPT11-MEM (PS2-HW-300)
 		H.st.ws_tex++;
 		if (H.pred_frame != H.frame_no + 1)
 		{

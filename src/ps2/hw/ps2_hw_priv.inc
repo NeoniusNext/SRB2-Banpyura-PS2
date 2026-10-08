@@ -323,7 +323,7 @@ static struct
 	u32 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
 	int free_n;
 	u32 used_blocks;
-	u32 ws_cum, ws_prev, ws_last; // OPT11-MEM (PS2-HW-300): GS blocks of the textures drawn, summed over all frames since the start (the profiler never clears it) / its value at the last frame end / the working set of the last frame: showmem
+	u32 ws_prev, ws_last; // OPT11-MEM (PS2-HW-300): H.st.ws_blocks at the last frame end / the working set of the last frame (what showmem shows); no counter of their own in the draw path
 
 	// textures
 	texrec_t *rec;

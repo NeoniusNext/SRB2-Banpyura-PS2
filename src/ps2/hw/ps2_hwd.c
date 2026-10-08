@@ -780,8 +780,9 @@ static void hw_FinishUpdate(INT32 waitvbl)
 	frame_end();
 	drv_out();
 	H.st.frames++;
-	H.ws_last = H.ws_cum - H.ws_prev; // OPT11-MEM (PS2-HW-300): the working set of the frame just ended
-	H.ws_prev = H.ws_cum;
+	if (H.st.ws_blocks >= H.ws_prev) // OPT11-MEM (PS2-HW-300): the working set of the frame just ended (else the profiler cleared H.st in this frame: the last value stays)
+		H.ws_last = H.st.ws_blocks - H.ws_prev;
+	H.ws_prev = H.st.ws_blocks;
 	if (waitvbl)
 		vblank_wait(1);
 	d = cyc() - t0;
