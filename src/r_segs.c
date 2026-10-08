@@ -116,6 +116,12 @@ void R_ReleaseDrawSegScales(void)
 			drawsegs[i].frontscale = NULL;
 			drawsegs[i].frontscalewidth = 0;
 		}
+	// PS2-179: and the array of the drawsegs itself (128 entries grown by half to the busiest view: 0.6 MB after MAPF2, a block of the long-lived side that no level
+	// ever released); the first wall of the next level makes it again, as at the start of the game
+	Z_Free(drawsegs);
+	drawsegs = ds_p = curdrawsegs = NULL;
+	firstseg = NULL;
+	maxdrawsegs = 0;
 }
 
 void R_AllocDrawSegFrontScale(drawseg_t *ds)

@@ -8597,7 +8597,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
 #ifdef PS2
 	Z_FlushCache(); // PS2-72: the level starts from an arena without the last level's caches between its blocks
-	R_ReleaseDrawSegScales(); // PS2-172: the busiest view of the earlier levels does not stay in the arena
+	R_ReleaseDrawSegScales(); // PS2-172, 179: the busiest view of the earlier levels does not stay in the arena
+	R_ReleaseVisplanes();
 #endif
 	mobjcache = NULL;
 #ifdef PS2_OPT_REND
