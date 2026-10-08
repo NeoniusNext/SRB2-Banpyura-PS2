@@ -136,6 +136,7 @@ angle_t R_InterpolateAngle(angle_t from, angle_t to);
 
 // Evaluate the interpolated mobj state for the given mobj
 void R_InterpolateMobjState(mobj_t *mobj, fixed_t frac, interpmobjstate_t *out);
+void R_InterpolateMobjStateLite(mobj_t *mobj, fixed_t frac, interpmobjstate_t *out); // PS2-HW-245: without the subsector, the pitch and the roll
 // Evaluate the interpolated mobj state for the given precipmobj
 void R_InterpolatePrecipMobjState(precipmobj_t *mobj, fixed_t frac, interpmobjstate_t *out);
 

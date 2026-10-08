@@ -49,6 +49,8 @@
 #endif
 #include "ps2_prof.h"
 
+INT32 ps2_fxfrac; // -fxfrac N (OPT11 round 2, FX2): every frame is drawn N percent between two tics (d_main.c)
+
 rendermode_t rendermode = render_none;
 rendermode_t chosenrendermode = render_none;
 
@@ -240,6 +242,10 @@ static boolean Impl_HWAcquire(void)
 				ps2hwd_force_lt = atoi(M_GetNextParm()); // OPT11 FX: the water ripple phase of level time N (a PS2 frame is not at the PC's tic)
 			if (M_CheckParm("-hwwater") && M_IsNextParm())
 				ps2hwd_water_ab = atoi(M_GetNextParm()); // OPT11 FX: A/B switches of the water (ps2_hwd_dbg.h)
+			if (M_CheckParm("-fxfrac") && M_IsNextParm())
+				ps2_fxfrac = atoi(M_GetNextParm()); // OPT11 round 2 (FX2): every frame is drawn N percent between two tics (d_main.c; the time demo draws whole tics only)
+			if (M_CheckParm("-hwfx") && M_IsNextParm())
+				ps2hwd_fx2 = atoi(M_GetNextParm()); // OPT11 round 2 (FX2): A/B switches of the sprite paths (ps2_hw_fx2.h)
 			if (M_CheckParm("-hwhash"))
 				ps2hwd_hash_on = 1; // OPT10 HG: HWHASH lines (see ps2_hw_priv.inc)
 			if (M_CheckParm("-hwvu1"))

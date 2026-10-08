@@ -58,6 +58,7 @@
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
+#include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
 #include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test

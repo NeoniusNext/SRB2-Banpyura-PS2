@@ -945,6 +945,14 @@ static void D_RunFrame(void)
 			{
 				rendertimefrac = FRACUNIT;
 			}
+#ifdef PS2_PROFILE
+			{
+				extern INT32 ps2_fxfrac; // -fxfrac N (OPT11 round 2, FX2, measurements): every frame is drawn N percent of the way between two tics (a time demo draws whole tics only)
+
+				if (ps2_fxfrac > 0 && ps2_fxfrac < 100 && !(paused || P_AutoPause()))
+					rendertimefrac = (fixed_t)(((INT64)FRACUNIT * ps2_fxfrac) / 100);
+			}
+#endif
 		}
 		else
 		{
