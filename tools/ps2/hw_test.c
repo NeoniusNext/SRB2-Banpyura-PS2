@@ -109,6 +109,19 @@ void HWR_PS2_FlatUnpin(const u8 *p, size_t bytes)
 }
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc;
 int ps2hwp_skyview;
+/* OPT11 round 3 (FX3): stand-ins for what the driver gained since this test last linked (command line, zone, palette rendering, frame fraction, collection switches) */
+INT32 M_CheckParm(const char *check) { (void)check; return 0; }
+boolean M_IsNextParm(void) { return 0; }
+const char *M_GetNextParm(void) { return NULL; }
+boolean HWR_ShouldUsePaletteRendering(void) { return 0; }
+unsigned int hwr_geo_off;
+fixed_t rendertimefrac = 0x10000;
+void Z_Free(void *p) { free(p); }
+void *Z_TryMallocAlign(size_t size, INT32 tag, void *user, INT32 alignbits)
+{
+	(void)tag; (void)user;
+	return memalign((size_t)1 << alignbits, size);
+}
 
 static int failures, checks;
 #define CHECK(name, cond, ...) do { int ok_ = (cond) ? 1 : 0; failures += !ok_; checks++; printf("H0 %s %s ", ok_ ? "PASS" : "FAIL", name); printf(__VA_ARGS__); printf("\n"); } while (0)
