@@ -60,6 +60,9 @@ tic_t firstconnectattempttime = 0;
 UINT8 mynode;
 static void *snake = NULL;
 
+#ifdef PS2
+__attribute__((unused)) // PS2-336: the hints that used it are icons on the console
+#endif
 static const char *GetChatColorFromVideoFlag(INT32 flag)
 {
 	switch (flag) {
@@ -82,6 +85,27 @@ static const char *GetChatColorFromVideoFlag(INT32 flag)
 	}
 }
 
+// PS2-336: on the console the hints of the connection screens name the pad buttons by their icons (src/ps2/ps2_uiicons.h). The keys are those of CL_GameKey below:
+// Cross = Enter, Circle = Escape, Square = Space, D-pad = the arrows. Elsewhere the hints are what they always were.
+#ifdef PS2
+#include "../ps2/ps2_uiicons.h"
+#define HINT_ABORT PS2I_CIRCLE " Abort"
+#define HINT_CANCEL PS2I_CIRCLE " Cancel"
+#define HINT_BACK PS2I_CIRCLE " Back"
+#define HINT_SCROLL PS2I_DPAD_UD " Scroll list"
+#define HINT_DOWNLOAD PS2I_CROSS " Download"
+#define HINT_JOIN PS2I_CROSS " Join"
+#define HINT_SWITCH(what) va(PS2I_SQUARE " %s", what)
+#else
+#define HINT_ABORT "Press ESC to abort"
+#define HINT_CANCEL va("%sESC%s - Cancel", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+#define HINT_BACK va("%sESC%s - Back", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+#define HINT_SCROLL va("%sUP%s/%sDOWN%s - Scroll list", GetChatColorFromVideoFlag(MENUCOLOR), "\x80", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+#define HINT_DOWNLOAD va("%sENTER%s - Download", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+#define HINT_JOIN va("%sENTER%s - Join", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+#define HINT_SWITCH(what) va("%sSPACE%s - %s", GetChatColorFromVideoFlag(MENUCOLOR), "\x80", what)
+#endif
+
 static boolean IsDownloadingFile(void)
 {
 	if (cl_mode == CL_DOWNLOADFILES || cl_mode == CL_DOWNLOADHTTPFILES)
@@ -99,7 +123,7 @@ static void DrawConnectionStatusBox(void)
 	if (cl_mode == CL_CONFIRMCONNECT || IsDownloadingFile())
 		return;
 
-	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, "Press ESC to abort");
+	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, HINT_ABORT);
 }
 
 static void DrawFileProgress(fileneeded_t *file, int y)
@@ -527,7 +551,7 @@ static void CL_DrawDownloadAddonList(void)
 	V_DrawFill(8, BASEVIDHEIGHT - (ypos + 18), BASEVIDWIDTH - 16, 13, cv_menubgcolor.value);
 	V_DrawThinString(
 		12, BASEVIDHEIGHT - (ypos + 15),
-		V_ALLOWLOWERCASE, va("%sESC%s - Cancel", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+		V_ALLOWLOWERCASE, HINT_CANCEL
 	);
 
 	if (filelistsize >= MAXLISTADDONS)
@@ -535,12 +559,12 @@ static void CL_DrawDownloadAddonList(void)
 		V_DrawCenteredThinString(
 			BASEVIDWIDTH/2, BASEVIDHEIGHT - (ypos + 15),
 			V_ALLOWLOWERCASE,
-			va("%sUP%s/%sDOWN%s - Scroll list", GetChatColorFromVideoFlag(MENUCOLOR), "\x80", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+			HINT_SCROLL
 		);
 	}
 	V_DrawRightAlignedThinString(
 		BASEVIDWIDTH - 12, BASEVIDHEIGHT - (ypos + 15),
-		V_ALLOWLOWERCASE, va("%sENTER%s - Download", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+		V_ALLOWLOWERCASE, HINT_DOWNLOAD
 	);
 #undef maxcharlen
 #undef charsonside
@@ -680,7 +704,7 @@ static void CL_DrawConnectionStatus(void)
 			INT32 totalfileslength;
 			INT32 loadcompletednum = 0;
 
-			V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, "Press ESC to abort");
+			V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, HINT_ABORT);
 
 			// ima just count files here
 			if (fileneeded)
@@ -707,7 +731,7 @@ static void CL_DrawConnectionStatus(void)
 			INT32 totalfileslength;
 			INT32 checkcompletednum = 0;
 
-			V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, "Press ESC to abort");
+			V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, HINT_ABORT);
 
 			// ima just count files here
 			if (fileneeded)
@@ -742,19 +766,19 @@ static void CL_DrawConnectionStatus(void)
 			V_DrawFill(8, BASEVIDHEIGHT - (ypos+18), BASEVIDWIDTH - 16, 13, cv_menubgcolor.value);
 			V_DrawThinString(
 				12, BASEVIDHEIGHT - (ypos+15),
-				V_ALLOWLOWERCASE, va("%sESC%s - Back", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+				V_ALLOWLOWERCASE, HINT_BACK
 			);
 			if (fileneedednum > 0)
 			{
 				V_DrawCenteredThinString(
 					BASEVIDWIDTH/2, BASEVIDHEIGHT - (ypos+15),
 					V_ALLOWLOWERCASE,
-					va("%sSPACE%s - %s", GetChatColorFromVideoFlag(MENUCOLOR), "\x80", (viewserver_addons ? "Players" : "Addons"))
+					HINT_SWITCH(viewserver_addons ? "Players" : "Addons")
 				);
 			}
 			V_DrawRightAlignedThinString(
 				BASEVIDWIDTH - 12, BASEVIDHEIGHT - (ypos+15),
-				V_ALLOWLOWERCASE, va("%sENTER%s - Join", GetChatColorFromVideoFlag(MENUCOLOR), "\x80")
+				V_ALLOWLOWERCASE, HINT_JOIN
 			);
 		}
 		else if (cl_mode == CL_CONFIRMCONNECT)

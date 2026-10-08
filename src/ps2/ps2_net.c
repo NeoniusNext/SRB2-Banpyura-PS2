@@ -17,6 +17,7 @@
 
 #include "ps2_net.h"
 #include "ps2_netui.h"
+#include "ps2_uiicons.h"
 
 static INT32 netstate; // 0 not up (a new attempt is allowed), 1 up, -1 the network modules did not start (permanent)
 static char netaddr[24], netgw[24], netmask[24], netdns[24];
@@ -355,6 +356,7 @@ void PS2Net_Frame(void)
 	if (!parsed)
 	{
 		parsed = true;
+		PS2UI_RegisterCommands(); // PS2-336: "ps2_icons"
 		if (M_CheckParm("-netcmd") && M_IsNextParm())
 		{
 			const char *arg = M_GetNextParm();

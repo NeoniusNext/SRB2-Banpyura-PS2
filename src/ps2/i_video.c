@@ -1125,6 +1125,7 @@ static void Impl_VidKeys(void)
 		else if (!strcmp(kn, "console")) key = '`'; // PS2-HW-60: the console key
 		else if (!strcmp(kn, "f1")) key = KEY_F1;
 		else if (!strcmp(kn, "f2")) key = KEY_F2;
+		else if (!strcmp(kn, "f7")) key = KEY_F7; // PS2-336: F7 = the Options menu (a picture of the controls list)
 		else if (kn[0] >= 'a' && kn[0] <= 'z' && !kn[1]) key = kn[0];
 		else
 			I_Error("-vidkeys: unknown key '%s'", kn);

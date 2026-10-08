@@ -11,6 +11,7 @@
 #include "../m_menu.h"
 
 #include "ps2_osk.h"
+#include "ps2_uiicons.h"
 
 #define OSK_COLS 10
 #define OSK_ROWS 5
@@ -82,6 +83,14 @@ static void Move(INT32 dir)
 		case 2: curx = (curx + OSK_COLS - 1) % OSK_COLS; break;
 		default: curx = (curx + 1) % OSK_COLS; break;
 	}
+}
+
+void PS2OSK_TestOpen(void)
+{
+	active = true;
+	upper = false;
+	curx = cury = 0;
+	held_dir = -1;
 }
 
 boolean PS2OSK_Responder(const event_t *ev)
@@ -184,5 +193,6 @@ void PS2OSK_Draw(void)
 			V_DrawFill(x, y - 2, 46, 12, 54);
 		V_DrawCenteredString(x + 23, y, V_ALLOWLOWERCASE | (cur ? V_YELLOWMAP : 0), cmd_names[c]);
 	}
-	V_DrawCenteredString(160, y0 + 77, V_ALLOWLOWERCASE | V_6WIDTHSPACE, "X: type  Sq: shift  Tri: del  Start: ok  O: close");
+	// PS2-336: the buttons by their icons (thin font: the five labels and icons fit the 252 px of the panel)
+	V_DrawCenteredThinString(160, y0 + 78, V_ALLOWLOWERCASE, PS2I_CROSS " type  " PS2I_SQUARE " shift  " PS2I_TRIANGLE " del  " PS2I_START " ok  " PS2I_CIRCLE " close");
 }

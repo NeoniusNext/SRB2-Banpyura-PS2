@@ -15,19 +15,19 @@ static patch_t *iconpatch[PS2UI_NUMICONS];
 static boolean icontried[PS2UI_NUMICONS];
 
 // control character -> icon (the order of PS2I_* in ps2_uiicons.h)
-static const SINT8 tokenicon[0x16] =
+static const SINT8 uitokenicon[0x16] =
 {
 	-1,
 	PS2UI_CROSS, PS2UI_CIRCLE, PS2UI_SQUARE, PS2UI_TRIANGLE, PS2UI_L1, PS2UI_R1, PS2UI_L2, PS2UI_R2, // 0x01..0x08
 	-1, -1,                                                                                         // \t \n
 	PS2UI_START, PS2UI_SELECT,                                                                      // 0x0B 0x0C
 	-1,                                                                                             // \r
-	PS2UI_DPAD_UP, PS2UI_DPAD_DOWN, PS2UI_DPAD_LEFT, PS2UI_DPAD_RIGHT, PS2UI_L3, PS2UI_R3, PS2UI_LSTICK, PS2UI_RSTICK // 0x0E..0x15
+	PS2UI_DPAD_UP, PS2UI_DPAD_DOWN, PS2UI_DPAD_LEFT, PS2UI_DPAD_RIGHT, PS2UI_L3, PS2UI_R3, PS2UI_DPAD_UD, PS2UI_DPAD_LR // 0x0E..0x15
 };
 
 INT32 PS2UI_TokenIcon(UINT8 c)
 {
-	return c < sizeof tokenicon ? tokenicon[c] : -1;
+	return c < sizeof uitokenicon ? uitokenicon[c] : -1;
 }
 
 patch_t *PS2UI_Patch(INT32 icon)
@@ -83,9 +83,105 @@ const char *PS2UI_KeyToken(INT32 k)
 		[PS2UI_CROSS] = PS2I_CROSS, [PS2UI_CIRCLE] = PS2I_CIRCLE, [PS2UI_SQUARE] = PS2I_SQUARE, [PS2UI_TRIANGLE] = PS2I_TRIANGLE,
 		[PS2UI_L1] = PS2I_L1, [PS2UI_R1] = PS2I_R1, [PS2UI_L2] = PS2I_L2, [PS2UI_R2] = PS2I_R2, [PS2UI_START] = PS2I_START, [PS2UI_SELECT] = PS2I_SELECT,
 		[PS2UI_DPAD_UP] = PS2I_DPAD_UP, [PS2UI_DPAD_DOWN] = PS2I_DPAD_DOWN, [PS2UI_DPAD_LEFT] = PS2I_DPAD_LEFT, [PS2UI_DPAD_RIGHT] = PS2I_DPAD_RIGHT,
-		[PS2UI_L3] = PS2I_L3, [PS2UI_R3] = PS2I_R3
+		[PS2UI_L3] = PS2I_L3, [PS2UI_R3] = PS2I_R3, [PS2UI_DPAD_UD] = PS2I_DPAD_UD, [PS2UI_DPAD_LR] = PS2I_DPAD_LR
 	};
 	const INT32 icon = PS2UI_KeyIcon(k);
 
 	return icon >= 0 && tok[icon] ? tok[icon] : "";
+}
+
+// ---- the test card: console command "ps2_icons" (1 = on, 0 = off) draws every icon at its real size on two backgrounds, the hints of the screens in the normal and the thin
+// font and a message box with the key names; for looking at the icons in both renderers (pictures of docs/GATES/g1/opt11-NETUI.md). Drawn by M_Drawer. ----
+#include "../command.h"
+#include "../console.h"
+#include "../m_menu.h"
+#include "../v_video.h"
+#include "ps2_osk.h"
+
+static INT32 card_on; // 1 the card, 2 only the on-screen keyboard
+
+static void Command_Icons_f(void)
+{
+	card_on = COM_Argc() > 1 ? atoi(COM_Argv(1)) : !card_on;
+	if (card_on == 2)
+		PS2OSK_TestOpen(); // "ps2_icons 2": the on-screen keyboard instead of the message box
+	else if (card_on)
+		M_StartMessage("Press ENTER to continue\nor ESC to cancel.\n\n(Press a key)\n", NULL, MM_NOTHING);
+}
+
+void PS2UI_RegisterCommands(void)
+{
+	COM_AddCommand("ps2_icons", Command_Icons_f, 0);
+}
+
+void PS2UI_Card(void)
+{
+	INT32 i;
+
+	if (card_on != 1)
+		return;
+	V_DrawFill(0, 0, 160, 84, 156); // two backgrounds, a dark and a light one; the middle band is left for the message box
+	V_DrawFill(160, 0, 160, 84, 8);
+	V_DrawFill(0, 126, 160, 74, 156);
+	V_DrawFill(160, 126, 160, 74, 8);
+	for (i = 0; i < PS2UI_NUMICONS; i++)
+	{
+		patch_t *p = PS2UI_Patch(i);
+		const INT32 x = 6 + (i % 14) * 22, y = 4 + (i / 14) * 18;
+
+		if (p)
+			V_DrawScaledPatch(x, y, 0, p);
+	}
+	V_DrawString(6, 60, MENUCAPS, PS2I_CROSS " Enter  " PS2I_CIRCLE " Esc  " PS2I_SQUARE " Space  " PS2I_TRIANGLE " Tri");
+	V_DrawString(6, 71, MENUCAPS, PS2I_L1 PS2I_R1 PS2I_L2 PS2I_R2 " shoulders  " PS2I_START PS2I_SELECT " start/select");
+	V_DrawThinString(6, 130, V_ALLOWLOWERCASE, PS2I_CIRCLE " Cancel      " PS2I_DPAD_UD " Scroll list      " PS2I_CROSS " Download");
+	V_DrawThinString(6, 146, V_ALLOWLOWERCASE, PS2I_CIRCLE " Back      " PS2I_SQUARE " Players      " PS2I_CROSS " Join");
+	V_DrawCenteredString(160, 164, MENUCOLOR|MENUCAPS, va("%s Cancel", PS2I_CIRCLE));
+	V_DrawRightAlignedString(314, 180, V_YELLOWMAP|MENUCAPS, va("%s or %s", PS2UI_KeyToken(KEY_JOY1), PS2UI_KeyToken(KEY_HAT1 + 3)));
+	V_DrawString(6, 180, MENUCAPS, "Jump");
+}
+
+static boolean IsLetter(char c)
+{
+	return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z');
+}
+
+// The text of a message box (M_StartMessage) for the console: the key names that a pad has no key for become icons (PS2-336).
+// "ESC" -> Circle, "ENTER" -> Cross as whole words ("Press ESC", "Press ENTER to continue\nor ESC to cancel."), "Press a key" -> "Press any button".
+// A copy in a zone block (PU_STATIC), the caller frees it with Z_Free.
+char *PS2UI_Message(const char *src)
+{
+	static const struct { const char *word; const char *with; } words[] = {{"ESC", PS2I_CIRCLE}, {"ENTER", PS2I_CROSS}};
+	const size_t len = strlen(src);
+	char *out = Z_Malloc(len * 2 + 32, PU_STATIC, NULL), *o = out;
+	const char *s = src;
+
+	while (*s)
+	{
+		size_t i;
+		boolean done = false;
+
+		if (!strncmp(s, "Press a key", 11))
+		{
+			memcpy(o, "Press any button", 16);
+			o += 16;
+			s += 11;
+			continue;
+		}
+		for (i = 0; i < sizeof words / sizeof words[0] && !done; i++)
+		{
+			const size_t wl = strlen(words[i].word);
+
+			if (!strncmp(s, words[i].word, wl) && !(s > src && IsLetter(s[-1])) && !IsLetter(s[wl]))
+			{
+				*o++ = words[i].with[0];
+				s += wl;
+				done = true;
+			}
+		}
+		if (!done)
+			*o++ = *s++;
+	}
+	*o = '\0';
+	return out;
 }

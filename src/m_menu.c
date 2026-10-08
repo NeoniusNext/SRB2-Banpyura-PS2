@@ -71,6 +71,7 @@
 #include "i_joy.h" // for joystick menu controls
 #ifdef PS2
 #include "ps2/ps2_osk.h" // PS2-135: on-screen keyboard
+#include "ps2/ps2_uiicons.h" // PS2-336: pad button icons in hints
 #endif
 
 #include "p_saveg.h" // Only for NEWSKINSAVES
@@ -322,6 +323,11 @@ static void M_RejoinMenu(INT32 choice);
 static void M_ConnectMenuModChecks(INT32 choice);
 static void M_RejoinMenuModChecks(INT32 choice);
 static void M_Refresh(INT32 choice);
+#ifdef PS2
+#define PS2_PRESS_ESC_EXIT (PS2I_CIRCLE " Exit") // PS2-336
+#else
+#define PS2_PRESS_ESC_EXIT M_GetText("Press ESC to exit")
+#endif
 static void M_RefreshRejoins(INT32 choice);
 static void M_Connect(INT32 choice);
 static void M_RejoinConnect(INT32 choice);
@@ -3869,6 +3875,7 @@ void M_Drawer(void)
 
 #ifdef PS2
 	PS2OSK_Draw(); // PS2-135 (also over the chat line: nothing is drawn while it is closed)
+	PS2UI_Card(); // PS2-336: the test card of "ps2_icons" (nothing unless asked for)
 #endif
 }
 
@@ -6356,8 +6363,16 @@ menu_t MessageDef =
 void M_StartMessage(const char *string, void *routine, menumessagetype_t itemtype)
 {
 	static char *message;
+#ifdef PS2
+	char *consolestring = PS2UI_Message(string); // PS2-336: "Press ESC" -> "Press <Circle>", "(Press a key)" -> "(Press any button)"
+#endif
 	Z_Free(message);
+#ifdef PS2
+	message = V_WordWrap(0,0,V_ALLOWLOWERCASE,consolestring);
+	Z_Free(consolestring);
+#else
 	message = V_WordWrap(0,0,V_ALLOWLOWERCASE,string);
+#endif
 	DEBFILE(message);
 
 	M_StartControlPanel(); // can't put menuactive to true
@@ -10215,7 +10230,7 @@ void M_DrawTimeAttackMenu(void)
 						'\x1D' | MENUCOLOR, false);
 			}
 			// Draw press ESC to exit string on main record attack menu
-			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, M_GetText("Press ESC to exit"));
+			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, PS2_PRESS_ESC_EXIT);
 		}
 
 		em = M_GetLevelEmblems(cv_nextmap.value);
@@ -10480,7 +10495,7 @@ void M_DrawNightsAttackMenu(void)
 						'\x1D' | MENUCOLOR, false);
 			}
 			// Draw press ESC to exit string on main record attack menu
-			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, M_GetText("Press ESC to exit"));
+			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, PS2_PRESS_ESC_EXIT);
 		}
 
 		// Draw selected character's NiGHTS sprite
@@ -11305,7 +11320,7 @@ void M_DrawMarathon(void)
 	V_DrawString(currentMenu->x, cursory, MENUCOLOR|MENUCAPS, currentMenu->menuitems[itemOn].text);
 
 	// Draw press ESC to exit string on main record attack menu
-	V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, M_GetText("Press ESC to exit"));
+	V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, PS2_PRESS_ESC_EXIT);
 }
 
 // ========
@@ -13793,6 +13808,18 @@ static void M_Setup2PControlsMenu(INT32 choice)
 
 #define controlheight 18
 
+// The name of a key in the controls list. PS2-336: a pad button (either pad) is its icon, the rest keeps its name
+static const char *M_ControlKeyName(INT32 key)
+{
+#ifdef PS2
+	const char *token = PS2UI_KeyToken(key);
+
+	if (*token)
+		return token;
+#endif
+	return G_KeyNumToName(key);
+}
+
 // Draws the Customise Controls menu
 static void M_DrawControl(void)
 {
@@ -13857,7 +13884,11 @@ static void M_DrawControl(void)
 	else
 		V_DrawCenteredString(BASEVIDWIDTH/2, 30, MENUCAPS,
 		    (setupcontrols_secondaryplayer ? "Set controls for secondary player" :
+#ifdef PS2
+		                                     PS2I_CROSS " Change     " PS2I_SQUARE " Clear")); // PS2-336 (the menu keys of the pad: Cross = Enter, Square = Backspace)
+#else
 		                                     "Press Enter to change, Backspace to clear"));
+#endif
 
 	if (i)
 		V_DrawString(currentMenu->x - 16, y-(skullAnimCounter/5), MENUCOLOR, "\x1A"); // up arrow
@@ -13886,13 +13917,13 @@ static void M_DrawControl(void)
 			else
 			{
 				if (keys[0] != KEY_NULL)
-					strcat (tmp, G_KeyNumToName (keys[0]));
+					strcat (tmp, M_ControlKeyName(keys[0]));
 
 				if (keys[0] != KEY_NULL && keys[1] != KEY_NULL)
 					strcat(tmp," or ");
 
 				if (keys[1] != KEY_NULL)
-					strcat (tmp, G_KeyNumToName (keys[1]));
+					strcat (tmp, M_ControlKeyName(keys[1]));
 
 
 			}
