@@ -1,0 +1,4 @@
+SRB2-PS2-OPT11-final.ELF: ветка claude/lucid-mayer-1izlqe, состояние после слияния всех агентов OPT11 (CORE, GEOM/GEOM2, FX/FX2/FX3, VU/VU2, STAB, MODEL, AUDIO, NETUI).
+ВНИМАНИЕ: собрано БЕЗ тестов (по требованию пользователя), на эмуляторе не запускалось. Проверенный ELF — SRB2-PS2-OPT11-r1.ELF. Итоги и список непроверенного: docs/OPT11_RESULTS.md.
+Сборка: SRB2_PS2_NO= SRB2_PS2_HW=1 python3 tools/ps2/build.py --jobs 4 (EE GCC 15.2.0, LTO). Запуск: см. prebuilt/OPT11-r1.txt и docs/OPT10_RESULTS.md раздел 6.
+Hardware: Options -> Video или -renderer Hardware. По умолчанию выключены: gr_models, showmem, menuhints.
