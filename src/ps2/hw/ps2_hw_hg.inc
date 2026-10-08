@@ -24,7 +24,34 @@ static struct
 	u32 dome_n, dome_begin, dome_xf, dome_emit, dome_tris; // sky_dome_fast: calls, cycles of begin_draw / vu0 transform of the mesh / strips and clipped triangles, clipped triangles
 	u32 cw_n[7], cw_c[7]; // the polygons of cut_and_emit by reason (HWPROF20): polygons, cycles
 	u32 sk_single, sk_begin, sk_batches, sk_fans; // hw_DrawPolygon / begin_draw / PS2HWD_DrawFans calls in the skybox view
+	u32 drv_cyc; // OPT11 (VU): EE cycles inside the hwdriver_s entry points (outermost call, waits for the GS / the DMA / the flip taken out): the cost of the driver
+	u32 s_imm, s_begin, s_emit, s_set_n, s_set_cyc, c_fans; // hw_DrawPolygon by part (imm_prepare, begin_draw, emit_fan), hw_SetTexture calls / cycles, the polygons of PS2HWD_DrawFans (all)
+	u32 vr_calls, vr_slow, vr_rows, vr_blk_slow, vr_same; // prow_ensure: calls, calls that walked the rows, rows walked, rows that needed clut_get
+	u32 vs_n, vs_c, vs_rows, vs_pass, vs_consts, vs_send, vs_light; // vu_plan_setup: calls, cycles, and by part (rows, pass_setup, constants build, constants send, light)
+	u32 s_vu, s_same, s_retarget, vs_reuse, b_retarget, s_rec; // single polygons drawn through the VU1 program, of them: with the plan (key) of the previous single draw
 } G;
+
+// the outermost driver call: cycles minus the waits
+static u32 drv_depth, drv_t0, drv_w0;
+static inline void drv_in(void)
+{
+	if (drv_depth++ == 0)
+	{
+		drv_t0 = cyc();
+		drv_w0 = H.st.cyc_wait + H.st.cyc_flipwait;
+	}
+}
+
+static inline void drv_out(void)
+{
+	if (--drv_depth == 0)
+	{
+		const u32 w = H.st.cyc_wait + H.st.cyc_flipwait - drv_w0, d = cyc() - drv_t0;
+
+		if (d > w && w < 0x80000000u)
+			G.drv_cyc += d - w;
+	}
+}
 
 #define HG_SKY(br, dt) do { if (ps2hwp_skyview) { G.sk_n[br]++; G.sk_c[br] += (dt); } } while (0)
 
@@ -37,6 +64,10 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF3 batches=%u fans=%u single=%u vu=%u fast=%u lit=%u cut=%u water=%u begin=%u/%u tris=%u vuchunks=%u planhit=%u planmiss=%u\n", G.batches / frames, G.fans / frames, G.single / frames,
 		G.p_vu / frames, G.p_fast / frames, G.p_lit / frames, G.p_cut / frames, G.p_water / frames, G.begin_n / frames, G.begin_cyc / frames, G.tri_n / frames, G.vu_chunks / frames, G.plan_hit / frames, G.plan_miss / frames);
 	I_OutputMsg("HWPROF9 cut_and_emit (repeats etc.) polys=%u cyc=%u\n", G.p_cutold / frames, G.c_cutold / frames);
+	I_OutputMsg("HWPROF23 driver total=%u (+ plan %u: the texture planner HWR_RenderBatches calls) | singles: imm=%u begin=%u emit=%u vu=%u same=%u retarget=%u | settex n=%u cyc=%u | DrawFans polys=%u batch retargets=%u state records=%u\n", G.drv_cyc / frames, (unsigned)(ps2hwp_cyc[HWP_B_PLAN] / frames), G.s_imm / frames, G.s_begin / frames, G.s_emit / frames,
+		G.s_vu / frames, G.s_same / frames, G.s_retarget / frames, G.s_set_n / frames, G.s_set_cyc / frames, G.c_fans / frames, G.b_retarget / frames, G.s_rec / frames);
+	I_OutputMsg("HWPROF24 vu_plan_setup n=%u cyc=%u: light=%u rows=%u pass=%u build=%u send=%u | reuse=%u chunks=%u | prow_ensure calls=%u same=%u slow=%u rows=%u clut_get=%u\n", G.vs_n / frames, G.vs_c / frames, G.vs_light / frames, G.vs_rows / frames, G.vs_pass / frames, G.vs_consts / frames,
+		G.vs_send / frames, G.vs_reuse / frames, G.vu_chunks / frames, G.vr_calls / frames, G.vr_same / frames, G.vr_slow / frames, G.vr_rows / frames, G.vr_blk_slow / frames);
 	I_OutputMsg("HWPROF8 plan cache cycles: key=%u copy=%u touch=%u misc=%u miss=%u\n", G.pc_key / frames, G.pc_copy / frames, G.pc_touch / frames, G.pc_misc / frames, G.pc_miss / frames);
 	I_OutputMsg("HWPROF4 segs=%u subsecs=%u planes=%u sprites=%u proc=%u procbatch=%u\n", ps2hwp_cnt[HWC_SEGS] / frames, ps2hwp_cnt[HWC_SUBSECS] / frames, ps2hwp_cnt[HWC_PLANES] / frames,
 		ps2hwp_cnt[HWC_SPRITES] / frames, ps2hwp_cnt[HWC_PROC] / frames, ps2hwp_cnt[HWC_PROC_BATCH] / frames);

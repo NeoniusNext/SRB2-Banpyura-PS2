@@ -672,7 +672,7 @@ static inline u32 clut_slot(u32 i) // CT32 CLUT in CSM1: bits 3 and 4 of the ind
 // 16x16 CT32 image into VRAM (the CLUT format of a PSMT8 CSM1 CLUT)
 static void clut_write(u32 blk, const u32 *entries)
 {
-	qw_t *h = pk_alloc(1 + 4 + 1 + 64);
+	qw_t *h = pk_alloc(1 + 4 + 1 + 64 + 2);
 	qw_t *d;
 	int i;
 
@@ -694,6 +694,11 @@ static void clut_write(u32 blk, const u32 *entries)
 		d[i].w[2] = entries[i * 4 + 2];
 		d[i].w[3] = entries[i * 4 + 3];
 	}
+	// PS2-HW-102 (real GS, not PCSX2): a CLUT image written over a slot that was loaded before (the row of a light table, a palette change) must not come out of
+	// the texture cache of the GS: TEXFLUSH behind the transfer (the program of the VU1 path reloads CLUTs of the cache with TEX2 / CLD all the time)
+	d[64].d[0] = HWGIF_TAG(1, 1, 0, 0, 0, 1);
+	d[64].d[1] = GIF_REGS_AD;
+	ad_set(&d[65], 0, GSR_TEXFLUSH);
 	if (blk == H.clut_loaded)
 		H.clut_loaded = 0; // the GS holds a copy of the old contents
 	H.st.clut_uploads++;
@@ -805,6 +810,7 @@ static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
 	static u32 sw[256] __attribute__((aligned(64)));
 	int i;
 
+	H.clut_epoch++; // PS2-HW-101
 	clut_entries(kind, param, keyed, e);
 	for (i = 0; i < 256; i++)
 		sw[clut_slot((u32)i)] = e[i];

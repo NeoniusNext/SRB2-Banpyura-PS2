@@ -288,7 +288,7 @@ static void HWR_DrawBatch(FSurfaceInfo *surf, int count, FBITFIELD polyFlags)
 {
 #ifdef PS2
 	HWP_SPAN_BEGIN(tdb);
-	PS2HWD_DrawFans(surf, HWR_BATCH_VERTICES, (unsigned int)count / 2, polyFlags, finalVertexIndexArray);
+	PS2HWD_DrawFans(surf, HWR_BATCH_VERTICES, (unsigned int)count / 3, polyFlags, finalVertexIndexArray); // PS2-HW-106: (first vertex, count, light level) per polygon
 	HWP_SPAN_END2(tdb, HWP_B_DB, HWP_KB_DB);
 #else
 	HWD.pfnDrawIndexedTriangles(surf, HWR_BATCH_VERTICES, count, polyFlags, finalVertexIndexArray);
@@ -440,7 +440,14 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 				DIGEST(hash, shader_target);
 				DIGEST(hash, pSurf->TintColor.rgba);
 				DIGEST(hash, pSurf->FadeColor.rgba);
+#ifdef PS2 // PS2-HW-106: polygons the VU1 program lights by palette rows carry their own light level: the sectors' levels do not split the batches (248 -> 93 batches on a GFZ1 frame)
+				if (!PS2HWD_PalLit(pSurf, PolyFlags, current_texture, shader_target))
+				{
+					DIGEST(hash, pSurf->LightInfo.light_level);
+				}
+#else
 				DIGEST(hash, pSurf->LightInfo.light_level);
+#endif
 				DIGEST(hash, pSurf->LightInfo.fade_start);
 				DIGEST(hash, pSurf->LightInfo.fade_end);
 			}
@@ -486,7 +493,10 @@ UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIEL
 		DIGEST(hash, shader_target);
 		DIGEST(hash, pSurf->TintColor.rgba);
 		DIGEST(hash, pSurf->FadeColor.rgba);
-		DIGEST(hash, pSurf->LightInfo.light_level);
+		if (!PS2HWD_PalLit(pSurf, PolyFlags, tex, shader_target)) // PS2-HW-106: as in HWR_ProcessPolygon
+		{
+			DIGEST(hash, pSurf->LightInfo.light_level);
+		}
 		DIGEST(hash, pSurf->LightInfo.fade_start);
 		DIGEST(hash, pSurf->LightInfo.fade_end);
 	}
@@ -768,6 +778,7 @@ void HWR_RenderBatches(void)
 #ifdef PS2 // PS2-HW-19: the driver draws the polygons as GS triangle fans: (first vertex, count) pairs instead of triangle indices
 		finalVertexIndexArray[finalIndexWritePos++] = firstIndex;
 		finalVertexIndexArray[finalIndexWritePos++] = numVerts;
+		finalVertexIndexArray[finalIndexWritePos++] = (UINT32)polygonArray[index].surf.LightInfo.light_level; // PS2-HW-106
 		(void)lastIndex; (void)fanIndex;
 #else
 		while (fanIndex < lastIndex)

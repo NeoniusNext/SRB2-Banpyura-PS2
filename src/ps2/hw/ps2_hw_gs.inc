@@ -18,6 +18,7 @@ static void val_init(void); // PS2-HW-74: GIF stream validator (ps2_hw_val.inc, 
 static void val_buffer(const qw_t *b, u32 wr);
 static void val_reset(void);
 static void val_shutdown(void);
+static void vu_chunk_flush(void); // ps2_hw_vu1.inc (PS2-HW-103): closes the open VU1 chunk (a chunk stays open between single draws); everything that goes into the ring calls it first
 
 // DMA tags of a source chain (the GIF channel reads one tag per element: the tag itself is not sent to the GIF)
 #define DMAT_REFE 0ull // send qwc qwords from addr, then end
@@ -176,6 +177,8 @@ static void pk_flush(void)
 	qw_t *b;
 	int slot;
 
+	if (V.chunk_open)
+		vu_chunk_flush();
 	if (H.wr <= 1)
 		return;
 	b = H.ring[H.cur];
@@ -235,6 +238,8 @@ static qw_t *pk_alloc(u32 n)
 {
 	qw_t *p;
 
+	if (V.chunk_open)
+		vu_chunk_flush();
 	if (n > BUF_QW - 2)
 	{
 		CONS_Alert(CONS_ERROR, "PS2 GS: oversized GIF packet (%u qwords)\n", n);
@@ -254,6 +259,8 @@ static void pk_ref(const void *data, u32 qwc)
 	qw_t *b, *t;
 	u32 n;
 
+	if (V.chunk_open)
+		vu_chunk_flush();
 	if (V.on && qwc > VIF_DIRECT_MAX) // PS2-HW-44: one DIRECT carries at most 65535 quadwords
 	{
 		pk_ref(data, VIF_DIRECT_MAX);
@@ -676,7 +683,7 @@ static int gs_setup(void)
 	H.fbpsm = H.fb32 ? PSM_CT32 : PSM_CT16S;
 	H.outid = H.mode == PS2HWD_VIDEO_480P ? 2 : (H.mode == PS2HWD_VIDEO_PAL ? (field_frame ? 4 : 1) : (field_frame ? 3 : 0));
 
-	V.on = (ps2hwd_dbg_flags & HWDBG_VU1) != 0; // PS2-HW-44: -hwdbg 0x4000000: the stream goes through VIF1, the VU1 program draws the polygons
+	V.on = (ps2hwd_dbg_flags & HWDBG_NOVU1) == 0; // PS2-HW-44 / PS2-HW-100: the stream goes through VIF1, the VU1 program draws the polygons (-hwdbg 0x10000000: the EE does)
 	val_init();
 	// OPT10 (HG): dmaKit does not take the VIF1 channel (with it in the mask gsKit_init_screen hangs in PCSX2): the channel is reset by hand below
 	dmaKit_init(D_CTRL_RELE_OFF, D_CTRL_MFD_OFF, D_CTRL_STS_UNSPEC, D_CTRL_STD_OFF, D_CTRL_RCYC_8, 1 << DMA_CHANNEL_GIF);
