@@ -312,6 +312,10 @@ boolean PS2HWD_Init(void)
 	// at its edge on 32 MB (DEMO_003 ends in "Out of memory" on the tip of the main branch already). Without -hwspr the lists are not made and every sprite goes through the batch.
 	if (!M_CheckParm("-hwspr"))
 		ps2hwd_fx2 |= FX3_NOSTREAM;
+	// PS2-HW-251: the parallelogram test (PS2HWD_ParaHidden) for shadows and the exact test of sprites is opt-in (-hwpara) on the tree merged with MODEL / AUDIO: the check mode (-hwfx 2) of the merged
+	// ELF reported 38574 of 116736 shadow quads that the test hides and PS2HWD_QuadHidden does not (1..3 before the merge); not explained, not run again (delivered without tests).
+	if (!M_CheckParm("-hwpara"))
+		ps2hwd_fx2 |= FX3_NOPARA;
 	if (!(ps2hwd_fx2 & (FX3_NOSTREAM | FX3_NOSPR)))
 		spr_alloc(); // the lists of the sprite stream (zone blocks while the driver runs; no stream when there is no room)
 	wd_last_flips = ~0u;
