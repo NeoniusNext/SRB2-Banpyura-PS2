@@ -3264,6 +3264,7 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	fixed_t groundz;
 	fixed_t slopez;
 	pslope_t *groundslope;
+	float shadowlift = 0.05f; // how far above the floor the shadow lies (PS2-HW-124)
 
 	HWD_LOCAL; // OPT11: the parts of this function (HWPROF36, --hwdetail)
 
@@ -3415,18 +3416,32 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		shadowVerts[i].z = fy + ((oldx - fx) * gl_shadowsin) + ((oldy - fy) * gl_shadowcos);
 	}
 
+#ifdef PS2_PROFILE
+	// PS2-HW-124: the shadow lies 0.05 units above the floor, which is not enough for the GS: the depth of a floor polygon at a pixel is interpolated from vertices
+	// snapped to 1/16 pixel, a floor seen from a low camera changes by ~400000 / h depth steps per pixel (h = camera height above it), so the snap alone moves
+	// the floor's depth by hundreds of steps, while 0.05 units are 67e6 * 0.05 / d^2 steps (d = distance): the floor won the depth test and the shadow of the
+	// player and the enemies was gone on 1/3 of the maps. The lift grows with d^2 / h (four times the snap error), at most 6 units (a pixel or two on the screen).
+	{
+		const float sdx = fx - gl_viewx, sdy = fy - gl_viewy, sdz = gl_viewz - FIXED_TO_FLOAT(groundz);
+		float sh = fabsf(sdz), lift;
+
+		sh = sh < 16.0f ? 16.0f : sh;
+		lift = (sdx * sdx + sdy * sdy + sdz * sdz) * (1.0f / 640.0f) / sh;
+		shadowlift = lift < 0.05f ? 0.05f : lift > 6.0f ? 6.0f : lift;
+	}
+#endif
 	if (groundslope)
 	{
 		for (i = 0; i < 4; i++)
 		{
 			slopez = P_GetSlopeZAt(groundslope, FLOAT_TO_FIXED(shadowVerts[i].x), FLOAT_TO_FIXED(shadowVerts[i].z));
-			shadowVerts[i].y = FIXED_TO_FLOAT(slopez) + flip * 0.05f;
+			shadowVerts[i].y = FIXED_TO_FLOAT(slopez) + flip * shadowlift;
 		}
 	}
 	else
 	{
 		for (i = 0; i < 4; i++)
-			shadowVerts[i].y = FIXED_TO_FLOAT(groundz) + flip * 0.05f;
+			shadowVerts[i].y = FIXED_TO_FLOAT(groundz) + flip * shadowlift;
 	}
 
 #ifdef PS2_PROFILE

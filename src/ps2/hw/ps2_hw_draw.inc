@@ -1375,8 +1375,10 @@ typedef struct
 {
 	float sb, tb; // whole repeats removed from s, t
 	int cls; // darkness class of a band piece, -1 = none
-	int ripple; // water: displace the texture coordinates by the vertex depth
+	int ripple; // PS2-HW-120: the vertices are a triangle STRIP (the water polygon between its depth planes), not a convex fan
 } piece_t;
+
+static qw_t *ws_pack(qw_t *o, const cv_t *v, int cnt, const pack_t *pk); // ps2_hw_water.inc (PS2-HW-120): the vertices of a water strip, put_vertex with the plan constants in registers
 
 static inline int ov_room(int cnt)
 {
@@ -1412,6 +1414,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 	qw_t *o;
 	u32 fogF = 255;
 	int fog_on = 0;
+	const u32 ptype = pc->ripple ? PRIM_TRISTRIP : PRIM_TRIFAN;
 
 	if (cnt < 3)
 		return;
@@ -1476,18 +1479,25 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		pk.nreg = pack_regs(pk.fmt);
 		if (pk.fmt != 4 && 1 + cnt * pk.nreg <= 16)
 		{
-			emit_reglist_fan(v, cnt, &pk, PRIM_TRIFAN | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)));
+			emit_reglist_fan(v, cnt, &pk, ptype | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)));
 			H.st.verts_out += (u32)cnt;
 			if (k)
 				H.st.passes++;
 			continue;
 		}
 		o = pk_alloc((u32)(1 + cnt * pk.nreg));
-		o[0].d[0] = HWGIF_TAG(cnt, 1, 1, PRIM_TRIFAN | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)), 0, pk.nreg);
+		o[0].d[0] = HWGIF_TAG(cnt, 1, 1, ptype | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)), 0, pk.nreg);
 		o[0].d[1] = pack_regdesc(pk.fmt);
 		o++;
-		for (i = 0; i < cnt; i++)
-			o = put_vertex(o, &v[i], &pk);
+		if (pc->ripple && (pk.fmt == 0 || pk.fmt == 1) && !pk.ramp && !(ps2hwd_water_ab & 4)) // -hwwater 4: put_vertex for the water strips too (A/B)
+		{
+			o = ws_pack(o, v, cnt, &pk);
+		}
+		else
+		{
+			for (i = 0; i < cnt; i++)
+				o = put_vertex(o, &v[i], &pk);
+		}
 		H.st.verts_out += (u32)cnt;
 		if (k)
 			H.st.passes++;
@@ -1914,100 +1924,39 @@ static inline float ripple_sinf(float a) // sin() of any angle from a 256 entry 
 	return ripple_sin[i] + (ripple_sin[i + 1] - ripple_sin[i]) * x;
 }
 
+// PS2-HW-125: the phase of the shader's time term. r_opengl.c SetShaderInfo hands the shader (leveltime - 1 + rendertimefrac) / TICRATE seconds and the shader
+// adds seconds * speed (2 rad): 2 / 35 rad per tic, one turn in 110 tics. The first versions of this driver (OPT9, OPT10, the first OPT11 one) turned the ripple 2 rad per
+// TIC: 35 times too fast, a water that flickered instead of rippling slowly. The phase is kept in 1/2^32 turns (WPH_K per tic: 2^32 / (35 pi), an error of 5e-6 turn after
+// 200000 tics), so the reduction modulo a turn is the wrap of an integer (a double fmod cost 12000 cycles per tic on the EE).
+#define WPH_K 39060873u
+static float wph_rad;
+static int wph_lt = 0x7FFFFFFF;
+static float wph_fr = -1.0f;
+
+static float water_phase_rad(void)
+{
+	if (wph_lt != H.leveltime || wph_fr != H.lt_frac)
+	{
+		const u32 ph = (u32)(H.leveltime - 1) * WPH_K + (u32)(H.lt_frac * (float)WPH_K);
+
+		wph_rad = (float)ph * (6.28318530718f / 4294967296.0f);
+		wph_lt = H.leveltime;
+		wph_fr = H.lt_frac;
+	}
+	return wph_rad;
+}
+
 static void ripple_offset(float zc, float *ds, float *dt)
 {
-	float a = -3.14159265f * (zc * 0.5f * 0.025f) + (float)H.leveltime * 2.0f;
+	float a = -3.14159265f * (zc * 0.5f * 0.025f) + water_phase_rad();
 
 	*ds = ripple_sinf(a) * RIPPLE_AMP;
 	*dt = ripple_sinf(a + 1.57079633f) * RIPPLE_AMP; // cos
 }
 
-#include "ps2_hw_water.inc" // PS2-HW-47: water_fast, the one sweep water polygon
+#include "ps2_hw_water.inc" // PS2-HW-47 / 120: emit_water_poly (continuous ripple), the OPT10 band sweep (A/B) and the old band by band path
 
-static cv_t wpiece[CUTBUF], wrem[2][CUTBUF];
-
-static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
-{
-	if (water_fast(v, cnt, pc))
-		return;
-	float wlo = v[0].w, whi = v[0].w, z0, z1, ds, dt, step = RIPPLE_STEP;
-	const cv_t *rem = v;
-	int nrem = cnt, i, k, which = 0;
-	piece_t p2;
-
-	if (!ripple_ready)
-	{
-		for (i = 0; i <= 256; i++)
-			ripple_sin[i] = sinf((float)i * (6.28318530718f / 256.0f));
-		ripple_ready = 1;
-	}
-	for (i = 1; i < cnt; i++)
-	{
-		if (v[i].w < wlo)
-			wlo = v[i].w;
-		if (v[i].w > whi)
-			whi = v[i].w;
-	}
-	z0 = zfrag_of_w(wlo);
-	z1 = zfrag_of_w(whi);
-	if (z0 >= RIPPLE_ZMAX)
-	{
-		cut_and_emit(v, cnt, 0, pc, na);
-		return;
-	}
-	k = z0 > 0.0f ? (int)(z0 / step) : 0;
-	for (;; k++)
-	{
-		float cutz = (float)(k + 1) * step;
-
-		if (cutz >= z1 || cutz >= RIPPLE_ZMAX)
-		{
-			// the last piece: the rest of the polygon
-			p2 = pc;
-			if (cutz >= RIPPLE_ZMAX && (float)k * step >= RIPPLE_ZMAX)
-			{
-				ds = dt = 0.0f;
-			}
-			else
-			{
-				float lo = (float)k * step, hi = z1 < RIPPLE_ZMAX ? z1 : RIPPLE_ZMAX;
-
-				if (lo < z0)
-					lo = z0;
-				ripple_offset(0.5f * (lo + hi), &ds, &dt);
-			}
-			p2.sb += ds;
-			p2.tb += dt;
-			cut_and_emit(rem, nrem, 0, p2, na);
-			return;
-		}
-		{
-			float cutw = w_of_zfrag(cutz);
-			int np = clip_attr(rem, nrem, wpiece, 6, cutw, 0, na);
-			cv_t *rb = wrem[which];
-			int nn = clip_attr(rem, nrem, rb, 6, cutw, 1, na);
-
-			if (np >= 3)
-			{
-				float lo = (float)k * step;
-
-				if (lo < z0)
-					lo = z0;
-				ripple_offset(0.5f * (lo + cutz), &ds, &dt);
-				p2 = pc;
-				p2.sb += ds;
-				p2.tb += dt;
-				cut_and_emit(wpiece, np, 0, p2, na);
-				H.st.bands++;
-			}
-			if (nn < 3)
-				return;
-			rem = rb;
-			nrem = nn;
-			which ^= 1;
-		}
-	}
-}
+// emit_water_poly (the water polygon of the plan with P.water) lives in ps2_hw_water.inc (PS2-HW-120, OPT11 FX)
 
 #include "ps2_hw_fast.inc" // PS2-HW-43: lit_fast_poly / lit_fast_plan
 #include "ps2_hw_vu1.inc" // PS2-HW-45: vu_poly / vu_sync (the VU1 program draws the polygons of a batch)
@@ -2288,7 +2237,8 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		}
 		pc.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
 		pc.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
-		big = (P.wrapx && (smax - smin) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin) * (float)P.r->h > UV_EXTENT); // PS2-HW-64: too many texels for one primitive: cut at whole repeats (cut_and_emit)
+		// PS2-HW-120: the ripple moves the texture coordinates of a vertex by up to 0.0325 of a repeat each way (the validator saw spans of 4101 texels)
+		big = (P.wrapx && (smax - smin + (P.water ? 0.07f : 0.0f)) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin + (P.water ? 0.07f : 0.0f)) * (float)P.r->h > UV_EXTENT); // PS2-HW-64: too many texels for one primitive: cut at whole repeats (cut_and_emit)
 	}
 	else
 	{
@@ -2315,9 +2265,9 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		G.c_lit += cyc() - gt1;
 		HG_SKY(2, cyc() - gt1);
 	}
-	else if (P.water && P.textured && !P.vcol && !vcol && !big)
+	else if (P.water && P.textured && !P.vcol && !vcol)
 	{
-		G.p_water++, emit_water_poly(v, cnt, pc, na);
+		G.p_water++, emit_water_poly(v, cnt, pc, na, big, LF_PV(vu0, or_));
 		G.c_water += cyc() - gt1;
 		HG_SKY(4, cyc() - gt1);
 	}

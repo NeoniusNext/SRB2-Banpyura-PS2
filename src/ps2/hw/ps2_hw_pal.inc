@@ -102,6 +102,9 @@ static void lt_clear(void)
 		lt_idx[i] = NULL;
 		lt_gen[i] = 0;
 	}
+	// PS2-HW-123: the next level makes its tables in another order (id 1 may hold another colormap), but the CLUT of (id, generation, row) of this level has the same key:
+	// without this the world of the level after a death/restart/next map showed the colormap of the level before (a gray green world on DSZ1, found with fx_pair.py)
+	H.pal_gen++;
 }
 
 // the CLUT entries of row `row` of table `tbl` (alpha 0x80; the keyed variant has the hole at index 255)
