@@ -1382,6 +1382,11 @@ enum
 #else
 #define VOFS(n) (n)
 #endif
+#ifdef PS2
+#define VOFM(n) (VOFS(n) + 5) // OPT11-MEM (PS2-HW-300): one item ("Show RAM/VRAM") above
+#else
+#define VOFM(n) VOFS(n)
+#endif
 
 static menuitem_t OP_VideoOptionsMenu[] =
 {
@@ -1436,13 +1441,16 @@ static menuitem_t OP_VideoOptionsMenu[] =
 
 	{IT_HEADER, NULL, "Diagnostic", NULL, VOFS(184)},
 	{IT_STRING | IT_CVAR, NULL, "Show FPS",                  &cv_ticrate,         VOFS(190)},
-	{IT_STRING | IT_CVAR, NULL, "Clear Before Redraw",       &cv_homremoval,      VOFS(195)},
-	{IT_STRING | IT_CVAR, NULL, "Show \"FOCUS LOST\"",       &cv_showfocuslost,   VOFS(200)},
+#ifdef PS2
+	{IT_STRING | IT_CVAR, NULL, "Show RAM/VRAM",             &cv_showmem,         VOFS(195)}, // OPT11-MEM (PS2-HW-300): the items below move down by VOFM
+#endif
+	{IT_STRING | IT_CVAR, NULL, "Clear Before Redraw",       &cv_homremoval,      VOFM(195)},
+	{IT_STRING | IT_CVAR, NULL, "Show \"FOCUS LOST\"",       &cv_showfocuslost,   VOFM(200)},
 
 #ifdef HWRENDER
-	{IT_HEADER, NULL, "Renderer", NULL, VOFS(208)},
-	{IT_CALL | IT_STRING, NULL, HWR_RENDERER_NAME " Options...",         M_OpenGLOptionsMenu, VOFS(214)},
-	{IT_STRING | IT_CVAR, NULL, "FPS Cap",                   &cv_fpscap,          VOFS(219)},
+	{IT_HEADER, NULL, "Renderer", NULL, VOFM(208)},
+	{IT_CALL | IT_STRING, NULL, HWR_RENDERER_NAME " Options...",         M_OpenGLOptionsMenu, VOFM(214)},
+	{IT_STRING | IT_CVAR, NULL, "FPS Cap",                   &cv_fpscap,          VOFM(219)},
 #endif
 };
 

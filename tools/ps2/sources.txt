@@ -125,6 +125,7 @@ src/ps2/ps2_kbd.c
 src/ps2/ps2_mouse.c
 src/ps2/ps2_padmap.c
 src/ps2/ps2_mem.c
+src/ps2/ps2_memhud.c
 src/ps2/ps2_spill.c
 src/ps2/ps2_hwfb.c
 src/ps2/ps2_memops.c

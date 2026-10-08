@@ -733,6 +733,21 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 #endif
 }
 
+void PS2HWD_VramStats(ps2hwd_vram_t *out) // OPT11-MEM (PS2-HW-300)
+{
+	memset(out, 0, sizeof *out);
+	if (!H.up)
+		return;
+	out->up = 1;
+	out->total_blocks = VRAM_BLOCKS;
+	out->fb_blocks = H.z_addr / 256;
+	out->z_blocks = H.clut_base - H.z_addr / 256;
+	out->clut_blocks = H.pool_base - H.clut_base;
+	out->pool_blocks = H.pool_blocks;
+	out->pool_used_blocks = H.used_blocks;
+	out->ws_blocks = H.ws_last;
+}
+
 void PS2HWD_GetStats(ps2hwd_stats_t *out, int reset)
 {
 	H.st.vblanks = H.vbl;
@@ -765,6 +780,8 @@ static void hw_FinishUpdate(INT32 waitvbl)
 	frame_end();
 	drv_out();
 	H.st.frames++;
+	H.ws_last = H.ws_cum - H.ws_prev; // OPT11-MEM (PS2-HW-300): the working set of the frame just ended
+	H.ws_prev = H.ws_cum;
 	if (waitvbl)
 		vblank_wait(1);
 	d = cyc() - t0;

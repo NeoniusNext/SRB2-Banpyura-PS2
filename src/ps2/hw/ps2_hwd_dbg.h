@@ -102,6 +102,19 @@ void PS2HWD_Configure(const ps2hwd_config_t *cfg);
 void PS2HWD_GetConfig(ps2hwd_config_t *cfg);
 
 void PS2HWD_GetInfo(ps2hwd_info_t *out);
+
+// OPT11-MEM (PS2-HW-300): the GS memory (4 MiB = 16384 blocks of 256 bytes) in use, from counters the driver keeps anyway (O(1), no walk of the pool): showmem
+typedef struct
+{
+	int up; // the driver is running (otherwise all zero)
+	unsigned int total_blocks; // 16384
+	unsigned int fb_blocks; // the two frame buffers
+	unsigned int z_blocks; // the Z buffer
+	unsigned int clut_blocks; // the CLUT area (palette images of the colormap rows)
+	unsigned int pool_blocks, pool_used_blocks; // the texture pool and what is allocated in it (textures kept for later use included, screen captures too)
+	unsigned int ws_blocks; // GS blocks of the textures the last frame drew (its working set)
+} ps2hwd_vram_t;
+void PS2HWD_VramStats(ps2hwd_vram_t *out);
 void PS2HWD_GetStats(ps2hwd_stats_t *out, int reset);
 // diagnostics: prints the biggest textures drawn in the current frame
 void PS2HWD_DumpWorkingSet(void);

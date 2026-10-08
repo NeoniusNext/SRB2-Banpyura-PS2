@@ -1578,6 +1578,8 @@ static void PS2Mem_NullGuard(int init)
 	}
 }
 
+extern void PS2MemHud_Check(void); // ps2_memhud.c
+
 void PS2Mem_Frame(void)
 {
 	static int init;
@@ -1755,6 +1757,7 @@ void PS2Mem_Frame(void)
 			(unsigned long)st.largestfree, (unsigned long)st.evictions, (unsigned long)st.evictedbytes, (unsigned long)st.failures,
 			(unsigned long)PS2Mem_LibcFree(), (unsigned long)Z_TestFlushes(), (unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_StackUsed(), (unsigned long)sp_peak, (unsigned long)sp_now,
 			(unsigned long)PS2Mem_Ms());
+		PS2MemHud_Check(); // OPT11-MEM (PS2-HW-300): what showmem shows, from a fresh reading
 		I_OutputMsg("ZQUIT DONE\n");
 		I_Quit();
 	}
