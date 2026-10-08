@@ -16,6 +16,7 @@
 #include <limits.h>
 #ifdef PS2
 #include "../z_zone.h"
+#include "../p_tick.h" // leveltime (-hwgo 256)
 #include "../ps2/hw/ps2_hwd.h"
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
@@ -313,6 +314,20 @@ static void HWR_DrawBatch(FSurfaceInfo *surf, const UINT32 *indices, int count, 
 {
 #ifdef PS2
 	HWP_SPAN_BEGIN(tdb);
+	if ((hwr_geo_off & 256) && leveltime >= 372 && leveltime <= 376)
+	{
+		// -hwgo 256: what the driver is given, in a line per batch for the level tics 372..376 (two runs that differ in a picture are compared with it)
+		UINT32 h = 0x811c9dc5u, hs = 0x811c9dc5u;
+		const UINT32 *w = (const UINT32 *)(const void *)surf;
+		int j;
+
+		for (j = 0; j < (int)(sizeof(FSurfaceInfo) / 4); j++)
+			hs = (hs ^ w[j]) * 16777619u;
+		for (j = 0; j < count; j++)
+			h = (h ^ indices[j]) * 16777619u;
+		I_OutputMsg("HWDF lt=%u n=%d fl=%x surf=%08x [%08x %08x %08x %08x %08x %08x %08x %08x] desc=%08x\n", (unsigned)leveltime, count / 3, (unsigned)polyFlags, (unsigned)hs,
+			(unsigned)w[0], (unsigned)w[1], (unsigned)w[2], (unsigned)w[3], (unsigned)w[4], (unsigned)w[5], (unsigned)w[6], (unsigned)w[7], (unsigned)h);
+	}
 	PS2HWD_DrawFans(surf, HWR_BATCH_VERTICES, (unsigned int)count / 3, polyFlags, indices); // PS2-HW-106: (first vertex, count, light level) per polygon
 	HWP_SPAN_END2(tdb, HWP_B_DB, HWP_KB_DB);
 #else
@@ -613,7 +628,7 @@ static void HWR_PlanPass(void)
 
 // -hwgo 128: the batches the walk of HWR_RenderBatchesOld would make (a dry run over the sorted order: no drawing), to be compared with those of HWR_RenderBatchesV2
 #define HWR_BCMP_MAX 8192
-static UINT32 bcmp_new[HWR_BCMP_MAX][3], bcmp_old[HWR_BCMP_MAX][3]; // first polygon, polygons, hash of the state the batch is drawn with
+static UINT32 (*bcmp_new)[3], (*bcmp_old)[3]; // first polygon, polygons, hash of the state the batch is drawn with (made when -hwgo 128 is given: 200 KB of .bss would be 200 KB less zone)
 static int bcmp_nnew, bcmp_nold;
 
 static UINT32 HWR_BCmpHash(const FSurfaceInfo *s, FBITFIELD flags, GLMipmap_t *tex)
@@ -805,6 +820,12 @@ static int HWR_RenderBatchesV2(void)
 		static int ref_cap;
 		unsigned int bad = 0;
 
+		if (!bcmp_new)
+		{
+			bcmp_new = HWR_BatchResize(NULL, (size_t)HWR_BCMP_MAX * 3 * sizeof(UINT32));
+			bcmp_old = HWR_BatchResize(NULL, (size_t)HWR_BCMP_MAX * 3 * sizeof(UINT32));
+		}
+
 		if (ref_cap < n)
 		{
 			ref_idx = HWR_BatchResize(ref_idx, (size_t)n * sizeof(UINT32));
@@ -971,6 +992,12 @@ static int HWR_RenderBatchesV2(void)
 				for (j = 0; j < bcmp_nnew && j < HWR_BCMP_MAX && !diff; j++)
 					if (bcmp_new[j][0] != bcmp_old[j][0] || bcmp_new[j][1] != bcmp_old[j][1] || bcmp_new[j][2] != bcmp_old[j][2])
 						diff = j + 1;
+			{
+				static unsigned checked;
+
+				if (++checked % 500 == 0)
+					I_OutputMsg("HWBATCH2 checked %u batch lists, last: %d batches of %d polygons\n", checked, bcmp_nnew, n);
+			}
 			if (diff)
 				I_OutputMsg("HWBATCH2 batches differ: new %d old %d first difference at %d (new %u/%u/%08x old %u/%u/%08x)\n", bcmp_nnew, bcmp_nold, diff - 1,
 					diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_new[diff - 1][0] : 0u, diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_new[diff - 1][1] : 0u, diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_new[diff - 1][2] : 0u,

@@ -96,7 +96,7 @@ static inline void vu0b_mvp(void)
 #endif
 
 // Sutherland-Hodgman against the six planes of the view volume (x, y, z, w only); the vertices are in `a`, `b` is scratch; returns the count, *res the result
-// PS2-HW-224: the distance of a vertex to the plane is made once (it was made for both ends of every edge, through a switch), "inside" (d >= 0, -0 included) is read from the
+// PS2-HW-229: the distance of a vertex to the plane is made once (it was made for both ends of every edge, through a switch), "inside" (d >= 0, -0 included) is read from the
 // bits (a floating point compare and its branch cost 5 cycles), and only x, y, z, w are copied (one quadword): the planner needs no more of a clipped vertex.
 static inline int plan_inside(float d)
 {
@@ -252,7 +252,7 @@ static int plan_part_ref(cv_t *poly, int n, int or_, float *s, float *area)
 	return 1;
 }
 
-// PS2-HW-224: plan_part with the arithmetic of the per vertex density folded. The screen position of a vertex is (X px, Y py) with X = x / w, Y = y / w (NDC), and the
+// PS2-HW-229: plan_part with the arithmetic of the per vertex density folded. The screen position of a vertex is (X px, Y py) with X = x / w, Y = y / w (NDC), and the
 // size of a texel along u at the vertex is |(dx, dy)| with dx = px (Lx - X Lw) / w, dy = py (Ly - Y Lw) / w, L = d(x, y, w) / du (lodc): the coefficients are scaled by
 // px, py once per polygon, the area is made in NDC and scaled once, and the maxima are kept as squares. The values are those of plan_part_ref up to the last bits of
 // the floats (-hwplan 2 compares the two on every polygon).
@@ -449,7 +449,7 @@ static int plan_measure_impl(const GLMipmap_t *m, const FOutVector *verts, unsig
 	return cnt;
 }
 
-// PS2-HW-224: -hwplan 0 (default) the VU0 transform and the lean arithmetic, 1 the scalar transform of PS2-HW-34/37 and plan_part_ref, 2 both on every polygon, the
+// PS2-HW-229: -hwplan 0 (default) the VU0 transform and the lean arithmetic, 1 the scalar transform of PS2-HW-34/37 and plan_part_ref, 2 both on every polygon, the
 // differences counted (a different number of parts, a texel size or an area that differs by more than 1 per mille: HWPLANCMP)
 static int plan_measure(const GLMipmap_t *m, const FOutVector *verts, unsigned int n)
 {

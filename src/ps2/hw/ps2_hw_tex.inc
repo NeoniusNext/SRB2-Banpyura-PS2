@@ -2395,7 +2395,7 @@ static void poly_plane(const cv_t *un, int n, float sw, float sh)
 	if (third >= n)
 		return;
 	{
-		const float rdet = 1.0f / det; // PS2-HW-224: one division instead of six
+		const float rdet = 1.0f / det; // PS2-HW-229: one division instead of six
 
 		for (k = 0; k < 3; k++)
 		{
@@ -2521,8 +2521,8 @@ static void lod_frame_end(void)
 // HWTEX line of the window just ended (per-frame averages of the block counts; counts of uploads are window totals)
 static unsigned spr_hid_test, spr_hid_yes; // PS2-HW-72 (ps2_hw_plan.inc)
 static int qh_mode; // PS2-HW-220
-static int plan_mode; // PS2-HW-224 (-hwplan)
-static unsigned pm_cmp, pm_dcnt, pm_dval; // PS2-HW-224: -hwplan 2: polygons compared, different number of parts, different values
+static int plan_mode; // PS2-HW-229 (-hwplan)
+static unsigned pm_cmp, pm_dcnt, pm_dval; // PS2-HW-229: -hwplan 2: polygons compared, different number of parts, different values
 static unsigned qh_diff;
 
 static void tx_report(void)
