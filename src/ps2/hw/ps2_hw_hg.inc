@@ -30,6 +30,7 @@ static struct
 	u32 s_imm, s_begin, s_emit, s_set_n, s_set_cyc, c_fans; // hw_DrawPolygon by part (imm_prepare, begin_draw, emit_fan), hw_SetTexture calls / cycles, the polygons of PS2HWD_DrawFans (all)
 	u32 vr_calls, vr_slow, vr_rows, vr_blk_slow, vr_same; // prow_ensure: calls, calls that walked the rows, rows walked, rows that needed clut_get
 	u32 vs_n, vs_c, vs_rows, vs_pass, vs_consts, vs_send, vs_light; // vu_plan_setup: calls, cycles, and by part (rows, pass_setup, constants build, constants send, light)
+	u32 md_draws, md_meshes, md_tris, md_verts, md_cyc, md_slow, md_lod, md_over, md_c1, md_c2, md_c3, md_ctx; // OPT11 MODEL (HWPROF40): draw_model calls, meshes, triangles, vertices interpolated, cycles inside draw_model, emit_tris calls of the corner path
 	u32 s_vu, s_same, s_retarget, vs_reuse, b_retarget, s_rec; // single polygons drawn through the VU1 program, of them: with the plan (key) of the previous single draw
 	u32 spr_cyc; // OPT11 round 3 (FX3): cycles of the flushes of the sprite stream (PS2HWD_SprFlush)
 } G;
@@ -59,6 +60,7 @@ static inline void drv_out(void)
 #define HG_SKY(br, dt) do { if (ps2hwp_skyview) { G.sk_n[br]++; G.sk_c[br] += (dt); } } while (0)
 
 #ifdef __mips__ // (the x86 host tests have no log)
+extern void PS2Models_Stats(unsigned int *out); // OPT11 MODEL (ps2_models.c)
 extern void HWR_PBProf(unsigned int frames); // OPT11 round 2 VU2: HWPROF50, the collection of the batch (hardware/hw_pbatch.inc)
 extern void HWR_GCacheProf(unsigned int frames); // OPT11 GEOM: HWPROF32, the geometry cache (hardware/hw_gcache.inc)
 void PS2HWD_ProfExtra(unsigned int frames)
@@ -98,6 +100,13 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF18 plane cache key misses: height=%u light=%u flags=%u texture=%u offsets=%u epoch=%u poly=%u\n", ps2hwp_cnt[HWC_PKM_H] / frames, ps2hwp_cnt[HWC_PKM_L] / frames, ps2hwp_cnt[HWC_PKM_F] / frames,
 		ps2hwp_cnt[HWC_PKM_T] / frames, ps2hwp_cnt[HWC_PKM_O] / frames, ps2hwp_cnt[HWC_PKM_E] / frames, ps2hwp_cnt[HWC_PKM_P] / frames);
 	I_OutputMsg("HWPROF17 band_sweep: polys=%u pieces=%u ripple_planes=%u\n", G.wf_polys / frames, G.wf_pieces / frames, G.wf_bands / frames);
+	I_OutputMsg("HWPROF40 models: draws=%u meshes=%u tris=%u verts=%u slow=%u lod=%u over=%u cyc=%u c1=%u c2=%u c3=%u ctx=%u\n", G.md_draws / frames, G.md_meshes / frames, G.md_tris / frames, G.md_verts / frames, G.md_slow / frames, G.md_lod / frames, G.md_over / frames, G.md_cyc / frames, G.md_c1 / frames, G.md_c2 / frames, G.md_c3 / frames, G.md_ctx / frames);
+	{
+		unsigned int ms[10];
+
+		PS2Models_Stats(ms);
+		I_OutputMsg("HWPROF41 model memory: alive=%u (%u KiB) loads=%u frees=%u reclaims=%u refused(memory)=%u damaged=%u load cycles total=%u max=%u injected=%u\n", ms[0], ms[1], ms[2], ms[3], ms[4], ms[5], ms[6], ms[7], ms[8], ms[9]);
+	}
 	HWR_GCacheProf(frames);
 	HWR_PBProf(frames);
 	I_OutputMsg("HWPROF37 HWR_RenderPlane parts: setup=%u buffer+flat=%u vertices=%u lightlevel=%u lighting=%u flags+shader=%u polygon=%u (the last, the sum of the two before it, is what HWR_ProcessPolygon takes)\n", (unsigned)(ps2hwp_cyc[HWP_PL_A] / frames),

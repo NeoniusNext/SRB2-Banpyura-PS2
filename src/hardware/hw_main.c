@@ -8281,6 +8281,9 @@ void HWR_AddCommands(void)
 	CV_RegisterVar(&cv_glpalettedepth);
 	CV_RegisterVar(&cv_gllightdither);
 	CV_RegisterVar(&cv_glwireframe);
+#ifdef PS2_PROFILE
+	CV_RegisterVar(&cv_glmodeldetail); // OPT11-MODEL (PS2-HW-266)
+#endif
 }
 
 // --------------------------------------------------------------------------

@@ -245,6 +245,204 @@ static __attribute__((noinline)) size_t MixNativeMMI(int32_t *accum, const uint8
 #undef MMI_BIAS128
 #endif
 
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+// PS2-318: the music block into the accumulator (accum = music * gain / 32768, truncating toward zero like Div32768) eight samples per iteration.
+// gain 32768 only widens. music and accum 16-byte aligned; returns the number of samples done (a multiple of 8).
+static __attribute__((noinline)) size_t MusicMMI(int32_t *accum, const int16_t *music, size_t samples, unsigned gain)
+{
+	size_t groups = samples / 8;
+	uint16_t g[8] __attribute__((aligned(16)));
+	unsigned i;
+	if (!groups || ((uintptr_t)music & 15) || ((uintptr_t)accum & 15)) return 0;
+	if (gain == 32768)
+	{
+		__asm__ volatile(
+			"1:\n\t"
+			"lq $8,0(%1)\n\t"
+			"pextlh $9,$8,$8\n\t"
+			"pextuh $10,$8,$8\n\t"
+			"psraw $9,$9,16\n\t"
+			"psraw $10,$10,16\n\t"
+			"sq $9,0(%0)\n\t"
+			"sq $10,16(%0)\n\t"
+			"addiu %1,%1,16\n\t"
+			"addiu %0,%0,32\n\t"
+			"addiu %2,%2,-1\n\t"
+			"bnez %2,1b\n\t"
+			"nop\n\t"
+			: "+r"(accum), "+r"(music), "+r"(groups)
+			: : "$8", "$9", "$10", "memory");
+		return samples & ~(size_t)7;
+	}
+	for (i = 0; i < 8; i++) g[i] = (uint16_t)gain;
+	__asm__ volatile(
+		"lq $9,0(%3)\n\t"
+		"1:\n\t"
+		"lq $8,0(%1)\n\t"
+		"pmulth $zero,$8,$9\n\t"
+		"pmflo $10\n\t"
+		"pmfhi $11\n\t"
+		"pcpyld $12,$11,$10\n\t"
+		"pcpyud $13,$10,$11\n\t"
+		"psraw $14,$12,31\n\t"
+		"psraw $15,$13,31\n\t"
+		"psrlw $14,$14,17\n\t"
+		"psrlw $15,$15,17\n\t"
+		"paddw $12,$12,$14\n\t"
+		"paddw $13,$13,$15\n\t"
+		"psraw $12,$12,15\n\t"
+		"psraw $13,$13,15\n\t"
+		"sq $12,0(%0)\n\t"
+		"sq $13,16(%0)\n\t"
+		"addiu %1,%1,16\n\t"
+		"addiu %0,%0,32\n\t"
+		"addiu %2,%2,-1\n\t"
+		"bnez %2,1b\n\t"
+		"nop\n\t"
+		: "+r"(accum), "+r"(music), "+r"(groups)
+		: "r"(g)
+		: "$8", "$9", "$10", "$11", "$12", "$13", "$14", "$15", "hi", "lo", "memory");
+	return samples & ~(size_t)7;
+}
+
+// PS2-318: a voice whose source rate is twice the output rate (step exactly 2.0: 44.1 kHz sound effects, most of the stock ones) reads every second
+// source frame and the fraction never changes, so sixteen (8 bit) / eight (16 bit) output frames are the even elements of 32 source bytes, gathered with
+// PPACB / PPACH from unaligned 64-bit loads, then the same products as the native path (8-bit: no divide; 16-bit: the truncating divide by 256).
+// p = the source at the current frame, n = output frames (a multiple of 16 / 8); both need the source bytes p[0 .. 2*n*stride-1] to be inside the sample.
+#define MMI_PRODUCTS(G, DIVIDE) \
+	"pmulth $zero," G ",%[gn]\n\t" \
+	"pmflo %[a]\n\t" \
+	"pmfhi %[b]\n\t" \
+	"pcpyld %[c],%[b],%[a]\n\t" \
+	"pcpyud %[d],%[a],%[b]\n\t" DIVIDE \
+	"lq %[a],0(%[o])\n\t" \
+	"lq %[b],16(%[o])\n\t" \
+	"paddw %[c],%[c],%[a]\n\t" \
+	"paddw %[d],%[d],%[b]\n\t" \
+	"sq %[c],0(%[o])\n\t" \
+	"sq %[d],16(%[o])\n\t" \
+	"addiu %[o],%[o],32\n\t"
+#define MMI_DIV256_ABCD \
+	"psraw %[a],%[c],31\n\t" \
+	"psraw %[b],%[d],31\n\t" \
+	"psrlw %[a],%[a],24\n\t" \
+	"psrlw %[b],%[b],24\n\t" \
+	"paddw %[c],%[c],%[a]\n\t" \
+	"paddw %[d],%[d],%[b]\n\t" \
+	"psraw %[c],%[c],8\n\t" \
+	"psraw %[d],%[d],8\n\t"
+static __attribute__((noinline)) size_t MixDec2Mono8(int32_t *accum, const uint8_t *p, size_t n, int left, int right)
+{
+	uint16_t gains[8] __attribute__((aligned(16)));
+	static const uint16_t bias[8] __attribute__((aligned(16))) = {128, 128, 128, 128, 128, 128, 128, 128};
+	size_t groups = n / 16;
+	long t0, t1, t2, t3, a, b, c, d, e, f, gn, bi;
+	unsigned i;
+	if (!groups || left < 0 || left > 256 || right < 0 || right > 256 || ((uintptr_t)accum & 15)) return 0;
+	for (i = 0; i < 8; i += 2) { gains[i] = (uint16_t)left; gains[i+1] = (uint16_t)right; }
+	__asm__ volatile(
+		"lq %[gn],0(%[gp])\n\t"
+		"lq %[bi],0(%[bp])\n\t"
+		"1:\n\t"
+		"ldl %[t0],7(%[p])\n\t" "ldr %[t0],0(%[p])\n\t"
+		"ldl %[t1],15(%[p])\n\t" "ldr %[t1],8(%[p])\n\t"
+		"ldl %[t2],23(%[p])\n\t" "ldr %[t2],16(%[p])\n\t"
+		"ldl %[t3],31(%[p])\n\t" "ldr %[t3],24(%[p])\n\t"
+		"pcpyld %[t0],%[t1],%[t0]\n\t"
+		"pcpyld %[t2],%[t3],%[t2]\n\t"
+		"ppacb %[e],%[t2],%[t0]\n\t"          /* e = the 16 even source bytes */
+		"pextlb %[f],$zero,%[e]\n\t"          /* frames 0..7 as halfwords */
+		"pextub %[e],$zero,%[e]\n\t"          /* frames 8..15 */
+		"psubh %[f],%[f],%[bi]\n\t"
+		"psubh %[e],%[e],%[bi]\n\t"
+		"pextlh %[t0],%[f],%[f]\n\t"          /* frames 0..3, each twice (left source, right source) */
+		"pextuh %[t1],%[f],%[f]\n\t"          /* frames 4..7 */
+		"pextlh %[t2],%[e],%[e]\n\t"          /* frames 8..11 */
+		"pextuh %[t3],%[e],%[e]\n\t"          /* frames 12..15 */
+		MMI_PRODUCTS("%[t0]", "")
+		MMI_PRODUCTS("%[t1]", "")
+		MMI_PRODUCTS("%[t2]", "")
+		MMI_PRODUCTS("%[t3]", "")
+		"addiu %[p],%[p],32\n\t"
+		"addiu %[g],%[g],-1\n\t"
+		"bnez %[g],1b\n\t"
+		"nop\n\t"
+		: [p] "+r"(p), [o] "+r"(accum), [g] "+r"(groups),
+		  [t0] "=&r"(t0), [t1] "=&r"(t1), [t2] "=&r"(t2), [t3] "=&r"(t3), [a] "=&r"(a), [b] "=&r"(b), [c] "=&r"(c), [d] "=&r"(d),
+		  [e] "=&r"(e), [f] "=&r"(f), [gn] "=&r"(gn), [bi] "=&r"(bi)
+		: [gp] "r"(gains), [bp] "r"(bias)
+		: "hi", "lo", "memory");
+	return n & ~(size_t)15;
+}
+static __attribute__((noinline)) size_t MixDec2Mono16(int32_t *accum, const uint8_t *p, size_t n, int left, int right)
+{
+	uint16_t gains[8] __attribute__((aligned(16)));
+	size_t groups = n / 8;
+	long t0, t1, t2, t3, a, b, c, d, e, gn;
+	unsigned i;
+	if (!groups || left < 0 || left > 256 || right < 0 || right > 256 || ((uintptr_t)accum & 15) || ((uintptr_t)p & 1)) return 0;
+	for (i = 0; i < 8; i += 2) { gains[i] = (uint16_t)left; gains[i+1] = (uint16_t)right; }
+	__asm__ volatile(
+		"lq %[gn],0(%[gp])\n\t"
+		"1:\n\t"
+		"ldl %[t0],7(%[p])\n\t" "ldr %[t0],0(%[p])\n\t"
+		"ldl %[t1],15(%[p])\n\t" "ldr %[t1],8(%[p])\n\t"
+		"ldl %[t2],23(%[p])\n\t" "ldr %[t2],16(%[p])\n\t"
+		"ldl %[t3],31(%[p])\n\t" "ldr %[t3],24(%[p])\n\t"
+		"pcpyld %[t0],%[t1],%[t0]\n\t"
+		"pcpyld %[t2],%[t3],%[t2]\n\t"
+		"ppach %[e],%[t2],%[t0]\n\t"          /* e = the 8 even source halfwords */
+		"pextlh %[t0],%[e],%[e]\n\t"          /* frames 0..3, each twice */
+		"pextuh %[t1],%[e],%[e]\n\t"          /* frames 4..7 */
+		MMI_PRODUCTS("%[t0]", MMI_DIV256_ABCD)
+		MMI_PRODUCTS("%[t1]", MMI_DIV256_ABCD)
+		"addiu %[p],%[p],32\n\t"
+		"addiu %[g],%[g],-1\n\t"
+		"bnez %[g],1b\n\t"
+		"nop\n\t"
+		: [p] "+r"(p), [o] "+r"(accum), [g] "+r"(groups),
+		  [t0] "=&r"(t0), [t1] "=&r"(t1), [t2] "=&r"(t2), [t3] "=&r"(t3), [a] "=&r"(a), [b] "=&r"(b), [c] "=&r"(c), [d] "=&r"(d),
+		  [e] "=&r"(e), [gn] "=&r"(gn)
+		: [gp] "r"(gains)
+		: "hi", "lo", "memory");
+	return n & ~(size_t)7;
+}
+#undef MMI_PRODUCTS
+#undef MMI_DIV256_ABCD
+#endif
+
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+// PS2-318: a mono voice with step exactly 2.0 (44.1 kHz source at normal pitch): the fraction never changes and the source frame advances by 2 per
+// output frame, so the MMI kernel takes whole groups (16 frames for 8-bit, 8 for 16-bit) while all 2*group source frames are inside the sample,
+// then a scalar loop finishes the rest and ends the voice at the right frame (the same arithmetic as the generic loop of MixVoice).
+static __attribute__((noinline)) void MixDec2Voice(ps2_voice *v, int32_t *accum, size_t block, const uint8_t *data,
+	uint32_t frames, int bits, int left, int right)
+{
+	uint32_t frame = v->frame;
+	const size_t want = bits == 8 ? 16 : 8;
+	const size_t cap = frame < frames ? (size_t)((frames - frame) / (2 * want)) * want : 0;
+	const size_t n = block < cap ? block : cap;
+	size_t f = 0;
+	if (n >= want)
+	{
+		f = bits == 8 ? MixDec2Mono8(accum, data + (size_t)frame, n, left, right) : MixDec2Mono16(accum, data + (size_t)frame * 2, n, left, right);
+		frame += (uint32_t)(2 * f);
+	}
+	for (; f < block; f++, frame += 2)
+	{
+		int l;
+		if (frame >= frames) { v->sample = NULL; break; }
+		if (bits == 8) { l = (int)data[frame] - 128; accum[f*2] += l * left; accum[f*2+1] += l * right; }
+		else
+		{
+			l = (int16_t)(data[(size_t)frame * 2] | (unsigned)data[(size_t)frame * 2 + 1] << 8);
+			accum[f*2] += Div256(l * left); accum[f*2+1] += Div256(l * right);
+		}
+	}
+	v->frame = frame;
+}
+#endif
+
 // One voice into the accumulator for up to `block` output frames. Same arithmetic as PS2_PCMValue + the per-sample
 // cursor update, with the cursor in registers: nothing is re-read through the voice after each store.
 // bits: 8 or 16 (constant at each call site), stereo: source has two channels, aligned: 16-bit data is 2-byte aligned.
@@ -280,6 +478,11 @@ static ALWAYS_INLINE void MixVoice(ps2_voice *v, int32_t *accum, size_t block, c
 		v->frame = frame + (uint32_t)block;
 		return;
 	}
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+	// PS2-318: step exactly 2.0 (44.1 kHz mono source): a function of its own, so that the generic loop below keeps the code GCC made of it
+	// before this step (with the pre-pass inside, its loop got a second counter and ran 10 % slower)
+	if (step == 131072 && !stereo) { MixDec2Voice(v, accum, block, data, frames, bits, left, right); return; }
+#endif
 	for (f = 0; f < block; f++)
 	{
 		const uint8_t *p;
@@ -336,8 +539,15 @@ void PS2_MixerRender(ps2_mixer *m, int16_t *out, const int16_t *music, size_t n,
 	{
 		size_t block = n > PS2_AUDIO_BLOCK ? PS2_AUDIO_BLOCK : n;
 		if (!music || !gain) memset(accum, 0, block * 2 * sizeof accum[0]);
-		else if (gain == 32768) for (f = 0; f < block * 2; f++) accum[f] = music[f];
-		else for (f = 0; f < block * 2; f++) accum[f] = Div32768((int32_t)music[f] * (int)gain);
+		else
+		{
+			f = 0;
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+			f = MusicMMI(accum, music, block * 2, gain);
+#endif
+			if (gain == 32768) for (; f < block * 2; f++) accum[f] = music[f];
+			else for (; f < block * 2; f++) accum[f] = Div32768((int32_t)music[f] * (int)gain);
+		}
 		for (c = 0; c < PS2_AUDIO_CHANNELS; c++)
 		{
 			ps2_voice *v = &m->voices[c];

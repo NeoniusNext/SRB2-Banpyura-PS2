@@ -42,6 +42,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
+#include "../ps2_models.h" // PS2Models_TryAlloc (the model work areas)
 
 // PS2-HW-67: the driver's diagnostics (limitation warnings, texture cap changes, HWT/HWFX/HWPROF traces) go to the log only: through CONS_Printf/CONS_Alert
 // they were drawn over the game picture as console lines ("HWD texture cap 512 -> 1024 blocks", "WARNING: PS2 GS experimental limitation ...")
@@ -68,6 +69,7 @@ static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
+#include "ps2_hw_wire.inc" // OPT11-MODEL (PS2-HW-270): PF_WireFrame and gr_wireframe as GS lines
 #include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
 #include "ps2_hw_bench.inc" // OPT11 round 2: -hwbench, what the instructions cost
 
@@ -979,6 +981,16 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 {
 	if (!H.up)
 		return;
+	if ((PolyFlags & PF_WireFrame) || wire_mode)
+	{
+		drv_in(); // OPT11-MODEL (PS2-HW-270)
+		if (PolyFlags & PF_WireFrame)
+			wire_pairs(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts);
+		else
+			wire_poly(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts);
+		drv_out();
+		return;
+	}
 	if (TRACING())
 	{
 		const texrec_t *tr = H.cur_tex != NOREC ? &H.rec[H.cur_tex] : NULL;
@@ -1088,6 +1100,12 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 
 		CONS_Printf("HWT fans n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u psm=%d clut=%d\n", nfans, flags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
 			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u, tr ? (int)tr->psm : -1, tr ? (int)tr->clut : -1);
+	}
+	if (wire_mode)
+	{
+		wire_fans((const FSurfaceInfo *)surf, flags, (const FOutVector *)base, nfans, desc); // OPT11-MODEL (PS2-HW-270)
+		drv_out();
+		return;
 	}
 	G.batches++;
 	G.fans += nfans;
@@ -1390,6 +1408,12 @@ static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, 
 			tri[2] = pOutVerts[IndexArray[i + 2]];
 			split_draw(pSurf, (u32)PolyFlags, tri, 3);
 		}
+		drv_out();
+		return;
+	}
+	if (wire_mode)
+	{
+		wire_tris(pSurf, (u32)PolyFlags, pOutVerts, IndexArray, (u32)iNumPts); // OPT11-MODEL (PS2-HW-270)
 		drv_out();
 		return;
 	}
@@ -1849,9 +1873,7 @@ static void hw_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 	}
 	else if (IdState == HWD_SET_MODEL_LIGHTING)
 	{
-		H.model_light = Value;
-		if (Value)
-			hw_limit(HW_MODEL_LIGHT, "model normal lighting is not implemented; sector modulation used");
+		H.model_light = Value; // OPT11-MODEL (PS2-HW-264): the vertex light factor of the OpenGL model shader is implemented (ps2_hw_model.inc)
 	}
 	else if (IdState == HWD_SET_SHADERS)
 	{
@@ -1859,8 +1881,10 @@ static void hw_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 	}
 	else if (Value > 1 && IdState == HWD_SET_TEXTUREANISOTROPICMODE)
 		hw_limit(HW_ANISO, "anisotropic filtering unavailable");
-	else if (Value && IdState == HWD_SET_WIREFRAME)
-		hw_limit(HW_WIREFRAME, "wireframe state unavailable");
+	else if (IdState == HWD_SET_WIREFRAME)
+	{
+		wire_mode = Value ? 1 : 0; // OPT11-MODEL (PS2-HW-270): the walls and planes of the frame are drawn as the edges of their triangles (ps2_hw_wire.inc)
+	}
 }
 
 static void hw_DrawModel(model_t *model, INT32 frameIndex, float duration, float tics, INT32 nextFrameIndex, FTransform *pos,

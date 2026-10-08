@@ -23,4 +23,10 @@ uint32_t PS2_MusicLoop(const ps2_music *m);
 int PS2_MusicSpeed(ps2_music *m, float speed);
 // Always clears the unused portion. Returns real generated frames.
 size_t PS2_MusicRender(ps2_music *m, int16_t *out, size_t frames);
+// PS2-317: while the music is muted (gain 0) a compressed song need not be decoded: the position advances as if it had been (end and loop
+// included), the PCM is the caller's silence, and the decoder is re-synchronised by a seek at the next PS2_MusicRender.
+// PS2_MusicCanSkip: playing, not paused, Ogg/MP3 with a known length at normal speed, and `frames` more frames end well before the end of the song.
+// PS2_MusicSkip moves the position by `frames` without decoding (returns frames, or 0 if it cannot); the next PS2_MusicRender seeks the decoder there.
+int PS2_MusicCanSkip(const ps2_music *m, size_t frames);
+size_t PS2_MusicSkip(ps2_music *m, size_t frames);
 #endif

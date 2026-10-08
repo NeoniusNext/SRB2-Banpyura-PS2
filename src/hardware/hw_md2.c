@@ -43,6 +43,10 @@
 
 #include "hw_main.h"
 #include "../v_video.h"
+#ifdef PS2_PROFILE
+#include "../ps2/ps2_models.h" // OPT11-MODEL: models from MODELS.PAK, 8 bit textures
+#include "../ps2/hw/ps2_hwd.h" // PS2HWD_ModelWanted
+#endif
 #ifdef HAVE_PNG
 
 #ifndef _MSC_VER
@@ -368,6 +372,7 @@ static GLTextureFormat_t PCX_Load(const char *filename, int *w, int *h,
 	return GL_TEXFMT_RGBA;
 }
 
+#ifndef PS2_PROFILE
 // -----------------+
 // md2_loadTexture  : Download a pcx or png texture for models
 // -----------------+
@@ -434,6 +439,95 @@ static void md2_loadTexture(md2_t *model)
 	HWD.pfnSetTexture(grPatch->mipmap);
 }
 
+#else
+// OPT11-MODEL (PS2-HW-261): the texture of a model is 8 bit palette indices (index 255 = hole, TF_CHROMAKEYED): from the cooked pack, or a loose PNG / PCX made into the
+// same by the quantizer of the cooker. GL_TEXFMT_RGBA would be CT32 in the GS: 256 KB of VRAM for a 256 x 256 texture (the pool is 3.2 MB), 64 KB as indices + CLUT.
+static void md2_loadTexture(md2_t *model)
+{
+	patch_t *patch;
+	GLPatch_t *grPatch = NULL;
+	const char *filename = model->filename;
+	const UINT32 palhash = PS2Models_PaletteHash();
+
+	if (model->grpatch)
+	{
+		patch = model->grpatch;
+		grPatch = (GLPatch_t *)(patch->hardware);
+		if (grPatch && model->ps2_pal && model->ps2_pal != palhash)
+		{
+			// the texture palette changed (a map with a palette of its own): the indices were made for the old one
+			HWR_FreeTextureColormaps(patch);
+			HWD.pfnDeleteTexture(grPatch->mipmap);
+			if (grPatch->mipmap->data)
+				Z_Free(grPatch->mipmap->data);
+			grPatch->mipmap->downloaded = 0;
+			grPatch->mipmap->format = 0;
+		}
+	}
+	else
+		model->grpatch = patch = Patch_Create(0, 0);
+
+	if (!patch->hardware)
+		Patch_AllocateHardwarePatch(patch);
+
+	if (grPatch == NULL)
+		grPatch = (GLPatch_t *)(patch->hardware);
+
+	if (!grPatch->mipmap->data && (!grPatch->mipmap->downloaded || model->ps2_pal != palhash))
+	{
+		char rel[48];
+
+		strlcpy(rel, filename, sizeof rel);
+		FIL_ForceExtension(rel, ".png");
+		grPatch->mipmap->downloaded = 0;
+		if (!PS2Models_LoadTexture(rel, grPatch->mipmap))
+		{
+			int w = 0, h = 0;
+
+			grPatch->mipmap->format = 0;
+#ifdef HAVE_PNG
+			grPatch->mipmap->format = PNG_Load(filename, &w, &h, grPatch);
+			if (grPatch->mipmap->format == 0)
+#endif
+			grPatch->mipmap->format = PCX_Load(filename, &w, &h, grPatch);
+			if (grPatch->mipmap->format == 0)
+			{
+				model->notexturefile = true; // mark it so its not searched for again repeatedly
+				return;
+			}
+			{
+				// a loose file: RGBA from the loader -> 8 bit indices
+				UINT8 *rgba = grPatch->mipmap->data, *idx;
+				boolean holes = false;
+
+				idx = Z_TryMallocAlign((size_t)w * h, PU_HWRMODELTEXTURE, NULL, 4);
+				if (!idx)
+				{
+					Z_Free(rgba);
+					grPatch->mipmap->format = 0;
+					return;
+				}
+				PS2Models_Quantize(rgba, w, h, idx, &holes);
+				Z_Free(rgba); // clears mipmap->data
+				Z_SetUser(idx, &grPatch->mipmap->data);
+				Z_ChangeTag(idx, PU_HWRMODELTEXTURE_UNLOCKED);
+				grPatch->mipmap->format = GL_TEXFMT_P_8;
+				grPatch->mipmap->flags = holes ? TF_CHROMAKEYED : 0;
+				grPatch->mipmap->width = (UINT16)w;
+				grPatch->mipmap->height = (UINT16)h;
+			}
+		}
+		model->ps2_pal = palhash;
+		patch->width = (INT16)grPatch->mipmap->width;
+		patch->height = (INT16)grPatch->mipmap->height;
+		grPatch->mipmap->downloaded = 0;
+	}
+	HWD.pfnSetTexture(grPatch->mipmap);
+}
+
+#endif
+
+#ifndef PS2_PROFILE
 // -----------------+
 // md2_loadBlendTexture  : Download a pcx or png texture for blending MD2 models
 // -----------------+
@@ -490,12 +584,15 @@ static void md2_loadBlendTexture(md2_t *model)
 	Z_Free(filename);
 }
 
+#endif
+
 // Don't spam the console, or the OS with fopen requests!
 static boolean nomd2s = false;
 
 #ifdef PS2_DYNLIMITS
 void HWR_GrowSpriteTables(void)
 {
+	PS2Models_FreeAll(); // the owner pointers of the models point into the table that is replaced
 	md2_t *grown = Z_Calloc(sizeof (md2_t) * NUMSPRITES, PU_STATIC, NULL);
 	size_t i;
 
@@ -519,15 +616,59 @@ void HWR_InitModels(void)
 		md2_models[i].noblendfile = false;
 		md2_models[i].found = false;
 		md2_models[i].error = false;
+#ifdef PS2_PROFILE
+		md2_models[i].ps2_retry = md2_models[i].ps2_pal = 0;
+#endif
 	}
 
 	if (numsprites && numskins)
 		HWR_LoadModels();
 }
 
+// one line of models.dat: a sprite name or PLAYER<skin> / <skin>, the model file, its scale and offset
+static void HWR_AddModelsDatEntry(const char *name, const char *filename, float scale, float offset, size_t prefixlen)
+{
+	const char *skinname = name;
+	size_t len = strlen(name), i;
+	INT32 s;
+
+	// Check for the player model prefix.
+	if (!strnicmp(name, PLAYERMODELPREFIX, prefixlen) && (len > prefixlen))
+	{
+		skinname += prefixlen;
+		goto addskinmodel;
+	}
+
+	// Add sprite models.
+	for (i = 0; i < numsprites; i++)
+	{
+		if (stricmp(name, sprnames[i]) == 0)
+		{
+			md2_models[i].scale = scale;
+			md2_models[i].offset = offset;
+			md2_models[i].found = true;
+			strcpy(md2_models[i].filename, filename);
+			return;
+		}
+	}
+
+addskinmodel:
+	// Add player models.
+	for (s = 0; s < numskins; s++)
+	{
+		if (stricmp(skinname, skins[s]->name) == 0)
+		{
+			md2_playermodels[s].scale = scale;
+			md2_playermodels[s].offset = offset;
+			md2_playermodels[s].found = true;
+			strcpy(md2_playermodels[s].filename, filename);
+			return;
+		}
+	}
+}
+
 void HWR_LoadModels(void)
 {
-	size_t i;
 	INT32 s;
 	FILE *f;
 
@@ -544,6 +685,9 @@ void HWR_LoadModels(void)
 	// realloc player models table
 	if (numskins != (INT32)md2_numplayermodels)
 	{
+#ifdef PS2_PROFILE
+		PS2Models_FreeAll(); // the owner pointers of the models point into the table that is moved
+#endif
 		md2_numplayermodels = (size_t)numskins;
 		md2_playermodels = Z_Realloc(md2_playermodels, sizeof(md2_t) * md2_numplayermodels, PU_STATIC, NULL);
 
@@ -556,9 +700,43 @@ void HWR_LoadModels(void)
 			md2_playermodels[s].noblendfile = false;
 			md2_playermodels[s].found = false;
 			md2_playermodels[s].error = false;
+#ifdef PS2_PROFILE
+			md2_playermodels[s].ps2_retry = md2_playermodels[s].ps2_pal = 0;
+#endif
 		}
 	}
 
+#ifdef PS2_PROFILE
+	// OPT11-MODEL (PS2-HW-260): models.dat comes from the cooked pack MODELS.PAK, else from the files next to the ELF / in the home directory; no models.dat = no models, quietly
+	{
+		size_t datsize = 0;
+		char *dat = PS2Models_Dat(&datsize);
+
+		if (dat)
+		{
+			const char *p = dat;
+			int used = 0;
+
+			prefixlen = strlen(PLAYERMODELPREFIX);
+			while (sscanf(p, "%25s %31s %f %f%n", name, filename, &scale, &offset, &used) == 4)
+			{
+				HWR_AddModelsDatEntry(name, filename, scale, offset, prefixlen);
+				p += used;
+			}
+			free(dat);
+			return;
+		}
+	}
+	f = fopen(va("%s"PATHSEP"%s", srb2home, "models.dat"), "rt");
+	if (!f)
+		f = fopen(va("%s"PATHSEP"%s", srb2path, "models.dat"), "rt");
+	if (!f)
+	{
+		CONS_Debug(DBG_RENDER, "no models.dat: models are not used\n");
+		nomd2s = true;
+		return;
+	}
+#else
 	// read the models.dat file
 	//Filename checking fixed ~Monster Iestyn and Golden
 	f = fopen(va("%s"PATHSEP"%s", srb2home, "models.dat"), "rt");
@@ -573,57 +751,20 @@ void HWR_LoadModels(void)
 			return;
 		}
 	}
+#endif
 
 	// length of the player model prefix
 	prefixlen = strlen(PLAYERMODELPREFIX);
 
 	while (fscanf(f, "%25s %31s %f %f", name, filename, &scale, &offset) == 4)
-	{
-		char *skinname = name;
-		size_t len = strlen(name);
-
-		// Check for the player model prefix.
-		if (!strnicmp(name, PLAYERMODELPREFIX, prefixlen) && (len > prefixlen))
-		{
-			skinname += prefixlen;
-			goto addskinmodel;
-		}
-
-		// Add sprite models.
-		for (i = 0; i < numsprites; i++)
-		{
-			if (stricmp(name, sprnames[i]) == 0)
-			{
-				md2_models[i].scale = scale;
-				md2_models[i].offset = offset;
-				md2_models[i].found = true;
-				strcpy(md2_models[i].filename, filename);
-				goto modelfound;
-			}
-		}
-
-addskinmodel:
-		// Add player models.
-		for (s = 0; s < numskins; s++)
-		{
-			if (stricmp(skinname, skins[s]->name) == 0)
-			{
-				md2_playermodels[s].scale = scale;
-				md2_playermodels[s].offset = offset;
-				md2_playermodels[s].found = true;
-				strcpy(md2_playermodels[s].filename, filename);
-				goto modelfound;
-			}
-		}
-
-modelfound:
-		// Move on to the next line...
-		continue;
-	}
+		HWR_AddModelsDatEntry(name, filename, scale, offset, prefixlen);
 
 	fclose(f);
 }
 
+#ifdef PS2_PROFILE
+#include "hw_md2_ps2.inc" // PS2-HW-262: the blend in palette index space
+#else
 // Define for getting accurate color brightness readings according to how the human eye sees them.
 // https://en.wikipedia.org/wiki/Relative_luminance
 // 0.2126 to red
@@ -1069,6 +1210,8 @@ static void HWR_GetBlendedTexture(patch_t *patch, patch_t *blendpatch, INT32 ski
 	Z_ChangeTag(newMipmap->data, PU_HWRMODELTEXTURE_UNLOCKED);
 }
 
+#endif // PS2_PROFILE
+
 static boolean HWR_AllowModel(mobj_t *mobj)
 {
 	// Signpost overlay. Not needed.
@@ -1300,6 +1443,12 @@ static INT32 GetAnimDuration(mobj_t *mobj) //part of p_mobj's setplayermobjstate
 // HWR_DrawModel
 //
 
+#ifdef PS2_PROFILE
+// OPT11-MODEL (PS2-HW-266): the level of detail of models on a console: High = the objects of 8 pixels and more, 16000 triangles a frame; Medium = 12 pixels, 8000; Low = 20 pixels, 3000
+static CV_PossibleValue_t glmodeldetail_cons_t[] = {{0, "High"}, {1, "Medium"}, {2, "Low"}, {0, NULL}};
+consvar_t cv_glmodeldetail = CVAR_INIT ("gr_modeldetail", "High", CV_SAVE, glmodeldetail_cons_t, NULL);
+#endif
+
 boolean HWR_DrawModel(gl_vissprite_t *spr)
 {
 	md2_t *md2;
@@ -1434,6 +1583,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			md2 = &md2_models[spr->mobj->sprite];
 		}
 
+#ifndef PS2_PROFILE
 		// texture loading before model init, so it knows if sprite graphics are used, which
 		// means that texture coordinates have to be adjusted
 		gpatch = md2->grpatch;
@@ -1492,6 +1642,92 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			}
 		}
 
+#else
+		// OPT11-MODEL (PS2-HW-260): the model first (a model that is not there, or does not fit, costs no texture), then its 8 bit texture; the skin colour blend map is read
+		// when a blend is made (HWR_GetBlendedTexture), not kept
+		boolean newmodel = false;
+
+		if (md2->error)
+			return false; // we already failed loading this before :(
+		if (!md2->model)
+		{
+			int why = 0;
+
+			if (md2->ps2_retry && (INT32)(Z_FrameCount() - md2->ps2_retry) < 0)
+				return false; // there was no room a moment ago: a sprite for now
+			md2->ps2_retry = 0;
+			md2->model = PS2Models_Load(md2->filename, (void **)&md2->model, &why);
+			if (!md2->model && why == 3)
+				return false; // the models of this frame were read already (PS2Models_Load): a sprite now, asked again in the next frame
+			if (!md2->model && why == 0)
+			{
+				sprintf(filename, "models/%s", md2->filename);
+				md2->model = md2_readModel(filename); // not in the pack: a loose file next to the ELF
+			}
+			if (!md2->model)
+			{
+				if (why == 1)
+					md2->ps2_retry = Z_FrameCount() + 140; // memory: asked again in about four seconds
+				else
+					md2->error = true; // prevent endless fail
+				return false;
+			}
+			newmodel = true;
+		}
+		PS2Models_Touch(md2->model); // used in this frame: the reclaim hook leaves it alone
+
+		// PS2-HW-266: an object a few pixels big is its sprite (the model of a ring is 140 triangles, a level shows a hundred rings)
+		{
+			const float mr = PS2Models_Radius(md2->model);
+
+			if (mr > 0.0f)
+			{
+				const float sx = FIXED_TO_FLOAT(interp.scale) * FIXED_TO_FLOAT(interp.spritexscale), sy = FIXED_TO_FLOAT(interp.scale) * FIXED_TO_FLOAT(interp.spriteyscale);
+				const float wr = mr * md2->scale * (sx > sy ? sx : sy) * (0.5f / 64.0f);
+				unsigned mdtris = 0;
+				int mm;
+
+				for (mm = 0; mm < md2->model->numMeshes; mm++)
+					mdtris += (unsigned)md2->model->meshes[mm].numTriangles;
+
+				PS2HWD_ModelDetail(cv_glmodeldetail.value);
+				if (!PS2HWD_ModelWanted(FIXED_TO_FLOAT(interp.x), FIXED_TO_FLOAT(interp.y), FIXED_TO_FLOAT(flip ? interp.z + interp.height : interp.z), wr, mdtris))
+					return false; // the sprite
+			}
+		}
+
+		// texture loading, so it knows if sprite graphics are used, which means that texture coordinates have to be adjusted
+		gpatch = md2->grpatch;
+		if (gpatch)
+			hwrPatch = ((GLPatch_t *)gpatch->hardware);
+
+		if (!gpatch || !hwrPatch
+		|| ((!hwrPatch->mipmap->format || !hwrPatch->mipmap->downloaded) && !md2->notexturefile)
+		|| (md2->ps2_pal && md2->ps2_pal != PS2Models_PaletteHash() && !md2->notexturefile))
+			md2_loadTexture(md2);
+
+		// Load it again, because it isn't being loaded into gpatch after md2_loadtexture...
+		gpatch = md2->grpatch;
+		if (gpatch)
+			hwrPatch = ((GLPatch_t *)gpatch->hardware);
+
+		if (newmodel)
+		{
+			md2_printModelInfo(md2->model);
+			// If model uses sprite patch as texture, then
+			// adjust texture coordinates to take power of two textures into account
+			if (!gpatch || !hwrPatch || !hwrPatch->mipmap->format)
+				adjustTextureCoords(md2->model, spr->gpatch);
+			// note down the max_s and max_t that end up in the VBO
+			md2->model->vbo_max_s = md2->model->max_s;
+			md2->model->vbo_max_t = md2->model->max_t;
+			HWD.pfnCreateModelVBOs(md2->model);
+		}
+		(void)blendgpatch;
+		(void)hwrBlendPatch;
+
+#endif
+
 		//HWD.pfnSetBlend(blend); // This seems to actually break translucency?
 		//Hurdler: arf, I don't like that implementation at all... too much crappy
 
@@ -1528,7 +1764,11 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			}
 
 			// Translation or skin number found
+#ifdef PS2_PROFILE
+			HWR_GetBlendedTexture(md2, gpatch, skinnum, spr->colormap, (skincolornum_t)spr->mobj->color);
+#else
 			HWR_GetBlendedTexture(gpatch, blendgpatch, skinnum, spr->colormap, (skincolornum_t)spr->mobj->color);
+#endif
 		}
 		else // Sprite
 		{

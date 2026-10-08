@@ -104,6 +104,7 @@ static struct
 	float ra, rb; // ramp coordinate: s = ra * w + rb
 	int ramp_scale;
 	int vcol; // vertices carry their own colours (sky dome)
+	int vlight; // OPT11-MODEL (PS2-HW-264): with vcol, the vertices carry only a light factor (a[2]) that scales the colour of the pass (put_vertex format 6): gr_modellighting
 	int cull; // 0 two-sided; +1 keep CCW; -1 keep CW (models)
 	int pal; // PS2-HW-71: palette rendering: the pieces of the light staircase are drawn with the CLUT of their colormap row (CK_LIGHT) instead of GS fog
 	int pal_row; // the row whose CLUT the GS state holds (-1 = none)
@@ -665,15 +666,13 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	P.r = r;
 	P.flags = flags;
 	P.vcol = 0;
+	P.vlight = 0;
 	P.cull = 0;
 	P.npass = 0;
 	P.zbias = (flags & PF_Decal) ? (float)cfg.decal_bias : 0.0f;
 	P.wrapx = P.wrapy = 0;
 	P.cutx = P.cuty = 0;
 	P.tsx = P.tsy = 1.0f;
-	if (flags & PF_WireFrame)
-		hw_limit(HW_WIREFRAME, "wireframe flag is not implemented; filled geometry drawn");
-
 	if (textured)
 	{
 		int wms = r->wrapx ? 0 : 1, wmt = r->wrapy ? 0 : 1; // 0 = repeat, 1 = clamp
@@ -1081,9 +1080,12 @@ static inline void xform_vertex(const FOutVector *s, const float *vc, cv_t *d)
 	if (vc)
 	{
 		d->a[2] = vc[0];
-		d->a[3] = vc[1];
-		d->a[4] = vc[2];
-		d->a[5] = vc[3];
+		if (!P.vlight)
+		{
+			d->a[3] = vc[1];
+			d->a[4] = vc[2];
+			d->a[5] = vc[3];
+		}
 	}
 }
 
@@ -1125,7 +1127,7 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 
 	zf = clampf(zf, 0.0f, P.zmax);
 	zi = (u32)(int)zf; // 0 <= zf <= Z24: the signed conversion is one instruction, the unsigned one a compare and a branch (PS2-HW-59)
-	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4 || pk->fmt == 5)
+	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4 || pk->fmt == 5 || pk->fmt == 6)
 	{
 		if (pk->ramp)
 		{
@@ -1150,6 +1152,17 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 		o->w[3] = pk->col >> 24;
 		o++;
 	}
+	else if (pk->fmt == 6)
+	{
+		// OPT11-MODEL (PS2-HW-264): the colour of the pass scaled by the light factor of the vertex (alpha as it is)
+		const float lf = s->a[2];
+
+		o->w[0] = (u32)((float)(pk->col & 255) * lf + 0.5f);
+		o->w[1] = (u32)((float)((pk->col >> 8) & 255) * lf + 0.5f);
+		o->w[2] = (u32)((float)((pk->col >> 16) & 255) * lf + 0.5f);
+		o->w[3] = pk->col >> 24;
+		o++;
+	}
 	else if (pk->fmt == 4)
 	{
 		o->w[0] = col_lut[(int)clampf(s->a[2], 0.0f, 255.0f)];
@@ -1158,11 +1171,11 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 		o->w[3] = col_lut[(int)clampf(s->a[5], 0.0f, 255.0f)];
 		o++;
 	}
-	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4)
+	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4 || pk->fmt == 6)
 		H.gsr.valid &= ~(u32)RV_RGBAQ; // packed vertices changed Q (and sky colours) behind the A+D state cache
 	o->w[0] = (u32)xi;
 	o->w[1] = (u32)yi;
-	if (pk->fmt == 1 || pk->fmt == 3)
+	if (pk->fmt == 1 || pk->fmt == 3 || pk->fmt == 6)
 	{
 		o->w[2] = zi << 4;
 		o->w[3] = pk->fog << 4;
@@ -1177,7 +1190,7 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 
 static inline int pack_regs(int fmt)
 {
-	return (fmt == 0 || fmt == 1 || fmt == 4) ? 3 : fmt == 5 ? 2 : 1;
+	return (fmt == 0 || fmt == 1 || fmt == 4 || fmt == 6) ? 3 : fmt == 5 ? 2 : 1;
 }
 
 static inline u64 pack_regdesc(int fmt)
@@ -1189,6 +1202,7 @@ static inline u64 pack_regdesc(int fmt)
 		case 2: return GIF_REGS_XYZ;
 		case 3: return GIF_REGS_XYZF;
 		case 5: return GIF_REGS_STQ_XYZ;
+		case 6: return GIF_REGS_STQ_RGBA_XYZF; // OPT11-MODEL: vertex light factor, fog
 		default: return GIF_REGS_STQ_RGBA_XYZ;
 	}
 }
@@ -1482,7 +1496,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		pk.sb = pc->sb;
 		pk.tb = pc->tb;
 		pk.fog = fogF;
-		pk.fmt = P.vcol ? 4 : (ps->tex ? (usefog ? 1 : 0) : (usefog ? 3 : 2));
+		pk.fmt = P.vlight ? 6 : P.vcol ? 4 : (ps->tex ? (usefog ? 1 : 0) : (usefog ? 3 : 2));
 		pk.col = ps->col;
 		if (pk.fmt == 0)
 		{
@@ -1491,7 +1505,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 			if (unitq) pk.fmt = 5; // retain the compact affine HUD/screen path
 		}
 		pk.nreg = pack_regs(pk.fmt);
-		if (pk.fmt != 4 && 1 + cnt * pk.nreg <= 16)
+		if (pk.fmt != 4 && pk.fmt != 6 && 1 + cnt * pk.nreg <= 16)
 		{
 			emit_reglist_fan(v, cnt, &pk, ptype | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)));
 			H.st.verts_out += (u32)cnt;
@@ -2421,18 +2435,20 @@ static inline xv_t *xv_get(const FOutVector *base, const float *vcol, u32 vi)
 		const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
 
 #ifdef HW_VU0
-		if (P.vu0 && !vcol)
+		if (P.vu0 && (!vcol || P.vlight))
 		{
 			pv_t unused;
 
 			vu0_need();
 
 			e->oc = vu0_xform(&base[vi], &e->v, &unused);
+			if (vcol)
+				e->v.a[2] = vcol[vi]; // a model's light factor (the sky dome's colours take the scalar path)
 		}
 		else
 #endif
 		{
-			xform_vertex(&base[vi], vcol ? &vcol[vi * 4] : NULL, &e->v);
+			xform_vertex(&base[vi], vcol ? (P.vlight ? &vcol[vi] : &vcol[vi * 4]) : NULL, &e->v);
 			e->oc = outcode(&e->v, gx, gy);
 		}
 		e->tag = vi + 1;
@@ -2446,9 +2462,9 @@ static inline xv_t *xv_get(const FOutVector *base, const float *vcol, u32 vi)
 static void emit_tris(const FOutVector *base, const u32 *idx, u32 nidx, const float *vcol)
 {
 	u32 i, t0 = cyc();
-	int na = P.vcol ? 6 : 2;
+	int na = P.vlight ? 3 : P.vcol ? 6 : 2;
 	int simple_mode = P.npass == 1 && (P.lmode == LM_NONE || (P.lmode == LM_RAMP && !P.pass[0].ramp)) && !P.cutx && !P.cuty && !P.water && P.pass[0].tex == (u8)P.textured;
-	int fmt = P.vcol ? 4 : (P.textured ? 0 : 2);
+	int fmt = P.vlight ? 6 : P.vcol ? 4 : (P.textured ? 0 : 2);
 	int nreg = pack_regs(fmt);
 	pack_t pk;
 

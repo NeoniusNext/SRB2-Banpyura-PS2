@@ -28,6 +28,8 @@ typedef long long ps2e_s64;
 #define PS2E_DCMDS 64        // game -> D ring (power of two)
 #define PS2E_SLOTS 24        // decoded music blocks: 24 * 512 frames = 557 ms
 #define PS2E_SLOT_FRAMES PS2_AUDIO_BLOCK
+#define PS2E_MUTE_STEPS 8    // PS2-317: decode steps with the music gain at 0 before an Ogg/MP3 song is skipped instead of decoded
+#define PS2E_MUTE_AHEAD 4    // blocks decoded ahead while skipping (the lookahead of the normal decode is PS2E_SLOTS)
 
 #if defined(_MSC_VER)
 #include <intrin.h>
@@ -81,9 +83,14 @@ typedef struct
 	volatile ps2e_u32 blocks, bytes_sent, music_starved, handle_mismatch, dec_slots, dec_max_us;
 	volatile ps2e_u32 music_frames_dec, music_frames_cons, ring_full_stalls;
 	volatile ps2e_u32 min_queue_ms, queue_cap, cmd_full, dcmd_full;
+	volatile ps2e_u32 rpc_calls, pump_calls;                   // audsrv RPCs and wake-ups of the pump (EE diagnostics)
+	volatile ps2e_u64 rpc_cycles, pump_cycles;                 // COP0 cycles inside the RPCs / the whole pump (mixer thread)
+	volatile ps2e_u32 flush_blocks, short_writes;               // silence blocks that overwrite the IOP ring after the last sound (PS2-300); refused/short audsrv writes
 	volatile ps2e_u32 music_hash_dec, music_hash_cons, hash_errors;   // per-block check of the decoder -> mixer transport
 	volatile ps2e_u32 mix_cycles_max, mix_cycles_blocks;       // COP0 cycles of one PS2E_Render (EE only)
 	volatile ps2e_u64 mix_cycles_total;
+	volatile ps2e_u64 dec_cycles_total;                            // COP0 cycles inside PS2E_DecodeStep (decoder thread; includes preemption by the mixer thread)
+	volatile ps2e_u32 dec_steps_silent;                            // decode steps that skipped the decoder because the music was muted (PS2-317)
 	volatile ps2e_u32 main_gap_max_ms, main_gaps_over_100ms;   // game thread: longest time between two I_UpdateSound calls
 } ps2e_stats;
 
@@ -119,6 +126,7 @@ typedef struct ps2_engine
 	ps2_music *d_song;
 	ps2e_u32 d_epoch, d_hash;
 	int d_playing;
+	ps2e_u32 d_mute_steps;            // PS2-317: consecutive decode steps with the music gain at 0
 	// ---- M-owned music state
 	int m_flowing;                    // at least one slot of the current epoch was consumed
 	ps2e_u32 m_epoch_seen, m_hash;

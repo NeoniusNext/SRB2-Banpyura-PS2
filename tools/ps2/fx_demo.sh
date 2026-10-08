@@ -15,7 +15,7 @@ for d in $DEMOS; do
 		IFS='|' read -ra parts <<< "$FX_CFG"
 		for c in "${parts[@]}"; do cfg+=(--cfg "$c"); done
 	fi
-	python3 -B tools/ps2/opt_run.py --name "${TAG}_d$n" --elf "$ELF" --pak /home/user/SRB2-Banpyura-PS2/build/pak --out build/runs --demo "DEMO_00$n" --no-ref --timeout 2400 --until "gametics in" "${cfg[@]}" -- -renderer Hardware -zreserve 1536 -ps2prof "$@" > "build/runs/${TAG}_d$n.log" 2>&1
+	python3 -B tools/ps2/opt_run.py --name "${TAG}_d$n" --elf "$ELF" --pak "${FX_PAK:-/home/user/SRB2-Banpyura-PS2/build/pak}" --out build/runs --demo "DEMO_00$n" --no-ref --timeout 2400 --until "gametics in" "${cfg[@]}" -- -renderer Hardware -zreserve 1536 -ps2prof "$@" > "build/runs/${TAG}_d$n.log" 2>&1
 	rm -f "build/runs/${TAG}_d$n/SRB2.ELF" # (10 MB a run: the disk is shared; the ELF is the one given on the command line)
 	echo "$TAG d$n: $(grep -h 'timed .* gametics' build/runs/${TAG}_d$n/boot.txt | tail -1)"
 done
