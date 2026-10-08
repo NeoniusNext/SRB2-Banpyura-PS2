@@ -77,6 +77,8 @@ enum
 	HWP_SH_A, HWP_SH_B, HWP_SH_C, HWP_SH_D, HWP_SH_E, HWP_SH_F, HWP_SH_G, HWP_SH_H,
 	// HWR_RenderPlane by parts (HWPROF37): set-up and slope, buffer and flat size, vertex loop, slope light, lighting, polygon (HWR_ProcessPolygon)
 	HWP_PL_A, HWP_PL_B, HWP_PL_C, HWP_PL_D, HWP_PL_E, HWP_PL_F,
+	// OPT11 round 2 (FX2, --hwdetail): the flush of the sprite batch by parts (HWPROF41): collect (HWR_ProcessPolygon of a batched sprite), sort, plan, draw, the rest
+	HWP_SF_COLLECT, HWP_SF_SORT, HWP_SF_PLAN, HWP_SF_DRAW, HWP_SF_ALL,
 	HWP_NUM
 };
 
