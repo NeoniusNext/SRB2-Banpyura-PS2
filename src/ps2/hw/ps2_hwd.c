@@ -307,7 +307,13 @@ boolean PS2HWD_Init(void)
 	if (!hwbig_alloc())
 		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
-	spr_alloc(); // PS2-HW-255: the lists of the sprite stream (zone blocks while the driver runs; no stream when there is no room)
+	// PS2-HW-255 (OPT11 round 3, FX3): the sprite stream is opt-in (-hwspr). Measured on the tree with the VU2 collection of polygons in blocks (docs/GATES/g1/opt11-FX.md 7.7): the stream costs the EE
+	// what the batch costs for the same sprites (D1 +1.3 % of the sprite set, D2 -2.7 %, D3 -1.5 %, D4 +4.6 %, against the cheap projection alone), and its lists are 75 KB of the zone, which is
+	// at its edge on 32 MB (DEMO_003 ends in "Out of memory" on the tip of the main branch already). Without -hwspr the lists are not made and every sprite goes through the batch.
+	if (!M_CheckParm("-hwspr"))
+		ps2hwd_fx2 |= FX3_NOSTREAM;
+	if (!(ps2hwd_fx2 & (FX3_NOSTREAM | FX3_NOSPR)))
+		spr_alloc(); // the lists of the sprite stream (zone blocks while the driver runs; no stream when there is no room)
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
