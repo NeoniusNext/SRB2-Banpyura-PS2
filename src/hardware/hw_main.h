@@ -99,6 +99,9 @@ extern consvar_t cv_glpalettedepth;
 extern consvar_t cv_gllightdither;
 
 extern consvar_t cv_glwireframe;
+#ifdef PS2_PROFILE
+extern consvar_t cv_glmodeldetail; // OPT11-MODEL (PS2-HW-266): gr_modeldetail High / Medium / Low (hw_md2.c): how small an object must be to stay a sprite, how many triangles of models a frame may take
+#endif
 
 // BP: big hack for a test in lighting ref : 1249753487AB
 extern fixed_t *hwbbox;

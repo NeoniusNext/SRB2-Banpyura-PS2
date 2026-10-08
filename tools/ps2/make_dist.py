@@ -4,6 +4,7 @@ usage: python3 tools/ps2/make_dist.py [--elf build/out/SRB2.ELF] [--pak build/pa
 Result (everything the engine opens at run time, nothing else):
   SRB2.ELF            the engine (full configuration: Lua, UDMF, add-ons, limits, network, master server, software + GS hardware renderer)
   SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK   cooked game data (tools/ps2/cook.py from the user's own SRB2 2.2.15 files; not part of the repository)
+  MODELS.PAK          optional, cooked 3D models (tools/ps2/cook_models.py from the user's own models/ folder and models.dat): taken from --pak when it is there
   FINEACON.DAT        arccos table of Lua's acos/asin (tools/ps2/gen_fineacon.py; without it acos is computed, slower)
   modules/*.irx       IOP drivers loaded on first use from <data>/modules (src/ps2/ps2_addons.c): memory card (mcman, mcserv) and USB mass storage (bdm,
                       bdmfs_fatfs, usbmass_bd); the other drivers (sio2man, padman, usbd, keyboard/mouse, audsrv, network) are embedded in the ELF
@@ -31,6 +32,7 @@ README = r"""SRB2 for PlayStation 2 (Sonic Robo Blast 2 2.2.15, "Banpyura" port)
 ---------------------
 SRB2.ELF                    движок / the engine
 SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK   данные игры (упакованные файлы SRB2 2.2.15) / the game data (cooked from SRB2 2.2.15)
+MODELS.PAK                  необязательно: 3D-модели (MD3) для gr_models On / optional: the 3D models for gr_models On (the game runs without it, with sprites)
 FINEACON.DAT                таблица арккосинуса для Lua / arccos table for Lua
 modules/*.irx               драйверы IOP: карта памяти и USB-накопитель, грузятся при первом обращении / IOP drivers for the memory card and USB storage, loaded on first use
 autoload/                   сюда класть аддоны (.pk3 .wad .soc .lua): грузятся при каждом старте / add-ons put here load at every start

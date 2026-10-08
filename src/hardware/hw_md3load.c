@@ -193,6 +193,14 @@ model_t *MD3_LoadModel(const char *fileName, int ztag, boolean useFloat)
 
 	// read in file
 	buffer = malloc(fileLen);
+#ifdef PS2_PROFILE
+	if (!buffer) // OPT11-MODEL: the C heap of the console is 1.6 MB: a big model that is not in the pack is a sprite, not a crash
+	{
+		fclose(f);
+		Z_Free(retModel);
+		return NULL;
+	}
+#endif
 	fileReadLen = fread(buffer, fileLen, 1, f);
 	fclose(f);
 
@@ -339,6 +347,9 @@ model_t *MD3_LoadModel(const char *fileName, int ztag, boolean useFloat)
 
 //				if (retModel->materials[0].lightmap)
 //					retModel->meshes[i].tinyframes[j].tangents = (char*)malloc(sizeof(char));//(char*)Z_Malloc(sizeof(char)*3*mdS->numVerts, ztag);
+#ifdef PS2_PROFILE // OPT11-MODEL: one array of indices per surface (the loop made one per frame and kept the last: numFrames - 1 leaked)
+				if (j == 0)
+#endif
 				retModel->meshes[i].indices = (unsigned short*)Z_Malloc(sizeof(unsigned short) * 3 * mdS->numTriangles, ztag, 0);
 				vertptr = retModel->meshes[i].tinyframes[j].vertices;
 				normptr = retModel->meshes[i].tinyframes[j].normals;
