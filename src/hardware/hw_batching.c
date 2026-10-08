@@ -609,6 +609,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			ps2hwp_cnt[HWC_PROC_BATCH]--;
 			if (!HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, (hwr_sprite_batch && !hwr_sprite_shadow) ? 1u : 0u))
 				HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
+#ifdef PS2_PROFILE
+			if (hwr_grec_on)
+				HWR_GCRecBlockDone(); // OPT11 (PS2-HW-215): the block the polygon became goes into its record
+#endif
 #ifdef PS2_HWDETAIL
 			if (hwr_sprite_batch)
 				ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);
@@ -795,11 +799,23 @@ void HWR_GCBatchReserve(int npoly, int nvert)
 	}
 }
 
+UINT32 HWR_GCNeedExt(const GLMipmap_t *tex, FBITFIELD flags)
+{
+	return HWR_PBNeedExt(tex, flags);
+}
+
+boolean HWR_GCBlocksOn(void)
+{
+	return HWR_PBOn() ? true : false;
+}
+
 // HWR_ProcessPolygon of a polygon the geometry cache made before: the texture of the polygon is current (touched once per view: the driver only stamps it with the frame, the zone the block),
-// then the polygon goes the way it went the first time (the block collection of PS2-HW-233 when it is on)
+// then the block the collection made of it the first time goes into its bucket (PS2-HW-215). The long way - the vertices out of the block, HWR_ProcessPolygon - when something looks at the
+// polygon (-hwpolyhash), the texture repeats differently now, or the collection is not the block one.
 void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view)
 {
 	FSurfaceInfo *sf = (FSurfaceInfo *)(h + 1);
+	const hwr_qw_t *blk = (const hwr_qw_t *)((const UINT8 *)h + GC_POLY_HDR);
 	GLMipmap_t *m = h->tex;
 
 	if (m && m->ps2_gcv != view)
@@ -809,7 +825,22 @@ void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view)
 		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
 	}
 	current_texture = m;
-	HWR_ProcessPolygon(sf, (FOutVector *)(sf + 1), h->n, h->flags, h->target, h->horizon);
+	if (hwr_ph_on <= 0 && currently_batching && !hwr_sprite_batch && HWR_PBOn() && HWR_PBAddBlock(sf, blk, h->n, h->flags, h->target, h->horizon, h->needext))
+		return;
+	{
+		static FOutVector fv[256];
+		UINT32 k;
+
+		for (k = 0; k < h->n; k++)
+		{
+			fv[k].x = blk[2 + 2 * k].f[0];
+			fv[k].y = blk[2 + 2 * k].f[1];
+			fv[k].z = blk[2 + 2 * k].f[2];
+			fv[k].s = blk[3 + 2 * k].f[0];
+			fv[k].t = blk[3 + 2 * k].f[1];
+		}
+		HWR_ProcessPolygon(sf, fv, h->n, h->flags, h->target, h->horizon);
+	}
 }
 #endif
 

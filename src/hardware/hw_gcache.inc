@@ -49,6 +49,7 @@ extern unsigned int PS2HWD_ScanDirection(void); // ps2_hw_tex.inc: 0 / 1 alterna
 
 enum { GCOP_POLY = 2, GCOP_TWALL = 3 }; // (the texture ops of the first versions are gone: the entry of a polygon holds its texture, the header of the record the texture the function ended with)
 
+typedef union { UINT32 w[4]; float f[4]; } hwr_qw_t_gc; // (a quadword of a block, hw_pbatch.inc: hwr_qw_t)
 typedef struct { UINT8 op, fog; UINT16 size; INT32 texnum; INT32 src; FBITFIELD blend; INT32 lightlevel; extracolormap_t *cmap; FOutVector v[4]; FSurfaceInfo surf; } gctw_t;
 
 typedef struct { UINT32 a, b; } gcfp_t;
@@ -96,6 +97,8 @@ static struct
 	UINT32 epoch;
 	UINT32 rec_start, rec_pos, rec_limit, rec_np, rec_nv, rec_nw;
 	boolean rec_fail, rec_full, rec_lastset, rec_hassrc;
+	UINT8 *rec_blkdst; // where the block of the polygon being collected goes (HWR_GCRecBlockDone)
+	UINT32 rec_blkneed;
 	GLMipmap_t *rec_last;
 	INT32 rec_lsrc, rec_ltnum;
 	// statistics of the window (HWPROF32)
@@ -590,7 +593,7 @@ static const gcrh_t *gc_promote(gcent_t *e, const gcrh_t *rh)
 		memcpy(gc.ar + gc.ar_used, rh, len);
 		e->off = gc.ar_used;
 		e->gen = gc.gen;
-		gc.ar_used += (len + 3u) & ~3u;
+		gc.ar_used += (len + 15u) & ~15u;
 		gc.s_promo++;
 		return (const gcrh_t *)(gc.ar + e->off);
 	}
@@ -616,7 +619,7 @@ static boolean gc_alloc_block(void)
 	seg_b = dseg ? (((size_t)numsegs * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
 	pl_b = dpl ? (((size_t)addsubsector * 2u * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
 	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
-	total = tab_b + seg_b + pl_b + sec_b + vert_b + ar_b + 64;
+	total = tab_b + seg_b + pl_b + sec_b + vert_b + ar_b + 64 + 16;
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
 #ifdef PS2
@@ -625,7 +628,7 @@ static boolean gc_alloc_block(void)
 	if (Z_ArenaFree() < total + Z_RenderHeadroom() + (1u << 20))
 		return false;
 #endif
-	p = Z_TryMallocAlign(total, PU_HWRPLANE, &gc.blk, 4);
+	p = Z_TryMallocAlign(total, PU_HWRPLANE, &gc.blk, 16);
 	if (!p)
 	{
 		gc.blk = NULL;
@@ -666,7 +669,7 @@ static boolean gc_alloc_block(void)
 	gc.nvert = numvertexes;
 	memset(gc.vst, 0, (size_t)vsize * sizeof(UINT32));
 	memset(gc.vtag, 0, (size_t)vsize * sizeof(UINT32));
-	gc.ar = p;
+	gc.ar = (UINT8 *)(((uintptr_t)p + 15u) & ~(uintptr_t)15u); // (the records are on quadwords)
 	gc.hsize = gc.kb * 512u & ~15u;
 	gc.hbase = 0;
 	gc.ar_size = gc.hsize * 2u;
@@ -700,7 +703,7 @@ static boolean HWR_GCacheFrame(void)
 	if (!gc.mode_set)
 		HWR_GCacheParse();
 	gc.on = false;
-	if ((gc.mode & 3) == 0 || gc.dead)
+	if ((gc.mode & 3) == 0 || gc.dead || !HWR_GCBlocksOn()) // (the records hold the blocks of the block collection: with the old collection, -hwgo 65536, there is no cache)
 		return false;
 	if (!gc.blk && !gc_alloc_block())
 	{
@@ -855,6 +858,7 @@ static void *gc_rec_alloc(UINT32 bytes)
 
 	if (gc.rec_fail)
 		return NULL;
+	bytes = (bytes + 15u) & ~15u; // (every op starts on a quadword: the block of a polygon is moved with lq / sq)
 	if (gc.rec_pos + bytes > gc.rec_limit)
 		gc.rec_full = true; // the arena has no room: it is started again
 	if (gc.rec_full || gc.rec_pos + bytes - gc.rec_start > GC_MAXREC)
@@ -871,12 +875,15 @@ static size_t HWR_GCacheReclaim(size_t want);
 
 void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon)
 {
-	const UINT32 size = (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo) + n * sizeof(FOutVector));
+	const UINT32 need = 2u + 2u * (UINT32)n; // quadwords of the block the collection makes of the polygon
+	const UINT32 size = GC_POLY_HDR + need * 16u;
 	gcphdr_t *h;
 	UINT32 *d;
 	const UINT32 *sp;
 	UINT32 k;
 
+	(void)verts; // (the vertices are in the block)
+	gc.rec_blkdst = NULL;
 	if (gc.test_rec && ++gc.test_n1 == gc.test_rec)
 		HWR_GCacheReclaim(0); // (test: the zone takes the cache back in the middle of a record)
 	if (n > 250)
@@ -889,7 +896,7 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 	h->op = GCOP_POLY;
 	h->n = (UINT8)n;
 	h->horizon = horizon ? 1 : 0;
-	h->pad = 0;
+	h->needext = (UINT8)HWR_GCNeedExt(current_texture, flags);
 	h->size = (UINT16)size;
 	h->target = (INT16)shader;
 	h->flags = flags;
@@ -908,13 +915,20 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 	for (k = 0; k < sizeof(FSurfaceInfo) / 4u; k++)
 		d[k] = sp[k];
 	((FSurfaceInfo *)(h + 1))->PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
-	d = (UINT32 *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo));
-	sp = (const UINT32 *)verts;
-	for (k = 0; k < n * 5u; k++)
-		d[k] = sp[k];
+	for (k = (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo)) / 4u; k < GC_POLY_HDR / 4u; k++)
+		((UINT32 *)h)[k] = 0; // (the padding: a check compares the bytes)
+	gc.rec_blkdst = (UINT8 *)h + GC_POLY_HDR; // the block is copied when the collection has made it (HWR_GCRecBlockDone)
+	gc.rec_blkneed = need;
 	gc.rec_np++;
 	gc.rec_nv += n;
 	gc.s_rec_ops++;
+}
+
+void HWR_GCRecBlockDone(void)
+{
+	if (gc.rec_blkdst && !gc.rec_fail && gc.blk)
+		HWR_PBCopyLast(gc.rec_blkdst, gc.rec_blkneed);
+	gc.rec_blkdst = NULL;
 }
 
 void HWR_GCRecTex(GLMipmap_t *texture)
@@ -938,9 +952,10 @@ static void HWR_GCRecTWall(const FOutVector *wallVerts, const FSurfaceInfo *pSur
 
 	if (!w)
 		return;
+	memset(w, 0, (sizeof(gctw_t) + 15u) & ~15u); // (the padding to the quadword: a check compares the bytes)
 	w->op = GCOP_TWALL;
 	w->fog = fogwall ? 1 : 0;
-	w->size = (UINT16)sizeof(gctw_t);
+	w->size = (UINT16)((sizeof(gctw_t) + 15u) & ~15u);
 	w->texnum = texnum;
 	w->src = (hwr_gc_src && texnum && texnum == hwr_gc_tnum) ? hwr_gc_src : 0; // (as the polygons: the number is patched at the replay)
 	if (w->src)
@@ -971,10 +986,10 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	gc.rec_last = NULL;
 	hwr_gc_src = 0;
 	hwr_grec_on = true;
-	if ((rh = gc_rec_alloc((UINT32)(sizeof(gcrh_t) + 4u * (UINT32)keyw))) != NULL)
+	if ((rh = gc_rec_alloc((UINT32)((sizeof(gcrh_t) + 4u * (UINT32)keyw + 15u) & ~15u))) != NULL)
 	{
 		rh->keyw = (UINT16)keyw;
-		rh->opsoff = (UINT16)(sizeof(gcrh_t) + 4u * (UINT32)keyw);
+		rh->opsoff = (UINT16)((sizeof(gcrh_t) + 4u * (UINT32)keyw + 15u) & ~15u);
 		rh->npoly = rh->nvert = rh->nwall = rh->flags = 0;
 		rh->last = NULL;
 		rh->lsrc = rh->ltnum = 0;
@@ -984,6 +999,8 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 
 			for (j = 0; j < keyw; j++)
 				kd[j] = key[j];
+			for (j = (int)((sizeof(gcrh_t) / 4u) + (UINT32)keyw); j < (int)(rh->opsoff / 4u); j++)
+				((UINT32 *)rh)[j] = 0; // (the padding to the quadword: a check compares the bytes)
 		}
 	}
 }
@@ -1174,15 +1191,16 @@ static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 
 			{
 				const UINT32 rel = i - o;
 
-				if (a[o] == GCOP_POLY && rel >= sizeof(gcphdr_t) + sizeof(FSurfaceInfo))
+				if (a[o] == GCOP_POLY && rel >= GC_POLY_HDR)
 				{
-					const UINT32 vo = rel - (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo));
-					const FOutVector *va = (const FOutVector *)(a + o + sizeof(gcphdr_t) + sizeof(FSurfaceInfo)), *vb = (const FOutVector *)(b + o + sizeof(gcphdr_t) + sizeof(FSurfaceInfo));
+					const UINT32 bo = rel - GC_POLY_HDR;
 					const UINT32 nv = ((const gcphdr_t *)(a + o))->n;
+					const hwr_qw_t_gc *va = (const hwr_qw_t_gc *)(a + o + GC_POLY_HDR), *vb = (const hwr_qw_t_gc *)(b + o + GC_POLY_HDR);
 
-					I_OutputMsg("  in op at %u (poly, %u vertices, flags %x): vertex %u field %u (x y z s t)\n", (unsigned)o, (unsigned)nv, (unsigned)((const gcphdr_t *)(a + o))->flags, (unsigned)(vo / 20), (unsigned)((vo % 20) / 4));
+					I_OutputMsg("  in the block of a poly op at %u (%u vertices, flags %x): quadword %u word %u\n", (unsigned)o, (unsigned)nv, (unsigned)((const gcphdr_t *)(a + o))->flags, (unsigned)(bo / 16), (unsigned)((bo % 16) / 4));
 					for (k = 0; k < nv; k++)
-						I_OutputMsg("    v%u cached %.4f %.4f %.4f %.6f %.6f | now %.4f %.4f %.4f %.6f %.6f\n", (unsigned)k, va[k].x, va[k].y, va[k].z, va[k].s, va[k].t, vb[k].x, vb[k].y, vb[k].z, vb[k].s, vb[k].t);
+						I_OutputMsg("    v%u cached %.4f %.4f %.4f %.6f %.6f | now %.4f %.4f %.4f %.6f %.6f\n", (unsigned)k, va[2 + 2 * k].f[0], va[2 + 2 * k].f[1], va[2 + 2 * k].f[2], va[3 + 2 * k].f[0], va[3 + 2 * k].f[1],
+							vb[2 + 2 * k].f[0], vb[2 + 2 * k].f[1], vb[2 + 2 * k].f[2], vb[3 + 2 * k].f[0], vb[3 + 2 * k].f[1]);
 				}
 				else
 					I_OutputMsg("  in op at %u (type %u) offset %u\n", (unsigned)o, (unsigned)a[o], (unsigned)rel);
