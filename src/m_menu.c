@@ -1499,6 +1499,9 @@ static menuitem_t OP_OpenGLOptionsMenu[] =
 	{IT_STRING|IT_CVAR,         NULL, "Models",              &cv_glmodels,             12},
 	{IT_STRING|IT_CVAR,         NULL, "Frame interpolation", &cv_glmodelinterpolation, 22},
 	{IT_STRING|IT_CVAR,         NULL, "Ambient lighting",    &cv_glmodellighting,      32},
+#ifdef PS2_PROFILE
+	{IT_STRING|IT_CVAR,         NULL, "Detail",              &cv_glmodeldetail,        42}, // OPT11-MODEL: how many models a frame (High / Medium / Low)
+#endif
 
 	{IT_HEADER, NULL, "General", NULL, 51},
 	{IT_STRING|IT_CVAR,         NULL, "Shaders",             &cv_glshaders,            63},

@@ -708,6 +708,21 @@ int ps2hwd_model_px = 8;
 int ps2hwd_model_tris = 16000;
 static u32 mdl_budget_frame = 0xFFFFFFFFu, mdl_budget_used;
 
+void PS2HWD_ModelDetail(int level)
+{
+	static int forced = -1;
+	static const int px[3] = {8, 12, 20}, tris[3] = {16000, 8000, 3000};
+
+	if (forced < 0)
+		forced = M_CheckParm("-hwmodelpx") || M_CheckParm("-hwmodeltris");
+	if (forced)
+		return;
+	if (level < 0 || level > 2)
+		level = 0;
+	ps2hwd_model_px = px[level];
+	ps2hwd_model_tris = tris[level];
+}
+
 int PS2HWD_ModelWanted(float x, float y, float z, float world_radius, unsigned int tris)
 {
 	float w, pr;

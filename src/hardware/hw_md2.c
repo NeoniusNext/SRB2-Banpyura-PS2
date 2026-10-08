@@ -1443,6 +1443,12 @@ static INT32 GetAnimDuration(mobj_t *mobj) //part of p_mobj's setplayermobjstate
 // HWR_DrawModel
 //
 
+#ifdef PS2_PROFILE
+// OPT11-MODEL (PS2-HW-266): the level of detail of models on a console: High = the objects of 8 pixels and more, 16000 triangles a frame; Medium = 12 pixels, 8000; Low = 20 pixels, 3000
+static CV_PossibleValue_t glmodeldetail_cons_t[] = {{0, "High"}, {1, "Medium"}, {2, "Low"}, {0, NULL}};
+consvar_t cv_glmodeldetail = CVAR_INIT ("gr_modeldetail", "High", CV_SAVE, glmodeldetail_cons_t, NULL);
+#endif
+
 boolean HWR_DrawModel(gl_vissprite_t *spr)
 {
 	md2_t *md2;
@@ -1684,6 +1690,7 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 				for (mm = 0; mm < md2->model->numMeshes; mm++)
 					mdtris += (unsigned)md2->model->meshes[mm].numTriangles;
 
+				PS2HWD_ModelDetail(cv_glmodeldetail.value);
 				if (!PS2HWD_ModelWanted(FIXED_TO_FLOAT(interp.x), FIXED_TO_FLOAT(interp.y), FIXED_TO_FLOAT(flip ? interp.z + interp.height : interp.z), wr, mdtris))
 					return false; // the sprite
 			}
