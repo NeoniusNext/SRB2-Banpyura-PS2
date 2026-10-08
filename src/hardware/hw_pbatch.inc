@@ -115,7 +115,7 @@ static void HWR_PBAlloc(void)
 	if (pb_pool)
 		return;
 	pb_cap = 12288;
-	pb_ecap = 2048;
+	pb_ecap = pb_cap / 8; // (a polygon takes 8 quadwords at the least: room in the pool is room in the polygon arrays, one test)
 	pb_bcap = 256;
 	pb_pool = HWR_BatchAlloc((size_t)pb_cap * sizeof(hwr_qw_t));
 	pb_ent = HWR_BatchAlloc((size_t)pb_ecap * sizeof(hwr_pbe_t));
@@ -163,24 +163,20 @@ static void HWR_PBReset(void)
 	}
 }
 
-// the pool or the polygon arrays are full (a few times a level): grow them by half
+// the pool is full (a few times a level): grow it by half; the polygon arrays hold one entry for every 8 quadwords of the pool (a triangle takes 8)
 static void __attribute__((noinline)) HWR_PBGrow(UINT32 need)
 {
-	if (pb_n >= pb_ecap)
-	{
-		const UINT32 c = (UINT32)HWR_BatchCapacity((int)pb_ecap, (int)pb_n + 1, sizeof(hwr_pbe_t) + sizeof(hwr_pbp_t) + sizeof(UINT32));
-
-		pb_ent = HWR_BatchResize(pb_ent, (size_t)c * sizeof(hwr_pbe_t));
-		pb_plan = HWR_BatchResize(pb_plan, (size_t)c * sizeof(hwr_pbp_t));
-		pb_walk = HWR_BatchResize(pb_walk, (size_t)c * sizeof(UINT32));
-		pb_ecap = c;
-	}
 	if (pb_wr + need > pb_cap)
 	{
-		const UINT32 c = (UINT32)HWR_BatchCapacity((int)pb_cap, (int)(pb_wr + need), sizeof(hwr_qw_t));
+		const UINT32 c = (UINT32)HWR_BatchCapacity((int)pb_cap, (int)(pb_wr + need), sizeof(hwr_qw_t) + (sizeof(hwr_pbe_t) + sizeof(hwr_pbp_t) + sizeof(UINT32)) / 8);
+		const UINT32 e = (c + 7) / 8;
 
 		pb_pool = HWR_BatchResize(pb_pool, (size_t)c * sizeof(hwr_qw_t));
+		pb_ent = HWR_BatchResize(pb_ent, (size_t)e * sizeof(hwr_pbe_t));
+		pb_plan = HWR_BatchResize(pb_plan, (size_t)e * sizeof(hwr_pbp_t));
+		pb_walk = HWR_BatchResize(pb_walk, (size_t)e * sizeof(UINT32));
 		pb_cap = c;
+		pb_ecap = e;
 	}
 }
 
@@ -208,7 +204,7 @@ static inline int HWR_PBMatch(const hwr_pbk_t *b, const FSurfaceInfo *s, const G
 
 static inline UINT32 HWR_PBH1(const GLMipmap_t *tex, UINT32 flags, UINT32 pc)
 {
-	return ((UINT32)(uintptr_t)tex * 0x9E3779B1u) ^ (flags * 0x85EBCA6Bu) ^ (pc * 0xC2B2AE35u);
+	return ((UINT32)(uintptr_t)tex ^ (flags << 9) ^ (flags >> 3) ^ pc ^ (pc >> 16)) * 0x9E3779B1u; // (one multiply: cheaper than three on the machine of the profile; the high bits are the index)
 }
 
 // the order of a bucket among the others (the order HWR_GroupPlan made, PS2-HW-231): the buckets without a texture (and the horizon lines) first, in reverse order of their
@@ -440,7 +436,7 @@ static void __attribute__((noinline)) HWR_PBAdd(const FSurfaceInfo *s, const FOu
 	}
 	else
 		bi = HWR_PBNew(s, tex, flags, ex, shader_target, 0, 0, spr);
-	if (pb_n >= pb_ecap || pb_wr + need > pb_cap)
+	if (pb_wr + need > pb_cap)
 		HWR_PBGrow(need);
 	HWR_PBPut(&pb_bk[bi], bi, s, v, n, need);
 }
@@ -457,7 +453,7 @@ static inline __attribute__((always_inline)) int HWR_PBFast(const FSurfaceInfo *
 		return 0;
 	h1 = HWR_PBH1(tex, flags, s->PolyColor.rgba);
 	e = pb_cache[h1 >> 23];
-	if (!e || e > pb_nb || pb_n >= pb_ecap || pb_wr + need > pb_cap)
+	if (e - 1u >= pb_nb || pb_wr + need > pb_cap)
 		return 0;
 	{
 		hwr_pbk_t *const b = &pb_bk[e - 1];
@@ -593,6 +589,8 @@ static int HWR_PBRender(void)
 #endif
 	}
 	currently_batching = false; // no longer collecting batches
+	ps2hwp_cnt[HWC_PROC] += n; // (the counters of HWPROF4: the collection does not count each polygon)
+	ps2hwp_cnt[HWC_PROC_BATCH] += n;
 	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
 	ps_hw_numpolys.value.i = (int)n;
 	ps_hw_numcalls.value.i = ps_hw_numverts.value.i = 0;

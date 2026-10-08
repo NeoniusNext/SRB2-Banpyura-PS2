@@ -513,10 +513,8 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 {
 	if (iNumPts < 3)
 		return; // no triangles; do not advance the fan writer past its allocation
-	if (currently_batching && !hwr_sprite_batch && !hwr_grec_on && !(hwr_ph_on > 0) && HWR_PBOn())
+	if (currently_batching && !((UINT32)hwr_sprite_batch | (UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB)))
 	{
-		ps2hwp_cnt[HWC_PROC]++; // (the counters of HWPROF4)
-		ps2hwp_cnt[HWC_PROC_BATCH]++;
 		if (HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial))
 			return;
 		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
@@ -570,6 +568,8 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 #ifdef PS2
 		if (HWR_PBOn())
 		{
+			ps2hwp_cnt[HWC_PROC]--; // (counted when the batch is drawn)
+			ps2hwp_cnt[HWC_PROC_BATCH]--;
 			HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
 #ifdef PS2_HWDETAIL
 			if (hwr_sprite_batch)
@@ -783,6 +783,8 @@ void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FU
 		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 	if (HWR_PBOn())
 	{
+		ps2hwp_cnt[HWC_PROC]--; // (counted when the batch is drawn)
+		ps2hwp_cnt[HWC_PROC_BATCH]--;
 		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233: the digest the record keeps (texid, h16) is not needed
 		return;
 	}
