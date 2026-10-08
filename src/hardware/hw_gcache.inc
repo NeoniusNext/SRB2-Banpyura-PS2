@@ -18,7 +18,6 @@
 // 3 on, and one hit in 16 is checked that way (on a difference the entry is dropped). -hwgcmem KB: the size of the record arena (default GC_DEFAULT_KB).
 // The memory is one block of the zone (PU_HWRPLANE), asked with Z_TryMallocAlign: when the zone has no room the cache stays off, nothing else fails.
 
-#define GC_SETS 2048u
 #define GC_WAYS 2u
 #define GC_DEFAULT_KB 384u
 #define GC_SCRATCH (24u << 10) // the record of a hit that is checked (mode 2, 3)
@@ -28,7 +27,6 @@ extern unsigned int PS2HWD_ScanDirection(void); // ps2_hw_tex.inc: 0 / 1 alterna
 
 enum { GCOP_TEX = 1, GCOP_POLY = 2, GCOP_TWALL = 3 };
 
-typedef struct { UINT8 op, n, horizon, hashed; UINT16 size, h16; FBITFIELD flags; INT32 shader; UINT32 texid; GLMipmap_t *tex; } gcphdr_t; // 24 bytes, followed by an FSurfaceInfo and n FOutVector
 typedef struct { UINT8 op, pad[3]; GLMipmap_t *m; } gctex_t;
 typedef struct { UINT8 op, fog; UINT16 size; INT32 texnum; FBITFIELD blend; INT32 lightlevel; extracolormap_t *cmap; FOutVector v[4]; FSurfaceInfo surf; } gctw_t;
 
@@ -36,9 +34,13 @@ typedef struct { UINT32 a, b; } gcfp_t;
 
 typedef struct
 {
-	UINT32 id, id2, k0, k1, off;
+	UINT32 id, id2, off;
 	UINT16 len, gen;
 } gcent_t;
+
+// a record in the arena: this header, keyw words of key (the inputs the result was made from; compared word by word with the live ones), then the ops
+typedef struct { UINT16 keyw, opsoff; } gcrh_t;
+#define GC_KEYMAX 80u
 
 static struct
 {
@@ -49,6 +51,8 @@ static struct
 	gcent_t *tab;
 	gcfp_t *bfp, *ffp; // per sector: the fingerprint of the sector alone / with its 3D floors and light list
 	UINT32 *bst, *fst; // ... and the view they were made in
+	UINT32 *bver, *fver; // ... and a number that changes when the fingerprint does (what the keys of segs and planes hold: one word for a sector)
+	UINT32 vctr;
 	UINT32 nsec, view, scan;
 	UINT8 *ar;
 	UINT32 ar_size, ar_used;
@@ -59,6 +63,9 @@ static struct
 	// statistics of the window (HWPROF32)
 	UINT32 s_seg_hit, s_seg_miss, s_seg_skip, s_pl_hit, s_pl_miss, s_pl_skip, s_flush, s_full, s_chk, s_bad, s_rep_ops, s_rec_ops;
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
+	UINT32 sdbg, nsets, nsets_user;
+	UINT32 mmpos, mm[34], mmp[34]; // the position of the first word of a key that differed (1 = the first), histograms of the segs and of the planes
+	UINT32 s_new, s_stale, c_rpoly, c_rtex, n_rpoly, n_rtex; // misses of a seg or plane never seen / seen with another key; cycles and number of the polygon and texture ops of the replays
 	UINT32 reports;
 } gc;
 
@@ -126,16 +133,8 @@ static void gc_sector_base(gcfp_t *h, const sector_t *s)
 	gcw(h, (UINT16)s->ceilinglightlevel | (s->floorlightabsolute ? 0x10000u : 0u) | (s->ceilinglightabsolute ? 0x20000u : 0u) | (s->ffloors ? 0x40000u : 0u) | ((UINT32)s->numlights << 20));
 	gcw(h, (UINT32)s->floorlightsec);
 	gcw(h, (UINT32)s->ceilinglightsec);
-	gcw(h, (UINT32)s->floorxoffset);
-	gcw(h, (UINT32)s->flooryoffset);
-	gcw(h, (UINT32)s->ceilingxoffset);
-	gcw(h, (UINT32)s->ceilingyoffset);
-	gcw(h, (UINT32)s->floorxscale);
-	gcw(h, (UINT32)s->flooryscale);
-	gcw(h, (UINT32)s->ceilingxscale);
-	gcw(h, (UINT32)s->ceilingyscale);
-	gcw(h, (UINT32)s->floorangle);
-	gcw(h, (UINT32)s->ceilingangle);
+	// (not the flat offsets, scales and angles: the wall builder does not read them, and scrolling flats would make every wall of the sector miss;
+	// the plane key has the ones its plane uses, gc_plane_words)
 	gcw(h, (UINT32)s->heightsec);
 	gcw(h, (UINT32)s->flags);
 	gcw(h, s->tags.count);
@@ -189,45 +188,69 @@ static void gc_sector_full(gcfp_t *h, const sector_t *s)
 	}
 }
 
-// the fingerprint of a sector, once per view for the sectors of the map; a copy (R_FakeFlat) is done every time
+// the fingerprint of a sector of the map is made once per view (a stamp per sector); the version of the sector is a number that changes when the fingerprint does:
+// the keys of the segs and planes hold the version (one word) and not the fingerprint. A sector the engine fakes (R_FakeFlat: a copy) is done every time.
+static void gc_refresh(size_t n, const sector_t *s, boolean full)
+{
+	gcfp_t h;
+	const UINT32 t0 = ps2hwp_now();
+
+	gc_init_fp(&h);
+	if (full)
+	{
+		gc_sector_full(&h, s);
+		if (h.a != gc.ffp[n].a || h.b != gc.ffp[n].b)
+		{
+			if ((gc.mode & 16) && gc.fver[n] && gc.sdbg++ < 60)
+			{
+				gcfp_t b;
+
+				gc_init_fp(&b);
+				gc_sector_base(&b, s);
+				I_OutputMsg("HWGC sector %u changed (view %u): base part %s | floor %d ceil %d light %d ffloors %d lights %d floorpic %d ceilpic %d\n", (unsigned)n, (unsigned)gc.view, (b.a != gc.bfp[n].a || b.b != gc.bfp[n].b) ? "CHANGED" : "same",
+					(int)(s->floorheight >> 16), (int)(s->ceilingheight >> 16), (int)s->lightlevel, s->ffloors ? 1 : 0, (int)s->numlights, (int)s->floorpic, (int)s->ceilingpic);
+			}
+			gc.ffp[n] = h;
+			gc.fver[n] = ++gc.vctr;
+		}
+		gc.fst[n] = gc.view;
+		gc.n_fpf++;
+	}
+	else
+	{
+		gc_sector_base(&h, s);
+		if (h.a != gc.bfp[n].a || h.b != gc.bfp[n].b)
+		{
+			gc.bfp[n] = h;
+			gc.bver[n] = ++gc.vctr;
+		}
+		gc.bst[n] = gc.view;
+		gc.n_fpb++;
+	}
+	gc.c_fp += ps2hwp_now() - t0;
+}
+
+static inline UINT32 gc_ver(size_t n, const sector_t *s, boolean full)
+{
+	if (full)
+	{
+		if (gc.fst[n] != gc.view)
+			gc_refresh(n, s, true);
+		return gc.fver[n];
+	}
+	if (gc.bst[n] != gc.view)
+		gc_refresh(n, s, false);
+	return gc.bver[n];
+}
+
 static void gc_get_fp(const sector_t *s, boolean full, gcfp_t *out)
 {
 	const size_t n = (size_t)(s - sectors);
 
 	if (n < gc.nsec)
 	{
-		if (full)
-		{
-			if (gc.fst[n] != gc.view)
-			{
-				gcfp_t h;
-				const UINT32 t0 = ps2hwp_now();
-
-				gc_init_fp(&h);
-				gc_sector_full(&h, s);
-				gc.ffp[n] = h;
-				gc.fst[n] = gc.view;
-				gc.c_fp += ps2hwp_now() - t0;
-				gc.n_fpf++;
-			}
-			*out = gc.ffp[n];
-		}
-		else
-		{
-			if (gc.bst[n] != gc.view)
-			{
-				gcfp_t h;
-				const UINT32 t0 = ps2hwp_now();
-
-				gc_init_fp(&h);
-				gc_sector_base(&h, s);
-				gc.bfp[n] = h;
-				gc.bst[n] = gc.view;
-				gc.c_fp += ps2hwp_now() - t0;
-				gc.n_fpb++;
-			}
-			*out = gc.bfp[n];
-		}
+		gc_ver(n, s, full);
+		*out = full ? gc.ffp[n] : gc.bfp[n];
 		return;
 	}
 	gc_init_fp(out);
@@ -260,54 +283,62 @@ static void gc_side_mid(gcfp_t *h, const side_t *sd)
 	}
 }
 
-// the fingerprint of the input of HWR_ProcessSeg
-static void gc_seg_key(const seg_t *sg, const sector_t *fs, const sector_t *bs, gcfp_t *k)
+// The KEY of a record: the words below, in this order. Recording (rec) stores them, checking compares them with the live values and stops at the first difference (-1).
+// One function for both, so the two cannot disagree; the input is the same as the fingerprint of round 1 (every field the builders read), but compared as plain words:
+// no hashing, no collisions, and a hit costs one load and one compare for each word.
+#define GCW(x) do { const UINT32 w_ = (UINT32)(x); if (rec) { if (kp >= kend) return -1; *kp++ = w_; } else if (*kp++ != w_) { gc.mmpos = (UINT32)(kp - kbase); return -1; } } while (0)
+// a sector of the map is its version; a sector the engine made up for the frame (a copy) is its fingerprint, made now
+#define GC_SECW(sc) do { const sector_t *sc_ = (sc); const size_t n_ = (size_t)(sc_ - sectors); \
+		if (n_ < gc.nsec) GCW(gc_ver(n_, sc_, true)); \
+		else { gcfp_t t_; gc_init_fp(&t_); gc_sector_full(&t_, sc_); GCW(t_.a); GCW(t_.b); } } while (0)
+#define GC_SIDEMIDW(sd_) do { const side_t *sdm_ = (sd_); \
+		GCW(sdm_->textureoffset); GCW(sdm_->rowoffset); GCW(R_GetTextureNum(sdm_->midtexture)); \
+		if (GC_SIDE_UDMF(sdm_)) { GCW(SIDE_OFFSETX_MID(sdm_)); GCW(SIDE_OFFSETY_MID(sdm_)); GCW(SIDE_SCALEX_MID(sdm_)); GCW(SIDE_SCALEY_MID(sdm_)); \
+			GCW((UINT16)SIDE_LIGHT(sdm_) | (SIDE_LIGHTABSOLUTE(sdm_) ? 0x10000u : 0u)); } } while (0)
+
+static inline __attribute__((always_inline)) int gc_seg_words(const seg_t *sg, const sector_t *fs, const sector_t *bs, UINT32 *kbase, const boolean rec)
 {
+	UINT32 *kp = kbase;
+	UINT32 *const kend = kbase + GC_KEYMAX;
 	const side_t *sd = sg->sidedef;
 	const line_t *ld = sg->linedef;
-	gcfp_t t;
 	INT32 tt, bt, mt;
 
-	gc_init_fp(k);
-	gc_get_fp(fs, true, &t);
-	gcw_fp(k, &t);
+	GC_SECW(fs);
 	if (bs)
-	{
-		gc_get_fp(bs, true, &t);
-		gcw_fp(k, &t);
-	}
-	gcw(k, (bothceilingssky ? 1u : 0u) | (bothfloorssky ? 2u : 0u) | ((UINT32)(UINT16)ld->flags << 8) | ((UINT32)(UINT16)ld->special << 16));
-	gcw(k, (UINT32)ld->alpha);
-	gcw(k, (UINT32)ld->blendmode);
+		GC_SECW(bs);
+	GCW((bothceilingssky ? 1u : 0u) | (bothfloorssky ? 2u : 0u) | ((UINT32)(UINT16)ld->flags << 8) | ((UINT32)(UINT16)ld->special << 16));
+	GCW(ld->alpha);
+	GCW(ld->blendmode);
 	tt = R_GetTextureNum(sd->toptexture);
 	bt = R_GetTextureNum(sd->bottomtexture);
 	mt = R_GetTextureNum(sd->midtexture);
-	gcw(k, (UINT32)tt | (tt ? HWR_PS2_TexTransparent(tt) << 31 : 0u));
-	gcw(k, (UINT32)bt | (bt ? HWR_PS2_TexTransparent(bt) << 31 : 0u));
-	gcw(k, (UINT32)mt | (mt ? HWR_PS2_TexTransparent(mt) << 31 : 0u));
-	gcw(k, (UINT32)sd->textureoffset);
-	gcw(k, (UINT32)sd->rowoffset);
-	gcw(k, (UINT32)sd->repeatcnt);
+	GCW((UINT32)tt | (tt ? HWR_PS2_TexTransparent(tt) << 31 : 0u));
+	GCW((UINT32)bt | (bt ? HWR_PS2_TexTransparent(bt) << 31 : 0u));
+	GCW((UINT32)mt | (mt ? HWR_PS2_TexTransparent(mt) << 31 : 0u));
+	GCW(sd->textureoffset);
+	GCW(sd->rowoffset);
+	GCW(sd->repeatcnt);
 	if (GC_SIDE_UDMF(sd))
 	{
-		gcw(k, (UINT32)SIDE_OFFSETX_TOP(sd));
-		gcw(k, (UINT32)SIDE_OFFSETX_MID(sd));
-		gcw(k, (UINT32)SIDE_OFFSETX_BOTTOM(sd));
-		gcw(k, (UINT32)SIDE_OFFSETY_TOP(sd));
-		gcw(k, (UINT32)SIDE_OFFSETY_MID(sd));
-		gcw(k, (UINT32)SIDE_OFFSETY_BOTTOM(sd));
-		gcw(k, (UINT32)SIDE_SCALEX_TOP(sd));
-		gcw(k, (UINT32)SIDE_SCALEX_MID(sd));
-		gcw(k, (UINT32)SIDE_SCALEX_BOTTOM(sd));
-		gcw(k, (UINT32)SIDE_SCALEY_TOP(sd));
-		gcw(k, (UINT32)SIDE_SCALEY_MID(sd));
-		gcw(k, (UINT32)SIDE_SCALEY_BOTTOM(sd));
-		gcw(k, (UINT16)SIDE_LIGHT(sd) | (SIDE_LIGHTABSOLUTE(sd) ? 0x10000u : 0u));
+		GCW(SIDE_OFFSETX_TOP(sd));
+		GCW(SIDE_OFFSETX_MID(sd));
+		GCW(SIDE_OFFSETX_BOTTOM(sd));
+		GCW(SIDE_OFFSETY_TOP(sd));
+		GCW(SIDE_OFFSETY_MID(sd));
+		GCW(SIDE_OFFSETY_BOTTOM(sd));
+		GCW(SIDE_SCALEX_TOP(sd));
+		GCW(SIDE_SCALEX_MID(sd));
+		GCW(SIDE_SCALEX_BOTTOM(sd));
+		GCW(SIDE_SCALEY_TOP(sd));
+		GCW(SIDE_SCALEY_MID(sd));
+		GCW(SIDE_SCALEY_BOTTOM(sd));
+		GCW((UINT16)SIDE_LIGHT(sd) | (SIDE_LIGHTABSOLUTE(sd) ? 0x10000u : 0u));
 	}
 	if (bs && (bs->ffloors || fs->ffloors))
 	{
 		// the 3D floor loops of HWR_ProcessSeg read the side of the control linedef of every floor of both sectors; where that depends on the seg's own
-		// line (ML_TFERLINE) it is here, the other sides are in the fingerprint of the sector
+		// line (ML_TFERLINE) it is here, the other sides are in the version of the sector
 		const ffloor_t *r;
 		int pass;
 
@@ -315,10 +346,67 @@ static void gc_seg_key(const seg_t *sg, const sector_t *fs, const sector_t *bs, 
 			for (r = pass ? fs->ffloors : bs->ffloors; r; r = r->next)
 				if (r->master->flags & ML_TFERLINE)
 				{
-					gc_side_mid(k, R_GetFFloorSide(ld, r, bs));
-					gcw(k, (UINT16)R_GetFFloorLine(ld, r, bs)->flags);
+					GC_SIDEMIDW(R_GetFFloorSide(ld, r, bs));
+					GCW((UINT16)R_GetFFloorLine(ld, r, bs)->flags);
 				}
 	}
+	return (int)(kp - kbase);
+}
+
+// the key of a plane: everything HWR_RenderPlane reads of the sector (the slope of the plane and the offset, scale and angle of its flat; the rest of its input is its
+// arguments), the texture record the caller chose (the sort key of the polygon is made with it) and the colormap. No sector version: a light that flickers or a floor that
+// moves in the same sector changes the arguments of the planes it concerns, and nothing else.
+static inline __attribute__((always_inline)) int gc_plane_words(const pslope_t *slope, const sector_t *src, boolean isceiling, fixed_t fixedheight, FBITFIELD PolyFlags, INT32 lightlevel, UINT8 alpha,
+	const levelflat_t *levelflat, const extracolormap_t *cm, UINT32 *kbase, const boolean rec)
+{
+	UINT32 *kp = kbase;
+	UINT32 *const kend = kbase + GC_KEYMAX;
+
+	if (!slope)
+		GCW(0x51a9e001u);
+	else
+	{
+		GCW(slope->o.x);
+		GCW(slope->o.y);
+		GCW(slope->o.z);
+		GCW(slope->d.x);
+		GCW(slope->d.y);
+		GCW(slope->zdelta);
+		GCW(slope->normal.x);
+		GCW(slope->normal.y);
+	}
+	if (!isceiling)
+	{
+		GCW(src->floorxoffset);
+		GCW(src->flooryoffset);
+		GCW(src->floorxscale);
+		GCW(src->flooryscale);
+		GCW(src->floorangle);
+	}
+	else
+	{
+		GCW(src->ceilingxoffset);
+		GCW(src->ceilingyoffset);
+		GCW(src->ceilingxscale);
+		GCW(src->ceilingyscale);
+		GCW(src->ceilingangle);
+	}
+	GCW(fixedheight);
+	GCW(PolyFlags);
+	GCW(lightlevel);
+	GCW(alpha);
+	GCW(levelflat ? (UINT32)R_GetTextureNumForFlat((levelflat_t *)levelflat) : 0xFFFFFFFFu);
+	GCW((UINT32)(uintptr_t)current_texture);
+	if (!cm)
+		GCW(0x9c3a5d01u);
+	else
+	{
+		GCW(cm->rgba);
+		GCW(cm->fadergba);
+		GCW((UINT32)cm->fadestart | ((UINT32)cm->fadeend << 8) | ((UINT32)cm->flags << 16) | (cm->gl_lighttable.needs_update ? 0x01000000u : 0u));
+		GCW(cm->gl_lighttable.id);
+	}
+	return (int)(kp - kbase);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -330,7 +418,7 @@ static void gc_flush_arena(void)
 	if (++gc.gen == 0) // wrapped: the entries of 65535 generations ago would match again
 	{
 		if (gc.tab)
-			memset(gc.tab, 0, (size_t)GC_SETS * GC_WAYS * sizeof(gcent_t));
+			memset(gc.tab, 0, (size_t)gc.nsets * GC_WAYS * sizeof(gcent_t));
 		gc.gen = 1;
 	}
 }
@@ -363,6 +451,16 @@ static void HWR_GCacheParse(void)
 	gc.kb = GC_DEFAULT_KB;
 	if (M_CheckParm("-hwgc") && M_IsNextParm())
 		gc.mode = atoi(M_GetNextParm());
+	gc.nsets_user = 0; // (the size follows the level unless -hwgcsets says)
+	if (M_CheckParm("-hwgcsets") && M_IsNextParm())
+	{
+		INT32 n = atoi(M_GetNextParm());
+		UINT32 p2 = 256;
+
+		while (p2 < (UINT32)n && p2 < 16384)
+			p2 <<= 1;
+		gc.nsets_user = p2;
+	}
 	if (M_CheckParm("-hwgcmem") && M_IsNextParm())
 	{
 		INT32 kb = atoi(M_GetNextParm());
@@ -373,10 +471,20 @@ static void HWR_GCacheParse(void)
 
 static boolean gc_alloc_block(void)
 {
-	size_t tab_b = (size_t)GC_SETS * GC_WAYS * sizeof(gcent_t);
-	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 2 * sizeof(UINT32));
+	UINT32 want = 2048u;
+	size_t tab_b;
+	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32));
 	size_t ar_b = (size_t)gc.kb * 1024u + GC_SCRATCH;
-	size_t total = tab_b + sec_b + ar_b + 64;
+	size_t total;
+
+	// the table: a set for every subsector (a seg of it, its floor, its ceiling ...), 2 ways, at least 2048 and at most 8192 sets: 16 bytes an entry. A table that is smaller than what
+	// a run looks at evicts entries it needs (D1 with 2048 sets: 84 segs and planes a frame calculated that a table of 4096 sets kept: -0.2 M cycles)
+	while (want < (UINT32)numsubsectors && want < 8192u)
+		want <<= 1;
+	if (gc.nsets_user)
+		want = gc.nsets_user; // (-hwgcsets)
+	tab_b = (size_t)want * GC_WAYS * sizeof(gcent_t);
+	total = tab_b + sec_b + ar_b + 64;
 	UINT8 *p;
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
@@ -390,6 +498,7 @@ static boolean gc_alloc_block(void)
 		gc.blk = NULL;
 		return false;
 	}
+	gc.nsets = want;
 	gc.tab = (gcent_t *)p;
 	p += tab_b;
 	gc.bfp = (gcfp_t *)p;
@@ -400,6 +509,10 @@ static boolean gc_alloc_block(void)
 	p += (size_t)numsectors * sizeof(UINT32);
 	gc.fst = (UINT32 *)p;
 	p += (size_t)numsectors * sizeof(UINT32);
+	gc.bver = (UINT32 *)p;
+	p += (size_t)numsectors * sizeof(UINT32);
+	gc.fver = (UINT32 *)p;
+	p += (size_t)numsectors * sizeof(UINT32);
 	gc.ar = p;
 	gc.ar_size = gc.kb * 1024u;
 	gc.ar_used = 0;
@@ -407,6 +520,11 @@ static boolean gc_alloc_block(void)
 	memset(gc.tab, 0, tab_b);
 	memset(gc.bst, 0, (size_t)numsectors * sizeof(UINT32));
 	memset(gc.fst, 0, (size_t)numsectors * sizeof(UINT32));
+	memset(gc.bver, 0, (size_t)numsectors * sizeof(UINT32));
+	memset(gc.fver, 0, (size_t)numsectors * sizeof(UINT32));
+	memset(gc.bfp, 0, (size_t)numsectors * sizeof(gcfp_t));
+	memset(gc.ffp, 0, (size_t)numsectors * sizeof(gcfp_t));
+	gc.vctr = 0;
 	gc.gen = 1;
 	gc.view = 0;
 	gc.epoch = 0;
@@ -469,7 +587,7 @@ static gcent_t *gc_find(UINT32 id, UINT32 id2, boolean *hit)
 	UINT32 w;
 
 	h = (h ^ (h >> 15)) * 2246822519u;
-	set = &gc.tab[((h >> 8) & (GC_SETS - 1)) * GC_WAYS];
+	set = &gc.tab[((h >> 8) & (gc.nsets - 1)) * GC_WAYS];
 	for (w = 0; w < GC_WAYS; w++)
 		if (set[w].gen == gc.gen && set[w].id == id && set[w].id2 == id2)
 		{
@@ -569,73 +687,91 @@ static void HWR_GCRecTWall(const FOutVector *wallVerts, const FSurfaceInfo *pSur
 	gc.s_rec_ops++;
 }
 
-static void gc_rec_begin(boolean scratch)
+// the record starts with its header and its key; the ops follow while the function runs
+static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 {
+	gcrh_t *rh;
+
 	gc.rec_start = gc.rec_pos = scratch ? gc.ar_size : gc.ar_used;
 	gc.rec_limit = scratch ? gc.ar_size + GC_SCRATCH : gc.ar_size;
 	gc.rec_fail = gc.rec_full = false;
 	hwr_grec_on = true;
+	if ((rh = gc_rec_alloc((UINT32)(sizeof(gcrh_t) + 4u * (UINT32)keyw))) != NULL)
+	{
+		rh->keyw = (UINT16)keyw;
+		rh->opsoff = (UINT16)(sizeof(gcrh_t) + 4u * (UINT32)keyw);
+		memcpy(rh + 1, key, 4u * (UINT32)keyw);
+	}
 }
 
 // the records of what the function did: made again
 static void gc_replay(const UINT8 *p, UINT32 len)
 {
-	const UINT8 *end = p + len;
+	const UINT8 *const end = p + len;
+	const UINT32 view = gc.view;
+	UINT32 nops = 0;
 
 	while (p < end)
 	{
-		switch (*p)
+		const UINT32 op = *p;
+
+		if (op == GCOP_POLY)
 		{
-			case GCOP_TEX:
-			{
-				GLMipmap_t *m = ((const gctex_t *)p)->m;
+			const gcphdr_t *h = (const gcphdr_t *)p;
 
-				if (m && m->ps2_gcv != gc.view)
-				{
-					m->ps2_gcv = gc.view; // once a view is enough: the driver only stamps the texture with the frame, the zone the block
-					HWR_SetCurrentTexture(m); // as HWR_GetTexture / HWR_GetLevelFlat do (and then:)
-					Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
-				}
-				else
-					current_texture = m;
-				p += sizeof(gctex_t);
-				break;
-			}
-			case GCOP_POLY:
+			if (current_texture == h->tex)
 			{
-				const gcphdr_t *h = (const gcphdr_t *)p;
-				FSurfaceInfo *sf = (FSurfaceInfo *)(h + 1);
-				FOutVector *vv = (FOutVector *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo));
-
-				if (current_texture == h->tex)
-					HWR_GCReplayPoly(sf, vv, h->n, h->flags, h->shader, h->horizon != 0, h->texid, h->h16, gc.scan);
-				else
-					HWR_ProcessPolygon(sf, vv, h->n, h->flags, h->shader, h->horizon != 0); // (the texture of the caller is not the one of the record: the long way)
-				p += h->size;
-				break;
+				HWD_LOCAL;
+				HWR_GCReplayPoly(h);
+				gc.n_rpoly++;
+				HWD_ADDC(gc.c_rpoly);
 			}
-			case GCOP_TWALL:
-			{
-				const gctw_t *w = (const gctw_t *)p;
-
-				HWR_AddTransparentWall((FOutVector *)w->v, (FSurfaceInfo *)&w->surf, w->texnum, w->blend, w->fog != 0, w->lightlevel, w->cmap);
-				p += w->size;
-				break;
-			}
-			default:
-				return; // (cannot happen: the records are written by the functions above)
+			else
+				HWR_ProcessPolygon((FSurfaceInfo *)(h + 1), (FOutVector *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo)), h->n, h->flags, h->shader, h->horizon != 0); // (the texture of the caller is not the one of the record: the long way)
+			p += h->size;
 		}
-		gc.s_rep_ops++;
+		else if (op == GCOP_TEX)
+		{
+			GLMipmap_t *m = ((const gctex_t *)p)->m;
+
+			gc.n_rtex++;
+			if (m && m->ps2_gcv != view)
+			{
+				m->ps2_gcv = view; // once a view is enough: the driver only stamps the texture with the frame, the zone the block
+				HWR_SetCurrentTexture(m); // as HWR_GetTexture / HWR_GetLevelFlat do (and then:)
+				Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+			}
+			else
+				current_texture = m;
+			p += sizeof(gctex_t);
+		}
+		else if (op == GCOP_TWALL)
+		{
+			const gctw_t *w = (const gctw_t *)p;
+
+			HWR_AddTransparentWall((FOutVector *)w->v, (FSurfaceInfo *)&w->surf, w->texnum, w->blend, w->fog != 0, w->lightlevel, w->cmap);
+			p += w->size;
+		}
+		else
+			break; // (cannot happen: the records are written by the functions above)
+		nops++;
 	}
+	gc.s_rep_ops += nops;
 }
 
 static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 alen, const UINT8 *b, UINT32 blen)
 {
 	UINT32 i, n = alen < blen ? alen : blen;
+	const UINT32 base = alen >= sizeof(gcrh_t) ? ((const gcrh_t *)a)->opsoff : 0; // (the key is checked word by word before a hit; the ops are what is decoded)
 
 	gc.s_bad++;
 	if (gc.reports++ >= 24)
 		return;
+	a += base;
+	b += base;
+	alen -= base;
+	blen -= base;
+	n = alen < blen ? alen : blen;
 	for (i = 0; i < n && a[i] == b[i]; i++)
 		;
 	I_OutputMsg("HWGC MISMATCH %s %u: cached %u bytes, calculated %u bytes, first difference at %u (op %u)\n", kind, (unsigned)idx, (unsigned)alen, (unsigned)blen, (unsigned)i, (unsigned)(i < n ? a[i] : 0));
@@ -680,7 +816,7 @@ static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 
 }
 
 // after the function ran with the record on: keep it (miss), or compare it with the entry (check)
-static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, const gcfp_t *key, boolean check, const char *kind, UINT32 idx)
+static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const char *kind, UINT32 idx)
 {
 	hwr_grec_on = false;
 	if (gc.rec_fail)
@@ -710,8 +846,6 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, const gcfp_t *key, boo
 	}
 	e->id = id;
 	e->id2 = id2;
-	e->k0 = key->a;
-	e->k1 = key->b;
 	e->off = gc.rec_start;
 	e->len = (UINT16)(gc.rec_pos - gc.rec_start);
 	e->gen = gc.gen;
@@ -733,6 +867,23 @@ void HWR_GCacheProf(unsigned int frames)
 {
 	if (!frames)
 		frames = 1;
+	I_OutputMsg("HWPROF39 gcache replay: new=%u stale=%u | poly ops %u (%u cycles) texture ops %u\n", gc.s_new / frames, gc.s_stale / frames, gc.n_rpoly / frames, gc.c_rpoly / frames, gc.n_rtex / frames);
+	{
+		unsigned i;
+
+		I_OutputMsg("HWPROF40 stale keys by the first word that differs (seg:");
+		for (i = 0; i < 34; i++)
+			if (gc.mm[i])
+				I_OutputMsg(" %u=%u", i, gc.mm[i] / frames);
+		I_OutputMsg(" | plane:");
+		for (i = 0; i < 34; i++)
+			if (gc.mmp[i])
+				I_OutputMsg(" %u=%u", i, gc.mmp[i] / frames);
+		I_OutputMsg(")\n");
+		memset(gc.mm, 0, sizeof gc.mm);
+		memset(gc.mmp, 0, sizeof gc.mmp);
+	}
+	gc.s_new = gc.s_stale = gc.c_rpoly = gc.c_rtex = gc.n_rpoly = gc.n_rtex = 0;
 	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | arena=%u/%u\n",
 		gc.mode, gc.blk ? 1 : 0, gc.s_seg_hit / frames, gc.s_seg_miss / frames, gc.s_seg_skip / frames, gc.s_pl_hit / frames, gc.s_pl_miss / frames, gc.s_pl_skip / frames, gc.s_rep_ops / frames, gc.s_rec_ops / frames,
 		gc.s_flush, gc.s_full, gc.s_chk, gc.s_bad, gc.c_key / frames, gc.c_fp / frames, gc.n_fpb / frames, gc.n_fpf / frames, gc.c_hit / frames, gc.c_miss / frames, (unsigned)(gc.ar_used >> 10), (unsigned)(gc.ar_size >> 10));

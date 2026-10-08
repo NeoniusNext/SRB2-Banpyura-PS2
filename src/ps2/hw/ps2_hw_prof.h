@@ -111,15 +111,18 @@ static inline unsigned int ps2hwp_now(void)
 #define HWD_LOCAL HWP_LOCAL
 #define HWD_LAP(idx) HWP_LAP(idx)
 #define HWD_ADD(i) HWC_ADD(i)
+#define HWD_ADDC(acc) do { hwp_t1 = ps2hwp_now(); (acc) += (unsigned int)(hwp_t1 - hwp_t0); hwp_t0 = hwp_t1; } while (0) // OPT11 round 2: a lap into a plain counter
 #else
 #define HWD_LOCAL ((void)0)
 #define HWD_LAP(idx) ((void)0)
 #define HWD_ADD(i) ((void)0)
+#define HWD_ADDC(acc) ((void)0)
 #endif
 #else
 #define HWD_LOCAL ((void)0)
 #define HWD_LAP(idx) ((void)0)
 #define HWD_ADD(i) ((void)0)
+#define HWD_ADDC(acc) ((void)0)
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
 #define HWP_SPAN_BEGIN(name) ((void)0)

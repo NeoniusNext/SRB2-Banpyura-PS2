@@ -46,7 +46,8 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 void HWR_GCRecTex(GLMipmap_t *texture);
 UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIELD PolyFlags, int shader_target); // the 16 bit state hash of the sort key
 UINT32 HWR_GCTexId(const GLMipmap_t *tex); // the frame independent part of the texture order
-void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial, UINT32 texid, UINT32 h16, UINT32 scan_dir);
+typedef struct { UINT8 op, n, horizon, hashed; UINT16 size, h16; FBITFIELD flags; INT32 shader; UINT32 texid; GLMipmap_t *tex; } gcphdr_t; // 24 bytes, followed by an FSurfaceInfo and n FOutVector: what the cache keeps of one HWR_ProcessPolygon
+void HWR_GCReplayPoly(const gcphdr_t *h); // HWR_ProcessPolygon of such a record (batching; the texture of the record is current_texture)
 extern GLMipmap_t *current_texture; // the texture of the next polygon (HWR_SetCurrentTexture)
 void HWR_GCacheFlush(void); // everything cached is dropped (a new level, the texture records or the light tables go away, a setting changed)
 void HWR_PolyHashFrame(INT32 frame); // -hwpolyhash: the HWPH line of the frame just ended

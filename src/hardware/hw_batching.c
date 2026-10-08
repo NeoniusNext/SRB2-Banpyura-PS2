@@ -509,15 +509,9 @@ UINT32 HWR_GCTexId(const GLMipmap_t *tex)
 	return HWR_PS2_TextureId(tex);
 }
 
-// HWR_ProcessPolygon of a polygon the geometry cache made before (batching, not sprites): what the digest and the sort key need is in the record
-void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial, UINT32 texid, UINT32 h16, UINT32 scan_dir)
+// The capacity of the batch arrays is used up: the long way (HWR_ProcessPolygon does the same)
+static void HWR_GCReplayGrow(FUINT iNumPts)
 {
-	PolygonArrayEntry *pe;
-
-	HWC_ADD(HWC_PROC);
-	HWC_ADD(HWC_PROC_BATCH);
-	if (hwr_ph_on > 0)
-		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 	if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
 		I_Error("Hardware batch geometry exceeds addressable storage");
 	if (polygonArraySize == polygonArrayAllocSize)
@@ -531,21 +525,50 @@ void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FU
 		unsortedVertexArrayAllocSize = HWR_BatchCapacity(unsortedVertexArrayAllocSize, unsortedVertexArraySize + (int)iNumPts, sizeof(FOutVector));
 		unsortedVertexArray = HWR_BatchResize(unsortedVertexArray, (size_t)unsortedVertexArrayAllocSize * sizeof(FOutVector));
 	}
-	pe = &polygonArray[polygonArraySize];
-	pe->surf = *pSurf;
-	pe->vertsIndex = unsortedVertexArraySize;
-	pe->numVerts = iNumPts;
-	pe->polyFlags = PolyFlags;
+}
+
+// HWR_ProcessPolygon of a polygon the geometry cache made before (batching, not sprites): what the digest and the sort key need is in the record
+void HWR_GCReplayPoly(const gcphdr_t *h)
+{
+	const FSurfaceInfo *sf = (const FSurfaceInfo *)(h + 1);
+	const UINT32 *vs = (const UINT32 *)(sf + 1);
+	const FUINT n = h->n;
+	PolygonArrayEntry *pe;
+	UINT32 *vd;
+	int idx, vi;
+	FUINT k;
+
+	ps2hwp_cnt[HWC_PROC]++;
+	ps2hwp_cnt[HWC_PROC_BATCH]++;
+	if (hwr_ph_on > 0)
+		HWR_PolyHashAdd(sf, (const FOutVector *)vs, n, h->flags, h->shader, h->horizon);
+	if (__builtin_expect(polygonArraySize == polygonArrayAllocSize || unsortedVertexArraySize + (int)n > unsortedVertexArrayAllocSize, 0))
+		HWR_GCReplayGrow(n);
+	idx = polygonArraySize;
+	vi = unsortedVertexArraySize;
+	pe = &polygonArray[idx];
+	pe->surf = *sf;
+	pe->vertsIndex = (unsigned int)vi;
+	pe->numVerts = n;
+	pe->polyFlags = h->flags;
 	pe->texture = current_texture;
-	pe->shader = HWR_ShaderOfTarget(shader_target);
-	pe->horizonSpecial = horizonSpecial;
-	if (!(PolyFlags & PF_NoTexture) && !horizonSpecial)
-		pe->hash = (INT32)((HWR_PS2_OrderOf(texid, scan_dir) << 16) | h16);
+	pe->shader = HWR_ShaderOfTarget(h->shader);
+	pe->horizonSpecial = h->horizon;
+	if (h->hashed)
+		pe->hash = (INT32)((HWR_PS2_OrderOf(h->texid, hwr_scan_dir) << 16) | h->h16);
 	else
-		pe->hash = -polygonArraySize; // (to stay in order on horizon lines)
-	polygonArraySize++;
-	memcpy(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts * sizeof(FOutVector));
-	unsortedVertexArraySize += iNumPts;
+		pe->hash = -idx; // (to stay in order on horizon lines)
+	polygonArraySize = idx + 1;
+	vd = (UINT32 *)&unsortedVertexArray[vi];
+	for (k = 0; k < n * 5u; k += 5)
+	{
+		vd[k] = vs[k];
+		vd[k + 1] = vs[k + 1];
+		vd[k + 2] = vs[k + 2];
+		vd[k + 3] = vs[k + 3];
+		vd[k + 4] = vs[k + 4];
+	}
+	unsortedVertexArraySize = vi + (int)n;
 }
 #endif
 

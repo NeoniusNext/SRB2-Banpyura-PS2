@@ -556,7 +556,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	INT32 i;
 #ifdef PS2_PROFILE
 	gcent_t *gce = NULL; // OPT11 PS2-HW-80: the geometry cache entry this plane is recorded into
-	gcfp_t gck = {0, 0};
+	UINT32 gckey[GC_KEYMAX];
+	int gckn = 0;
 	boolean gccheck = false;
 	UINT32 gcid = 0, gcid2 = 0;
 #endif
@@ -610,36 +611,45 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	{
 		const UINT32 t0 = ps2hwp_now();
 		const sector_t *src = FOFsector ? FOFsector : gl_frontsector;
-		gcfp_t t;
 		boolean hit;
 
 		gcid = ((UINT32)(xsub - extrasubsectors) * 2u + (isceiling ? 1u : 0u)) * 2u + 1u;
 		gcid2 = (UINT32)(uintptr_t)FOFsector;
-		gc_init_fp(&gck);
-		gc_get_fp(src, false, &t);
-		gcw_fp(&gck, &t);
-		gcw(&gck, (UINT32)fixedheight);
-		gcw(&gck, (UINT32)PolyFlags);
-		gcw(&gck, (UINT32)lightlevel);
-		gcw(&gck, (UINT32)alpha);
-		gcw(&gck, levelflat ? (UINT32)R_GetTextureNumForFlat(levelflat) : 0xFFFFFFFFu);
-		gcw(&gck, (UINT32)(uintptr_t)current_texture); // (the texture record the caller chose: the sort key of the polygon is made with it)
-		gc_cmap(&gck, planecolormap);
 		gce = gc_find(gcid, gcid2, &hit);
-		gc.c_key += ps2hwp_now() - t0;
-		if (hit && gce->k0 == gck.a && gce->k1 == gck.b)
+		if (hit)
 		{
-			if (!(gccheck = gc_check_this()))
-			{
-				const UINT32 t1 = ps2hwp_now();
+			const gcrh_t *rh = (const gcrh_t *)(gc.ar + gce->off);
 
-				gc_replay(gc.ar + gce->off, gce->len);
-				gc.s_pl_hit++;
-				gc.c_hit += ps2hwp_now() - t1;
-				return;
+			gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, planecolormap, (UINT32 *)(rh + 1), false);
+			gc.c_key += ps2hwp_now() - t0;
+			if (gckn == (int)rh->keyw)
+			{
+				if (!(gccheck = gc_check_this()))
+				{
+					const UINT32 t1 = ps2hwp_now();
+
+					gc_replay(gc.ar + gce->off + rh->opsoff, (UINT32)gce->len - rh->opsoff);
+					gc.s_pl_hit++;
+					gc.c_hit += ps2hwp_now() - t1;
+					return;
+				}
+			}
+			if (!gccheck) // (a valid entry that is being checked is not a miss)
+			{
+				gc.s_stale++;
+				gc.mmp[gckn < 0 ? (gc.mmpos < 33 ? gc.mmpos : 33) : 0]++;
 			}
 		}
-		gc_rec_begin(gccheck);
+		else
+			gc.s_new++;
+		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, planecolormap, gckey, true);
+		if (gckn >= 0)
+			gc_rec_begin(gccheck, gckey, gckn);
+		else
+		{
+			gce = NULL;
+			gc.s_pl_skip++;
+		}
 	}
 	else
 	{
@@ -823,7 +833,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	{
 		const UINT32 t1 = ps2hwp_now();
 
-		gc_rec_end(gce, gcid, gcid2, &gck, gccheck, "plane", gcid >> 1);
+		gc_rec_end(gce, gcid, gcid2, gccheck, "plane", gcid >> 1);
 		gce = NULL;
 		if (gccheck)
 			gc.s_pl_hit++;
@@ -2219,37 +2229,55 @@ static void HWR_ProcessSegC(void)
 	}
 	else
 	{
-		gcfp_t key;
+		UINT32 gckey[GC_KEYMAX];
 		gcent_t *e;
 		boolean hit, check = false;
+		int kn;
 		const UINT32 id = (UINT32)(sg - segs) * 2u;
 		const UINT32 t0 = ps2hwp_now();
 
-		gc_seg_key(sg, gl_frontsector, gl_backsector, &key);
 		e = gc_find(id, 0, &hit);
-		gc.c_key += ps2hwp_now() - t0;
-		if (hit && e->k0 == key.a && e->k1 == key.b)
+		if (hit)
 		{
-			if (!(check = gc_check_this()))
+			const gcrh_t *rh = (const gcrh_t *)(gc.ar + e->off);
+
+			kn = gc_seg_words(sg, gl_frontsector, gl_backsector, (UINT32 *)(rh + 1), false);
+			gc.c_key += ps2hwp_now() - t0;
+			if (kn == (int)rh->keyw && !(check = gc_check_this()))
 			{
 				const UINT32 t1 = ps2hwp_now();
 
 				gl_sidedef = sg->sidedef;
 				gl_linedef = sg->linedef;
-				gc_replay(gc.ar + e->off, e->len);
+				gc_replay(gc.ar + e->off + rh->opsoff, (UINT32)e->len - rh->opsoff);
 				gc.s_seg_hit++;
 				gc.c_hit += ps2hwp_now() - t1;
 				HWP_SPAN_END(t, HWP_SEG);
 				return;
 			}
+			// (an entry that does not match is made again; one that does and is being checked falls through with check set)
+			if (!check)
+			{
+				gc.s_stale++;
+				gc.mm[kn < 0 ? (gc.mmpos < 33 ? gc.mmpos : 33) : 0]++;
+			}
 		}
+		else
+			gc.s_new++;
+		kn = gc_seg_words(sg, gl_frontsector, gl_backsector, gckey, true);
+		if (kn < 0)
+		{
+			gc.s_seg_skip++;
+			HWR_ProcessSeg();
+		}
+		else
 		{
 			const UINT32 t1 = ps2hwp_now();
 			const UINT32 bad0 = gc.s_bad;
 
-			gc_rec_begin(check);
+			gc_rec_begin(check, gckey, kn);
 			HWR_ProcessSeg();
-			gc_rec_end(e, id, 0, &key, check, "seg", (UINT32)(sg - segs));
+			gc_rec_end(e, id, 0, check, "seg", (UINT32)(sg - segs));
 			if (gc.s_bad != bad0 && gc.reports <= 24)
 				I_OutputMsg("HWGC seg %u: line %d special %d front sector %d (ff %d lights %d fslope %d/%d hs %d) back %d (ff %d lights %d slopes %d/%d hs %d) tex %d/%d/%d sd off %d/%d polyseg %d\n", (unsigned)(sg - segs), (int)(sg->linedef - lines), (int)sg->linedef->special,
 					(int)(sg->frontsector - sectors), sg->frontsector->ffloors ? 1 : 0, (int)sg->frontsector->numlights, sg->frontsector->f_slope ? 1 : 0, sg->frontsector->c_slope ? 1 : 0, (int)sg->frontsector->heightsec,
