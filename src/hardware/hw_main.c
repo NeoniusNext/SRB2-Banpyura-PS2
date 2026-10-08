@@ -664,17 +664,9 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 		gcid = ((UINT32)(xsub - extrasubsectors) * 2u + (isceiling ? 1u : 0u)) * 2u + 1u;
 		gcid2 = (UINT32)(uintptr_t)FOFsector;
-		if (FOFsector)
-			gce = gc_find_h(gcid, gcid2, &hit);
-		else
-		{
-			const UINT32 pi = (UINT32)(xsub - extrasubsectors) * 2u + (isceiling ? 1u : 0u);
-
-			gce = pi < gc.nplent ? &gc.plent[pi] : NULL;
-			hit = gce && gc_live(gce->gen);
-			if (!gce)
-				goto gc_plane_nocache; // (a subsector the table does not know: made without the cache)
-		}
+		gce = gc_plane_slot((UINT32)(xsub - extrasubsectors), isceiling, gcid, gcid2, &hit);
+		if (!gce)
+			goto gc_plane_nocache; // (a subsector the table does not know: made without the cache)
 		if (hit)
 		{
 			const gcrh_t *rh = (const gcrh_t *)(gc.ar + gce->off);
@@ -2305,12 +2297,12 @@ static void HWR_ProcessSegC(void)
 	{
 		UINT32 gckey[GC_KEYMAX];
 		const UINT32 id = (UINT32)(sg - segs);
-		gcent_t *e = &gc.segent[id]; // (a place of its own: no hashing)
-		boolean check = false;
+		boolean hit, check = false;
+		gcent_t *e = gc_seg_slot(id, &hit);
 		int kn;
 		const UINT32 t0 = ps2hwp_now();
 
-		if (gc_live(e->gen))
+		if (hit)
 		{
 			const gcrh_t *rh = (const gcrh_t *)(gc.ar + e->off);
 
@@ -2365,7 +2357,7 @@ static void HWR_ProcessSegC(void)
 
 			gc_rec_begin(check, gckey, kn);
 			HWR_ProcessSeg();
-			gc_rec_end(e, id, 0, check, "seg", id);
+			gc_rec_end(e, id * 2u, 0, check, "seg", id);
 			{
 				const UINT32 cyc = ps2hwp_now() - t1;
 				const UINT32 bk = cyc >> 9 < 9 ? cyc >> 9 : 9;
@@ -2526,13 +2518,16 @@ static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
 
 		if (i < gc.nvert)
 		{
-			if (gc.vst[i] == (UINT32)validcount)
+			const size_t k = i & gc.vmask; // (a place with a tag: another vertex with the same low bits takes it)
+
+			if (gc.vtag[k] == (UINT32)i + 1u && gc.vst[k] == (UINT32)validcount)
 			{
 				HWD_ADD(HWC_AL_VHIT);
-				return gc.vang[i];
+				return gc.vang[k];
 			}
-			gc.vst[i] = (UINT32)validcount;
-			return gc.vang[i] = R_PointToAngle64(x, y);
+			gc.vtag[k] = (UINT32)i + 1u;
+			gc.vst[k] = (UINT32)validcount;
+			return gc.vang[k] = R_PointToAngle64(x, y);
 		}
 	}
 	return R_PointToAngle64(x, y);

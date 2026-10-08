@@ -30,8 +30,9 @@
 #define GC_BYPASS_MIN 16u
 #define GC_BYPASS_MAX 512u
 #define GC_DEFAULT_KB 640u // both halves of the arena
-#define GC_KB_DIV 28u // the arena of a level: (segs + 2 * subsectors) / this KB ...
-#define GC_MAX_AUTO_KB 1536u // ... at most this
+#define GC_MAX_AUTO_KB 1536u // the arena grows (doubles) while it is full too often and the zone has room, up to this
+#define GC_DIRECT_MAX 8192u // levels with at most this many segs (planes: twice the subsectors) have a place of their own for each
+#define GC_VMAX 8192u // vertices of the table of angles
 #define GC_SCRATCH (24u << 10) // the record of a hit that is checked (mode 2, 3)
 #define GC_MAXREC (12u << 10) // longest record that is kept
 
@@ -73,7 +74,8 @@ static struct
 	gcfp_t *bfp, *ffp; // per sector: the fingerprint of the sector alone / with its 3D floors and light list
 	UINT32 *bst, *fst; // ... and the view they were made in
 	angle_t *vang; // per vertex of the map: R_PointToAngle64 of it in the view vst says (HWR_VertAngle: a vertex belongs to the segs of several subsectors and to both sides of its lines)
-	UINT32 *vst;
+	UINT32 *vst, *vtag; // (vang, vst, vtag: a table with a tag, vmask + 1 places)
+	UINT32 vmask;
 	size_t nvert;
 	UINT32 *bver, *fver; // ... and a number that changes when the fingerprint does (what the keys of segs and planes hold: one word for a sector)
 	UINT32 vctr;
@@ -90,6 +92,7 @@ static struct
 	UINT32 s_seg_hit, s_seg_miss, s_seg_skip, s_pl_hit, s_pl_miss, s_pl_skip, s_flush, s_full, s_chk, s_bad, s_rep_ops, s_rec_ops;
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
 	UINT32 ch[10], cl[10]; // misses of segs by the cycles the calculation took (buckets of 512) and the bytes of their records
+	UINT32 w_full, grow_n;
 	UINT32 bypass, bypass_len, w_views, w_q, w_hit, s_bypass; // adaptive: a window of views in which fewer than a third of the queries hit puts the cache out of use for a while (bypass views), longer every time
 	UINT32 sdbg, nsets, nsets_user, s_reclaim, s_promo, test_rec, test_res, test_n1, test_n2; // -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th HWR_GCReserve (tests of the reclaim)
 	UINT32 mmpos, mm[34], mmp[34]; // the position of the first word of a key that differed (1 = the first), histograms of the segs and of the planes
@@ -487,10 +490,12 @@ void HWR_GCacheFlush(void)
 // a new level: the zone has freed the block (PU_HWRPLANE), all pointers into it are gone
 static void HWR_GCacheLevel(void)
 {
-	gc.bypass = gc.bypass_len = gc.w_views = gc.w_q = gc.w_hit = 0;
+	gc.bypass = gc.bypass_len = gc.w_views = gc.w_q = gc.w_hit = gc.w_full = 0;
 	gc.dead = false;
 	gc.blk = NULL;
 	gc.on = false;
+	if (!gc.kb_user)
+		gc.kb = GC_DEFAULT_KB; // (a level starts with the small arena)
 }
 
 // -hwgo N: bits of the OPT11 geometry micro-optimisations that are switched OFF (A/B on one ELF): 1 AddLine angle reuse (PS2-HW-81), 4 QuadHidden two-corner exit (PS2-HW-86),
@@ -583,46 +588,29 @@ static const gcrh_t *gc_promote(gcent_t *e, const gcrh_t *rh)
 
 static boolean gc_alloc_block(void)
 {
-	UINT32 want = 1024u;
-	size_t tab_b, seg_b, pl_b;
-	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32)) + (size_t)numvertexes * (sizeof(angle_t) + sizeof(UINT32));
-	size_t ar_b;
-	size_t total;
+	size_t tab_b, seg_b, pl_b, vert_b, ar_b, total;
+	const size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32));
+	const boolean dseg = (UINT32)numsegs <= GC_DIRECT_MAX; // a small level: a place of its own for every seg and plane (8 bytes: no hashing, no ways, nothing to evict but by the arena),
+	const boolean dpl = !(gc.mode & 4) && (UINT32)addsubsector * 2u <= GC_DIRECT_MAX; // a big one: the hashed table (the memory of the tables does not grow with the level)
+	UINT32 want = (dseg && ((gc.mode & 4) || dpl)) ? 1024u : 4096u; // sets of the hashed table (2 ways, 16 bytes an entry): the planes of 3D floors, or all
+	UINT32 vsize = 1024u;
 	UINT8 *p;
 
-	// the arena follows the level (a level of 40000 segs and subsectors a view looks at 1000 segs and planes of 250 bytes: the working set of a view is 450 KB, and two halves of 320 KB
-	// - the first default - are emptied every few frames), unless -hwgcmem says; where the zone has not got room for it the arena is the default size
-	if (!gc.kb_user)
-	{
-		const UINT32 items = (UINT32)numsegs + 2u * (UINT32)numsubsectors;
-
-		gc.kb = items / GC_KB_DIV;
-		if (gc.kb < GC_DEFAULT_KB)
-			gc.kb = GC_DEFAULT_KB;
-		else if (gc.kb > GC_MAX_AUTO_KB)
-			gc.kb = GC_MAX_AUTO_KB;
-	}
-	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
-
-	// the places of the records: a seg and a plane of a sector have one of their own (8 bytes: no hashing, no ways, nothing to evict but by the arena), the planes of 3D floors
-	// (a few for each subsector with floors) share a small hashed table of 2 ways (16 bytes an entry)
 	if (gc.nsets_user)
 		want = gc.nsets_user; // (-hwgcsets)
+	while (vsize < (UINT32)numvertexes && vsize < GC_VMAX) // the angle of a vertex of the map in a view (HWR_VertAngle): a table with a tag, as large as the map up to GC_VMAX vertices
+		vsize <<= 1;
+	vert_b = (size_t)vsize * 3u * sizeof(UINT32);
 	tab_b = (size_t)want * GC_WAYS * sizeof(gchent_t);
-	seg_b = ((size_t)numsegs * sizeof(gcent_t) + 15u) & ~(size_t)15u;
-	pl_b = (gc.mode & 4) ? 0 : (((size_t)addsubsector * 2u * sizeof(gcent_t) + 15u) & ~(size_t)15u);
-	total = tab_b + seg_b + pl_b + sec_b + ar_b + 64;
+	seg_b = dseg ? (((size_t)numsegs * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
+	pl_b = dpl ? (((size_t)addsubsector * 2u * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
+	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
+	total = tab_b + seg_b + pl_b + sec_b + vert_b + ar_b + 64;
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
 #ifdef PS2
-	if (!gc.kb_user && gc.kb > GC_DEFAULT_KB && Z_ArenaFree() < total + Z_RenderHeadroom() + (1u << 20))
-	{
-		gc.kb = GC_DEFAULT_KB; // (no room for the big arena)
-		ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
-		total = tab_b + seg_b + pl_b + sec_b + ar_b + 64;
-	}
-	I_OutputMsg("HWGC block: %u KB wanted (tables %u KB, arena %u KB), arena free %u KB, render headroom %u KB | level: %u segs %u subsectors %u sectors\n", (unsigned)(total >> 10), (unsigned)((tab_b + seg_b + pl_b + sec_b) >> 10), (unsigned)(ar_b >> 10), (unsigned)(Z_ArenaFree() >> 10), (unsigned)(Z_RenderHeadroom() >> 10),
-		(unsigned)numsegs, (unsigned)numsubsectors, (unsigned)numsectors);
+	I_OutputMsg("HWGC block: %u KB wanted (tables %u KB, arena %u KB), arena free %u KB, render headroom %u KB | level: %u segs %u subsectors %u sectors %u vertices\n", (unsigned)(total >> 10), (unsigned)((total - ar_b) >> 10), (unsigned)(ar_b >> 10),
+		(unsigned)(Z_ArenaFree() >> 10), (unsigned)(Z_RenderHeadroom() >> 10), (unsigned)numsegs, (unsigned)numsubsectors, (unsigned)numsectors, (unsigned)numvertexes);
 	if (Z_ArenaFree() < total + Z_RenderHeadroom() + (1u << 20))
 		return false;
 #endif
@@ -639,11 +627,11 @@ static boolean gc_alloc_block(void)
 	gc.nsets = want;
 	gc.tab = (gchent_t *)p;
 	p += tab_b;
-	gc.segent = (gcent_t *)p;
-	gc.nsegent = (UINT32)numsegs;
+	gc.segent = dseg ? (gcent_t *)p : NULL;
+	gc.nsegent = dseg ? (UINT32)numsegs : 0;
 	p += seg_b;
-	gc.plent = pl_b ? (gcent_t *)p : NULL;
-	gc.nplent = pl_b ? (UINT32)addsubsector * 2u : 0;
+	gc.plent = dpl ? (gcent_t *)p : NULL;
+	gc.nplent = dpl ? (UINT32)addsubsector * 2u : 0;
 	p += pl_b;
 	gc.bfp = (gcfp_t *)p;
 	p += (size_t)numsectors * sizeof(gcfp_t);
@@ -658,11 +646,15 @@ static boolean gc_alloc_block(void)
 	gc.fver = (UINT32 *)p;
 	p += (size_t)numsectors * sizeof(UINT32);
 	gc.vang = (angle_t *)p;
-	p += (size_t)numvertexes * sizeof(angle_t);
+	p += (size_t)vsize * sizeof(angle_t);
 	gc.vst = (UINT32 *)p;
-	p += (size_t)numvertexes * sizeof(UINT32);
+	p += (size_t)vsize * sizeof(UINT32);
+	gc.vtag = (UINT32 *)p;
+	p += (size_t)vsize * sizeof(UINT32);
+	gc.vmask = vsize - 1u;
 	gc.nvert = numvertexes;
-	memset(gc.vst, 0, (size_t)numvertexes * sizeof(UINT32));
+	memset(gc.vst, 0, (size_t)vsize * sizeof(UINT32));
+	memset(gc.vtag, 0, (size_t)vsize * sizeof(UINT32));
 	gc.ar = p;
 	gc.hsize = gc.kb * 512u & ~15u;
 	gc.hbase = 0;
@@ -670,7 +662,8 @@ static boolean gc_alloc_block(void)
 	gc.ar_used = 0;
 	gc.nsec = (UINT32)numsectors;
 	memset(gc.tab, 0, tab_b);
-	memset(gc.segent, 0, seg_b);
+	if (seg_b)
+		memset(gc.segent, 0, seg_b);
 	if (pl_b)
 		memset(gc.plent, 0, pl_b);
 	memset(gc.bst, 0, (size_t)numsectors * sizeof(UINT32));
@@ -713,6 +706,29 @@ static boolean HWR_GCacheFrame(void)
 	}
 	if (++gc.w_views >= GC_WINDOW)
 	{
+		// An arena that was full three times or more in the window is too small for the views of the scene (the records of the views before are dropped before they are used again): it is
+		// doubled, when the zone has room (the textures need the memory more than the cache does: a big level is at the edge of it, a small one with many 3D floors is not)
+		if (!gc.kb_user && gc.kb < GC_MAX_AUTO_KB && gc.w_full >= 3u && !(hwr_geo_off & 65536))
+		{
+			const UINT32 nkb = gc.kb * 2u > GC_MAX_AUTO_KB ? GC_MAX_AUTO_KB : gc.kb * 2u;
+			const size_t delta = (size_t)(nkb - gc.kb) * 1024u;
+
+#ifdef PS2
+			if (Z_ArenaFree() >= delta + Z_RenderHeadroom() + (3u << 20))
+#endif
+			{
+				gc.kb = nkb;
+				gc.grow_n++;
+				Z_Free(gc.blk); // (nothing of it is in use: the frame has not started; the tables start empty)
+				gc.blk = NULL;
+				if (!gc_alloc_block())
+				{
+					gc.dead = true;
+					return false;
+				}
+			}
+		}
+		gc.w_full = 0;
 		if ((gc.mode & 3) == 1 && gc.w_q >= 64u && gc.w_hit * 3u < gc.w_q) // (not while checking: a checked hit is not counted as a hit)
 		{
 			gc.bypass = gc.bypass_len ? gc.bypass_len : GC_BYPASS_MIN;
@@ -785,6 +801,38 @@ static gcent_t *gc_find_h(UINT32 id, UINT32 id2, boolean *hit)
 			victim = &set[w]; // (one of the old half before one of the current)
 	}
 	return &victim->e;
+}
+
+// the place of the record of a seg (id: its number): its own in a small level, in the hashed table in a big one
+static inline gcent_t *gc_seg_slot(UINT32 segnum, boolean *hit)
+{
+	gcent_t *e;
+
+	if (gc.segent)
+	{
+		e = &gc.segent[segnum];
+		*hit = gc_live(e->gen);
+		return e;
+	}
+	return gc_find_h(segnum * 2u, 0, hit);
+}
+
+// ... and of a plane: the sector's own plane of the subsector (xnum), or that of a 3D floor (FOFsector)
+static inline gcent_t *gc_plane_slot(UINT32 xnum, boolean isceiling, UINT32 id, UINT32 id2, boolean *hit)
+{
+	if (id2 == 0 && gc.plent)
+	{
+		const UINT32 pi = xnum * 2u + (isceiling ? 1u : 0u);
+
+		if (pi >= gc.nplent)
+		{
+			*hit = false;
+			return NULL; // (a subsector the table does not know)
+		}
+		*hit = gc_live(gc.plent[pi].gen);
+		return &gc.plent[pi];
+	}
+	return gc_find_h(id, id2, hit);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------
@@ -1020,6 +1068,7 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const c
 			if (gc.rec_full)
 			{
 				gc.s_full++;
+				gc.w_full++;
 				gc_swap_arena(); // the half is full: the old half goes, this one becomes the old one; a record that is too long is just not kept
 			}
 			e->gen = 0; // (not kept)
@@ -1047,7 +1096,7 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const c
 		}
 		return;
 	}
-	if (id2)
+	if ((UINT8 *)e >= (UINT8 *)gc.tab && (UINT8 *)e < (UINT8 *)(gc.tab + (size_t)gc.nsets * GC_WAYS))
 	{
 		gchent_t *he = (gchent_t *)((UINT8 *)e - offsetof(gchent_t, e)); // (a place in the hashed table: it holds the ids)
 
