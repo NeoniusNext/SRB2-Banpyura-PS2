@@ -111,7 +111,7 @@ static UINT32 HWR_PS2_TextureId(const GLMipmap_t *t) // OPT11: the part of the o
 		return (UINT32)t->regen_id & 0x1FFFu;
 	if (t->regen_kind == 2)
 		return 0x2000u | ((UINT32)t->regen_id & 0x1FFFu);
-	return (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18; // patches: any fixed order
+	return 0x3FF0u; // patches (PS2-HW-231): one slot of the order after the map textures and flats; HWR_GroupPlan orders them by the order of arrival (the address of a patch gave an order that changed with the layout of the heap)
 }
 
 static inline UINT32 HWR_PS2_OrderOf(UINT32 id, UINT32 scan_dir)
@@ -884,7 +884,7 @@ static int HWR_RenderBatchesV2(void)
 	{
 		HWP_SPAN_BEGIN(tb_sort);
 
-		m = HWR_GroupPlan((const unsigned char *)&polygonArray[0].hash, (unsigned int)sizeof(PolygonArrayEntry), (unsigned int)n, bgrp, first, start, cnt, border);
+		m = HWR_GroupPlan((const unsigned char *)&polygonArray[0].hash, (const unsigned char *)&polygonArray[0].texture, (unsigned int)sizeof(PolygonArrayEntry), (unsigned int)n, bgrp, first, start, cnt, border);
 		if (m < 0)
 			return 0; // more than HWR_GS_MAX distinct keys: the old walk (radix sort)
 		if (n > finalVertexArrayAllocSize)
@@ -937,10 +937,14 @@ static int HWR_RenderBatchesV2(void)
 			UINT32 *ti = k + n, *tk = ti + n;
 			int j;
 
+			unsigned int rank[HWR_GS_MAX];
+
+			for (j = 0; j < m; j++)
+				rank[border[j]] = (unsigned int)j;
 			for (j = 0; j < n; j++)
 			{
 				ref_idx[j] = (UINT32)j;
-				k[j] = (UINT32)polygonArray[j].hash ^ 0x80000000u;
+				k[j] = rank[bgrp[j]]; // (PS2-HW-231: the order of the buckets is not the order of the keys any more; this checks the scatter and the batches, the order itself is tested by hw_sort_hosttest)
 			}
 			if (HWR_GroupSort32(k, ref_idx, tk, ti, (UINT32)n) == 0)
 			{

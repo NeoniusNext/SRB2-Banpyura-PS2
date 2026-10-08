@@ -161,22 +161,31 @@ static inline int HWR_GroupSort32(const unsigned int *keys, const unsigned int *
 	return 0;
 }
 
-// OPT11 round 2 (PS2-HW-226): the grouping half of HWR_GroupSort32 for keys that sit in an array of records (key at keys + i * stride, the signed order: the sign bit is
+// OPT11 round 2 (PS2-HW-226, 231): the grouping half of HWR_GroupSort32 for keys that sit in an array of records (key at keys + i * stride, the signed order: the sign bit is
 // flipped as HWR_RenderBatches did when it made its key array), without the key and index arrays and without the final scatter, which the caller makes together with the
 // copy of the record's data. Fills, for the m distinct keys (bucket numbers in order of first appearance): first[b] = the first polygon with the key, cnt[b] = how many,
-// start[b] = where the bucket begins in the sorted order, border[0..m) = the buckets in ascending key order; grp[i] = the bucket of polygon i. Polygons with equal keys
+// start[b] = where the bucket begins in the sorted order, border[0..m) = the buckets in the order they are drawn; grp[i] = the bucket of polygon i. Polygons with equal keys
 // keep their order (the caller scatters in the order of i). Returns m, or -1 when there are more than HWR_GS_MAX distinct keys (nothing is valid then).
-static inline int HWR_GroupPlan(const unsigned char *keys, unsigned int stride, unsigned int n, unsigned short *grp, unsigned int *first, unsigned int *start,
-	unsigned int *cnt, unsigned short *border)
+// The order of the buckets (PS2-HW-231): the key of a textured polygon is (texture order 15 bits << 16) | a 16 bit hash of its state, and the hash of the state contains the
+// ADDRESS of the texture (patches: the address decides the texture order too): the order of the states of one texture, and of two patches, was a function of the layout of the
+// heap, and two coplanar polygons (a shadow and a floor patch, two sprites at one depth) drew in an order that changed with any change of memory. Now the buckets go by (texture
+// order, the first polygon of the texture in this frame, the first polygon of the bucket): the order of arrival decides, the hash only tells the states apart. `tex` = the
+// texture identity of every polygon (read like the key), only its equality matters. Keys of polygons that are not textured or are horizon (a negative hash: the polygon's own
+// negated index, which sorts them in reverse order of arrival) keep the order of the key itself.
+#define HWR_GP_TSLOTS 1024u
+
+static inline int HWR_GroupPlan(const unsigned char *keys, const unsigned char *tex, unsigned int stride, unsigned int n, unsigned short *grp, unsigned int *first,
+	unsigned int *start, unsigned int *cnt, unsigned short *border)
 {
 	unsigned int hk[HWR_GS_SLOTS];
 	unsigned short hv[HWR_GS_SLOTS];
 	unsigned int dk[HWR_GS_MAX];
-	unsigned short ord[2][HWR_GS_MAX];
-	unsigned int i, m = 0, pass, run = 0;
-	unsigned int c8[256];
-	unsigned int andk = ~0u, ork = 0, lastk = 0, lastg = 0;
-	int cur = 0;
+	unsigned long long sk[HWR_GS_MAX];
+	unsigned int tk[HWR_GP_TSLOTS][2];
+	unsigned short tv[HWR_GP_TSLOTS];
+	unsigned int i, m = 0, run = 0, gap;
+	unsigned int lastk = 0, lastg = 0;
+	static const unsigned int gaps[] = {701, 301, 132, 57, 23, 10, 4, 1};
 
 	memset(hv, 0, sizeof hv);
 	for (i = 0; i < n; i++)
@@ -202,8 +211,6 @@ static inline int HWR_GroupPlan(const unsigned char *keys, unsigned int stride, 
 			dk[m] = k;
 			cnt[m] = 0;
 			first[m] = i;
-			andk &= k;
-			ork |= k;
 			m++;
 		}
 		lastk = k;
@@ -211,38 +218,54 @@ static inline int HWR_GroupPlan(const unsigned char *keys, unsigned int stride, 
 		grp[i] = (unsigned short)lastg;
 		cnt[lastg]++;
 	}
+	// the order of the buckets: one 64 bit word each, sorted (m is a few hundred: a shell sort)
+	memset(tv, 0, sizeof tv);
 	for (i = 0; i < m; i++)
-		ord[0][i] = (unsigned short)i;
-	for (pass = 0; pass < 4; pass++)
 	{
-		const unsigned int shift = pass * 8;
-		unsigned int d, sum = 0;
+		const unsigned int k = dk[i];
+		unsigned long long w;
 
-		if (!(((andk ^ ork) >> shift) & 255u))
+		if (!(k & 0x80000000u))
+			w = ((unsigned long long)(k & 0x7FFFFFFFu) << 32) | i; // a negative hash: in the order of the key, before the textured ones
+		else
+		{
+			const unsigned int hi = (k >> 16) & 0x7FFFu, id = *(const unsigned int *)(const void *)(tex + (size_t)first[i] * stride);
+			unsigned int h = ((hi * 0x9E3779B1u) ^ (id * 2654435761u)) >> 22, tf;
+
+			while (tv[h] && (tk[h][0] != hi || tk[h][1] != id))
+				h = (h + 1) & (HWR_GP_TSLOTS - 1);
+			if (!tv[h]) // the buckets come in the order of their first polygon: the first of a texture is its first appearance
+			{
+				tk[h][0] = hi;
+				tk[h][1] = id;
+				tv[h] = (unsigned short)(first[i] > 0xFFFEu ? 0xFFFFu : first[i] + 1u);
+			}
+			tf = (unsigned int)tv[h] - 1u;
+			w = (1ull << 63) | ((unsigned long long)hi << 47) | ((unsigned long long)tf << 31) | ((unsigned long long)(first[i] > 0xFFFFu ? 0xFFFFu : first[i]) << 15) | i;
+		}
+		sk[i] = w;
+	}
+	for (gap = 0; gap < sizeof gaps / sizeof gaps[0]; gap++)
+	{
+		const unsigned int g = gaps[gap];
+		unsigned int j;
+
+		if (g >= m)
 			continue;
-		memset(c8, 0, sizeof c8);
-		for (i = 0; i < m; i++)
-			c8[(dk[ord[cur][i]] >> shift) & 255]++;
-		for (d = 0; d < 256; d++)
+		for (i = g; i < m; i++)
 		{
-			const unsigned int t = c8[d];
+			const unsigned long long v = sk[i];
 
-			c8[d] = sum;
-			sum += t;
+			for (j = i; j >= g && sk[j - g] > v; j -= g)
+				sk[j] = sk[j - g];
+			sk[j] = v;
 		}
-		for (i = 0; i < m; i++)
-		{
-			const unsigned short id = ord[cur][i];
-
-			ord[cur ^ 1][c8[(dk[id] >> shift) & 255]++] = id;
-		}
-		cur ^= 1;
 	}
 	for (i = 0; i < m; i++)
 	{
-		const unsigned short id = ord[cur][i];
+		const unsigned int id = (unsigned int)(sk[i] & 0x7FFFu);
 
-		border[i] = id;
+		border[i] = (unsigned short)id;
 		start[id] = run;
 		run += cnt[id];
 	}
