@@ -1,0 +1,299 @@
+; PS2 GS hardware renderer: VU1 sprite program (PS2-HW-255, OPT11 round 3, FX3). Assembled with dvp-as (tools/ps2/build.py).
+;
+; A second program next to the polygon program (vu1/ps2_hw_vu1.vsm, which another agent keeps): it takes the billboards of the sprite stream (the things of the game, their drop
+; shadows) as a parallelogram, expands it to the four vertices, transforms, throws out what the screen cannot show, divides, converts and writes a GIF packet per sprite,
+; behind the A+D packet that selects the sprite's picture (TEX0, CLAMP) and, when the colormap row of its depth is not the one the GS holds, the CLUT of that row (TEX2).
+; It does not clip: the driver (ps2_hw_spr.inc) hands over only a sprite whose parallelogram lies wholly inside the guard band volume; a corner outside it anyway (the rounding at
+; the edge of the test) makes the sprite dropped and counted (the debug words, DBG). The plan constants (matrix, screen scale, GIF tags, the TEX2 table of the colormap rows, the
+; row the GS holds) are those of the polygon program and are sent by the same code (vu_plan_setup): one plan serves both programs.
+;
+; Data memory: as the polygon program (see there), plus
+;    RGBTMP (1000)  the colour of the vertices: R, G, B of the plan (qw 8), the alpha of the sprite in lane w
+;    DBG    (1001)  x = sprites drawn, y = hidden (every corner outside one plane), z = partly outside the guard band (dropped), w = records
+; Chunk (UNPACK into the input buffer, XTOP):
+;    qw 0           : x = number of records, y = 0.5 (the mean of the depth of two corners)
+;    record, qw 0   : x = type (0: state record, y = m: the m quad words behind this one are a GIF packet (A+D, EOP) that goes out through XGKICK as they are, like the
+;                     polygon program's; else a sprite), y = the light level of the sprite (float), z = alpha of the vertices (integer, GS scale 0..128), w = s of the left corners
+;           qw 1   : x, y, z = P0 (corner 0 in object space), w = t of the upper corners
+;           qw 2   : x, y, z = R (corner 1 - corner 0), w = s of the right corners
+;           qw 3   : x, y, z = U (corner 3 - corner 0), w = t of the lower corners
+;           qw 4   : A+D data and address of TEX0, qw 5: of CLAMP_1
+;      sprite = 6 quad words. Corners: 0 = P0, 1 = P0 + R, 2 = P0 + R + U, 3 = P0 + U, with (s, t) = (sl, tl), (sr, tl), (sr, tu), (sl, tu), a fan.
+; The colormap row is that of the mean depth of corners 0 and 2 (the equation of the polygon program's ROWOF with the light level of the record).
+;
+; Registers: VF01..VF04 matrix, VF05..VF07 screen constants, VF09 light constants (qw 17), VF10 (rlo, 155, 0, eps), VF22 chunk header, VF24/VF25 row equation, VF26 fan tag, VF28 A+D tag,
+; VF31 colour; per sprite VF29 header, VF11..VF13 P0 / R / U, VF14 VF17 VF18 VF19 corners 0..3, VF08 VF20 VF21 VF15 their (s, t, 1). VI02 record, VI03 count left, VI10 output buffer.
+
+		.equ	K_INT,		16
+		.equ	K_LIGHTB,	17
+		.equ	K_SPILL2,	19
+		.equ	ROWTAB,		32
+		.equ	OUTSUM,		1232
+		.equ	OCMASK,		0x0a95
+		.equ	RGBTMP,		1000
+		.equ	DBG,		1001
+
+; n idle cycles
+		.macro	IDLE n
+		.rept	\n
+		NOP					NOP
+		.endr
+		.endm
+
+; The colormap row of the eye depth in lane w of vf -> vi (0..31). Clobbers VF11, VF12. (the same as the polygon program's)
+		.macro	ROWOF vf, vi
+		subx.w		VF11,\vf,VF24x		NOP
+		mulx.w		VF11,VF11,VF25x		NOP
+		maxx.w		VF11,VF11,VF00x		NOP
+		miniz.w		VF11,VF11,VF25z		NOP
+		addw.w		VF11,VF11,VF00w		NOP
+		NOP					div			Q,VF24y,VF11w
+		NOP					waitq
+		subq.w		VF12,VF24,Q			NOP
+		maxz.w		VF12,VF12,VF24z		NOP
+		maxx.w		VF12,VF12,VF10x		NOP
+		miniw.w		VF12,VF12,VF25w		NOP
+		ftoi0.w		VF12,VF12			NOP
+		IDLE	4
+		NOP					mtir		\vi,VF12w
+		.endm
+
+; The outcode of the corner cl (clw = its w lane) accumulated into VI07 (or) and VI08 (and). Clobbers VF11, VF12, VI01, VI15.
+		.macro	OUTCODE cl, clw
+		addw.xyz	VF11,\cl,\clw		NOP
+		subw.xyz	VF12,\cl,\clw		NOP
+		clipw.xyz	VF11xyz,VF10w		NOP
+		clipw.xyz	VF12xyz,VF10w		NOP
+		IDLE	4
+		NOP					fcget		VI01
+		NOP					iaddiu		VI15,VI00,OCMASK
+		IDLE	2
+		NOP					iand		VI01,VI01,VI15
+		IDLE	1
+		NOP					ior			VI07,VI07,VI01
+		NOP					iand		VI08,VI08,VI01
+		.endm
+
+; One vertex: stv = (s, t, 1, 0), cl = the clip coordinates, clw = their w lane. Writes ST, RGBAQ (VF31), XYZF2 at VI12, advances VI12 by 3.
+		.macro	VERT cl, clw, stv
+		NOP					div			Q,VF00w,\clw
+		NOP					waitq
+		mulq.xyz	VF27,\stv,Q			NOP
+		mulq.xyz	VF23,\cl,Q			mfir.w		VF30,VI00
+		mulaw.xyz	ACC,VF06,VF00w		NOP
+		madd.xyz	VF23,VF23,VF05		NOP
+		max.z		VF23,VF23,VF00		NOP
+		mini.z		VF23,VF23,VF07		NOP
+		ftoi4.z		VF30,VF23			NOP
+		ftoi0.xy	VF30,VF23			NOP
+		NOP					sq			VF27,0(VI12)
+		NOP					sq			VF31,1(VI12)
+		NOP					sq			VF30,2(VI12)
+		NOP					iaddiu		VI12,VI12,3
+		.endm
+
+; a debug counter: lane l of DBG + 1
+		.macro	COUNT l
+		NOP					ilw.\l		VI14,DBG(VI00)
+		IDLE	4
+		NOP					iaddiu		VI14,VI14,1
+		IDLE	2
+		NOP					isw.\l		VI14,DBG(VI00)
+		.endm
+
+		.vu
+		.align	4
+		.global	VU1Spr_CodeStart
+		.global	VU1Spr_CodeEnd
+		.global	VU1Spr_EntryDraw
+VU1Spr_CodeStart:
+VU1Spr_EntryDraw:
+		NOP					xtop		VI02
+		NOP					lq			VF01,0(VI00)
+		NOP					lq			VF02,1(VI00)
+		NOP					lq			VF03,2(VI00)
+		NOP					lq			VF04,3(VI00)
+		NOP					lq			VF05,4(VI00)
+		NOP					lq			VF06,5(VI00)
+		NOP					lq			VF07,6(VI00)
+		NOP					lq			VF10,11(VI00)
+		NOP					lq			VF24,12(VI00)
+		NOP					lq			VF25,13(VI00)
+		NOP					lq			VF26,9(VI00)
+		NOP					lq			VF28,15(VI00)
+		NOP					lq			VF09,K_LIGHTB(VI00)
+		NOP					lq			VF31,8(VI00)
+		NOP					ilw.y		VI10,K_SPILL2(VI00)
+		IDLE	4
+		NOP					lq			VF22,0(VI02)
+		NOP					ilw.x		VI03,0(VI02)
+		NOP					sq			VF31,RGBTMP(VI00)
+		IDLE	4
+		NOP					iaddiu		VI02,VI02,1
+		IDLE	2
+		NOP					ibeq		VI03,VI00,SDone
+		NOP					NOP
+
+SprLoop:
+		NOP					ilw.x		VI04,0(VI02)
+		NOP					lq			VF29,0(VI02)
+		NOP					lq			VF11,1(VI02)
+		NOP					lq			VF12,2(VI02)
+		NOP					lq			VF13,3(VI02)
+		IDLE	4
+		NOP					ibeq		VI04,VI00,StateRec
+		NOP					NOP
+
+; ---- the four corners in clip space: C0 = M * (P0, 1), the differences dR = M * R and dU = M * U ----
+		mulax		ACC,VF01,VF11x		NOP
+		madday		ACC,VF02,VF11y		NOP
+		maddaz		ACC,VF03,VF11z		NOP
+		maddw		VF14,VF04,VF00w		NOP
+		mulax		ACC,VF01,VF12x		NOP
+		madday		ACC,VF02,VF12y		NOP
+		maddz		VF15,VF03,VF12z		NOP
+		mulax		ACC,VF01,VF13x		NOP
+		madday		ACC,VF02,VF13y		NOP
+		maddz		VF16,VF03,VF13z		NOP
+		add			VF17,VF14,VF15		NOP
+		add			VF19,VF14,VF16		NOP
+		add			VF18,VF17,VF16		NOP
+; the (s, t, 1) of the corners: (sl, tl), (sr, tl), (sr, tu), (sl, tu)
+		addw.x		VF08,VF00,VF29w		NOP
+		addw.y		VF08,VF00,VF13w		NOP
+		addw.z		VF08,VF00,VF00w		NOP
+		addw.x		VF20,VF00,VF12w		NOP
+		addw.y		VF20,VF00,VF13w		NOP
+		addw.z		VF20,VF00,VF00w		NOP
+		addw.x		VF21,VF00,VF12w		NOP
+		addw.y		VF21,VF00,VF11w		NOP
+		addw.z		VF21,VF00,VF00w		NOP
+		addw.x		VF15,VF00,VF29w		NOP
+		addw.y		VF15,VF00,VF11w		NOP
+		addw.z		VF15,VF00,VF00w		NOP
+; ---- the six planes of the guard band volume: every corner outside one plane: nothing to draw; a corner outside any plane: dropped ----
+		NOP					iaddiu		VI07,VI00,0
+		NOP					iaddiu		VI08,VI00,OCMASK
+		OUTCODE		VF14,VF14w
+		OUTCODE		VF17,VF17w
+		OUTCODE		VF18,VF18w
+		OUTCODE		VF19,VF19w
+		IDLE	2
+		NOP					ibne		VI08,VI00,SHidden
+		NOP					NOP
+		NOP					ibne		VI07,VI00,SPartial
+		NOP					NOP
+
+; ---- the colormap row of the mean depth of corners 0 and 2 (cap and base of the equation from the light level of the sprite, as the polygon program makes them) ----
+		mulx.y		VF16,VF29,VF09x		NOP
+		maxx.y		VF16,VF16,VF00x		NOP
+		miniy.y		VF16,VF16,VF09y		NOP
+		suby.y		VF13,VF09,VF16y		NOP
+		mulz.y		VF13,VF13,VF09z		NOP
+		suby.y		VF16,VF10,VF29y		NOP
+		mulw.y		VF16,VF16,VF09w		NOP
+		sub			VF30,VF00,VF00		NOP
+		addy.w		VF24,VF30,VF13y		NOP
+		addy.z		VF24,VF30,VF16y		NOP
+		add.w		VF13,VF14,VF18		NOP
+		muly.w		VF13,VF13,VF22		NOP
+		ROWOF		VF13, VI13
+		NOP					ilw.z		VI15,K_INT(VI00)
+		NOP					ilw.z		VI14,0(VI02)
+		IDLE	4
+		NOP					isub		VI01,VI13,VI15
+		NOP					isw.w		VI14,RGBTMP(VI00)
+		IDLE	2
+		NOP					lq			VF31,RGBTMP(VI00)
+
+; ---- the packet: A+D (TEX0, CLAMP, and TEX2 of the row when the GS holds another), then the fan ----
+		NOP					iaddiu		VI12,VI10,0
+		NOP					lq			VF11,4(VI02)
+		NOP					lq			VF12,5(VI02)
+		NOP					sq			VF28,0(VI12)
+		IDLE	1
+		NOP					sq			VF11,1(VI12)
+		NOP					sq			VF12,2(VI12)
+		NOP					ibeq		VI01,VI00,SNoRow
+		NOP					NOP
+		NOP					lq			VF13,ROWTAB(VI13)
+		NOP					isw.z		VI13,K_INT(VI00)
+		NOP					iaddiu		VI14,VI00,3
+		IDLE	1
+		NOP					sq			VF13,3(VI12)
+		NOP					iaddiu		VI12,VI12,4
+		NOP					b			STagDone
+		NOP					NOP
+SNoRow:
+		NOP					iaddiu		VI14,VI00,2
+		NOP					iaddiu		VI12,VI12,3
+STagDone:
+		IDLE	2
+		NOP					isw.x		VI14,0(VI10)
+		NOP					sq			VF26,0(VI12)
+		NOP					iaddiu		VI14,VI00,0x7fff
+		IDLE	1
+		NOP					iaddiu		VI14,VI14,5
+		IDLE	2
+		NOP					isw.x		VI14,0(VI12)
+		NOP					iaddiu		VI12,VI12,1
+		VERT		VF14,VF14w,VF08
+		VERT		VF17,VF17w,VF20
+		VERT		VF18,VF18w,VF21
+		VERT		VF19,VF19w,VF15
+		NOP					xgkick		VI10
+		NOP					iaddiu		VI15,VI00,OUTSUM
+		IDLE	2
+		NOP					isub		VI10,VI15,VI10
+		COUNT		x
+
+SNext:
+		NOP					iaddiu		VI02,VI02,6
+		NOP					isubiu		VI03,VI03,1
+		IDLE	2
+		NOP					ibne		VI03,VI00,SprLoop
+		NOP					NOP
+SDone:
+		NOP					isw.y		VI10,K_SPILL2(VI00)
+		NOP[E]				NOP
+		NOP					NOP
+
+SHidden:
+		COUNT		y
+		NOP					b			SNext
+		NOP					NOP
+SPartial:
+		COUNT		z
+		NOP					b			SNext
+		NOP					NOP
+
+; ---- a state record: its m quad words are a GIF packet of the driver (A+D, EOP) that goes out through XGKICK in its place between the sprites ----
+StateRec:
+		NOP					ilw.y		VI05,0(VI02)
+		NOP					iaddiu		VI11,VI02,1
+		NOP					iaddiu		VI12,VI10,0
+		IDLE	4
+		NOP					iaddiu		VI09,VI05,0
+SRLoop:
+		NOP					lq			VF11,0(VI11)
+		NOP					iaddiu		VI11,VI11,1
+		NOP					isubiu		VI09,VI09,1
+		NOP					sq			VF11,0(VI12)
+		NOP					iaddiu		VI12,VI12,1
+		IDLE	2
+		NOP					ibne		VI09,VI00,SRLoop
+		NOP					NOP
+		NOP					xgkick		VI10
+		NOP					iaddiu		VI15,VI00,OUTSUM
+		IDLE	2
+		NOP					isub		VI10,VI15,VI10
+		NOP					iadd		VI02,VI02,VI05
+		NOP					iaddiu		VI02,VI02,1
+		NOP					isubiu		VI03,VI03,1
+		IDLE	2
+		NOP					ibne		VI03,VI00,SprLoop
+		NOP					NOP
+		NOP					b			SDone
+		NOP					NOP
+		.align	4
+VU1Spr_CodeEnd:

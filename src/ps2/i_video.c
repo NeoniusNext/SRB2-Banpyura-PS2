@@ -963,7 +963,7 @@ static void Impl_HWProf(void)
 		PS2HWD_DumpWorkingSet();
 	PS2HWD_GetStats(&st, 1);
 	PS2HWD_GetInfo(&info);
-	CONS_Printf("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u vbl=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u cap=%u pred=%u capchg=%u restamp=%u decim=%u\n",
+	I_OutputMsg("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u vbl=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u cap=%u pred=%u capchg=%u restamp=%u decim=%u\n",
 		(int)windows, (int)frames, (unsigned)(wall / frames),
 		(unsigned)(ps2hwp_cyc[HWP_CLEAR] / frames), (unsigned)(ps2hwp_cyc[HWP_BSP] / frames), (unsigned)(ps2hwp_cyc[HWP_BATCH] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_SPRITES] / frames), (unsigned)(ps2hwp_cyc[HWP_NODES] / frames), (unsigned)(ps2hwp_cyc[HWP_POST] / frames),
@@ -974,7 +974,7 @@ static void Impl_HWProf(void)
 		st.cap_blocks, st.pred_ws, st.cap_changes, st.tex_restamped, st.tex_decimated);
 	hwprof_vbl0 = st.vblanks;
 	// PS2-HW-40 (OPT9, HG): finer spans of hardware/hw_main.c (inclusive, some nested in the phases above)
-	CONS_Printf("HWPROF2 win=%d setup=%u sky=%u seg=%u plane=%u addspr=%u subsec=%u light=%u sprsort=%u sprdraw=%u nodesort=%u nodedraw=%u\n", (int)windows,
+	I_OutputMsg("HWPROF2 win=%d setup=%u sky=%u seg=%u plane=%u addspr=%u subsec=%u light=%u sprsort=%u sprdraw=%u nodesort=%u nodedraw=%u\n", (int)windows,
 		(unsigned)(ps2hwp_cyc[HWP_SETUP] / frames), (unsigned)(ps2hwp_cyc[HWP_SKY] / frames), (unsigned)(ps2hwp_cyc[HWP_SEG] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_PLANE] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames), (unsigned)(ps2hwp_cyc[HWP_SUBSEC] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),

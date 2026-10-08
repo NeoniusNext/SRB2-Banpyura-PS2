@@ -32,6 +32,7 @@ static struct
 	u32 vs_n, vs_c, vs_rows, vs_pass, vs_consts, vs_send, vs_light; // vu_plan_setup: calls, cycles, and by part (rows, pass_setup, constants build, constants send, light)
 	u32 md_draws, md_meshes, md_tris, md_verts, md_cyc, md_slow, md_lod, md_over, md_c1, md_c2, md_c3, md_ctx; // OPT11 MODEL (HWPROF40): draw_model calls, meshes, triangles, vertices interpolated, cycles inside draw_model, emit_tris calls of the corner path
 	u32 s_vu, s_same, s_retarget, vs_reuse, b_retarget, s_rec; // single polygons drawn through the VU1 program, of them: with the plan (key) of the previous single draw
+	u32 spr_cyc; // OPT11 round 3 (FX3): cycles of the flushes of the sprite stream (PS2HWD_SprFlush)
 } G;
 
 // the outermost driver call: cycles minus the waits
@@ -118,7 +119,9 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		(unsigned)(ps2hwp_cyc[HWP_SG_C] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_D] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_E] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_F] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_G] / frames));
 	I_OutputMsg("HWPROF33 HWR_ProjectSprite parts: interp=%u frame=%u offsets=%u position=%u quadtest=%u vissprite=%u | AddSprites total=%u\n", (unsigned)(ps2hwp_cyc[HWP_PS_A] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_B] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_PS_C] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_D] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_E] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_F] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames));
-	I_OutputMsg("HWPROF41 sprite batch (FX2): collect=%u | flush: sort=%u plan=%u draw=%u all=%u\n", (unsigned)(ps2hwp_cyc[HWP_SF_COLLECT] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_SORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_PLAN] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_DRAW] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_ALL] / frames));
+	I_OutputMsg("HWPROF41 sprite batch (FX2): collect=%u | flush: sort=%u plan=%u draw=%u all=%u (in draw: settex=%u drawbatch=%u; in drawbatch: begin_draw=%u vu_fans=%u) calls=%u begin=%u retarget=%u same=%u polys=%u\n", (unsigned)(ps2hwp_cyc[HWP_SF_COLLECT] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_SORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_PLAN] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_DRAW] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_ALL] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_SETTEX] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_DRAWB] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_BEGIN] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_VUFANS] / frames),
+		ps2hwp_cnt[HWC_SF_CALLS] / frames, ps2hwp_cnt[HWC_SF_BEGIN] / frames, ps2hwp_cnt[HWC_SF_RET] / frames, ps2hwp_cnt[HWC_SF_SAME] / frames, ps2hwp_cnt[HWC_SF_POLYS] / frames);
+	PS2HWD_SprProf(frames); // HWPROF42 (ps2_hw_spr.inc)
 	I_OutputMsg("HWPROF40 sprites (FX2): things=%u projected=%u behind=%u quadhidden=%u vissprites=%u shadows=%u shadowhidden=%u prefiltered=%u drawn_hidden=%u drawn_with_shadow=%u rolled=%u noext=%u\n", ps2hwp_cnt[HWC_FX_THINGS] / frames, ps2hwp_cnt[HWC_FX_PROJ] / frames, ps2hwp_cnt[HWC_FX_BEHIND] / frames,
 		ps2hwp_cnt[HWC_FX_QHID] / frames, ps2hwp_cnt[HWC_FX_VIS] / frames, ps2hwp_cnt[HWC_FX_SHADOW] / frames, ps2hwp_cnt[HWC_FX_SHQHID] / frames, ps2hwp_cnt[HWC_FX_PRE] / frames, ps2hwp_cnt[HWC_FX_SPRHID] / frames, ps2hwp_cnt[HWC_FX_SPRSH] / frames, ps2hwp_cnt[HWC_FX_ROLL] / frames, ps2hwp_cnt[HWC_FX_NOEXT] / frames);
 	I_OutputMsg("HWPROF31 AddLine: calls=%u backface=%u clipped=%u empty=%u | boxes=%u rejected=%u\n", ps2hwp_cnt[HWC_AL_CALLS] / frames, ps2hwp_cnt[HWC_AL_BACK] / frames, ps2hwp_cnt[HWC_AL_CLIP] / frames,

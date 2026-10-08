@@ -52,6 +52,12 @@ void PS2HWD_BatchDraw(void); // the collected polygons are drawn: SetTexture mak
 void PS2HWD_BatchEnd(void);
 void PS2HWD_TouchTexture(struct GLMipmap_s *mipmap);
 boolean PS2HWD_ReadScreenRGB(INT32 slot, UINT8 *dst);
+// OPT11 round 3 (FX3, PS2-HW-255): the sprite stream. A polygon of the sprite batch (a sprite or a drop shadow: 4 vertices, a patch) is kept for the VU1 sprite program (1) or left to the caller (0);
+// the flush of the batch (HWR_RenderBatches) draws the kept ones: which 0 = shadows (before the batch), 1 = sprites (after it).
+int PS2HWD_SprPoly(const void *vsurf, const void *vverts, unsigned int flags, int shader, void *vtex, int is_shadow);
+void PS2HWD_SprFlush(int which);
+void PS2HWD_SprReset(void);
+void PS2HWD_SprProf(unsigned int frames);
 // OPT11 MODEL (PS2-HW-266): should the model of an object at x, y, z (engine coordinates, z = height) with a world radius be drawn as a model, by its size on the screen and the
 // triangles of the models already drawn in this frame? 0 = the sprite does it (a model of a few pixels is a sprite to the eye). tris = the triangles of the model.
 void PS2HWD_ModelDetail(int level); // OPT11 MODEL: gr_modeldetail: 0 High (8 pixels, 16000 triangles), 1 Medium (12, 8000), 2 Low (20, 3000); the command line (-hwmodelpx / -hwmodeltris) wins

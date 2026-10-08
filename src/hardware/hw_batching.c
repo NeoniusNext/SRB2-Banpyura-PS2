@@ -21,6 +21,7 @@
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
 #include "../m_argv.h" // -hwpolyhash
+#include "../ps2/hw/ps2_hw_fx2.h" // FX2_PTRORDER, ps2hwd_fx2 (OPT11 round 3)
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 #else
 #include "../ps2/hw/ps2_hw_prof.h" // no-op profiling macros for the PC build
@@ -557,6 +558,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 				HWD.pfnSetTexture(current_texture); // what the polygon selected while batching only noted it
 		}
 	}
+	// PS2-HW-255 (OPT11 round 3, FX3): a sprite or a drop shadow of the sprite batch is kept by the driver for its VU1 sprite program (drawn by the flush of the batch, below)
+	if (currently_batching && hwr_sprite_batch && iNumPts == 4 && pSurf && current_texture && !horizonSpecial
+		&& PS2HWD_SprPoly(pSurf, pOutVerts, (unsigned int)PolyFlags, HWR_ShaderOfTarget(shader_target), current_texture, hwr_sprite_shadow))
+		return;
 	HWC_ADD(HWC_PROC); // OPT10 HG: calls (HWC_PROC_BATCH: the batched ones)
 	if (currently_batching)
 		HWC_ADD(HWC_PROC_BATCH);
@@ -1609,6 +1614,10 @@ static void HWR_RenderBatchesOld(void)
 					HWP_SPAN_BEGIN(tst);
 					HWD.pfnSetTexture(nextTexture);
 					HWP_SPAN_END2(tst, HWP_B_TEX, HWP_KB_TEX);
+#ifdef PS2_HWDETAIL
+					if (hwr_sprite_batch)
+						ps2hwp_cyc[HWP_SF_SETTEX] += (unsigned int)(ps2hwp_now() - tst);
+#endif
 				}
 				currentTexture = nextTexture;
 				changeTexture = false;
@@ -1658,6 +1667,15 @@ static void HWR_RenderBatchesOld(void)
 void HWR_RenderBatches(void)
 {
 #ifdef PS2
+#ifdef PS2_PROFILE
+	if (currently_batching)
+	{
+		// PS2-HW-255 (OPT11 round 3, FX3): the drop shadows and the sprites of the sprite stream come first, in every collection path (before the uploads of the batch: their textures
+		// are made resident now and are not needed again; the order of the stream is its own, shadows then sprites, as the batch drew them)
+		PS2HWD_BatchDraw();
+		PS2HWD_SprFlush(0);
+	}
+#endif
 	if (currently_batching && pb_n > 0 && HWR_PBOn() && HWR_PBRender())
 		return;
 	if (currently_batching && polygonArraySize > 0 && !(hwr_geo_off & 64) && HWR_RenderBatchesV2())

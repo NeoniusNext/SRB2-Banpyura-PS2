@@ -33,6 +33,9 @@
 #include "../../console.h"
 #include "../../hardware/hw_drv.h"
 #include "../../hardware/hw_main.h"
+#ifdef PS2_HWDETAIL
+extern boolean hwr_sprite_batch; // hw_batching.c
+#endif
 #include "../../m_argv.h" // -hwnosplit
 #include "../../r_main.h" // rendertimefrac (the shader time of the water, PS2-HW-125)
 #include "../../z_zone.h" // PS2-171: hwbig_alloc
@@ -57,10 +60,13 @@
 #include "ps2_hw_vu0.inc"
 #include "ps2_hw_light.inc"
 #include "ps2_hw_pal.inc" // PS2-HW-71: palette rendering (light tables as CLUT rows)
+#include "ps2_hw_fx2.h" // OPT11 round 3 (FX3): -hwfx bits (FX3_NOFILL in the texture upload)
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
+static void settex_now(GLMipmap_t *TexInfo); // (below)
+#include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
 #include "ps2_hw_wire.inc" // OPT11-MODEL (PS2-HW-270): PF_WireFrame and gr_wireframe as GS lines
@@ -301,6 +307,13 @@ boolean PS2HWD_Init(void)
 	if (!hwbig_alloc())
 		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
+	// PS2-HW-255 (OPT11 round 3, FX3): the sprite stream is opt-in (-hwspr). Measured on the tree with the VU2 collection of polygons in blocks (docs/GATES/g1/opt11-FX.md 7.7): the stream costs the EE
+	// what the batch costs for the same sprites (D1 +1.3 % of the sprite set, D2 -2.7 %, D3 -1.5 %, D4 +4.6 %, against the cheap projection alone), and its lists are 75 KB of the zone, which is
+	// at its edge on 32 MB (DEMO_003 ends in "Out of memory" on the tip of the main branch already). Without -hwspr the lists are not made and every sprite goes through the batch.
+	if (!M_CheckParm("-hwspr"))
+		ps2hwd_fx2 |= FX3_NOSTREAM;
+	if (!(ps2hwd_fx2 & (FX3_NOSTREAM | FX3_NOSPR)))
+		spr_alloc(); // the lists of the sprite stream (zone blocks while the driver runs; no stream when there is no room)
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
@@ -401,6 +414,7 @@ void PS2HWD_Shutdown(void)
 		V.dmac_set = 0;
 	}
 	val_shutdown();
+	spr_free(); // PS2-HW-255
 	vu1_shutdown();
 	V.on = 0;
 	if (H.sema_vbl >= 0)
@@ -466,6 +480,7 @@ void PS2HWD_Abort(void)
 	H.imm_tex = NULL;
 	V.chunk_open = 0;
 	OV.n = 0;
+	PS2HWD_SprReset(); // PS2-HW-255
 	if (H.pend)
 		H.pend_done = 1; // show what there is
 	*GS_CSR = 2;
@@ -1120,6 +1135,14 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		if ((how == 1 && !(vu_bretmask & (P.pal ? 1 : 2))) || (how == 2 && !(vu_bretmask & 4)))
 			how = 0;
 	}
+#ifdef PS2_HWDETAIL
+	if (hwr_sprite_batch) // (the flush of a sprite batch: how its draws are made, HWPROF41)
+	{
+		HWC_ADD(HWC_SF_CALLS);
+		HWC_ADD(how == 0 ? HWC_SF_BEGIN : how == 1 ? HWC_SF_RET : HWC_SF_SAME);
+		ps2hwp_cnt[HWC_SF_POLYS] += nfans;
+	}
+#endif
 	if (how)
 	{
 		if (how == 1)
@@ -1131,7 +1154,16 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	}
 	else
 	{
+#ifdef PS2_HWDETAIL
+		const unsigned int sf_b0 = ps2hwp_now();
+		const int sf_ok = begin_draw((u32)flags, (const FSurfaceInfo *)surf);
+
+		if (hwr_sprite_batch)
+			ps2hwp_cyc[HWP_SF_BEGIN] += (unsigned int)(ps2hwp_now() - sf_b0);
+		if (!sf_ok)
+#else
 		if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+#endif
 		{
 			drv_out();
 			return;
@@ -1152,7 +1184,17 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		{
 			const unsigned int i0 = i;
 
+#ifdef PS2_HWDETAIL
+			{
+				const unsigned int sf_v0 = ps2hwp_now();
+
+				i = vu_fans((const FOutVector *)base, desc, i, nfans);
+				if (hwr_sprite_batch)
+					ps2hwp_cyc[HWP_SF_VUFANS] += (unsigned int)(ps2hwp_now() - sf_v0);
+			}
+#else
 			i = vu_fans((const FOutVector *)base, desc, i, nfans);
+#endif
 			G.p_vu += i - i0;
 			if (i >= nfans)
 				break;
@@ -1702,7 +1744,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 		// runs out; here a frame whose textures do not fit the pool, or a texture whose data the zone purged, loses polygons.
 		H.st.tex_missing++;
 		if (H.st.tex_missing <= 4)
-			CONS_Printf("HWD texture not resident: %s %s fmt=%d %ux%u flags=0x%x data=%p pool used %u/%u blocks, free ranges %d (draws skipped)\n", tex_fail_why, HWR_PS2_TexName(TexInfo),
+			CONS_Printf("HWD texture not resident [frame %u phase %d spr_flush %d tex %p dl %u]: %s %s fmt=%d %ux%u flags=0x%x data=%p pool used %u/%u blocks, free ranges %d (draws skipped)\n", (unsigned)H.frame_no, batch_phase, SPR.in_flush, (void *)TexInfo, (unsigned)TexInfo->downloaded, tex_fail_why, HWR_PS2_TexName(TexInfo),
 				(int)TexInfo->format, (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)TexInfo->flags, (void *)TexInfo->data,
 				(unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n);
 		hw_limit(HW_MISSING, "a texture could not be made resident in the GS pool (or its data was purged); its draws are skipped");

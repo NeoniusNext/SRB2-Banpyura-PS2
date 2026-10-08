@@ -1345,31 +1345,41 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
 	u32 x;
 
-	if (!c->dx && !(c->W2 & 3) && !((uintptr_t)s & 7) && !((uintptr_t)dst & 3))
+	if (!c->dx && !((uintptr_t)s & 7) && ((ps2hwd_fx2 & FX3_NOFILL) ? (!(c->W2 & 3) && !((uintptr_t)dst & 3)) : c->W2 >= 4))
 	{
 		// four texels (index, alpha pairs) in one 64-bit load: the index bytes are gathered, the alpha bytes that are zero become 0xFF (mode 0: a hole is index 255)
+		// PS2-HW-252 (FX3): any width and any alignment of the row (a patch is stored at the size of its picture: 3 of 4 rows of the patches were made texel by texel): four bytes
+		// at a time (an unaligned store is the swl / swr pair), the last 1..3 texels by the byte loop below
 		const u64 *s8 = (const u64 *)(const void *)s;
-		u32 *d4 = (u32 *)(void *)dst;
 		const int keyed = c->mode != 0;
+		const u32 x4 = c->W2 & ~3u;
+		u8 *dp = dst;
 
-		for (x = 0; x < c->W2; x += 4)
+		for (x = 0; x < x4; x += 4)
 		{
 			const u64 v = *s8++;
-			const u32 idx = (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
+			u32 idx = (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
 
-			if (keyed)
-			{
-				*d4++ = idx;
-			}
-			else
+			if (!keyed)
 			{
 				const u64 av = v >> 8;
 				const u32 a = (u32)(av & 0xFFu) | (u32)((av >> 8) & 0xFF00u) | (u32)((av >> 16) & 0xFF0000u) | (u32)((av >> 24) & 0xFF000000u);
 				const u32 nz = (((a & 0x7F7F7F7Fu) + 0x7F7F7F7Fu) | a) & 0x80808080u; // bit 7 of every byte that is not zero
 				const u32 zero = ~nz & 0x80808080u;
 
-				*d4++ = idx | ((zero >> 7) * 0xFFu);
+				idx |= (zero >> 7) * 0xFFu;
 			}
+			if ((uintptr_t)dp & 3)
+				memcpy(dp, &idx, 4);
+			else
+				*(u32 *)(void *)dp = idx;
+			dp += 4;
+		}
+		for (; x < c->W2; x++) // the last texels of the row (W2 not a multiple of 4)
+		{
+			const u8 *t = s + (size_t)x * 2;
+
+			dst[x] = (!keyed && t[1] == 0) ? 255 : t[0];
 		}
 		if (ps2hwd_dbg_flags & HWDBG_COMPOSE) // -hwdbg 16777216: the row is made again by the byte loop and compared (PS2-HW-71)
 		{
@@ -1801,6 +1811,76 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 	return ne;
 }
 
+// The classification of the picture of a patch (AP_88: index, alpha) for tex_upload: partial alpha anywhere (a partial one ends the scan: the others are not valid then), a hole (alpha 0),
+// an opaque texel of index 255, a hole whose index is not 255 and whose colour is not the hole colour of the palette. fast: four texels in one 64-bit word (PS2-HW-252, FX3).
+static void ap88_scan(const u16 *d16, u32 sw, u32 cw, u32 ch, u32 pal255, int fast, int *partial, int *hole, int *opaque255, int *hole_rgb)
+{
+	u32 y, x;
+
+	for (y = 0; y < ch && !*partial; y++)
+	{
+		const u16 *row = d16 + (size_t)y * sw;
+
+		x = 0;
+		if (fast)
+		{
+			// The alpha of a lane (0..255) is 255 when (A + 1) has bit 8 set, not 0 when (A + 255) has it; a lane that is one but not the other is a partial alpha.
+			const u64 *r8 = (const u64 *)(const void *)row;
+			const u64 lanes = 0x00FF00FF00FF00FFull, one = 0x0001000100010001ull, bit8 = 0x0100010001000100ull;
+			const u32 x4 = cw & ~3u;
+
+			for (; x < x4; x += 4)
+			{
+				const u64 v = *r8++, a = (v >> 8) & lanes, iv = v & lanes;
+				const u64 ge1 = (a + lanes) & bit8; // alpha != 0
+				const u64 ff = (a + one) & bit8; // alpha == 255
+				const u64 i255 = (iv + one) & bit8; // index == 255
+				u64 zero;
+
+				if (ge1 != ff)
+				{
+					*partial = 1;
+					return;
+				}
+				*opaque255 |= (ff & i255) != 0;
+				zero = bit8 & ~ge1; // lanes with alpha 0
+				if (zero)
+				{
+					*hole = 1;
+					if (zero & ~i255) // a hole whose index is not 255: its colour decides
+					{
+						u32 k;
+
+						for (k = 0; k < 4; k++)
+							if (((zero >> (16 * k + 8)) & 1u) && ((iv >> (16 * k)) & 255u) != 255u && H.pal[(iv >> (16 * k)) & 255u] != pal255)
+								*hole_rgb = 1;
+					}
+				}
+			}
+		}
+		for (; x < cw; x++)
+		{
+			const u32 v = row[x], a = v >> 8, idx = v & 255u;
+
+			if (a == 255)
+			{
+				*opaque255 |= idx == 255;
+			}
+			else if (a == 0)
+			{
+				*hole = 1;
+				if (idx != 255 && H.pal[idx] != pal255)
+					*hole_rgb = 1;
+			}
+			else
+			{
+				*partial = 1;
+				return;
+			}
+		}
+	}
+}
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -1934,32 +2014,24 @@ static int tex_upload(GLMipmap_t *m)
 				// one pass over the stored part (the real picture of a patch): binary alpha (0 / 255), holes, an opaque texel of index 255, holes whose colour is not
 				// the hole colour of the palette
 				const u16 *d16 = (const u16 *)(const void *)data;
-				const u32 pal255 = H.pal[255];
-				u32 y, x;
+				const int fast = !(ps2hwd_fx2 & FX3_NOFILL) && !((uintptr_t)d16 & 7) && !(sw & 3);
 
-				for (y = 0; y < ch && !partial; y++)
+				ap88_scan(d16, sw, cw, ch, H.pal[255], fast, &partial, &hole, &opaque255, &hole_rgb);
+				if (fast && (ps2hwd_dbg_flags & HWDBG_COMPOSE)) // -hwdbg 16777216: the scan again texel by texel, the same answer
 				{
-					const u16 *row = d16 + (size_t)y * sw;
+					static unsigned scanned, sbad;
+					int p2 = 0, h2 = 0, o2 = 0, r2 = 0;
 
-					for (x = 0; x < cw; x++)
+					ap88_scan(d16, sw, cw, ch, H.pal[255], 0, &p2, &h2, &o2, &r2);
+					scanned++;
+					if (partial != p2 || (!partial && (hole != h2 || opaque255 != o2 || hole_rgb != r2)))
 					{
-						const u32 v = row[x], a = v >> 8, idx = v & 255u;
-
-						if (a == 255)
-						{
-							opaque255 |= idx == 255;
-						}
-						else if (a == 0)
-						{
-							hole = 1;
-							if (idx != 255 && H.pal[idx] != pal255)
-								hole_rgb = 1;
-						}
-						else
-						{
-							partial = 1;
-							break;
-						}
+						sbad++;
+						CONS_Printf("HWC scan MISMATCH %u of %u (%dx%d: %d %d %d %d against %d %d %d %d)\n", sbad, scanned, (int)cw, (int)ch, partial, hole, opaque255, hole_rgb, p2, h2, o2, r2);
+					}
+					else if (!(scanned & 255))
+					{
+						CONS_Printf("HWC scan check: %u patches, %u differ\n", scanned, sbad);
 					}
 				}
 			}
