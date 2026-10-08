@@ -82,6 +82,7 @@
 #ifdef PS2_PROFILE
 #include "w_pack.h"
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-1
+#include "m_argv.h"
 #endif
 
 #ifdef HWRENDER
@@ -138,6 +139,7 @@ void W_Shutdown(void)
 			fclose(wad->handle);
 #ifdef PS2_PROFILE
 		free(wad->iobuf);
+		WPack_Close(wad->pack);
 #endif
 		Z_Free(wad->filename);
 		if (wad->path)
@@ -158,6 +160,10 @@ void W_Shutdown(void)
 		}
 		M_AATreeFree(wad->startfolders);
 		M_AATreeFree(wad->endfolders);
+#ifdef PS2_PROFILE
+		Z_Free(wad->namebucket);
+		Z_Free(wad->namenext);
+#endif
 
 		Z_Free(wad->lumpinfo);
 		Z_Free(wad);
@@ -874,6 +880,37 @@ static void W_LoadTrnslateLumps(UINT16 w)
 	}
 }
 
+#ifdef PS2_PROFILE
+// -verifypack: decodes every lump of a pack that was just opened and compares its CRC32 (docs/PACK_FORMAT.md); a damaged pack stops the start with the lump named
+static const lumpinfo_t *verify_lumps;
+static void W_VerifyPackReport(UINT32 lump, const char *what)
+{
+	if (lump == 0xFFFFFFFFu)
+		CONS_Alert(CONS_ERROR, "pack verification: %s\n", what);
+	else
+		CONS_Alert(CONS_ERROR, "pack verification: lump %u (%s): %s\n", (unsigned)lump, verify_lumps[lump].fullname, what);
+}
+
+static void W_VerifyPackFile(const char *filename, wpack_t *pack, FILE *handle, const lumpinfo_t *lumps, UINT16 numlumps)
+{
+	UINT32 bad;
+
+	if (!M_CheckParm("-verifypack"))
+		return;
+	if (!pack)
+	{
+		CONS_Printf("-verifypack: %s is a version 1 pack (no CRC table), skipped\n", filename);
+		return;
+	}
+	CONS_Printf("-verifypack: checking %s (%u lumps)...\n", filename, (unsigned)numlumps);
+	verify_lumps = lumps;
+	bad = WPack_Verify(pack, handle, lumps, numlumps, W_VerifyPackReport);
+	if (bad)
+		I_Error("%s is damaged: %u of %u lumps do not match the checksums (see the log); copy the data files again", filename, (unsigned)bad, (unsigned)numlumps);
+	CONS_Printf("-verifypack: %s is intact\n", filename);
+}
+#endif
+
 #if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: original loader (wad/pk3/soc/lua/folder); a cooked pack is recognised inside it (PS2-100)
 //  Allocate a wadfile, setup the lumpinfo (directory) and
 //  lumpcache, add the wadfile to the current active wadfiles
@@ -897,6 +934,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	int important;
 #ifdef PS2_PROFILE
 	void *pool = NULL, *iobuf = NULL; // cooked pack: name pool, stdio buffer
+	wpack_t *pack = NULL; // cooked pack of version 2: head table
 #endif
 	LP_BEGIN(lpf);
 	LP_BEGIN(lp1);
@@ -1008,7 +1046,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 		boolean nonmusic;
 
 		type = RET_PK3;
-		lumpinfo = WPack_GetLumps(handle, &numlumps, &pool, &nonmusic);
+		lumpinfo = WPack_GetLumps(handle, filename, &numlumps, &pool, &nonmusic, &pack);
 	}
 	else
 #endif
@@ -1050,6 +1088,12 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	// link wad file to search files
 	//
 	wadfile = Z_Malloc(sizeof (*wadfile), PU_STATIC, NULL);
+#ifdef PS2_PROFILE
+	wadfile->namebucket = NULL; // PS2-LOAD-2
+	wadfile->namenext = NULL;
+	wadfile->namemask = 0;
+	wadfile->flatsknown = false;
+#endif
 	wadfile->filename = Z_StrDup(filename);
 	wadfile->path = NULL;
 	wadfile->type = type;
@@ -1061,6 +1105,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 #ifdef PS2_PROFILE
 	wadfile->pool = pool;
 	wadfile->iobuf = iobuf;
+	wadfile->pack = pack;
+	if (pack)
+		WPack_Register(pack);
+	if (pool)
+		W_VerifyPackFile(filename, pack, handle, lumpinfo, numlumps);
 #endif
 	fseek(handle, 0, SEEK_END);
 	wadfile->filesize = (unsigned)ftell(handle);
@@ -1261,6 +1310,12 @@ UINT16 W_InitFolder(const char *path, boolean mainfile, boolean startup, boolean
 		G_SetGameModified(true);
 
 	wadfile = Z_Malloc(sizeof (*wadfile), PU_STATIC, NULL);
+#ifdef PS2_PROFILE
+	wadfile->namebucket = NULL; // PS2-LOAD-2
+	wadfile->namenext = NULL;
+	wadfile->namemask = 0;
+	wadfile->flatsknown = false;
+#endif
 	wadfile->filename = fn;
 	wadfile->path = fullpath;
 	wadfile->type = RET_FOLDER;
@@ -1315,6 +1370,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	wadfile_t *wadfile;
 	UINT16 numlumps = 0;
 	void *pool = NULL, *iobuf;
+	wpack_t *pack = NULL;
 	boolean nonmusic = false;
 
 	if (local || !startup)
@@ -1340,7 +1396,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 
 	lumpinfo = NULL;
 	if (WPack_Detect(handle))
-		lumpinfo = WPack_GetLumps(handle, &numlumps, &pool, &nonmusic);
+		lumpinfo = WPack_GetLumps(handle, filename, &numlumps, &pool, &nonmusic, &pack);
 	else
 		CONS_Alert(CONS_ERROR, "%s is not a cooked pack (SRP2)\n", filename);
 
@@ -1358,6 +1414,12 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	// link wad file to search files
 	//
 	wadfile = Z_Malloc(sizeof (*wadfile), PU_STATIC, NULL);
+#ifdef PS2_PROFILE
+	wadfile->namebucket = NULL; // PS2-LOAD-2
+	wadfile->namenext = NULL;
+	wadfile->namemask = 0;
+	wadfile->flatsknown = false;
+#endif
 	wadfile->filename = Z_StrDup(filename);
 	wadfile->path = NULL;
 	wadfile->type = RET_PK3;
@@ -1368,6 +1430,9 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	wadfile->important = nonmusic;
 	wadfile->pool = pool;
 	wadfile->iobuf = iobuf;
+	wadfile->pack = pack;
+	if (pack)
+		WPack_Register(pack);
 	fseek(handle, 0, SEEK_END);
 	wadfile->filesize = (unsigned)ftell(handle);
 	wadfile->startfolders = M_AATreeAlloc(0);
@@ -1473,9 +1538,54 @@ const char *W_CheckNameForNum(lumpnum_t lumpnum)
 //
 // 'startlump' is the lump number to start the search
 //
+#ifdef PS2_PROFILE
+// PS2-LOAD-2: the lump name index. quickncasehash(name, 8) of every lump (lumpinfo_t.hash, case-insensitive) picks a bucket; the chain of a bucket lists the
+// lumps in ascending order, so "the first match at or after startlump" is the same lump the linear scan found. 12 614 lumps of SRB2.PAK: 16 KiB of buckets
+// and 25 KiB of chain; the lookups of R_LoadTextures / R_InitSprites / the map loader were 30% of the start-up (a scan of every lump of every file per name).
+static void W_BuildNameIndex(wadfile_t *wf)
+{
+	UINT32 n = wf->numlumps, nb = 16, i;
+	UINT16 *bucket, *next;
+
+	while (nb < n / 2 + 1)
+		nb <<= 1;
+	bucket = Z_Calloc(nb * sizeof *bucket, PU_STATIC, NULL);
+	next = Z_Malloc((n + 1) * sizeof *next, PU_STATIC, NULL);
+	for (i = n; i-- > 0;)
+	{
+		const UINT32 h = wf->lumpinfo[i].hash, b = (h ^ (h >> 15)) & (nb - 1);
+
+		next[i] = bucket[b];
+		bucket[b] = (UINT16)(i + 1);
+	}
+	wf->namebucket = bucket;
+	wf->namenext = next;
+	wf->namemask = (UINT16)(nb - 1);
+}
+
+// First lump of the file with this (already upper-cased) name at or after startlump; INT16_MAX if none. Same test as the linear scan.
+static UINT16 W_FindName8(wadfile_t *wf, UINT32 hash, const char *uname, UINT16 startlump)
+{
+	UINT16 e;
+
+	if (!wf->namebucket)
+		W_BuildNameIndex(wf);
+	for (e = wf->namebucket[(hash ^ (hash >> 15)) & wf->namemask]; e; e = wf->namenext[e - 1])
+	{
+		const lumpinfo_t *lump_p = wf->lumpinfo + (e - 1);
+
+		if ((UINT16)(e - 1) >= startlump && lump_p->hash == hash && !strncmp(lump_p->name, uname, 8))
+			return (UINT16)(e - 1);
+	}
+	return INT16_MAX;
+}
+#endif
+
 UINT16 W_CheckNumForNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 {
+#ifndef PS2_PROFILE
 	UINT16 i;
+#endif
 	static char uname[8 + 1];
 	UINT32 hash;
 
@@ -1486,6 +1596,11 @@ UINT16 W_CheckNumForNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 	strupr(uname);
 	hash = quickncasehash(uname, 8);
 
+#ifdef PS2_PROFILE
+	if (startlump < wadfiles[wad]->numlumps)
+		return W_FindName8(wadfiles[wad], hash, uname, startlump);
+	return INT16_MAX;
+#else
 	//
 	// scan forward
 	// start at 'startlump', useful parameter when there are multiple
@@ -1501,6 +1616,7 @@ UINT16 W_CheckNumForNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 
 	// not found.
 	return INT16_MAX;
+#endif
 }
 
 //
@@ -1807,12 +1923,31 @@ lumpnum_t W_CheckNumForName(const char *name)
 		return cachenum;
 
 	// scan wad files backwards so patch lump files take precedence
+#ifdef PS2_PROFILE
+	{
+		char uname[8 + 1];
+		UINT32 hash;
+
+		strlcpy(uname, name, sizeof uname); // PS2-LOAD-2: the name is upper-cased and hashed once, not once per file
+		strupr(uname);
+		hash = quickncasehash(uname, 8);
+		for (i = numwadfiles - 1; i >= 0; i--)
+		{
+			if (!wadfiles[i] || !wadfiles[i]->numlumps)
+				continue;
+			check = W_FindName8(wadfiles[i], hash, uname, 0);
+			if (check != INT16_MAX)
+				break; //found it
+		}
+	}
+#else
 	for (i = numwadfiles - 1; i >= 0; i--)
 	{
 		check = W_CheckNumForNamePwad(name,(UINT16)i,0);
 		if (check != INT16_MAX)
 			break; //found it
 	}
+#endif
 
 	if (check == INT16_MAX) return LUMPERROR;
 	else
@@ -1967,7 +2102,17 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
 	// like placing graphics inside a namespace it doesn't make sense for them to be in, like Sounds/ or SOC/
 	// So for now, this checks for lumps OUTSIDE of the flats namespace.
 	// When this situation changes, change the loops below to check for lumps INSIDE the namespaces to look in.
-	// TODO: cache namespace lump IDs
+#ifdef PS2_PROFILE
+	// PS2-LOAD-2: the range of the flats of the file is computed once (the folder helpers allocate a key string and walk a tree on every call), and a name
+	// search walks the hash chain of the name instead of every lump below start and above end
+	if (wadfiles[wad]->flatsknown)
+	{
+		start = wadfiles[wad]->flatsstart;
+		end = wadfiles[wad]->flatsend;
+	}
+	else
+#endif
+	{
 	if (W_FileHasFolders(wadfiles[wad]))
 	{
 		start = W_CheckNumForFolderStartPK3("Flats/", wad, 0);
@@ -1987,11 +2132,39 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
 		if (end != INT16_MAX)
 			end++;
 	}
-
-	lump_p = wadfiles[wad]->lumpinfo;
+#ifdef PS2_PROFILE
+	wadfiles[wad]->flatsstart = start;
+	wadfiles[wad]->flatsend = end;
+	wadfiles[wad]->flatsknown = true;
+#endif
+	}
 
 	if (start == INT16_MAX)
 		start = wadfiles[wad]->numlumps;
+
+#ifdef PS2_PROFILE
+	if (!longname)
+	{
+		wadfile_t *wf = wadfiles[wad];
+		UINT16 e;
+
+		if (!wf->numlumps)
+			return INT16_MAX;
+		if (!wf->namebucket)
+			W_BuildNameIndex(wf);
+		for (e = wf->namebucket[(hash ^ (hash >> 15)) & wf->namemask]; e; e = wf->namenext[e - 1])
+		{
+			i = (UINT16)(e - 1);
+			lump_p = wf->lumpinfo + i;
+			// the linear scan below: [0, start) and, when the range is not empty, [end, numlumps)
+			if (lump_p->hash == hash && !strncmp(lump_p->name, uname, sizeof(uname) - 1)
+				&& (i < start || (end != INT16_MAX && start < end && i >= end)))
+				return i;
+		}
+		return INT16_MAX;
+	}
+#endif
+	lump_p = wadfiles[wad]->lumpinfo;
 
 	for (i = 0; i < start; i++, lump_p++)
 	{
@@ -2287,6 +2460,10 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 
 	r = W_ReadLumpHeaderPwad_(wad, lump, dest, size, offset);
 	LP_END(W_READLUMP, lp0);
+#ifdef PS2_PROFILE
+	if (ps2lp_on && M_CheckParm("-lpreads"))
+		I_OutputMsg("RD %u %u %u %u %s\n", (unsigned)wad, (unsigned)lump, (unsigned)size, (unsigned)offset, wadfiles[wad]->lumpinfo[lump].fullname);
+#endif
 	return r;
 }
 
@@ -2305,7 +2482,7 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 		return 0;
 	if (!size || size > l->size - offset)
 		size = l->size - offset;
-	bytesread = WPack_ReadLump(wadfiles[wad]->handle, l, dest, size, offset);
+	bytesread = WPack_ReadLumpN((wpack_t *)wadfiles[wad]->pack, wadfiles[wad]->handle, lump, l, dest, size, offset);
 	if (bytesread != size)
 		I_Error("wad %d, lump %d: cannot read pack data", wad, lump);
 	return bytesread;
@@ -2371,7 +2548,7 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 #ifdef PS2_PROFILE
 	if (wadfiles[wad]->pool) // cooked pack: all reads use the aligned bounce path, including raw lumps
 	{
-		bytesread = WPack_ReadLump(handle, l, dest, size, offset);
+		bytesread = WPack_ReadLumpN((wpack_t *)wadfiles[wad]->pack, handle, lump, l, dest, size, offset);
 		if (bytesread != size)
 			I_Error("wad %d, lump %d: cannot read pack data", wad, lump);
 		return bytesread;

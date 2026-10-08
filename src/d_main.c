@@ -45,6 +45,9 @@
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler (-loadprof)
+#ifdef PS2_PROFILE
+#include "w_pack.h" // PS2-LOAD-10
+#endif
 #endif
 #include "am_map.h"
 #include "console.h"
@@ -1656,12 +1659,14 @@ void D_SRB2Main(void)
 #endif //ifndef DEVELOP
 
 	cht_Init();
+	LP_LAP(B_GFX0);
 
 	//---------------------------------------------------- READY SCREEN
 	// we need to check for dedicated before initialization of some subsystems
 
 	CONS_Printf("I_StartupGraphics()...\n");
 	I_StartupGraphics();
+	LP_LAP(B_GFX1);
 
 #ifdef HWRENDER
 	// Lactozilla: Add every hardware mode CVAR and CCMD.
@@ -1675,6 +1680,7 @@ void D_SRB2Main(void)
 	SCR_Startup();
 
 	PaletteRemap_Init();
+	LP_LAP(B_GFX2);
 
 	HU_Init();
 
@@ -1901,6 +1907,9 @@ void D_SRB2Main(void)
 
 		G_SetGamestate(GS_NULL);
 		wipegamestate = GS_NULL;
+#ifdef PS2_PROFILE
+		WPack_DropHeads();
+#endif
 		LP_LAP(B_START);
 		return;
 	}
@@ -1994,6 +2003,9 @@ void D_SRB2Main(void)
 		F_StartIntro(); // Tails 03-03-2002
 
 	CON_ToggleOff();
+#ifdef PS2_PROFILE
+	WPack_DropHeads(); // PS2-LOAD-10: the start-up reads are done: the head tables of the packs give their memory back
+#endif
 	LP_LAP(B_START);
 
 	if (dedicated && server)

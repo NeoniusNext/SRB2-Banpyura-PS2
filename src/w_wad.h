@@ -161,6 +161,13 @@ typedef struct wadfile_s
 #ifdef PS2_PROFILE
 	void *pool;   // cooked pack: one block holding all lump names (lumpinfo strings are not separate allocations), else NULL
 	void *iobuf;  // cooked pack: stdio buffer of handle, free() after fclose
+	void *pack;   // cooked pack of version 2: its context (w_pack.c wpack_t: head table), else NULL
+	// PS2-LOAD-2: name index of the lumps (built at the first lookup, w_wad.c): bucket heads and chains hold lump number + 1 (0 = end), ascending
+	UINT16 *namebucket;
+	UINT16 *namenext;
+	UINT16 namemask;  // bucket count - 1 (a power of two)
+	boolean flatsknown; // the "Flats/" or F_START..F_END range of the patch name search (flatsstart/flatsend) has been computed
+	UINT16 flatsstart, flatsend;
 #endif
 } wadfile_t;
 

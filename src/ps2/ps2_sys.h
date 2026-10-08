@@ -5,6 +5,7 @@
 #include "../doomtype.h"
 
 // i_joy.c
+void PS2Joy_Prewarm(void);     // PS2-LOAD-3: opens libpad at once (main), so that the controller detection overlaps the engine start-up
 void PS2Joy_Poll(void);        // both pads: read libpad, post engine events (called from I_OsPolling)
 void PS2Joy_Shutdown(void);    // neutral events for everything held, pads released
 void PS2Joy_WaitStart(void);   // block until Start is pressed (or the power button): fatal error screens

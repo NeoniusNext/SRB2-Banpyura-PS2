@@ -137,7 +137,7 @@ static boolean PK_Open(void)
 		fclose(f);
 		return false;
 	}
-	if (!WPack_Detect(f) || !(lumps = WPack_GetLumps(f, &n, &pool, &nonmusic)))
+	if (!WPack_Detect(f) || !(lumps = WPack_GetLumps(f, "MODELS.PAK", &n, &pool, &nonmusic, NULL)))
 	{
 		fclose(f);
 		free(iobuf);

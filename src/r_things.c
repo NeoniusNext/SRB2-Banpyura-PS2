@@ -532,11 +532,70 @@ static void CheckFrame(const char *sprname)
 //
 // Returns true if the sprite was succesfully added
 //
+#ifdef PS2_PROFILE
+// PS2-LOAD-4: R_AddSingleSpriteDef compared the 4 letter name of the sprite with the name of EVERY lump of the sprite range (strlen + memcmp, 391 sprites x
+// 5 400 lumps per file): 3% of the start-up. The index lists, for each first-four-letters key, the lumps of the range in ascending order (the order of the
+// scan), so the loop below visits exactly the lumps the scan would have accepted, in the same order. It lives only while AddShortSpriteDefs runs one range.
+typedef struct
+{
+	UINT16 wad, start, end;
+	UINT16 mask;
+	UINT16 *bucket; // lump - start + 1 of the first lump of the key, 0 = none
+	UINT16 *next;   // per lump of the range
+} sprindex_t;
+static sprindex_t sprindex;
+
+static void R_FreeSpriteIndex(void)
+{
+	Z_Free(sprindex.bucket);
+	Z_Free(sprindex.next);
+	memset(&sprindex, 0, sizeof sprindex);
+}
+
+static UINT32 SprKey4(const char *name)
+{
+	UINT32 k;
+
+	memcpy(&k, name, 4);
+	return (k ^ (k >> 13) ^ (k >> 22)) * 2654435761u;
+}
+
+static const sprindex_t *R_GetSpriteIndex(UINT16 wadnum, UINT16 startlump, UINT16 endlump)
+{
+	UINT32 n = endlump - startlump, nb = 16, i;
+	const lumpinfo_t *lumpinfo = wadfiles[wadnum]->lumpinfo;
+
+	if (sprindex.bucket && sprindex.wad == wadnum && sprindex.start == startlump && sprindex.end == endlump)
+		return &sprindex;
+	R_FreeSpriteIndex();
+	while (nb < n / 2 + 1)
+		nb <<= 1;
+	sprindex.bucket = Z_Calloc(nb * sizeof *sprindex.bucket, PU_STATIC, NULL);
+	sprindex.next = Z_Malloc(n * sizeof *sprindex.next, PU_STATIC, NULL);
+	sprindex.mask = (UINT16)(nb - 1);
+	for (i = n; i-- > 0;)
+	{
+		const UINT32 b = (SprKey4(lumpinfo[startlump + i].name) >> 16) & sprindex.mask;
+
+		sprindex.next[i] = sprindex.bucket[b];
+		sprindex.bucket[b] = (UINT16)(i + 1);
+	}
+	sprindex.wad = wadnum;
+	sprindex.start = startlump;
+	sprindex.end = endlump;
+	return &sprindex;
+}
+#endif
+
 boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16 wadnum, UINT16 startlump, UINT16 endlump, boolean longname)
 {
 	UINT16 l;
 	lumpinfo_t *lumpinfo;
 	UINT16 numadded = 0;
+#ifdef PS2_PROFILE
+	const sprindex_t *sidx = NULL;
+	UINT16 scand = 0; // the next candidate of the index: lump - start + 1
+#endif
 
 #ifdef PS2_DYNLIMITS
 	memset(sprtemp, 0xFF, sizeof (spriteframe_t) * LIMIT_MAXFRAMENUM);
@@ -563,8 +622,27 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 	if (endlump > wadfiles[wadnum]->numlumps)
 		endlump = wadfiles[wadnum]->numlumps;
 
+#ifdef PS2_PROFILE
+	if (!longname && endlump > startlump && endlump - startlump >= 256 && strlen(sprname) == 4)
+	{
+		sidx = R_GetSpriteIndex(wadnum, startlump, endlump);
+		scand = sidx->bucket[(SprKey4(sprname) >> 16) & sidx->mask];
+	}
+#endif
 	for (l = startlump; l < endlump; l++)
 	{
+#ifdef PS2_PROFILE
+		if (sidx)
+		{
+			// next lump of the range with this key (the key is a hash: the exact test below still decides)
+			while (scand && memcmp(lumpinfo[startlump + scand - 1].name, sprname, 4))
+				scand = sidx->next[scand - 1];
+			if (!scand)
+				break;
+			l = (UINT16)(startlump + scand - 1);
+			scand = sidx->next[scand - 1];
+		}
+#endif
 		if (longname && W_IsLumpFolder(wadnum, l))
 		{
 			CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: all frame lumps for a sprite should be contained inside a single folder\n");
@@ -736,6 +814,9 @@ static void AddShortSpriteDefs(UINT16 wadnum, size_t *ptr_spritesadded, size_t *
 #endif
 		}
 	}
+#ifdef PS2_PROFILE
+	R_FreeSpriteIndex();
+#endif
 
 	*ptr_framesadded += end - start;
 }

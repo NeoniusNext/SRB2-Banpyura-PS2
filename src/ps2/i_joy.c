@@ -60,9 +60,23 @@ static boolean PortPresent(INT32 p)
 	return st == PAD_STATE_STABLE || st == PAD_STATE_EXECCMD || st == PAD_STATE_FINDCTP1;
 }
 
-static boolean PadLib(void)
+static UINT32 pad_t0;     // PS2-LOAD-3: COP0 Count when the ports were opened
+static boolean padsettled; // the detection wait and the analog-mode negotiation of PadLib() have run
+
+static inline UINT32 PadCount(void)
 {
-	INT32 p, ms;
+	UINT32 v;
+
+	__asm__ volatile("mfc0 %0,$9" : "=r"(v));
+	return v;
+}
+
+// PS2-LOAD-3: libpad is opened right at the start of main() (PS2Joy_Prewarm), the detection of the controllers (up to 1.3 s with no pad plugged in, a few
+// hundred ms with one) then runs while the engine initialises; PadLib() waits only for what is left of the same limits (1000 ms for port 1, 1300 ms in all for
+// port 2, counted from the moment the ports were opened). The first PadLib() call used to open the ports and wait the whole time with nothing else going on.
+static boolean PadOpen(void)
+{
+	INT32 p;
 
 	if (padlib)
 		return padlib > 0;
@@ -84,9 +98,31 @@ static boolean PadLib(void)
 			return false;
 		}
 	padlib = 1;
+	pad_t0 = PadCount();
+	return true;
+}
+
+void PS2Joy_Prewarm(void)
+{
+	if (!M_CheckParm("-nopadprewarm"))
+		PadOpen();
+}
+
+static boolean PadLib(void)
+{
+	INT32 p, ms;
+
+	if (!PadOpen())
+		return false;
+	if (padsettled)
+		return true;
+	padsettled = true;
 
 	// detection takes a few hundred milliseconds; port 1 is probed alongside, port 2 gets a short grace
-	for (ms = 0; ms < 1000 && padGetState(0, 0) != PAD_STATE_STABLE; ms += 10)
+	ms = (INT32)((UINT32)(PadCount() - pad_t0) / 294912u) / 10 * 10; // time already spent since padPortOpen
+	if (ms > 1300)
+		ms = 1300;
+	for (; ms < 1000 && padGetState(0, 0) != PAD_STATE_STABLE; ms += 10)
 		DelayThread(10000);
 	for (; ms < 1300 && padGetState(1, 0) != PAD_STATE_STABLE; ms += 10)
 		DelayThread(10000);
@@ -494,7 +530,7 @@ static void InitSlot(INT32 j)
 	if (M_CheckParm("-nojoy"))
 		return;
 
-	if (!PadLib())
+	if (!PadOpen()) // PS2-LOAD-3: the ports only have to be open; the controller detection goes on in the background (PadLib() is for who needs to know what is plugged in)
 	{
 		cv->value = 0;
 		return;

@@ -12,6 +12,7 @@
 
 #include "ps2_boot.h"
 #include "ps2_loadprof.h"
+#include "ps2_sys.h"
 
 // -logfile NAME: also write the console log to NAME in the data directory (the EE stdout goes to the
 // emulator log anyway).
@@ -42,6 +43,7 @@ int main(int argc, char **argv)
 	myargc = argc;
 	myargv = argv;
 	PS2LP_Init(lp_t0);
+	PS2Joy_Prewarm(); // PS2-LOAD-3
 	LP_LAP(B_BOOTINIT);
 	PS2Ref_Init();
 

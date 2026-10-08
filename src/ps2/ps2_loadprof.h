@@ -20,6 +20,10 @@
 	X(B_EARLY, "boot: locale, settings, paths -> Z_Init") \
 	X(B_ZINIT, "boot: Z_Init, COM_Init, autoload scan, tables") \
 	X(B_WADMAIN, "boot: W_InitMultipleFiles (4 main packs + their SOC)") \
+	X(B_GFX0, "boot: cht_Init .. before I_StartupGraphics") \
+	X(B_GFX1, "boot: I_StartupGraphics") \
+	X(B_GFX2, "boot: SCR_Startup, palette remap") \
+	X(B_GFX3, "boot: HU_Init, CON_Init, command registration") \
 	X(B_GFX, "boot: I_StartupGraphics .. console init") \
 	X(B_WADEXTRA, "boot: extra PWADs (-file / autoload)") \
 	X(B_HULOAD, "boot: HU_LoadGraphics") \

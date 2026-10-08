@@ -22,6 +22,11 @@ void *Z_MallocAlign(size_t size, INT32 tag, void *user, INT32 alignbits)
 		I_Error("Host test: allocation failed");
 	return p;
 }
+void *Z_CallocAlign(size_t size, INT32 tag, void *user, INT32 alignbits)
+{
+	(void)tag; (void)user; (void)alignbits;
+	return calloc(1, size);
+}
 void Z_Free(void *p) { free(p); }
 void CONS_Alert(alerttype_t level, const char *fmt, ...)
 {
@@ -56,6 +61,10 @@ static UINT32 rnd(void)
 	return rngstate >> 8;
 }
 
+static wpack_t *pk; /* v2: head table */
+static UINT32 curlump; /* index of the lump being read, for the head table */
+static const lumpinfo_t *alllumps;
+
 /* same contract as W_ReadLumpHeaderPwad after its clamping */
 static size_t read_lump(FILE *f, const lumpinfo_t *l, void *dest, size_t size, size_t offset)
 {
@@ -63,7 +72,12 @@ static size_t read_lump(FILE *f, const lumpinfo_t *l, void *dest, size_t size, s
 		return 0;
 	if (!size || size > l->size - offset)
 		size = l->size - offset;
-	return WPack_ReadLump(f, l, dest, size, offset);
+	return WPack_ReadLumpN(pk, f, (UINT32)(l - alllumps), l, dest, size, offset);
+}
+
+static void verify_report(UINT32 lump, const char *what)
+{
+	fprintf(stderr, "verify: lump %u: %s\n", (unsigned)lump, what);
 }
 
 static boolean guarded(const UINT8 *buf, size_t off, size_t len, size_t capacity)
@@ -88,6 +102,7 @@ int main(int argc, char **argv)
 	unsigned long partial = 0, bad = 0, lz4lumps = 0;
 	UINT32 k, j;
 	boolean rejectheader, rejectread, rejectindex;
+	int nohead = 0;
 
 	for (k = 0; k < 256; k++)
 	{
@@ -97,6 +112,8 @@ int main(int argc, char **argv)
 		crctab[k] = c;
 	}
 
+	if (argc == 4 && !strcmp(argv[3], "nohead")) /* the same checks after WPack_DropHeads: every read takes the file path */
+		argc = 3, nohead = 1;
 	if (argc != 3)
 		return 3;
 	rejectheader = strcmp(argv[1], "--reject-header") == 0;
@@ -109,7 +126,8 @@ int main(int argc, char **argv)
 	iobuf = WPack_SetupHandle(f); // setvbuf must precede detection or any other stream I/O
 	if (!WPack_Detect(f))
 		return 4;
-	li = WPack_GetLumps(f, &n, &pool, &nonmusic);
+	li = WPack_GetLumps(f, "host test pack", &n, &pool, &nonmusic, &pk);
+	alllumps = li;
 	if (rejectheader || rejectread)
 	{
 		boolean rejected = rejectheader && li == NULL && n == 0 && pool == NULL;
@@ -144,6 +162,10 @@ int main(int argc, char **argv)
 	}
 	if (!li)
 		return 5;
+	if (pk)
+		WPack_Register(pk);
+	if (nohead)
+		WPack_DropHeads();
 	out = fopen(argv[2], "wb");
 	if (!out)
 		return 3;
@@ -200,8 +222,16 @@ int main(int argc, char **argv)
 		free(part);
 	}
 	fclose(out);
-	fprintf(stderr, "%u lumps (%lu LZ4), %lu partial reads, %lu failures\n", (unsigned)n, lz4lumps, partial, bad);
+	if (pk)
+	{
+		UINT32 vb = WPack_Verify(pk, f, li, n, verify_report);
+
+		fprintf(stderr, "verify (CRC32 table of the pack): %u damaged lumps\n", (unsigned)vb);
+		bad += vb;
+	}
+	fprintf(stderr, "%u lumps (%lu LZ4), %lu partial reads, %lu failures%s\n", (unsigned)n, lz4lumps, partial, bad, pk ? (nohead ? " [v2, no head table]" : " [v2]") : " [v1]");
 	WPack_Shutdown();
+	WPack_Close(pk);
 	Z_Free(li);
 	Z_Free(pool);
 	fclose(f);
