@@ -20,6 +20,7 @@
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
 #include "../m_argv.h" // -hwpolyhash
+#include "../ps2/hw/ps2_hw_fx2.h" // FX2_PTRORDER, ps2hwd_fx2 (OPT11 round 3)
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 #else
 #include "../ps2/hw/ps2_hw_prof.h" // no-op profiling macros for the PC build
@@ -110,6 +111,18 @@ static UINT32 HWR_PS2_TextureId(const GLMipmap_t *t) // OPT11: the part of the o
 		return (UINT32)t->regen_id & 0x1FFFu;
 	if (t->regen_kind == 2)
 		return 0x2000u | ((UINT32)t->regen_id & 0x1FFFu);
+	// PS2-HW-250 (OPT11 round 3, FX3): the order of the patches (sprites, HUD) is the order of their first use in a batch, not a hash of their address: polygons of equal depth
+	// (z ties of the sprites, the shadows) were drawn in an order that moved with every change of the heap layout (a different build, any allocation): two ELFs made
+	// pictures that differed by 0.5 % of the pixels without any difference in the drawing. -hwfx 4096 (FX2_PTRORDER): the address hash as before.
+	if (!(ps2hwd_fx2 & FX2_PTRORDER))
+	{
+		static UINT32 hwr_ord_serial;
+		GLMipmap_t *w = (GLMipmap_t *)t;
+
+		if (!w->ps2_ord)
+			w->ps2_ord = ++hwr_ord_serial;
+		return w->ps2_ord & 0x3FFFu;
+	}
 	return (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18; // patches: any fixed order
 }
 
@@ -431,7 +444,7 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			if (current_texture)
 			{
 #ifdef PS2 // PS2-HW-22: the texture's identity, not its GS handle: nothing is uploaded while polygons are collected, so every texture that is not resident has handle 0
-				DIGEST(hash, (UINT32)(uintptr_t)current_texture);
+				DIGEST(hash, (ps2hwd_fx2 & FX2_PTRORDER) ? (UINT32)(uintptr_t)current_texture : HWR_PS2_TextureId(current_texture)); // PS2-HW-250: the texture's identity, not its address
 #else
 				DIGEST(hash, current_texture->downloaded);
 #endif
@@ -491,7 +504,7 @@ UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIEL
 #define DIGEST(h, x) h ^= (x); h *= 0x01000193
 	if (tex)
 	{
-		DIGEST(hash, (UINT32)(uintptr_t)tex);
+		DIGEST(hash, (ps2hwd_fx2 & FX2_PTRORDER) ? (UINT32)(uintptr_t)tex : HWR_PS2_TextureId(tex)); // PS2-HW-250 (KEEP IN STEP with HWR_ProcessPolygon)
 	}
 	DIGEST(hash, PolyFlags);
 	DIGEST(hash, pSurf->PolyColor.rgba);
@@ -683,7 +696,9 @@ void HWR_RenderBatches(void)
 	{
 		const PolygonArrayEntry *pa = &polygonArray[i];
 
-		if (pa->texture && !(pa->polyFlags & PF_NoTexture))
+		// PS2-HW-253 (OPT11 round 3, FX3): only the map textures and flats are planned (plan_wants: regen_kind 1 or 2); a sprite or a patch is asked for nothing: 120 cycles
+		// a polygon for the call alone (-hwfx 65536: the call for every polygon as before)
+		if (pa->texture && !(pa->polyFlags & PF_NoTexture) && ((pa->texture->regen_kind - 1u) < 2u || (ps2hwd_fx2 & FX3_NOLEAN)))
 			PS2HWD_PlanPolygon(pa->texture, &unsortedVertexArray[pa->vertsIndex], pa->numVerts);
 	}
 	PS2HWD_PlanEnd();
@@ -868,7 +883,16 @@ void HWR_RenderBatches(void)
 		if (changeState || stopFlag)
 		{
 			// execute draw call
+#ifdef PS2_HWDETAIL
+			{
+			const unsigned int sf_db0 = ps2hwp_now();
+#endif
             HWR_DrawBatch(&currentSurfaceInfo, finalIndexWritePos, currentPolyFlags);
+#ifdef PS2_HWDETAIL
+			if (hwr_sprite_batch)
+				ps2hwp_cyc[HWP_SF_DRAWB] += (unsigned int)(ps2hwp_now() - sf_db0);
+			}
+#endif
 			// update stats
 			ps_hw_numcalls.value.i++;
 			ps_hw_numverts.value.i += finalIndexWritePos;
@@ -899,6 +923,10 @@ void HWR_RenderBatches(void)
 					HWP_SPAN_BEGIN(tst);
 					HWD.pfnSetTexture(nextTexture);
 					HWP_SPAN_END2(tst, HWP_B_TEX, HWP_KB_TEX);
+#ifdef PS2_HWDETAIL
+					if (hwr_sprite_batch)
+						ps2hwp_cyc[HWP_SF_SETTEX] += (unsigned int)(ps2hwp_now() - tst);
+#endif
 				}
 				currentTexture = nextTexture;
 				changeTexture = false;

@@ -15,6 +15,12 @@
 #define FX2_NOINTERP 0x40 // PS2-HW-245: the interpolated state of a thing is made as before (the full R_InterpolateMobjState, again for the shadow and the aim rotation)
 #define FX2_NOWATER 0x100 // PS2-HW-246: the sky box view plans the water ripple as the main view does
 #define FX2_NOVIS 0x400 // PS2-HW-248: R_ThingVisible for every thing (as before)
+// OPT11 round 3 (FX3), measurement only: bit 13 (0x2000) draws no sprites and no shadows (HWR_DrawSprites does nothing): the difference of two runs is what the drawing costs
+#define FX3_NODRAW 0x2000
+#define FX3_NOLEAN 0x10000 // PS2-HW-253 (FX3): the lean paths of the sprite batch (planner call, collect, sort) are off, as before
+#define FX3_NOFILL 0x8000 // PS2-HW-252 (FX3): the texels of a patch are stored by the fast loop only when the width is a multiple of 4 (as before)
+#define FX3_NOPARA 0x4000 // PS2-HW-251 (FX3): PS2HWD_QuadHidden (four transforms) for the quads of the sprites and the shadows, as before
+#define FX2_PTRORDER 0x1000 // PS2-HW-250 (FX3): the order of the patches in the batches by the hash of their address, as before (A/B)
 
 extern int ps2hwd_fx2;
 
@@ -37,6 +43,8 @@ typedef struct
 } ps2cull_t;
 
 extern const ps2cull_t *PS2HWD_CullSetup(void);
+// PS2-HW-251 (FX3): PS2HWD_QuadHidden of the parallelogram P0, P0 + R, P0 + R + U, P0 + U (p0, r, u: x, height, y of FOutVector); 1 = it cannot put a pixel on the screen
+extern int PS2HWD_ParaHidden(const ps2cull_t *cs, const float *p0, const float *r, const float *u);
 
 #endif
 #endif

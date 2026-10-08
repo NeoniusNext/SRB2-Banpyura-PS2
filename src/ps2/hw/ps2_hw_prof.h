@@ -78,7 +78,7 @@ enum
 	// HWR_RenderPlane by parts (HWPROF37): set-up and slope, buffer and flat size, vertex loop, slope light, lighting, polygon (HWR_ProcessPolygon)
 	HWP_PL_A, HWP_PL_B, HWP_PL_C, HWP_PL_D, HWP_PL_E, HWP_PL_F,
 	// OPT11 round 2 (FX2, --hwdetail): the flush of the sprite batch by parts (HWPROF41): collect (HWR_ProcessPolygon of a batched sprite), sort, plan, draw, the rest
-	HWP_SF_COLLECT, HWP_SF_SORT, HWP_SF_PLAN, HWP_SF_DRAW, HWP_SF_ALL,
+	HWP_SF_COLLECT, HWP_SF_SORT, HWP_SF_PLAN, HWP_SF_DRAW, HWP_SF_ALL, HWP_SF_SETTEX, HWP_SF_DRAWB, HWP_SF_BEGIN, HWP_SF_VUFANS,
 	HWP_NUM
 };
 
@@ -90,7 +90,7 @@ enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH,
 	HWC_SR_POLY, HWC_SR_FFLOORS, HWC_SR_SLOPE, HWC_SR_HEIGHTSEC, HWC_SR_LIGHTS, HWC_SR_MID, HWC_SR_BACK,
 	HWC_AL_CALLS, HWC_AL_BACK, HWC_AL_CLIP, HWC_AL_EMPTY, HWC_AL_BOX, HWC_AL_BOXREJ,
 	// OPT11 round 2 (FX2): the sprites of a frame (HWPROF40, --hwdetail): things of the sectors, ProjectSprite calls, behind the view, quad hidden, vissprites, shadows, shadows hidden
-	HWC_FX_THINGS, HWC_FX_PROJ, HWC_FX_BEHIND, HWC_FX_QHID, HWC_FX_VIS, HWC_FX_SHADOW, HWC_FX_SHQHID, HWC_FX_PRE, HWC_FX_SPRHID, HWC_FX_SPRSH, HWC_FX_ROLL, HWC_FX_NOEXT, HWC_NUM };
+	HWC_FX_THINGS, HWC_FX_PROJ, HWC_FX_BEHIND, HWC_FX_QHID, HWC_FX_VIS, HWC_FX_SHADOW, HWC_FX_SHQHID, HWC_FX_PRE, HWC_FX_SPRHID, HWC_FX_SPRSH, HWC_FX_ROLL, HWC_FX_NOEXT, HWC_SF_CALLS, HWC_SF_BEGIN, HWC_SF_RET, HWC_SF_SAME, HWC_SF_POLYS, HWC_NUM };
 extern unsigned int ps2hwp_cnt[HWC_NUM];
 extern int ps2hwp_skyview; // 1 while HWR_RenderSkyboxView runs (the counters of the driver are split by view)
 #define HWC_ADD(i) (ps2hwp_cnt[i]++)

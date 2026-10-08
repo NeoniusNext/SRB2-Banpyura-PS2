@@ -3221,6 +3221,43 @@ static inline boolean HWR_FX_SphereHidden(const ps2cull_t *cs, float X, float Y,
 	cy = cs->r[1][0] * X + cs->r[1][1] * Y + cs->r[1][2] * Z + cs->r[1][3];
 	return (cy - cw) - cs->nym * R > 0.0f || (cy + cw) + cs->nyp * R < 0.0f;
 }
+// PS2-HW-251 (FX3): PS2HWD_QuadHidden of a quad whose corners 1 and 3 are the neighbours of the corner 0 and the corner 2 is the fourth of a parallelogram (the drop shadow:
+// the square on the floor or on a slope, the shape of the sprite of cv_shadow 2): from the rows of the transform, without the four transforms. -hwfx 16384: as before.
+static boolean HWR_FX_QuadHidden(const FOutVector *v)
+{
+	if (!(ps2hwd_fx2 & FX3_NOPARA))
+	{
+		const ps2cull_t *cs = PS2HWD_CullSetup();
+
+		if (cs->valid)
+		{
+			const float p0[3] = {v[0].x, v[0].y, v[0].z};
+			const float r[3] = {v[1].x - v[0].x, v[1].y - v[0].y, v[1].z - v[0].z};
+			const float u[3] = {v[3].x - v[0].x, v[3].y - v[0].y, v[3].z - v[0].z};
+			const boolean h = PS2HWD_ParaHidden(cs, p0, r, u) != 0;
+
+			if (ps2hwd_fx2 & FX2_PRECHECK)
+			{
+				static unsigned chk, bad;
+				const boolean o = PS2HWD_QuadHidden(v) != 0;
+
+				chk++;
+				if (o != h)
+				{
+					bad++;
+					if (bad <= 20)
+						CONS_Printf("HWC shadow para MISMATCH %u of %u: new %d old %d\n", bad, chk, (int)h, (int)o);
+				}
+				else if (!(chk & 1023))
+				{
+					CONS_Printf("HWC shadow para check: %u quads, %u differ\n", chk, bad);
+				}
+			}
+			return h;
+		}
+	}
+	return PS2HWD_QuadHidden(v) != 0;
+}
 #endif
 
 // --------------------------------------------------------------------------
@@ -3618,7 +3655,7 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 			cs = NULL;
 		if (cs && (ps2hwd_fx2 & FX2_PRECHECK) && !(ps2hwd_fx2 & FX2_NOSHADOW) && !groundslope && cv_shadow.value != 2)
 			sph = HWR_FX_SphereHidden(cs, fx, shadowVerts[0].y, fy, offset * 1.4143f + shadowlift + 0.5f); // check mode: the exact test below must agree
-		if (PS2HWD_QuadHidden(shadowVerts))
+		if (HWR_FX_QuadHidden(shadowVerts))
 		{
 			HWD_ADD(HWC_FX_SHQHID);
 			return;
@@ -5197,6 +5234,9 @@ static void HWR_DrawSprites(void)
 #ifdef PS2_PROFILE
 		boolean sprwas = false;
 
+		if (ps2hwd_fx2 & FX3_NODRAW) // (measurement only)
+			continue;
+
 		if (sprbatch)
 		{
 			if (!spr->bbox && !spr->precip && spr->dispoffset)
@@ -5542,7 +5582,7 @@ static boolean HWR_PS2_NoCull(void) // -hwnocull: every sprite is made (A/B of P
 
 // the quad HWR_DrawSprite would hand to HWR_ProcessPolygon for a sprite (x1..x2 / z1..z2 along the view, gz..gzt in height, the display offset, and for a view
 // that looks up or down the turn around the foot of HWR_RotateSpritePolyToAim: basey is the height of the foot, the same formulas)
-static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
+static boolean HWR_PS2_SpriteHiddenOld(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
 {
 	FOutVector wv[4];
 
@@ -5579,6 +5619,72 @@ static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, floa
 		wv[1].z += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
 	}
 	return PS2HWD_QuadHidden(wv) != 0;
+}
+
+// PS2-HW-251 (OPT11 round 3, FX3): the same quad as a parallelogram (the corners are P0, P0 + R, P0 + R + U, P0 + U: the display offset moves all of them, the turn around the foot
+// of HWR_RotateSpritePolyToAim adds (height - basey) * (cos, sin, ...) to the upper and lower pair), tested from the rows of the transform (PS2HWD_ParaHidden).
+// -hwfx 16384 = the four transforms of PS2HWD_QuadHidden; -hwfx 2 (check mode) asks both and reports a difference (HWC para MISMATCH).
+static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
+{
+	const ps2cull_t *cs;
+
+	if (ps2hwd_fx2 & FX3_NOPARA)
+		return HWR_PS2_SpriteHiddenOld(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim);
+	cs = PS2HWD_CullSetup();
+	if (!cs->valid)
+		return HWR_PS2_SpriteHiddenOld(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim);
+	{
+		float p0[3], r[3], u[3], co = 0.0f, si = 0.0f;
+		boolean h;
+
+		if (dispoffset)
+		{
+			co = -gl_viewcos * (0.05f * dispoffset);
+			si = -gl_viewsin * (0.05f * dispoffset);
+		}
+		if (aim)
+		{
+			const float lo = gz - basey, hi = gzt - basey;
+
+			p0[0] = x1 + co + (lo * gl_viewludcos) * gl_viewcos;
+			p0[1] = lo * gl_viewludsin + basey;
+			p0[2] = z1 + si + (lo * gl_viewludcos) * gl_viewsin;
+			u[0] = ((hi * gl_viewludcos) * gl_viewcos) - ((lo * gl_viewludcos) * gl_viewcos);
+			u[1] = hi * gl_viewludsin - lo * gl_viewludsin;
+			u[2] = ((hi * gl_viewludcos) * gl_viewsin) - ((lo * gl_viewludcos) * gl_viewsin);
+		}
+		else
+		{
+			p0[0] = x1 + co;
+			p0[1] = gz;
+			p0[2] = z1 + si;
+			u[0] = 0.0f;
+			u[1] = gzt - gz;
+			u[2] = 0.0f;
+		}
+		r[0] = x2 - x1;
+		r[1] = 0.0f;
+		r[2] = z2 - z1;
+		h = PS2HWD_ParaHidden(cs, p0, r, u) != 0;
+		if (ps2hwd_fx2 & FX2_PRECHECK)
+		{
+			static unsigned chk, bad;
+			const boolean o = HWR_PS2_SpriteHiddenOld(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim);
+
+			chk++;
+			if (o != h)
+			{
+				bad++;
+				if (bad <= 20)
+					CONS_Printf("HWC para MISMATCH %u of %u: new %d old %d (x %.3f..%.3f z %.3f..%.3f gz %.3f gzt %.3f disp %d aim %d)\n", bad, chk, (int)h, (int)o, x1, x2, z1, z2, gz, gzt, (int)dispoffset, (int)aim);
+			}
+			else if (!(chk & 4095))
+			{
+				CONS_Printf("HWC para check: %u quads, %u differ\n", chk, bad);
+			}
+		}
+		return h;
+	}
 }
 #endif
 

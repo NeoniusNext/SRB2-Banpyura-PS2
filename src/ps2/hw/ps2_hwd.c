@@ -33,6 +33,9 @@
 #include "../../console.h"
 #include "../../hardware/hw_drv.h"
 #include "../../hardware/hw_main.h"
+#ifdef PS2_HWDETAIL
+extern boolean hwr_sprite_batch; // hw_batching.c
+#endif
 #include "../../m_argv.h" // -hwnosplit
 #include "../../r_main.h" // rendertimefrac (the shader time of the water, PS2-HW-125)
 #include "../../z_zone.h" // PS2-171: hwbig_alloc
@@ -56,6 +59,7 @@
 #include "ps2_hw_vu0.inc"
 #include "ps2_hw_light.inc"
 #include "ps2_hw_pal.inc" // PS2-HW-71: palette rendering (light tables as CLUT rows)
+#include "ps2_hw_fx2.h" // OPT11 round 3 (FX3): -hwfx bits (FX3_NOFILL in the texture upload)
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
@@ -1074,6 +1078,14 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		if ((how == 1 && !(vu_bretmask & (P.pal ? 1 : 2))) || (how == 2 && !(vu_bretmask & 4)))
 			how = 0;
 	}
+#ifdef PS2_HWDETAIL
+	if (hwr_sprite_batch) // (the flush of a sprite batch: how its draws are made, HWPROF41)
+	{
+		HWC_ADD(HWC_SF_CALLS);
+		HWC_ADD(how == 0 ? HWC_SF_BEGIN : how == 1 ? HWC_SF_RET : HWC_SF_SAME);
+		ps2hwp_cnt[HWC_SF_POLYS] += nfans;
+	}
+#endif
 	if (how)
 	{
 		if (how == 1)
@@ -1085,7 +1097,16 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	}
 	else
 	{
+#ifdef PS2_HWDETAIL
+		const unsigned int sf_b0 = ps2hwp_now();
+		const int sf_ok = begin_draw((u32)flags, (const FSurfaceInfo *)surf);
+
+		if (hwr_sprite_batch)
+			ps2hwp_cyc[HWP_SF_BEGIN] += (unsigned int)(ps2hwp_now() - sf_b0);
+		if (!sf_ok)
+#else
 		if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+#endif
 		{
 			drv_out();
 			return;
@@ -1106,7 +1127,17 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		{
 			const unsigned int i0 = i;
 
+#ifdef PS2_HWDETAIL
+			{
+				const unsigned int sf_v0 = ps2hwp_now();
+
+				i = vu_fans((const FOutVector *)base, desc, i, nfans);
+				if (hwr_sprite_batch)
+					ps2hwp_cyc[HWP_SF_VUFANS] += (unsigned int)(ps2hwp_now() - sf_v0);
+			}
+#else
 			i = vu_fans((const FOutVector *)base, desc, i, nfans);
+#endif
 			G.p_vu += i - i0;
 			if (i >= nfans)
 				break;
