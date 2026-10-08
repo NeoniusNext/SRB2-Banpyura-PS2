@@ -356,6 +356,7 @@ static struct
 	int shaders_on; // SetSpecialState(HWD_SET_SHADERS)
 	int model_light; // SetSpecialState(HWD_SET_MODEL_LIGHTING)
 	int leveltime;
+	float lt_frac; // rendertimefrac of the frame (1.0 without frame interpolation): the shader time is (leveltime - 1 + lt_frac) / TICRATE seconds (PS2-HW-125)
 
 	gsregs_t gsr;
 	u32 serial; // bumped by everything that writes GS state or CLUT data (A+D packets, uploads): a polygon plan set up earlier is then stale
@@ -366,6 +367,8 @@ static struct
 } H __attribute__((aligned(16)));
 
 int ps2hwd_dbg_flags;
+int ps2hwd_force_lt = -1;
+int ps2hwd_water_ab = 0;
 int ps2hwd_hash_on; // -hwhash (OPT10 HG): a 64 bit hash of every GIF packet buffer of a frame is printed (HWHASH lines): equal streams of two runs = equal pictures, bit for bit
 static u64 hash_frame;
 

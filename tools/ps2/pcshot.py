@@ -52,14 +52,17 @@ def main():
     ap.add_argument('--exe', default='')
     ap.add_argument('--timeout', type=float, default=240)
     ap.add_argument('--size', default='320x200')
+    ap.add_argument('--tree', default='', help='a directory copied into the home of the engine (models.dat, models/*.md3 ...)')
     ap.add_argument('--nogrid', action='store_true', help='do not check that the picture was made with palette rendering (the default look); a run without it is repeated')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
     o = Path(a.out).resolve() / a.name
     shutil.rmtree(o, ignore_errors=True)
     (o / 'home/.srb2').mkdir(parents=True)
+    if a.tree:
+        shutil.copytree(a.tree, o / 'home/.srb2', dirs_exist_ok=True)
     cfg = ''.join(x.strip() + '\n' for x in a.cfg.split(';') if x.strip())
-    (o / 'home/.srb2/reference.cfg').write_text('fpscap "35"\nfullscreen "Off"\nshowfps "No"\nshowping "Off"\nrollingdemos "Off"\n' + cfg)
+    (o / 'home/.srb2/reference.cfg').write_text('fpscap "35"\nfullscreen "Off"\nshowfps "No"\nshowping "Off"\nrollingdemos "Off"\ngamma "0"\n' + cfg)  # gamma "0": the engine saves its config into <SRB2WADDIR>/reference.cfg and reads it back (a run with gamma 4 left gamma 4 for the next ones)
     w, h = a.size.split('x')
     exe = a.exe or find_exe()
     args = ['xvfb-run', '-a', exe, '-home', str(o / 'home'), '-win', '-width', w, '-height', h, '-software' if a.sw else '-opengl', '-skipintro',
@@ -69,8 +72,11 @@ def main():
         args += ['-timedemo', a.demo + '.lmp']
     if a.warp:
         args += ['-warp', a.warp]
-    if a.cmd:
-        args += ['-ps2ref-cmd', a.cmd]
+    # the engine reads <SRB2WADDIR>/reference.cfg and saves every CV_SAVE variable into it at exit: what an earlier run set (gamma 4, gr_models On) stays for the next
+    # runs of every user of the machine. OPT11-FX: every run starts from the defaults of the variables the tests change, a run that changes them puts them back
+    # (the engine saves them again), see docs/GATES/g1/opt11-FX.md.
+    resets = 'gamma~0;gr_models~Off;gr_modellighting~Off;con_hudlines~5;'
+    args += ['-ps2ref-cmd', resets + (a.cmd if a.cmd else 'con_hudlines~5')]
     if a.keys:
         args += ['-ps2ref-keys', a.keys]
     args += a.extra
