@@ -179,15 +179,29 @@ void I_StartupTimer(void)
 	elapsed_frames = 0.0;
 }
 
+#ifdef PS2_PROFILE
+extern unsigned long long ps2prof_sleep_cyc; // ps2_prof.c (OPT12 HWDRV, PS2-HW-440): the working cycles printed by HWPROF0 are the wall minus these sleeps and the waits of the driver
+static inline unsigned int sleep_cyc_now(void) { unsigned int v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
+#endif
+
 void I_Sleep(UINT32 ms)
 {
+#ifdef PS2_PROFILE
+	const unsigned int t0 = sleep_cyc_now();
+#endif
 	if (ms)
 		DelayThread((s32)(ms * 1000));
+#ifdef PS2_PROFILE
+	ps2prof_sleep_cyc += (unsigned int)(sleep_cyc_now() - t0);
+#endif
 }
 
 // Thread sleep for all but the last millisecond, spin for the rest.
 void I_SleepDuration(precise_t duration)
 {
+#ifdef PS2_PROFILE
+	const unsigned int t0 = sleep_cyc_now();
+#endif
 	const precise_t dest = I_GetPreciseTime() + duration;
 	const INT64 slack = (INT64)(PS2_PRECISION / 1000);
 	precise_t cur = I_GetPreciseTime();
@@ -207,6 +221,9 @@ void I_SleepDuration(precise_t duration)
 
 	while ((INT64)(dest - cur) > 0)
 		cur = I_GetPreciseTime();
+#ifdef PS2_PROFILE
+	ps2prof_sleep_cyc += (unsigned int)(sleep_cyc_now() - t0);
+#endif
 }
 
 // ---------------------------------------------------------------------------------------------

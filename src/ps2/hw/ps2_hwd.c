@@ -1687,7 +1687,9 @@ static void settex_now(GLMipmap_t *TexInfo)
 			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
 				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d UPGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
 			ov_flush_all();
+			drop_reason = 2;
 			tex_drop(img_of((int)(r - H.rec)), 0);
+			drop_reason = 0;
 			r = NULL;
 			TX.upgrades++;
 		}
@@ -1697,7 +1699,9 @@ static void settex_now(GLMipmap_t *TexInfo)
 			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
 				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d DOWNGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
 			ov_flush_all();
+			drop_reason = 3;
 			tex_drop(img_of((int)(r - H.rec)), 0);
+			drop_reason = 0;
 			r = NULL;
 			TX.downgrades++;
 		}
@@ -1716,7 +1720,9 @@ static void settex_now(GLMipmap_t *TexInfo)
 				if (nb > r->nblk)
 					H.upg_blocks += nb;
 				ov_flush_all();
+				drop_reason = 4;
 				tex_drop((int)(r - H.rec), 0);
+				drop_reason = 0;
 				H.st.tex_restamped++;
 				r = NULL;
 			}
@@ -1750,8 +1756,17 @@ static void settex_now(GLMipmap_t *TexInfo)
 			|| (want && TexInfo->regen_kind == 2) || (want > 1 && dc_find_finer(dc_key(TexInfo), TexInfo->width, TexInfo->height, want, &(u32){0}))))) // PS2-HW-38/39: a level of a flat needs no copy of the flat (tex_upload pins the engine's)
 	{
 		u32 c0 = cyc();
+		static unsigned regen_reports;
 
 		HWR_PS2_RegenerateMipmap(TexInfo);
+		if (cyc() - c0 > 2000000u && regen_reports++ < 40) // PS2-HW-441: a texture that takes the engine 7 ms and more to make again (patches read back from the pack): the stall the player sees
+			CONS_Printf("HWREGEN f=%u %s %ux%u kind=%d made again in %u cycles (zone free %u K) uploads before=%u dropped by=%u\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height,
+				(int)TexInfo->regen_kind, (unsigned)(cyc() - c0), (unsigned)(Z_ArenaFree() >> 10), (unsigned)TexInfo->ps2_nup, (unsigned)TexInfo->ps2_drop);
+		{
+			const u32 dc = cyc() - c0;
+
+			TexInfo->ps2_cost = (u8)(dc >> 18 > 255u ? 255u : dc >> 18);
+		}
 		TX.regen_cyc += cyc() - c0;
 		TX.regen_n++;
 		H.st.tex_regen++;
@@ -1784,6 +1799,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 	}
 	H.cur_tex = ri;
 	H.cur_missing = 0;
+	if (TexInfo->ps2_nup < 255)
+		TexInfo->ps2_nup++;
 	if (batch_phase == 2)
 		H.rec[ri].done = H.frame_no + 1;
 }

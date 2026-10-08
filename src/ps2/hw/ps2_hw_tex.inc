@@ -308,9 +308,14 @@ static void own_clear(u32 blk, u32 n);
 static void lod_account(texrec_t *r);
 static int batch_phase; // (defined below)
 
+static int drop_reason; // OPT12 HWDRV (PS2-HW-441): who drops the image (0 = the default: eviction when counted, 5 otherwise); set by the callers that drop for another reason
+
 static void tex_drop(int i, int count_eviction)
 {
 	texrec_t *r = &H.rec[i];
+
+	if (r->owner)
+		r->owner->ps2_drop = (u8)(drop_reason ? drop_reason : (count_eviction ? 1 : 5));
 
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_account(r);
