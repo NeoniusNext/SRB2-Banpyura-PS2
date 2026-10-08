@@ -11,6 +11,7 @@ static struct
 	u32 single; // hw_DrawPolygon calls (not batched: sprites, HUD, sky wall...)
 	u32 p_vu, p_fast, p_lit, p_cut, p_water; // polygons by the way emit_poly drew them
 	u32 begin_n, begin_cyc; // begin_draw calls and cycles
+	u32 vc_n, vc_pieces, vc_cyc, vc_ee; // PS2-HW-236: polygons cut for the program (vu_cut_blk), pieces written, cycles, polygons left to the EE
 	u32 bb_n, bb_cyc, bb_same, bb_diff[8]; // begin_draw of a batch (DrawBlocks): calls, cycles, plans the key of the last draw equalled (how = 2), first difference of the key (flags / colour / tint / fade / light table, ..)
 	u32 tri_n; // emit_tris calls
 	u32 vu_chunks;
@@ -67,6 +68,7 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		G.p_vu / frames, G.p_fast / frames, G.p_lit / frames, G.p_cut / frames, G.p_water / frames, G.begin_n / frames, G.begin_cyc / frames, G.tri_n / frames, G.vu_chunks / frames, G.plan_hit / frames, G.plan_miss / frames);
 	I_OutputMsg("HWPROF51 batches that needed a plan: %u of %u (%u cycles) | key differs in: flags=%u colour=%u tint=%u fade=%u ltable=%u texkind=%u rest(light, texture, view)=%u plan-invalid=%u\n", G.bb_n / frames, G.batches / frames, G.bb_cyc / frames,
 		G.bb_diff[0] / frames, G.bb_diff[1] / frames, G.bb_diff[2] / frames, G.bb_diff[3] / frames, G.bb_diff[4] / frames, G.bb_diff[5] / frames, G.bb_diff[6] / frames, G.bb_diff[7] / frames);
+	I_OutputMsg("HWPROF52 cut for the VU1 program (PS2-HW-236): polygons=%u pieces=%u cycles=%u | left to the EE: %u\n", G.vc_n / frames, G.vc_pieces / frames, G.vc_cyc / frames, G.vc_ee / frames);
 	I_OutputMsg("HWPROF9 cut_and_emit (repeats etc.) polys=%u cyc=%u\n", G.p_cutold / frames, G.c_cutold / frames);
 	I_OutputMsg("HWPROF23 driver total=%u (+ plan %u: the texture planner HWR_RenderBatches calls) | singles: imm=%u begin=%u emit=%u vu=%u same=%u retarget=%u | settex n=%u cyc=%u | DrawFans polys=%u batch retargets=%u state records=%u\n", G.drv_cyc / frames, (unsigned)(ps2hwp_cyc[HWP_B_PLAN] / frames), G.s_imm / frames, G.s_begin / frames, G.s_emit / frames,
 		G.s_vu / frames, G.s_same / frames, G.s_retarget / frames, G.s_set_n / frames, G.s_set_cyc / frames, G.c_fans / frames, G.b_retarget / frames, G.s_rec / frames);

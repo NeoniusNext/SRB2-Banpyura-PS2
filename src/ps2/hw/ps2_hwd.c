@@ -307,6 +307,9 @@ boolean PS2HWD_Init(void)
 		PS2HWD_Bench();
 	if (M_CheckParm("-hwplan") && M_IsNextParm())
 		plan_mode = atoi(M_GetNextParm()); // PS2-HW-229: 0 = VU0 transform and lean arithmetic of the planner, 1 = scalar as before, 2 = both, compared
+	vu_nocut = M_CheckParm("-hwnocut") != 0; // PS2-HW-236 off (-hwnocut 0 = on, for an A/B run with the same form of the command line): the polygons that need cutting at whole repeats (and the fans of more than 12 vertices) are drawn by the EE as before
+	if (vu_nocut && M_CheckParm("-hwnocut") && M_IsNextParm())
+		vu_nocut = atoi(M_GetNextParm()) != 0;
 	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
 	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
 		vu_bretmask = atoi(M_GetNextParm());

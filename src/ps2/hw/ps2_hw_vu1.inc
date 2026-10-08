@@ -871,7 +871,7 @@ static int vu_poly(const FOutVector *base, int n, float light)
 	u32 need;
 	qw_t *o, *v;
 
-	if (n < 3 || n > VU_MAXVERT)
+	if (n < 3 || n > VU_MAXVERT || P.cutx || P.cuty) // (PS2-HW-236: a polygon of a texture with a side that is not a power of two is cut: vu_poly_blk does that for the blocks of a batch)
 		return 0;
 	if (!VU.consts_ok || P.serial != H.serial)
 	{
@@ -961,6 +961,8 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 	qw_t *ring = NULL;
 	u32 wr = 0, cn = 0, np = 0, nv = 0, ready = 0;
 
+	if (P.cutx || P.cuty)
+		return i; // (PS2-HW-236: the blocks of a batch are cut by vu_poly_blk; the earlier collection leaves such a plan to the EE)
 	while (i < nfans)
 	{
 		const u32 n = desc[3 * i + 1];
@@ -1081,16 +1083,10 @@ static inline void vu_qcopy(qw_t *dst, const qw_t *src, u32 cnt)
 #endif
 }
 
-// one block through the general entry (the plan's constants, the chunk's begin and end): the same as vu_poly for a polygon of the engine's vertices. 1 = taken.
-static int vu_poly_blk(const qw_t *b)
+// The plan's constants (the state of pass 0 and the constants of the program again when the plan is new, or the general path wrote GS state in between). 0: the plan cannot be drawn
+// by the program (PS2-HW-236: the part vu_poly and vu_poly_blk share).
+static inline int vu_pready(void)
 {
-	const u32 n = b[0].w[0];
-	float sb = 0.0f, tb = 0.0f;
-	u32 need;
-	qw_t *o;
-
-	if (n < 3 || n > VU_MAXVERT)
-		return 0;
 	if (!VU.consts_ok || P.serial != H.serial)
 	{
 		if (!vu_plan_setup())
@@ -1101,7 +1097,12 @@ static int vu_poly_blk(const qw_t *b)
 			return 0;
 		}
 	}
-	need = 2 + 2 * n;
+	return 1;
+}
+
+// The chunk's begin and room for one more polygon of `need` quadwords (the plan is ready); the position to write at.
+static qw_t *vu_pbegin(u32 need)
+{
 	if (VU.open && (VU.chunk_n + need > VU_CHUNK_QW || H.wr + need + 3 > BUF_QW))
 		vu_chunk_end();
 	if (!VU.open)
@@ -1112,16 +1113,380 @@ static int vu_poly_blk(const qw_t *b)
 		pk_flush();
 		vu_chunk_begin();
 	}
+	return H.ring[H.cur] + H.wr;
+}
+
+static inline void vu_pcommit(u32 need, u32 n)
+{
+	H.st.polys++;
+	H.st.verts_in += n;
+	H.wr += need;
+	VU.chunk_n += need;
+	VU.npoly++;
+}
+
+// ---- PS2-HW-236: polygons that must be cut at whole repeats of the texture ----
+// Before, a texture whose side is not a power of two (the GS can repeat only a power of two) and a polygon that covers more than UV_EXTENT texels of a power of two texture were left to the EE:
+// cut_and_emit transformed and clipped the polygon, cut it along the repeats (clip_attr2 on every cut), and transformed, clipped and packed every piece again (1.4 K cycles for a wall of a
+// 128x48 texture that needs no cut at all, 25..79 K for a 256x256 floor of 120 x 87 repeats; 0.1 / 0.5 / 0.7 M cycles a frame in DEMO_001 / 003 / 004). Now the EE cuts in object space (no
+// transform; the attributes are affine) and the pieces go into the chunk as polygons of their own, with the whole repeats of the piece in sb / tb; the program transforms, clips and lights them.
+// The cuts are those of cut_and_emit (stage 0: s, stage 1: t, the repeat limit of the size of the texture level); a polygon with many pieces is first transformed and clipped to the guard band
+// like the EE path (vu0_xform / clip_poly): only the strips its visible part covers are cut. A polygon with more vertices than the program takes goes in as a fan. Anything that does not fit
+// (too many pieces, too many vertices) is left to the EE path with nothing of it written.
+typedef struct
+{
+	float x, y, z, s, t;
+} vc_v_t;
+
+#define VC_MAXV 32 // vertices of a polygon in the cutter (a cell of a polygon of 22 or fewer vertices has 26 or fewer)
+#define VC_MAXPIECES 128 // cells of one polygon
+
+static vc_v_t vc_poly[VC_MAXV], vc_s[VC_MAXV], vc_c[VC_MAXV], vc_r1[VC_MAXV], vc_r2[VC_MAXV], vc_t1[VC_MAXV], vc_t2[VC_MAXV];
+
+// the part of in[] with attribute < cut (lo) and >= cut (hi), the point on an edge from the end with the smaller value (both parts get the same vertex): clip_attr2 on object space vertices
+static void vc_split(const vc_v_t *in, int n, vc_v_t *lo, int *nlo, vc_v_t *hi, int *nhi, int on_t, float cut)
+{
+	int i, ml = 0, mh = 0;
+
+	for (i = 0; i < n; i++)
+	{
+		const vc_v_t *v0 = &in[i], *v1 = &in[i + 1 == n ? 0 : i + 1];
+		const float f0 = on_t ? v0->t : v0->s, f1 = on_t ? v1->t : v1->s;
+		const int l0 = f0 < cut, l1 = f1 < cut, h0 = f0 >= cut, h1 = f1 >= cut;
+
+		if (l0)
+			lo[ml++] = *v0;
+		if (h0)
+			hi[mh++] = *v0;
+		if (l0 != l1 || h0 != h1)
+		{
+			const vc_v_t *a = f0 < f1 ? v0 : v1, *b = f0 < f1 ? v1 : v0;
+			const float fa = f0 < f1 ? f0 : f1, fb = f0 < f1 ? f1 : f0, tt = (cut - fa) / (fb - fa);
+			vc_v_t o;
+
+			o.x = a->x + (b->x - a->x) * tt;
+			o.y = a->y + (b->y - a->y) * tt;
+			o.z = a->z + (b->z - a->z) * tt;
+			o.s = a->s + (b->s - a->s) * tt;
+			o.t = a->t + (b->t - a->t) * tt;
+			if (on_t)
+				o.t = cut;
+			else
+				o.s = cut;
+			if (l0 != l1)
+				lo[ml++] = o;
+			if (h0 != h1)
+				hi[mh++] = o;
+		}
+	}
+	*nlo = ml;
+	*nhi = mh;
+}
+
+// a polygon of the object space vertices v[0..n) into the chunk, as a fan of polygons of VU_MAXVERT vertices or fewer if it has more (the plan is ready)
+static void vc_put(const vc_v_t *v, int n, u32 lightbits, float sb, float tb)
+{
+	int start = 1;
+
+	while (start < n - 1)
+	{
+		const int m = n - start < VU_MAXVERT - 1 ? n - start : VU_MAXVERT - 1; // the vertex 0 and m more
+		const u32 need = 2 + 2 * ((u32)m + 1);
+		qw_t *o = vu_pbegin(need), *q = o + 2;
+		int k;
+
+		q[0].f[0] = v[0].x;
+		q[0].f[1] = v[0].y;
+		q[0].f[2] = v[0].z;
+		q[1].f[0] = v[0].s;
+		q[1].f[1] = v[0].t;
+		q += 2;
+		for (k = 0; k < m; k++, q += 2)
+		{
+			q[0].f[0] = v[start + k].x;
+			q[0].f[1] = v[start + k].y;
+			q[0].f[2] = v[start + k].z;
+			q[1].f[0] = v[start + k].s;
+			q[1].f[1] = v[start + k].t;
+		}
+		o[0].w[0] = (u32)m + 1;
+		o[0].w[1] = lightbits;
+		o[1].f[0] = sb;
+		o[1].f[1] = tb;
+		o[1].f[2] = P.tsx;
+		o[1].f[3] = P.tsy;
+		vu_pcommit(need, (u32)m + 1);
+		G.vc_pieces++;
+		start += m - 1;
+	}
+}
+
+// The strips of one axis. cut: the axis is cut (a texture side that is not a power of two: at every repeat; a power of two texture: when the polygon covers more than UV_EXTENT texels, every
+// `step` repeats); strip j covers [base + step * j, base + step * (j + 1)]; j0..j1 are the strips drawn.
+typedef struct
+{
+	int cut;
+	float base, step;
+	int j0, j1;
+} vc_axis_t;
+
+static void vc_axis(vc_axis_t *ax, float lo, float hi, int npot, int wrap, float texsize)
+{
+	ax->cut = 0;
+	ax->step = 1.0f;
+	ax->base = 0.0f;
+	ax->j0 = ax->j1 = 0;
+	if (!(npot || (wrap && (hi - lo) * texsize > UV_EXTENT)))
+		return;
+	ax->cut = 1;
+	if (!npot)
+	{
+		ax->step = floorf(UV_EXTENT / texsize);
+		if (ax->step < 1.0f)
+			ax->step = 1.0f;
+	}
+	ax->base = floorf(lo);
+	while (ax->base + ax->step * (float)(ax->j1 + 1) < hi && ax->j1 < 100000) // (the cuts are at base + step * (j + 1) while below hi, as cut_and_emit makes them)
+		ax->j1++;
+}
+
+// The polygon of the block cut and written (the plan is ready). Returns 1 when it is drawn (or nothing of it is seen), 0 when the EE path has to do it (nothing was written).
+static int vu_cut_blk_run(const qw_t *b);
+
+static int vu_cut_blk(const qw_t *b)
+{
+	const u32 t0 = cyc();
+	const int r = vu_cut_blk_run(b);
+
+	G.vc_n++;
+	G.vc_cyc += cyc() - t0;
+	if (!r)
+		G.vc_ee++;
+	return r;
+}
+
+static int vu_cut_blk_run(const qw_t *b)
+{
+	const int n = (int)b[0].w[0];
+	const u32 lightbits = b[0].w[1];
+	vc_axis_t ax_s, ax_t;
+	float smin, smax, tmin, tmax, sb_one, tb_one;
+	int i;
+
+	if (n < 3 || n > VC_MAXV - 10 || !P.r)
+		return 0;
+	for (i = 0; i < n; i++)
+	{
+		vc_poly[i].x = b[2 + 2 * i].f[0];
+		vc_poly[i].y = b[2 + 2 * i].f[1];
+		vc_poly[i].z = b[2 + 2 * i].f[2];
+		vc_poly[i].s = b[3 + 2 * i].f[0];
+		vc_poly[i].t = b[3 + 2 * i].f[1];
+	}
+	smin = smax = vc_poly[0].s;
+	tmin = tmax = vc_poly[0].t;
+	for (i = 1; i < n; i++)
+	{
+		smin = hw_minf(smin, vc_poly[i].s);
+		smax = hw_maxf(smax, vc_poly[i].s);
+		tmin = hw_minf(tmin, vc_poly[i].t);
+		tmax = hw_maxf(tmax, vc_poly[i].t);
+	}
+	vc_axis(&ax_s, smin, smax, P.cutx, P.wrapx, (float)P.r->w);
+	vc_axis(&ax_t, tmin, tmax, P.cuty, P.wrapy, (float)P.r->h);
+	if (((ax_s.cut ? ax_s.j1 + 1 : 1) * (ax_t.cut ? ax_t.j1 + 1 : 1)) > 4)
+	{
+		// many pieces: only the strips that the visible part of the polygon covers (the EE path clipped first and cut the visible part)
+		FOutVector tmp[VC_MAXV];
+		cv_t *cvv;
+		int cnt, and_ = 0x3F, or_ = 0;
+		const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
+		float vs0, vs1, vt0, vt1;
+
+		for (i = 0; i < n; i++)
+		{
+			int oc;
+
+			tmp[i].x = vc_poly[i].x;
+			tmp[i].y = vc_poly[i].y;
+			tmp[i].z = vc_poly[i].z;
+			tmp[i].s = vc_poly[i].s;
+			tmp[i].t = vc_poly[i].t;
+			xform_vertex(&tmp[i], NULL, &vbuf_a[i]);
+			oc = vbuf_a[i].w <= 0.0f ? 0x3F : outcode(&vbuf_a[i], gx, gy);
+			and_ &= oc;
+			or_ |= oc;
+		}
+		if (and_)
+			return 1; // wholly outside the view volume: nothing to draw (the EE path rejects it too)
+		cvv = vbuf_a;
+		cnt = n;
+		if (or_)
+		{
+			cnt = clip_poly(vbuf_a, vbuf_b, n, 2, or_, &cvv);
+			if (cnt < 3)
+				return 1;
+		}
+		vs0 = vs1 = cvv[0].a[0];
+		vt0 = vt1 = cvv[0].a[1];
+		for (i = 1; i < cnt; i++)
+		{
+			vs0 = hw_minf(vs0, cvv[i].a[0]);
+			vs1 = hw_maxf(vs1, cvv[i].a[0]);
+			vt0 = hw_minf(vt0, cvv[i].a[1]);
+			vt1 = hw_maxf(vt1, cvv[i].a[1]);
+		}
+		if (ax_s.cut)
+		{
+			const int last = ax_s.j1, j0 = (int)((vs0 - ax_s.base) / ax_s.step), j1 = (int)((vs1 - ax_s.base) / ax_s.step);
+
+			ax_s.j0 = j0 < 0 ? 0 : j0 > last ? last : j0;
+			ax_s.j1 = j1 < ax_s.j0 ? ax_s.j0 : j1 > last ? last : j1;
+		}
+		if (ax_t.cut)
+		{
+			const int last = ax_t.j1, j0 = (int)((vt0 - ax_t.base) / ax_t.step), j1 = (int)((vt1 - ax_t.base) / ax_t.step);
+
+			ax_t.j0 = j0 < 0 ? 0 : j0 > last ? last : j0;
+			ax_t.j1 = j1 < ax_t.j0 ? ax_t.j0 : j1 > last ? last : j1;
+		}
+	}
+	if (((ax_s.cut ? ax_s.j1 - ax_s.j0 + 1 : 1) * (ax_t.cut ? ax_t.j1 - ax_t.j0 + 1 : 1)) > VC_MAXPIECES)
+		return 0; // more cells than the cutter holds: the EE path
+	sb_one = (P.wrapx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // an axis that is not cut: the base of vu_poly (|s| > 4)
+	tb_one = (P.wrapy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
+	{
+		vc_v_t *const sbuf[2] = {vc_r1, vc_r2};
+		vc_v_t *const tbuf[2] = {vc_t1, vc_t2};
+		const vc_v_t *srem = vc_poly;
+		int nsrem = n, sw = 0, js;
+
+		if (ax_s.cut && ax_s.j0 > 0)
+		{
+			int nlo, nhi;
+
+			vc_split(srem, nsrem, vc_s, &nlo, sbuf[sw], &nhi, 0, ax_s.base + ax_s.step * (float)ax_s.j0);
+			srem = sbuf[sw];
+			nsrem = nhi;
+			sw ^= 1;
+		}
+		for (js = ax_s.cut ? ax_s.j0 : 0; nsrem >= 3; js++)
+		{
+			const int last_s = !ax_s.cut || js >= ax_s.j1;
+			const float sb = ax_s.cut ? ax_s.base + ax_s.step * (float)js : sb_one;
+			const vc_v_t *piece;
+			int npc, nnext = 0;
+
+			if (!last_s)
+			{
+				vc_split(srem, nsrem, vc_s, &npc, sbuf[sw], &nnext, 0, ax_s.base + ax_s.step * (float)(js + 1));
+				piece = vc_s;
+			}
+			else
+			{
+				piece = srem;
+				npc = nsrem;
+			}
+			if (npc >= 3)
+			{
+				const vc_v_t *trem = piece;
+				int ntrem = npc, tw = 0, kt;
+
+				if (ax_t.cut && ax_t.j0 > 0)
+				{
+					int nlo, nhi;
+
+					vc_split(trem, ntrem, vc_c, &nlo, tbuf[tw], &nhi, 1, ax_t.base + ax_t.step * (float)ax_t.j0);
+					trem = tbuf[tw];
+					ntrem = nhi;
+					tw ^= 1;
+				}
+				for (kt = ax_t.cut ? ax_t.j0 : 0; ntrem >= 3; kt++)
+				{
+					const int last_t = !ax_t.cut || kt >= ax_t.j1;
+					const float tb = ax_t.cut ? ax_t.base + ax_t.step * (float)kt : tb_one;
+					const vc_v_t *cell;
+					int nc, ntnext = 0;
+
+					if (!last_t)
+					{
+						vc_split(trem, ntrem, vc_c, &nc, tbuf[tw], &ntnext, 1, ax_t.base + ax_t.step * (float)(kt + 1));
+						cell = vc_c;
+					}
+					else
+					{
+						cell = trem;
+						nc = ntrem;
+					}
+					if (nc >= 3)
+						vc_put(cell, nc, lightbits, sb, tb);
+					if (last_t)
+						break;
+					trem = tbuf[tw];
+					ntrem = ntnext;
+					tw ^= 1;
+				}
+			}
+			if (last_s)
+				break;
+			srem = sbuf[sw];
+			nsrem = nnext;
+			sw ^= 1;
+		}
+	}
+	return 1;
+}
+
+// one block through the general entry (the plan's constants, the chunk's begin and end): the same as vu_poly for a polygon of the engine's vertices, and the cuts and the fan splits.
+// 1 = taken (drawn or nothing to draw), 0 = the EE path has to draw it (nothing was written).
+static int vu_poly_blk(const qw_t *b)
+{
+	const u32 n = b[0].w[0];
+	float sb = 0.0f, tb = 0.0f;
+	u32 need;
+	qw_t *o;
+
+	if (n < 3 || !vu_pready())
+		return 0;
+	if (vu_nocut)
+	{
+		if (n > VU_MAXVERT || P.cutx || P.cuty)
+			return 0; // (-hwcut 0: the earlier rule, the EE path cuts and splits)
+		if (P.textured && (P.wrapx || P.wrapy) && ((P.wrapx && b[1].f[2] * (float)P.r->w > UV_EXTENT) || (P.wrapy && b[1].f[3] * (float)P.r->h > UV_EXTENT)))
+			return 0;
+	}
+	if (P.cutx || P.cuty)
+		return vu_cut_blk(b); // a texture side that is not a power of two: every polygon has its own repeat base, and the cuts
+	if (P.textured && (P.wrapx || P.wrapy) && ((P.wrapx && b[1].f[2] * (float)P.r->w > UV_EXTENT) || (P.wrapy && b[1].f[3] * (float)P.r->h > UV_EXTENT)))
+		return vu_cut_blk(b); // cut at whole repeats
 	if (P.textured && (P.wrapx || P.wrapy))
 	{
 		const float smin = b[1].f[0], tmin = b[1].f[1];
 
-		if ((P.wrapx && b[1].f[2] * (float)P.r->w > UV_EXTENT) || (P.wrapy && b[1].f[3] * (float)P.r->h > UV_EXTENT))
-			return 0; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
 		sb = (P.wrapx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
 		tb = (P.wrapy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
 	}
-	o = H.ring[H.cur] + H.wr;
+	if (n > VU_MAXVERT)
+	{
+		// more vertices than the program takes: a fan of polygons of VU_MAXVERT vertices or fewer, all with the vertex 0 (the engine's polygon is convex; the shared diagonals are the same vertices)
+		vc_v_t pv[VC_MAXV];
+		u32 i;
+
+		if (n > VC_MAXV - 10)
+			return 0;
+		for (i = 0; i < n; i++)
+		{
+			pv[i].x = b[2 + 2 * i].f[0];
+			pv[i].y = b[2 + 2 * i].f[1];
+			pv[i].z = b[2 + 2 * i].f[2];
+			pv[i].s = b[3 + 2 * i].f[0];
+			pv[i].t = b[3 + 2 * i].f[1];
+		}
+		vc_put(pv, (int)n, b[0].w[1], sb, tb);
+		return 1;
+	}
+	need = 2 + 2 * n;
+	o = vu_pbegin(need);
 	vu_qcopy(o + 2, b + 2, 2 * n);
 	o[0].w[0] = n;
 	o[0].w[1] = b[0].w[1]; // the light level (a float)
@@ -1129,11 +1494,7 @@ static int vu_poly_blk(const qw_t *b)
 	o[1].f[1] = tb;
 	o[1].f[2] = P.tsx;
 	o[1].f[3] = P.tsy;
-	H.st.polys++;
-	H.st.verts_in += n;
-	H.wr += need;
-	VU.chunk_n += need;
-	VU.npoly++;
+	vu_pcommit(need, n);
 	return 1;
 }
 
@@ -1144,6 +1505,7 @@ static u32 vu_blocks(const qw_t *pool, const u32 *blks, u32 i, u32 nfans)
 	const int wx = P.wrapx, wy = P.wrapy;
 	const float tsx = P.tsx, tsy = P.tsy;
 	const int ilx = wx ? fbits(UV_EXTENT / (float)P.r->w) : 0x7F7FFFFF, ily = wy ? fbits(UV_EXTENT / (float)P.r->h) : 0x7F7FFFFF; // (PS2-HW-228)
+	const int cutplan = P.cutx || P.cuty; // (PS2-HW-236: every polygon takes the general entry: its own repeat base, the cuts)
 	qw_t *ring = NULL;
 	u32 wr = 0, cn = 0, np = 0, nv = 0, ready = 0;
 
@@ -1155,7 +1517,7 @@ static u32 vu_blocks(const qw_t *pool, const u32 *blks, u32 i, u32 nfans)
 		qw_t *o;
 		float sb = 0.0f, tb = 0.0f;
 
-		if (!ready || n - 3 > VU_MAXVERT - 3 || cn + need > VU_CHUNK_QW || wr + need + 3 > BUF_QW)
+		if (cutplan || !ready || n - 3 > VU_MAXVERT - 3 || cn + need > VU_CHUNK_QW || wr + need + 3 > BUF_QW || (wrap && (fbits(b[1].f[2]) > ilx || fbits(b[1].f[3]) > ily)))
 		{
 			if (ready)
 			{
@@ -1183,8 +1545,6 @@ static u32 vu_blocks(const qw_t *pool, const u32 *blks, u32 i, u32 nfans)
 		{
 			const float smin = b[1].f[0], tmin = b[1].f[1];
 
-			if (fbits(b[1].f[2]) > ilx || fbits(b[1].f[3]) > ily)
-				break; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
 			sb = (wx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
 			tb = (wy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
 		}
