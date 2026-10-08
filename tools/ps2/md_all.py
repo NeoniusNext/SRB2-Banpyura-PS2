@@ -62,7 +62,7 @@ def main():
         extra = ''
         if boot.exists():
             txt = boot.read_text(errors='replace')
-            m = re.findall(r'HWPROF41[^\n]*', txt)
+            m = re.findall(r'HWPROF41 model[^\n]*', txt)
             extra = f'spawned {len(re.findall(r"MDLSCENE spr=", txt))} of {len(chunk)}; ' + (m[-1] if m else 'no HWPROF41')
             warn = [l for l in txt.splitlines() if 'WARNING' in l and 'mdlscene' in l]
             if warn:
