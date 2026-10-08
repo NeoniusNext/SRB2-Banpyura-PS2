@@ -32,7 +32,7 @@ addHook("MapLoad", function()
 			local side = (col * 50 - 100) * FRACUNIT
 			local x = p.mo.x + FixedMul(dist, cos(ang)) + FixedMul(side, cos(ang - ANGLE_90))
 			local y = p.mo.y + FixedMul(dist, sin(ang)) + FixedMul(side, sin(ang - ANGLE_90))
-			local mo = P_SpawnMobj(x, y, p.mo.z + 8 * FRACUNIT, mt)
+			local mo = P_SpawnMobj(x, y, p.mo.z + (8 + row * 42) * FRACUNIT, mt) -- higher rows hang higher: every row shows over the one in front
 			if mo and mo.valid then
 				mo.flags = MF_NOTHINK | MF_NOGRAVITY | MF_NOBLOCKMAP | MF_NOCLIP | MF_NOCLIPHEIGHT | MF_SCENERY
 				mo.angle = ang + ANGLE_180 + (n % 3) * ANGLE_45

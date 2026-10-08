@@ -518,9 +518,9 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 
 // PS2-HW-266: the model of an object that is a few pixels big is the sprite (the engine draws it when this says no): the model of a ring is 140 triangles, DEMO_001 shows a hundred
 // of them, most far away. By size on the screen: the radius of the model's sphere in pixels (-hwmodelpx N, default 8; 0 = every model); and a limit on the triangles of the models
-// of a frame (-hwmodeltris N, default 9000; 0 = none).
+// of a frame (-hwmodeltris N, default 16000; 0 = none).
 int ps2hwd_model_px = 8;
-int ps2hwd_model_tris = 9000;
+int ps2hwd_model_tris = 16000;
 static u32 mdl_budget_frame = 0xFFFFFFFFu, mdl_budget_used;
 
 int PS2HWD_ModelWanted(float x, float y, float z, float world_radius, unsigned int tris)
@@ -543,6 +543,12 @@ int PS2HWD_ModelWanted(float x, float y, float z, float world_radius, unsigned i
 		{
 			G.md_lod++;
 			return 0;
+		}
+		// the sprites go far to near: the models that are already there must not take the room of the one in front of the camera: a model of 40 pixels and more is never refused
+		if (pr >= 40.0f)
+		{
+			mdl_budget_used += tris;
+			return 1;
 		}
 	}
 	if (ps2hwd_model_tris > 0 && mdl_budget_used + tris > (u32)ps2hwd_model_tris)

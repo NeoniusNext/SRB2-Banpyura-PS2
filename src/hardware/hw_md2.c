@@ -1676,8 +1676,13 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			{
 				const float sx = FIXED_TO_FLOAT(interp.scale) * FIXED_TO_FLOAT(interp.spritexscale), sy = FIXED_TO_FLOAT(interp.scale) * FIXED_TO_FLOAT(interp.spriteyscale);
 				const float wr = mr * md2->scale * (sx > sy ? sx : sy) * (0.5f / 64.0f);
+				unsigned mdtris = 0;
+				int mm;
 
-				if (!PS2HWD_ModelWanted(FIXED_TO_FLOAT(interp.x), FIXED_TO_FLOAT(interp.y), FIXED_TO_FLOAT(flip ? interp.z + interp.height : interp.z), wr, (unsigned)md2->model->meshes[0].numTriangles * (unsigned)md2->model->numMeshes))
+				for (mm = 0; mm < md2->model->numMeshes; mm++)
+					mdtris += (unsigned)md2->model->meshes[mm].numTriangles;
+
+				if (!PS2HWD_ModelWanted(FIXED_TO_FLOAT(interp.x), FIXED_TO_FLOAT(interp.y), FIXED_TO_FLOAT(flip ? interp.z + interp.height : interp.z), wr, mdtris))
 					return false; // the sprite
 			}
 		}
