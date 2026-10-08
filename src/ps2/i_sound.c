@@ -116,6 +116,8 @@ static boolean diag_reloaded, diag_restarted, diag_parsed, diag_hash_flag, diag_
 static UINT32 diag_restart_at = 0xffffffffu;
 static const char *diag_bench;             // -abench <lump,lump,...> [-abenchsec N]: decode tracks on the game thread, COP0 cycles + PCM hash (PS2-3xx optimisation A/B)
 static UINT32 diag_bench_sec = 10;
+static boolean diag_bench_dump;            // -abenchdump: write the decoded PCM of every benchmarked lump to <home>/abench_<lump>.raw (s16 stereo, PS2-315 comparisons)
+extern volatile int ps2a_vu0_disable;     // vorbis/mdct.c: -novu0a forces the scalar transform (A/B in one ELF)
 static int16_t *dump_buf;
 static size_t dump_frames, dump_max;
 // -atrace <records>: a journal of every audsrv write and every read of the IOP ring (tools/ps2/audio_ring_sim.py replays it)
@@ -743,6 +745,8 @@ void I_StartupSound(void)
 		}
 		if (M_CheckParm("-abench") && M_IsNextParm()) diag_bench = M_GetNextParm();
 		if (M_CheckParm("-abenchsec") && M_IsNextParm()) diag_bench_sec = (UINT32)atoi(M_GetNextParm());
+		diag_bench_dump = M_CheckParm("-abenchdump") != 0;
+		if (M_CheckParm("-novu0a")) ps2a_vu0_disable = 1;
 		if (M_CheckParm("-atrace") && M_IsNextParm())
 		{
 			trace_max = (UINT32)atoi(M_GetNextParm());
@@ -957,6 +961,7 @@ static void BenchTracks(void)
 		size_t len, frames = 0, target = (size_t)diag_bench_sec * PS2_AUDIO_RATE;
 		UINT64 cycles = 0, hash = 14695981039346656037ull;
 		int16_t buf[PS2_AUDIO_BLOCK * 2];
+		int16_t *pcmdump = diag_bench_dump ? malloc((target + PS2_AUDIO_BLOCK) * 4) : NULL;
 		if (lump == LUMPERROR) { I_OutputMsg("ABENCH %s: no such lump\n", tok); continue; }
 		len = W_LumpLength(lump);
 		memset(&src, 0, sizeof src); src.lump = lump;
@@ -974,6 +979,7 @@ static void BenchTracks(void)
 			size_t n = PS2_MusicRender(m, buf, PS2_AUDIO_BLOCK), i;
 			cycles += (UINT32)(CopCount() - c0);
 			if (!n) break;
+			if (pcmdump) memcpy(pcmdump + frames * 2, buf, n * 4);
 			{
 				const uint8_t *p = (const uint8_t *)buf;
 				for (i = 0; i < n * 4; i++) hash = (hash ^ p[i]) * 1099511628211ull;
@@ -986,6 +992,15 @@ static void BenchTracks(void)
 		I_OutputMsg("ABENCH %s type=%d rate=%u frames=%u cycles=%u cyc_per_frame=%u fnv=%08x%08x\n", tok, (int)PS2_MusicType(m),
 			(unsigned)PS2_AUDIO_RATE, (unsigned)frames, (unsigned)cycles, frames ? (unsigned)(cycles / frames) : 0u,
 			(unsigned)(hash >> 32), (unsigned)hash);
+		if (pcmdump)
+		{
+			char path[256];
+			FILE *f;
+			snprintf(path, sizeof path, "%s/abench_%s.raw", srb2home, tok);
+			f = fopen(path, "wb");
+			if (f) { fwrite(pcmdump, 4, frames, f); fclose(f); }
+			free(pcmdump);
+		}
 		PS2_MusicClose(m); PackClose(rd);
 	}
 	I_OutputMsg("ABENCH done\n");

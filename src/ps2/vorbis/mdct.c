@@ -54,6 +54,7 @@
 
    FFT stages (butterfly_first / generic, blocks of B floats): table of B floats per stage = B/8 pairs of {CA, CB}, see ps2_vu0a.h. */
 volatile int ps2a_vu0_busy;
+volatile int ps2a_vu0_disable;   /* -novu0a (i_sound.c): scalar transform, for A/B runs in one ELF */
 
 static size_t ps2a_fft_floats(int log2n,int n){
   size_t f=0;
@@ -62,9 +63,9 @@ static size_t ps2a_fft_floats(int log2n,int n){
   for(i=1;--stages>0;i++)f+=points>>i;
   return f;
 }
-/* layout of the table area: [FFT stages][ROT1: n floats][ROT2: n floats] */
+/* layout of the table area: [FFT stages][ROT1: n floats][ROT2: n floats][BR: 12 words per iteration, n/16 iterations] */
 static size_t ps2a_tables_floats(int log2n,int n){
-  return ps2a_fft_floats(log2n,n)+(size_t)n*2;
+  return ps2a_fft_floats(log2n,n)+(size_t)n*2+(size_t)(n/16)*12;
 }
 static DATA_TYPE *ps2a_vt(const mdct_lookup *l){
   return (DATA_TYPE *)(((uintptr_t)(l->trig+l->n+l->n/4)+15)&~(uintptr_t)15);
@@ -107,6 +108,17 @@ static void ps2a_build_rot2(DATA_TYPE *tab,const DATA_TYPE *trig,int n){
     }
   }
 }
+/* BR constants: per iteration {CA, CB, four byte offsets of the gathered complex numbers}, see ps2_vu0a.h */
+static void ps2a_build_br(DATA_TYPE *tab,const DATA_TYPE *trig,const int *bitrev,int n){
+  int it;
+  for(it=0;it<n/16;it++){
+    DATA_TYPE *c=tab+it*12;
+    const DATA_TYPE *T=trig+n+4*it;
+    c[0]=T[0]; c[1]=T[1]; c[2]=T[2]; c[3]=T[3];
+    c[4]=T[1]; c[5]=-T[0]; c[6]=T[3]; c[7]=-T[2];
+    ((int *)c)[8]=bitrev[4*it]*4; ((int *)c)[9]=bitrev[4*it+1]*4; ((int *)c)[10]=bitrev[4*it+2]*4; ((int *)c)[11]=bitrev[4*it+3]*4;
+  }
+}
 static void ps2a_build_tables(mdct_lookup *l){
   int points=l->n>>1,stages=l->log2n-5,i;
   DATA_TYPE *vt=ps2a_vt(l);
@@ -120,12 +132,16 @@ static void ps2a_build_tables(mdct_lookup *l){
   }
   ps2a_build_rot1(vt,l->trig,l->n);
   ps2a_build_rot2(vt+l->n,l->trig,l->n);
+  ps2a_build_br(vt+2*l->n,l->trig,l->bitrev,l->n);
 }
 static DATA_TYPE *ps2a_rot1_tab(const mdct_lookup *l){
   return ps2a_vt(l)+ps2a_fft_floats(l->log2n,l->n);
 }
 static DATA_TYPE *ps2a_rot2_tab(const mdct_lookup *l){
   return ps2a_rot1_tab(l)+l->n;
+}
+static DATA_TYPE *ps2a_br_tab(const mdct_lookup *l){
+  return ps2a_rot1_tab(l)+2*l->n;
 }
 #endif
 
@@ -507,7 +523,7 @@ static void mdct_backward_x(mdct_lookup *init, DATA_TYPE *in, DATA_TYPE *out, in
 void mdct_backward(mdct_lookup *init, DATA_TYPE *in, DATA_TYPE *out){
 #ifdef PS2_VORBIS_VU0
   /* vu: 0 scalar code, 1 vector structure with the C twins of the kernels, 2 with VU0 */
-  if(!((((uintptr_t)in)|((uintptr_t)out))&15)){
+  if(!ps2a_vu0_disable && !((((uintptr_t)in)|((uintptr_t)out))&15)){
 #ifdef PS2A_MODEL
     mdct_backward_x(init,in,out,1);
     return;
@@ -570,6 +586,11 @@ static void mdct_backward_x(mdct_lookup *init, DATA_TYPE *in, DATA_TYPE *out, in
   }
 
   mdct_butterflies(init,out+n2,n2,vu);
+#ifdef PS2_VORBIS_VU0
+  if(vu)
+    ps2a_bitrev_dispatch(vu,out+n2,out,out+n2,ps2a_br_tab(init),n>>4);
+  else
+#endif
   mdct_bitreverse(init,out);
 
   /* roatate + window */

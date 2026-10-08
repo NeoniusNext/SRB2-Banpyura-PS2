@@ -105,7 +105,8 @@ src/ps2/vorbis/codebook.c  # PS2-311..313: libvorbis 1.3.7 decode files (entropy
 src/ps2/vorbis/floor1.c
 src/ps2/vorbis/mapping0.c
 src/ps2/vorbis/res0.c
-src/ps2/vorbis/mdct.c
+src/ps2/vorbis/mdct.c  # PS2-315: VU0 transform (ps2_vu0a.h)
+src/ps2/vorbis/synthesis.c  # PS2-315: 16-byte aligned spectrum vectors
 src/ps2/i_joy.c
 src/ps2/lua_stub.c  # unless:lua
 src/ps2/soc_numbers.c

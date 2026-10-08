@@ -118,7 +118,7 @@ static inline void ps2a_fft_pairs(float *H, float *L, const float *C, int npairs
 		"bgtz %3, 1b\n"
 		"addiu %2, %2, 0x40\n"
 		".set pop\n"
-		: "+r"(H), "+r"(L), "+r"(C), "+r"(cnt) : : "memory");
+		: "+&r"(H), "+&r"(L), "+&r"(C), "+&r"(cnt) : : "memory");
 }
 #endif
 
@@ -193,7 +193,7 @@ static inline void ps2a_rot1_lo(const float *G, float *O, const float *C, int np
 		"bgtz %3, 1b\n"
 		"addiu %2, %2, 0x40\n"
 		".set pop\n"
-		: "+r"(G), "+r"(O), "+r"(C), "+r"(cnt) : : "memory");
+		: "+&r"(G), "+&r"(O), "+&r"(C), "+&r"(cnt) : : "memory");
 }
 static inline void ps2a_rot1_hi(const float *G, float *O, const float *C, int npairs)
 {
@@ -227,7 +227,7 @@ static inline void ps2a_rot1_hi(const float *G, float *O, const float *C, int np
 		"bgtz %3, 1b\n"
 		"addiu %2, %2, 0x40\n"
 		".set pop\n"
-		: "+r"(G), "+r"(O), "+r"(C), "+r"(cnt) : : "memory");
+		: "+&r"(G), "+&r"(O), "+&r"(C), "+&r"(cnt) : : "memory");
 }
 #endif
 static inline void ps2a_rot1_lo_dispatch(int vu, const float *G, float *O, const float *C, int np)
@@ -349,7 +349,7 @@ static inline void ps2a_rot2_a(const float *Y, float *Ut, float *Vn, const float
 		"bgtz %4, 1b\n"
 		"addiu %3, %3, 0x80\n"
 		".set pop\n"
-		: "+r"(Y), "+r"(Ut), "+r"(Vn), "+r"(C), "+r"(cnt) : : "memory");
+		: "+&r"(Y), "+&r"(Ut), "+&r"(Vn), "+&r"(C), "+&r"(cnt) : : "memory");
 }
 static inline void ps2a_rev_neg(const float *U, float *R1, float *R2, int ngroups)
 {
@@ -373,7 +373,7 @@ static inline void ps2a_rev_neg(const float *U, float *R1, float *R2, int ngroup
 		"bgtz %3, 1b\n"
 		"addiu %1, %1, -0x10\n"
 		".set pop\n"
-		: "+r"(U), "+r"(R1), "+r"(R2), "+r"(cnt) : "r"(ps2a_k_one), "r"(ps2a_k_minus1) : "memory");
+		: "+&r"(U), "+&r"(R1), "+&r"(R2), "+&r"(cnt) : "r"(ps2a_k_one), "r"(ps2a_k_minus1) : "memory");
 }
 static inline void ps2a_rev(const float *V, float *R3, int ngroups)
 {
@@ -393,7 +393,7 @@ static inline void ps2a_rev(const float *V, float *R3, int ngroups)
 		"bgtz %2, 1b\n"
 		"addiu %1, %1, -0x10\n"
 		".set pop\n"
-		: "+r"(V), "+r"(R3), "+r"(cnt) : "r"(ps2a_k_one) : "memory");
+		: "+&r"(V), "+&r"(R3), "+&r"(cnt) : "r"(ps2a_k_one) : "memory");
 }
 #endif
 static inline void ps2a_rot2_a_dispatch(int vu, const float *Y, float *Ut, float *Vn, const float *C, int ng)
@@ -419,6 +419,101 @@ static inline void ps2a_rev_dispatch(int vu, const float *V, float *R3, int ng)
 #endif
 	(void)vu;
 	ps2a_rev_c(V, R3, ng);
+}
+
+// ---- kernel BR: mdct_bitreverse (gather of complex pairs by the bit-reversed table, rotation by trig[n..], unfold into two descending/ascending runs) --
+// Per iteration two sub-steps (A in lanes xy, B in lanes zw): C = {CA = (T0A, T1A, T0B, T1B), CB = (T1A, -T0A, T1B, -T0B)} (8 floats, 16-byte aligned),
+// boff = four BYTE offsets from x of the complex numbers x0A, x1A, x0B, x1B (the bit-reverse table of the scalar code times 4).
+//   E = (x0A, x0B), F = (x1A, x1B); S = E + F; D = E - F; Z = CA*S.x/z + CB*D.y/w; W = 0.5*(S.y, D.x | S.w, D.z)
+//   w0[0..3] = W + Z;  (w1[2], w1[3], w1[0], w1[1]) = (W.x - Z.x, Z.y - W.y, W.z - Z.z, Z.w - W.w);  w0 += 4, w1 -= 4 per iteration.
+// Each line is the same single operation as in the scalar code (mul, mul, add; the halving is a multiplication by 0.5 as there).
+static inline void ps2a_bitrev_c(const float *x, float *w0, float *w1, const float *cb, int iters)
+{
+	int it;
+	for (it = 0; it < iters; it++, cb += 12, w0 += 4)
+	{
+		const float *C = cb;
+		const int *boff = (const int *)(cb + 8);
+		const float *xa0 = (const float *)((const char *)x + boff[0]), *xa1 = (const float *)((const char *)x + boff[1]);
+		const float *xb0 = (const float *)((const char *)x + boff[2]), *xb1 = (const float *)((const char *)x + boff[3]);
+		float E[4] = {xa0[0], xa0[1], xb0[0], xb0[1]}, F[4] = {xa1[0], xa1[1], xb1[0], xb1[1]};
+		float S[4], D[4], P[4], Q[4], Z[4], W[4], Y1[4];
+		int l;
+		for (l = 0; l < 4; l++) { S[l] = E[l] + F[l]; D[l] = E[l] - F[l]; }
+		P[0] = C[0] * S[0]; P[1] = C[1] * S[0]; P[2] = C[2] * S[2]; P[3] = C[3] * S[2];
+		Q[0] = C[4] * D[1]; Q[1] = C[5] * D[1]; Q[2] = C[6] * D[3]; Q[3] = C[7] * D[3];
+		for (l = 0; l < 4; l++) Z[l] = P[l] + Q[l];
+		W[0] = 0.5f * S[1]; W[1] = 0.5f * D[0]; W[2] = 0.5f * S[3]; W[3] = 0.5f * D[2];
+		for (l = 0; l < 4; l++) w0[l] = W[l] + Z[l];
+		Y1[0] = W[0] - Z[0]; Y1[1] = Z[1] - W[1]; Y1[2] = W[2] - Z[2]; Y1[3] = Z[3] - W[3];
+		w1 -= 4;
+		w1[0] = Y1[2]; w1[1] = Y1[3]; w1[2] = Y1[0]; w1[3] = Y1[1];
+	}
+}
+#if PS2A_VU0
+static const float ps2a_k_half[4] __attribute__((aligned(16))) = {0.5f, 0.5f, 0.5f, 0.5f};
+// The table stride is 12 words (C: 8 floats, boff: 4 ints) per iteration: C and boff are one array (cb), iterations are 48 bytes apart.
+static inline void ps2a_bitrev(const float *x, float *w0, float *w1, const float *cb, int iters)
+{
+	int t0, t1, t2, t3, e0, e1, f0, f1;
+	__asm__ volatile(
+		"lqc2 $vf30, 0(%[half])\n"
+		".set push\n.set noreorder\n"
+		"1:\n"
+		"lw %[t0], 0x20(%[cb])\n"
+		"lw %[t1], 0x24(%[cb])\n"
+		"lw %[t2], 0x28(%[cb])\n"
+		"lw %[t3], 0x2c(%[cb])\n"
+		"lqc2 $vf3, 0x00(%[cb])\n"
+		"lqc2 $vf4, 0x10(%[cb])\n"
+		"addu %[t0], %[t0], %[x]\n"
+		"addu %[t1], %[t1], %[x]\n"
+		"addu %[t2], %[t2], %[x]\n"
+		"addu %[t3], %[t3], %[x]\n"
+		"ld %[e0], 0(%[t0])\n"
+		"ld %[e1], 0(%[t2])\n"
+		"ld %[f0], 0(%[t1])\n"
+		"ld %[f1], 0(%[t3])\n"
+		"pcpyld %[e0], %[e1], %[e0]\n"
+		"pcpyld %[f0], %[f1], %[f0]\n"
+		"qmtc2 %[e0], $vf1\n"
+		"qmtc2 %[f0], $vf2\n"
+		"vadd $vf5, $vf1, $vf2\n"
+		"vsub $vf6, $vf1, $vf2\n"
+		"vmulx.xy $vf7, $vf3, $vf5\n"
+		"vmulz.zw $vf7, $vf3, $vf5\n"
+		"vmuly.xy $vf8, $vf4, $vf6\n"
+		"vmulw.zw $vf8, $vf4, $vf6\n"
+		"vmuly.x $vf9, $vf30, $vf5\n"
+		"vmulx.y $vf9, $vf30, $vf6\n"
+		"vmulw.z $vf9, $vf30, $vf5\n"
+		"vmulz.w $vf9, $vf30, $vf6\n"
+		"vadd $vf7, $vf7, $vf8\n"
+		"vadd $vf10, $vf9, $vf7\n"
+		"vsub.xz $vf11, $vf9, $vf7\n"
+		"vsub.yw $vf11, $vf7, $vf9\n"
+		"sqc2 $vf10, 0(%[w0])\n"
+		"vmr32 $vf11, $vf11\n"
+		"vmr32 $vf11, $vf11\n"
+		"addiu %[w1], %[w1], -0x10\n"
+		"sqc2 $vf11, 0(%[w1])\n"
+		"addiu %[it], %[it], -1\n"
+		"addiu %[w0], %[w0], 0x10\n"
+		"bgtz %[it], 1b\n"
+		"addiu %[cb], %[cb], 0x30\n"
+		".set pop\n"
+		: [w0] "+&r"(w0), [w1] "+&r"(w1), [cb] "+&r"(cb), [it] "+&r"(iters),
+		  [t0] "=&r"(t0), [t1] "=&r"(t1), [t2] "=&r"(t2), [t3] "=&r"(t3), [e0] "=&r"(e0), [e1] "=&r"(e1), [f0] "=&r"(f0), [f1] "=&r"(f1)
+		: [x] "r"(x), [half] "r"(ps2a_k_half) : "memory");
+}
+#endif
+static inline void ps2a_bitrev_dispatch(int vu, const float *x, float *w0, float *w1, const float *cb, int iters)
+{
+#if PS2A_VU0
+	if (vu == 2) { ps2a_bitrev(x, w0, w1, cb, iters); return; }
+#endif
+	(void)vu;
+	ps2a_bitrev_c(x, w0, w1, cb, iters);
 }
 
 #endif

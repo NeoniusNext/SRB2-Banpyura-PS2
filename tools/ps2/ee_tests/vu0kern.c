@@ -108,6 +108,28 @@ int main(void)
 		h = fnv(h, Ut, 16 * ng); h = fnv(h, Vn, 16 * ng); h = fnv(h, R1, 16 * ng); h = fnv(h, R2, 16 * ng); h = fnv(h, R3, 16 * ng);
 	}
 	printf("EETEST KERN rot2 %016llx\n", (unsigned long long)h);
+	// K4: bit reverse
+	h = NEWHASH;
+	for (it = 0; it < 200; it++)
+	{
+		int iters = 2 + (it % 12);
+		static float X[512] __attribute__((aligned(16))), W[512] __attribute__((aligned(16))), CB[12 * 16] __attribute__((aligned(16)));
+		int k;
+		for (i = 0; i < 256; i++) X[i] = rf();
+		for (k = 0; k < iters; k++)
+		{
+			for (i = 0; i < 8; i++) CB[12 * k + i] = rf();
+			for (i = 0; i < 4; i++) ((int *)CB)[12 * k + 8 + i] = 8 * (rnd() % 32);
+		}
+		memset(W, 0, sizeof W);
+#if PS2A_VU0
+		ps2a_bitrev(X, W, W + 8 * iters, CB, iters);
+#else
+		ps2a_bitrev_c(X, W, W + 8 * iters, CB, iters);
+#endif
+		h = fnv(h, W, 32 * iters);
+	}
+	printf("EETEST KERN bitrev %016llx\n", (unsigned long long)h);
 #if PS2A_VU0
 	ps2a_vu0_leave(&sv);
 #endif

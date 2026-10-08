@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """PS2-314: bit-exactness and cost of the Ogg decoder over many lumps, between ELFs (PCSX2, the engine's -abench).
 
-usage: python3 tools/ps2/audio_exact.py --out DIR --elf TAG=ELF [--elf TAG=ELF ...] [--lumps FILE | --music | --sfx N]
-                                        [--sec 12] [--batch 12] [--jobs 3] [--ref TAG]
+usage: python3 tools/ps2/audio_exact.py --out DIR --elf TAG=ELF[|extra engine args] [--elf ...] [--lumps FILE | --music | --sfx N]
+                                        [--sec 12] [--batch 12] [--jobs 3] [--ref TAG] [--dump] [--keep]
+--dump: also write the decoded PCM (-abenchdump) and compare every ELF with the reference sample by sample: number of differing samples,
+largest |difference| in LSB, signal-to-error ratio (the same ELF can be run twice with different engine arguments, e.g.
+--elf scalar=build/outV/SRB2.ELF|-novu0a --elf vu0=build/outV/SRB2.ELF).  The raw files are deleted unless --keep.
 Runs `-abench lump,lump,...` (12 s of the decoded lump through PS2_MusicRender: cycles of the decode only, FNV-1a of the PCM) in batches
 per ELF, parallel over the emulator copies (run_pcsx2.py takes the locks), writes DIR/<TAG>.json = {lump: {cpf, fnv, frames}} and prints
 a table: per lump the cycles per output frame of each ELF and "same"/"DIFF" of the hash against --ref (default: the first ELF).
@@ -50,10 +53,13 @@ def sfx_lumps(n):
     return out
 
 
-def run_batch(tag, elf, idx, lumps, sec, outdir):
+def run_batch(tag, elf, idx, lumps, sec, outdir, extra=(), dump=False):
     name = f'ax_{tag}_{idx}'
     cmd = [sys.executable, str(ROOT / 'tools/ps2/opt_run.py'), '--name', name, '--elf', str(elf), '--pak', str(PAK), '--out', str(outdir / 'runs'),
            '--no-ref', '--timeout', '900', '--until', 'ABENCH done', '--', '-skipintro', '-nomusic', '-abench', ','.join(lumps), '-abenchsec', str(sec)]
+    if dump:
+        cmd += ['-abenchdump']
+    cmd += list(extra)
     run = outdir / 'runs' / name
     subprocess.run(['rm', '-rf', str(run)])
     p = subprocess.run(cmd, capture_output=True, text=True)
@@ -71,6 +77,52 @@ def run_batch(tag, elf, idx, lumps, sec, outdir):
     return res
 
 
+def dump_path(out, tag, bi, lump):
+    return out / 'runs' / f'ax_{tag}_{bi}' / '.srb2' / f'abench_{lump}.raw'
+
+
+def compare_dumps(out, elfs, lumps, ref, nbatches, bsize, keep):
+    """Sample-by-sample comparison of the decoded PCM of every ELF against the reference ELF."""
+    import numpy as np
+    print('\nPCM comparison against', ref)
+    for tag, _ in elfs:
+        if tag == ref:
+            continue
+        n_tot = n_diff = n_files = 0
+        worst = 0
+        sig = err = 0.0
+        hist = {}
+        worst_lump = ''
+        for i, l in enumerate(lumps):
+            bi = i // bsize
+            pa, pb = dump_path(out, ref, bi, l), dump_path(out, tag, bi, l)
+            if not pa.exists() or not pb.exists():
+                continue
+            a = np.fromfile(pa, dtype='<i2').astype(np.int64)
+            b = np.fromfile(pb, dtype='<i2').astype(np.int64)
+            m = min(len(a), len(b))
+            d = b[:m] - a[:m]
+            n_files += 1
+            n_tot += m
+            nd = int((d != 0).sum())
+            n_diff += nd
+            w = int(np.abs(d).max()) if m else 0
+            if w > worst:
+                worst, worst_lump = w, l
+            sig += float((a[:m].astype(np.float64) ** 2).sum())
+            err += float((d.astype(np.float64) ** 2).sum())
+            for v, c in zip(*np.unique(np.clip(d, -3, 3), return_counts=True)):
+                hist[int(v)] = hist.get(int(v), 0) + int(c)
+        snr = 10 * np.log10(sig / err) if err > 0 else float('inf')
+        print(f'{tag}: {n_files} lumps, {n_tot} samples, differing {n_diff} ({100.0 * n_diff / max(1, n_tot):.4f} %), max |diff| {worst} LSB ({worst_lump}), '
+              f'signal/error {snr:.1f} dB, histogram of the difference (clipped at +-3) {dict(sorted(hist.items()))}')
+    if not keep:
+        for tag, _ in elfs:
+            for bi in range(nbatches):
+                for f in (out / 'runs' / f'ax_{tag}_{bi}' / '.srb2').glob('abench_*.raw'):
+                    f.unlink()
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', required=True)
@@ -82,6 +134,8 @@ def main():
     ap.add_argument('--batch', type=int, default=12)
     ap.add_argument('--jobs', type=int, default=3)
     ap.add_argument('--ref')
+    ap.add_argument('--dump', action='store_true')
+    ap.add_argument('--keep', action='store_true')
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -92,14 +146,20 @@ def main():
         lumps += music_lumps()
     if a.sfx:
         lumps += sfx_lumps(a.sfx)
-    elfs = [tuple(e.split('=', 1)) for e in a.elf]
+    elfs = []
+    extras = {}
+    for e in a.elf:
+        tag, rest = e.split('=', 1)
+        elf, _, ex = rest.partition('|')
+        elfs.append((tag, elf))
+        extras[tag] = ex.split()
     batches = [lumps[i:i + a.batch] for i in range(0, len(lumps), a.batch)]
     results = {}
     with ThreadPoolExecutor(a.jobs) as ex:
         futs = {}
         for tag, elf in elfs:
             for i, b in enumerate(batches):
-                futs[(tag, i)] = ex.submit(run_batch, tag, elf, i, b, a.sec, out)
+                futs[(tag, i)] = ex.submit(run_batch, tag, elf, i, b, a.sec, out, extras[tag], a.dump)
         for tag, _ in elfs:
             results[tag] = {}
             for i in range(len(batches)):
@@ -123,6 +183,8 @@ def main():
         bad += not same
         print(row + '  ' + ('same' if same else 'DIFF'))
     print('%-12s' % 'ALL' + ''.join('%12s' % (tot[t][0] // max(1, tot[t][1])) for t, _ in elfs) + f'  lumps {len(lumps)}, differing {bad}')
+    if a.dump:
+        compare_dumps(out, elfs, lumps, ref, len(batches), a.batch, a.keep)
 
 
 if __name__ == '__main__':
