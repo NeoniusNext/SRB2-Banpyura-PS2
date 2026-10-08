@@ -181,7 +181,7 @@ static void add_mobj_hook(lua_State *L, int hook_type)
 {
 	mobjtype_t   mobj_type = luaL_optnumber(L, 3, MT_NULL);
 
-	luaL_argcheck(L, mobj_type < LIMIT_NUMMOBJTYPES, 3, "invalid mobjtype_t");
+	luaL_argcheck(L, !PS2_OOR_MOBJTYPE(mobj_type), 3, "invalid mobjtype_t"); // PS2-LUA: the PC bound; a type past the live table grows the tables first
 
 #ifdef PS2_PROFILE
 	if (!mobjHookIds)

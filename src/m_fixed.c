@@ -158,6 +158,23 @@ fixed_t FixedSqrt(fixed_t x)
 fixed_t FixedHypot(fixed_t x, fixed_t y)
 {
 	fixed_t ax, yx, yx2, yx1;
+#ifdef PS2
+	// PS2-LUA: abs(INT32_MIN) is undefined in C. The PC builds (x86) return INT32_MIN (negative), and FixedHypot(x, INT32_MIN) takes the |x|>|y| branch there; the EE
+	// compiler may assume abs() >= 0 and take the other one. Wrapping negation, spelled out, gives the PC numbers on every compiler.
+	{
+		const fixed_t axx = x < 0 ? (fixed_t)(0u - (UINT32)x) : x, ayy = y < 0 ? (fixed_t)(0u - (UINT32)y) : y;
+		if (ayy > axx) // |y|>|x|
+		{
+			ax = ayy;
+			yx = FixedDiv(x, y);
+		}
+		else // |x|>|y|
+		{
+			ax = axx;
+			yx = FixedDiv(y, x);
+		}
+	}
+#else
 	if (abs(y) > abs(x)) // |y|>|x|
 	{
 		ax = abs(y); // |y| => ax
@@ -168,6 +185,7 @@ fixed_t FixedHypot(fixed_t x, fixed_t y)
 		ax = abs(x); // |x| => ax
 		yx = FixedDiv(y, x); // (x/y)
 	}
+#endif
 	yx2 = FixedMul(yx, yx); // (x/y)^2
 	yx1 = FixedSqrt(1 * FRACUNIT + yx2); // (1 + (x/y)^2)^1/2
 	return FixedMul(ax, yx1); // |x|*((1 + (x/y)^2)^1/2)

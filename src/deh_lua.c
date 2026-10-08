@@ -481,7 +481,7 @@ static int ScanConstants(lua_State *L, boolean mathlib, const char *word)
 	else if (fastncmp("SPR_",word,4)) {
 		p = word+4;
 		i = R_GetSpriteNumByName(p);
-		if (i != LIMIT_NUMSPRITES)
+		if (i != NUMSPRITES)
 		{
 			// updating overridden sprnames is not implemented for soc parser,
 			// so don't use cache

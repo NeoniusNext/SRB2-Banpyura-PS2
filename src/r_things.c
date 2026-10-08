@@ -193,7 +193,7 @@ spritenum_t R_GetSpriteNumByName(const char *name)
 	for (spritenum_t i = 0; i < LIMIT_NUMSPRITES; i++)
 		if (!strcmp(name, sprnames[i]))
 			return i;
-	return LIMIT_NUMSPRITES;
+	return NUMSPRITES; // PS2-LUA: "not found" is the PC value, not the size of the live table (a script compares it with its own #sprnames)
 }
 
 //
@@ -853,7 +853,7 @@ static void AddLongSpriteDefs(UINT16 wadnum, size_t *ptr_spritesadded, size_t *p
 		strupr(sprname);
 		sprnum = R_GetSpriteNumByName(sprname);
 
-		if (sprnum != LIMIT_NUMSPRITES && R_AddSingleSpriteDef(sprname, &sprites[sprnum], wadnum, folderstart, folderend, true))
+		if (sprnum != NUMSPRITES && R_AddSingleSpriteDef(sprname, &sprites[sprnum], wadnum, folderstart, folderend, true))
 		{
 			// A new sprite was added (not just replaced)
 			(*ptr_spritesadded)++;

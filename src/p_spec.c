@@ -1900,7 +1900,7 @@ static void P_PlaySFX(INT32 sfxnum, mobj_t *mo, sector_t *callsec, INT16 tag, te
 	if (sfxnum == sfx_None)
 		return; // Do nothing!
 
-	if (sfxnum < sfx_None || sfxnum >= LIMIT_NUMSFX)
+	if (sfxnum < sfx_None || PS2_OOR_SFX(sfxnum))
 	{
 		CONS_Debug(DBG_GAMELOGIC, "Line type 414 Executor: sfx number %d is invalid!\n", sfxnum);
 		return;
@@ -2642,7 +2642,7 @@ static void P_ProcessLineSpecial(line_t *line, mobj_t *mo, sector_t *callsec)
 			if (mo && !mo->player)
 			{
 				statenum_t state = line->stringargs[0] ? get_number(line->stringargs[0]) : S_NULL;
-				if (state >= 0 && state < LIMIT_NUMSTATES)
+				if (state >= 0 && !PS2_OOR_STATE(state))
 					P_SetMobjState(mo, state);
 			}
 			break;
@@ -2904,17 +2904,17 @@ static void P_ProcessLineSpecial(line_t *line, mobj_t *mo, sector_t *callsec)
 		case 442: // Calls P_SetMobjState on mobjs of a given type in the tagged sectors
 		{
 			const mobjtype_t type = line->stringargs[0] ? get_number(line->stringargs[0]) : MT_NULL;
-			statenum_t state = LIMIT_NUMSTATES;
+			statenum_t state = NUMSTATES;
 			mobj_t *thing;
 
-			if (type < 0 || type >= LIMIT_NUMMOBJTYPES)
+			if (type < 0 || PS2_OOR_MOBJTYPE(type))
 				break;
 
 			if (!line->args[1])
 			{
 				state = line->stringargs[1] ? get_number(line->stringargs[1]) : S_NULL;
 
-				if (state < 0 || state >= LIMIT_NUMSTATES)
+				if (state < 0 || PS2_OOR_STATE(state))
 					break;
 			}
 

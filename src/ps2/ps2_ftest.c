@@ -208,7 +208,7 @@ static void TestSprites(const char *list)
 	{
 		spritenum_t num = R_GetSpriteNumByName(name);
 
-		if (num == LIMIT_NUMSPRITES || (size_t)num >= numsprites)
+		if (num == NUMSPRITES || (size_t)num >= numsprites)
 			I_OutputMsg("FT_SPR %s MISSING\n", name);
 		else
 		{
