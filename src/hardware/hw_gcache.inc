@@ -30,6 +30,8 @@
 #define GC_BYPASS_MIN 16u
 #define GC_BYPASS_MAX 512u
 #define GC_DEFAULT_KB 640u // both halves of the arena
+#define GC_KB_DIV 28u // the arena of a level: (segs + 2 * subsectors) / this KB ...
+#define GC_MAX_AUTO_KB 1536u // ... at most this
 #define GC_SCRATCH (24u << 10) // the record of a hit that is checked (mode 2, 3)
 #define GC_MAXREC (12u << 10) // longest record that is kept
 
@@ -62,6 +64,7 @@ static struct
 	int mode; // -hwgc: (mode & 3) 0 off (default), 1 on, 2 every hit is replayed AND recomputed and compared (check), 3 every 16th hit checked; +4 no plane cache, +8 no wall cache
 	boolean mode_set, on, dead;
 	UINT32 kb;
+	boolean kb_user;
 	void *blk; // the zone block that holds everything below
 	size_t blk_bytes;
 	gchent_t *tab; // hashed (planes of 3D floors)
@@ -500,7 +503,7 @@ static void HWR_GCacheParse(void)
 	if (M_CheckParm("-hwgo") && M_IsNextParm())
 		hwr_geo_off = (UINT32)atoi(M_GetNextParm());
 	gc.mode_set = true;
-	gc.mode = 1 | 4; // ON by default since the round 2, the walls only (v2: a hit is a key of plain words and a lean replay; a plane costs about as much to replay as to make and its record is the biggest); -hwgc 0: off, -hwgc 1: the planes too
+	gc.mode = 1; // ON by default since the round 2, walls and planes (a plane hit costs 630 cycles against 1100 for the calculation, the arena follows the level); -hwgc 0: off, -hwgc 5: the walls only
 	gc.kb = GC_DEFAULT_KB;
 	if (M_CheckParm("-hwgc") && M_IsNextParm())
 		gc.mode = atoi(M_GetNextParm());
@@ -528,6 +531,7 @@ static void HWR_GCacheParse(void)
 		INT32 kb = atoi(M_GetNextParm());
 
 		gc.kb = kb < 64 ? 64u : kb > 4096 ? 4096u : (UINT32)kb;
+		gc.kb_user = true;
 	}
 }
 
@@ -582,9 +586,23 @@ static boolean gc_alloc_block(void)
 	UINT32 want = 1024u;
 	size_t tab_b, seg_b, pl_b;
 	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32)) + (size_t)numvertexes * (sizeof(angle_t) + sizeof(UINT32));
-	size_t ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
+	size_t ar_b;
 	size_t total;
 	UINT8 *p;
+
+	// the arena follows the level (a level of 40000 segs and subsectors a view looks at 1000 segs and planes of 250 bytes: the working set of a view is 450 KB, and two halves of 320 KB
+	// - the first default - are emptied every few frames), unless -hwgcmem says; where the zone has not got room for it the arena is the default size
+	if (!gc.kb_user)
+	{
+		const UINT32 items = (UINT32)numsegs + 2u * (UINT32)numsubsectors;
+
+		gc.kb = items / GC_KB_DIV;
+		if (gc.kb < GC_DEFAULT_KB)
+			gc.kb = GC_DEFAULT_KB;
+		else if (gc.kb > GC_MAX_AUTO_KB)
+			gc.kb = GC_MAX_AUTO_KB;
+	}
+	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
 
 	// the places of the records: a seg and a plane of a sector have one of their own (8 bytes: no hashing, no ways, nothing to evict but by the arena), the planes of 3D floors
 	// (a few for each subsector with floors) share a small hashed table of 2 ways (16 bytes an entry)
@@ -597,6 +615,14 @@ static boolean gc_alloc_block(void)
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
 #ifdef PS2
+	if (!gc.kb_user && gc.kb > GC_DEFAULT_KB && Z_ArenaFree() < total + Z_RenderHeadroom() + (1u << 20))
+	{
+		gc.kb = GC_DEFAULT_KB; // (no room for the big arena)
+		ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
+		total = tab_b + seg_b + pl_b + sec_b + ar_b + 64;
+	}
+	I_OutputMsg("HWGC block: %u KB wanted (tables %u KB, arena %u KB), arena free %u KB, render headroom %u KB | level: %u segs %u subsectors %u sectors\n", (unsigned)(total >> 10), (unsigned)((tab_b + seg_b + pl_b + sec_b) >> 10), (unsigned)(ar_b >> 10), (unsigned)(Z_ArenaFree() >> 10), (unsigned)(Z_RenderHeadroom() >> 10),
+		(unsigned)numsegs, (unsigned)numsubsectors, (unsigned)numsectors);
 	if (Z_ArenaFree() < total + Z_RenderHeadroom() + (1u << 20))
 		return false;
 #endif
