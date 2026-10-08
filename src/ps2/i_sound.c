@@ -56,7 +56,11 @@ static boolean threaded;
 static int16_t output[PS2_AUDIO_BLOCK*2] __attribute__((aligned(64)));
 static size_t output_pending, output_offset;
 static ps2e_acct acct;
-static UINT32 queue_cap, queue_target, queue_ms_arg, mixer_period_us = 5000;
+static UINT32 ring_bytes, queue_target, queue_ms_arg, mixer_period_us = 5000;
+static UINT32 flush_left;                   // bytes of silence still to be written until no audible byte is left in the IOP ring (PS2-300)
+static boolean pending_audible;             // the block in `output` carries sound (not a flush block)
+#define RING_GUARD 4                        // bytes of the ring never written: a full ring would look empty (readpos == writepos)
+#define SILENCE_TARGET (PS2_AUDIO_BLOCK * 4 * 2) // keep-ahead while only silence is written: two blocks (46 ms)
 static volatile int audio_failure, failure_status;
 static const char *volatile failure_stage;
 
@@ -244,15 +248,26 @@ static void TraceObserve(void)
 
 // One refill of the audsrv queue: executes commands, renders blocks, sends them. Mixer thread, or the game thread in
 // single-thread mode. Never waits for playback space.
+//
+// PS2-300 (docs/GATES/g1/opt11-AUDIO.md): the IOP side of audsrv (audsrv.c play_thread) advances its read pointer by 940 bytes every
+// 10.667 ms for as long as the stream is "playing", whether or not the EE wrote anything. When the EE stops writing, the read pointer
+// overtakes the write pointer and the IOP plays the OLD content of the 9400-byte ring again and again. While music plays, new data
+// overwrites it all the time; without music (SFX only, music off/stopped/ended/paused) the tail of the last sound looped between sounds.
+// So after the last audible block the pump writes silence until every byte of the ring has been overwritten (ring_bytes of zeros),
+// then stops again: the ring holds silence and may be read any number of times at no cost.
+//
+// PS2-301: the size of the ring is measured once at start (queue_cap used to be re-estimated after short writes; readpos == writepos
+// is reported as "available 0, queued 0", the estimate collapsed to 0 or 940 and the stream never wrote again). The free space is read
+// from the IOP at every wake-up, and the ring is never filled completely (a full ring is indistinguishable from an empty one).
 static void AudioPump(unsigned maxblocks)
 {
 	unsigned blocks;
-	int queued, sent = 0;
+	int avail, queued, sent = 0;
 	PS2E_Process(&eng);
 	if (!threaded) while (PS2E_SlotsFilled(&eng) < 1 && PS2E_DecodeStep(&eng)) {}
-	if (!output_pending && !PS2E_Active(&eng))
+	if (!output_pending && !flush_left && !PS2E_Active(&eng))
 	{
-		acct.active_prev = 0; // idle: the empty queue that follows is not an underrun
+		acct.active_prev = 0; // idle: the ring holds silence, the empty queue that follows is not an underrun
 #ifdef _EE
 		{
 			static UINT32 idle_pumps;
@@ -262,33 +277,50 @@ static void AudioPump(unsigned maxblocks)
 		return;
 	}
 	TraceObserve();
-	queued = audsrv_queued();
-	if (queued < 0) { Fail("queue query", queued); return; }
+	avail = audsrv_available();
+	if (avail < 0) { Fail("queue query", avail); return; }
+	if (avail > (int)ring_bytes) avail = (int)ring_bytes;
+	queued = (int)ring_bytes - avail;
 	PS2E_AcctBegin(&acct, &eng, A_NOW(), A_HZ, queued);
 	for (blocks = 0; blocks < maxblocks; blocks++)
 	{
-		int space = (int)queue_cap - queued, request, written, status;
+		int space = avail - RING_GUARD, request, written, status;
 		if (!output_pending)
 		{
-			if (queued >= (int)queue_target || space < (int)sizeof output) break;
+			boolean active;
 			if (!threaded) while (PS2E_SlotsFilled(&eng) < 1 && PS2E_DecodeStep(&eng)) {}
-			if (!PS2E_Active(&eng)) break;
-#ifdef _EE
+			active = PS2E_Active(&eng) != 0;
+			if (!active && !flush_left) break;
+			if (space < (int)sizeof output || queued >= (int)(active ? queue_target : SILENCE_TARGET)) break;
+			if (active)
 			{
+#ifdef _EE
 				UINT32 c0 = CopCount(), c1;
 				PS2E_Render(&eng, output);
 				c1 = CopCount() - c0;
 				eng.st.mix_cycles_total += c1; eng.st.mix_cycles_blocks++;
 				if (c1 > eng.st.mix_cycles_max) eng.st.mix_cycles_max = c1;
-			}
 #else
-			PS2E_Render(&eng, output);
+				PS2E_Render(&eng, output);
 #endif
 #ifdef _EE
-			if (dump_buf && dump_frames + PS2_AUDIO_BLOCK <= dump_max)
-			{ memcpy(dump_buf + dump_frames * 2, output, sizeof output); dump_frames += PS2_AUDIO_BLOCK; }
-			trace_block = (UINT32)(eng.st.blocks - 1);
+				if (dump_buf && dump_frames + PS2_AUDIO_BLOCK <= dump_max)
+				{ memcpy(dump_buf + dump_frames * 2, output, sizeof output); dump_frames += PS2_AUDIO_BLOCK; }
+				trace_block = (UINT32)(eng.st.blocks - 1);
 #endif
+				flush_left = ring_bytes;
+				pending_audible = true;
+			}
+			else
+			{
+				memset(output, 0, sizeof output);
+				flush_left -= min(flush_left, (UINT32)sizeof output);
+				eng.st.flush_blocks++;
+#ifdef _EE
+				trace_block = 0xffffffffu;
+#endif
+				pending_audible = false;
+			}
 			output_pending = sizeof output; output_offset = 0;
 		}
 		request = (int)min(output_pending, (size_t)(space & ~3));
@@ -300,16 +332,11 @@ static void AudioPump(unsigned maxblocks)
 		{ Fail("PCM transfer", status ? status : written); return; }
 		// A short or zero write is backpressure, not an RPC failure: keep the unsent suffix, do not render again.
 		output_offset += (size_t)written; output_pending -= (size_t)written;
-		queued += written; sent += written;
+		queued += written; avail -= written; sent += written;
 		eng.st.bytes_sent += (UINT32)written;
-		if (written < request)
-		{
-			int available = audsrv_available();
-			if (available >= 0) queue_cap = (UINT32)(available + queued); // resynchronise the capacity estimate
-			if (!written) break;
-		}
+		if (written < request) { eng.st.short_writes++; break; }
 	}
-	PS2E_AcctEnd(&acct, A_NOW(), A_HZ, sent, output_pending != 0 || PS2E_Active(&eng));
+	PS2E_AcctEnd(&acct, A_NOW(), A_HZ, sent, (output_pending != 0 && pending_audible) || PS2E_Active(&eng));
 	if (sent) stream_reported = true;
 }
 
@@ -431,12 +458,13 @@ static void StatLine(const char *tag)
 	const ps2e_stats *s = &eng.st;
 	I_OutputMsg("ASTAT %s mode=%s cap=%u target=%u underruns=%u emptyobs=%u gapmax_ms=%u gaptotal_ms=%u pumps=%u "
 		"maxint_ms=%u minq_ms=%d blocks=%u sent=%u mstarve=%u hmis=%u decslots=%u decmax_us=%u cmdfull=%u dcmdfull=%u "
-		"fdec=%u fcons=%u hdec=%08x hcons=%08x herr=%u maingap_ms=%u gaps100=%u mixavg_cyc=%u mixmax_cyc=%u\n",
-		tag, threaded ? "thread" : "single", (unsigned)queue_cap, (unsigned)queue_target, s->underruns, s->empty_obs,
+		"fdec=%u fcons=%u hdec=%08x hcons=%08x herr=%u maingap_ms=%u gaps100=%u mixavg_cyc=%u mixmax_cyc=%u flushblk=%u shortw=%u\n",
+		tag, threaded ? "thread" : "single", (unsigned)ring_bytes, (unsigned)queue_target, s->underruns, s->empty_obs,
 		s->gap_max_ms, s->gap_total_ms, s->pumps, s->max_interval_ms, s->min_queue_ms == 0xffffffffu ? -1 : (int)s->min_queue_ms,
 		s->blocks, s->bytes_sent, s->music_starved, s->handle_mismatch, s->dec_slots, s->dec_max_us, s->cmd_full,
 		s->dcmd_full, s->music_frames_dec, s->music_frames_cons, s->music_hash_dec, s->music_hash_cons, s->hash_errors, s->main_gap_max_ms,
-		s->main_gaps_over_100ms, s->mix_cycles_blocks ? (unsigned)(s->mix_cycles_total / s->mix_cycles_blocks) : 0u, s->mix_cycles_max);
+		s->main_gaps_over_100ms, s->mix_cycles_blocks ? (unsigned)(s->mix_cycles_total / s->mix_cycles_blocks) : 0u, s->mix_cycles_max,
+		s->flush_blocks, s->short_writes);
 #ifdef _EE
 	if (threaded)
 		I_OutputMsg("ASTAT %s threads prio main=%d (was %d) mixer=%d decoder=%d stack_used mixer=%u/%u decoder=%u/%u\n", tag,
@@ -657,7 +685,7 @@ void I_StartupSound(void)
 	{ audsrv_quit(); CONS_Printf("PS2 audio: queue too small (%d + %d)\n", available, queued0); return; }
 	PS2E_Init(&eng); PS2E_YieldHook = YieldSleep;
 	memset(&acct, 0, sizeof acct);
-	queue_cap = (UINT32)(available + queued0);
+	ring_bytes = (UINT32)(available + queued0); flush_left = 0; pending_audible = false;
 	stream_reported = stream_printed = false; audio_failure = 0; output_pending = output_offset = 0;
 	main_last = 0; stat_t0 = A_NOW(); stat_last_print_ms = 0; stat_last_underruns = 0; stat_last_blocks = 0;
 	UpdateGain();
@@ -688,7 +716,7 @@ void I_StartupSound(void)
 	if (diag_nothread) want_thread = false;
 	eng.diag_hash = diag_hash_flag;
 	if (queue_ms_arg) queue_target = queue_ms_arg * BYTES_PER_MS;   // experiments only
-	if (queue_target > queue_cap) queue_target = queue_cap;
+	if (queue_target > ring_bytes) queue_target = ring_bytes;
 	threaded = false;
 	if (want_thread)
 	{
@@ -701,12 +729,12 @@ void I_StartupSound(void)
 #else
 	(void)want_thread;
 	threaded = false;
-	if (queue_target > queue_cap) queue_target = queue_cap;
+	if (queue_target > ring_bytes) queue_target = ring_bytes;
 #endif
 	sound_started = 1;
 	Z_SetReclaimHook(ReclaimSamples);
 	CONS_Printf("PS2 audio: %d Hz stereo, %d SFX channels, %s, audsrv queue %u bytes, target %u bytes\n", PS2_AUDIO_RATE,
-		PS2_AUDIO_CHANNELS, threaded ? "mixer and decoder threads" : "single-thread mixing", (unsigned)queue_cap, (unsigned)queue_target);
+		PS2_AUDIO_CHANNELS, threaded ? "mixer and decoder threads" : "single-thread mixing", (unsigned)ring_bytes, (unsigned)queue_target);
 }
 
 void I_ShutdownSound(void)
