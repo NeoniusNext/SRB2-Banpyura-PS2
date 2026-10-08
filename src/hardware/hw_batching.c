@@ -20,6 +20,8 @@
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
 #include "../m_argv.h" // -hwpolyhash
+#include "../r_state.h" // sectors (the HWPH state hash)
+#include "../r_main.h" // the view
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 #else
 #include "../ps2/hw/ps2_hw_prof.h" // no-op profiling macros for the PC build
@@ -119,7 +121,7 @@ static UINT32 HWR_PS2_TextureKey(const GLMipmap_t *t)
 	if (hwr_geo_off & 8192) // -hwgo 8192: the key of the earlier builds, the address (to show what the memory layout does to the order of the batches)
 		return (UINT32)(uintptr_t)t;
 	if (t->regen_kind == 1 || t->regen_kind == 2)
-		return ((UINT32)t->regen_kind << 28) | ((UINT32)t->regen_id & 0xFFFFFu) | (t->ps2_twin ? 0x08000000u : 0u) | ((t->flags & 0xFFu) << 20);
+		return ((UINT32)t->regen_kind << 28) | ((UINT32)t->regen_id & 0xFFFFFu) | (t->ps2_twin ? 0x08000000u : 0u) | ((t->flags & TF_WRAPXY) << 20); // (not TF_TRANSPARENT: the loader sets it when the texture is made, after the geometry cache may have recorded the key)
 	return HWR_PS2_PatchUid(t) | 0x80000000u;
 }
 
@@ -264,7 +266,19 @@ void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_v
 	if (!hwr_ph_on)
 		return;
 	hwr_ph_calls++;
-	I_OutputMsg("HWPH f=%d n=%u h=%08x%08x o=%08x w=%u:%08x%08x\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b, hwr_ph_order, hwr_ph_wn, hwr_ph_wa, hwr_ph_wb);
+	{
+		// the state the frame was made from (OPT11 round 2): s= heights, lights and flats of all sectors, v= the view; two runs that differ in the polygons and not in these differ in the walk itself
+		UINT32 sh = 0x811c9dc5u;
+		size_t k;
+
+		for (k = 0; k < numsectors; k++)
+		{
+			sh = (sh ^ (UINT32)sectors[k].floorheight) * 16777619u;
+			sh = (sh ^ (UINT32)sectors[k].ceilingheight) * 16777619u;
+			sh = (sh ^ ((UINT32)(UINT16)sectors[k].lightlevel | ((UINT32)(UINT16)sectors[k].floorpic << 16))) * 16777619u;
+		}
+		I_OutputMsg("HWPH f=%d n=%u h=%08x%08x o=%08x w=%u:%08x%08x s=%08x v=%d,%d,%d,%u\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b, hwr_ph_order, hwr_ph_wn, hwr_ph_wa, hwr_ph_wb, sh, (int)viewx, (int)viewy, (int)viewz, (unsigned)viewangle);
+	}
 	hwr_ph_order = 0x811c9dc5u;
 	hwr_ph_wa = 0x811c9dc5u;
 	hwr_ph_wb = 0x9e3779b9u;

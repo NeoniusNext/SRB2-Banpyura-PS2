@@ -952,8 +952,12 @@ static void D_RunFrame(void)
 			{
 				extern INT32 ps2_fxfrac; // -fxfrac N (OPT11 round 2, FX2, measurements): every frame is drawn N percent of the way between two tics (a time demo draws whole tics only)
 
+				extern boolean ps2_lockstep; // d_clisrv.c (-singletics on a map)
+
 				if (ps2_fxfrac > 0 && ps2_fxfrac < 100 && !(paused || P_AutoPause()))
 					rendertimefrac = (fixed_t)(((INT64)FRACUNIT * ps2_fxfrac) / 100);
+				else if (ps2_lockstep && !demoplayback && !netgame)
+					rendertimefrac = FRACUNIT; // OPT11 GEOM2 (PS2-HW-208): a frame locked run draws whole tics (the clock must not decide where between two tics a moving view is drawn)
 			}
 #endif
 		}

@@ -599,6 +599,10 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 	if (!r_renderfloors)
 		return;
+#ifdef PS2_PROFILE
+	if (hwr_geo_off & 16384) // (measurement only)
+		return;
+#endif
 
 	// no convex poly were generated for this subsector
 	if (!xsub->planepoly)
@@ -2254,6 +2258,8 @@ static void HWR_ProcessSegC(void)
 	seg_t *sg = gl_curline;
 
 	HWC_ADD(HWC_SEGS);
+	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
+		return;
 	if (!gc.on || sg->polyseg || !currently_batching || (gc.mode & 8))
 	{
 		gc.s_seg_skip++;
