@@ -187,13 +187,25 @@ demo_suite() { # demo_suite PREFIX sw|hw [extra engine args]
 	done
 }
 
+# The demos need the PS2REF ELF (tic log and frame dump, -DPS2REF) of the SAME source tree as ELF: SRB2_STAB_REFELF names one, otherwise it is built here (build/out-ref, incremental,
+# the environment of the caller: SRB2_PS2_NO / SRB2_PS2_HW as for the ELF itself; the default is the full configuration with the hardware renderer).
 stage_demos() {
+	local REF=${SRB2_STAB_REFELF:-}
+	if [ -z "$REF" ]; then
+		say "-- building the PS2REF ELF from this tree (build/out-ref)"
+		export PS2DEV=${PS2DEV:-/opt/ps2dev-x/ps2dev}
+		export PATH=$PS2DEV/ee/bin:$PS2DEV/bin:$PS2DEV/dvp/bin:$PATH
+		SRB2_PS2_OUT=$ROOT/build/out-ref SRB2_PS2_NO=${SRB2_PS2_NO-} SRB2_PS2_HW=${SRB2_PS2_HW-1} python3 tools/ps2/build.py --ps2ref --jobs 2 >> "$L" 2>&1
+		REF=$ROOT/build/out-ref/SRB2.ELF
+	fi
+	[ -f "$REF" ] || { say "demos: no PS2REF ELF ($REF), skipped"; return; }
+	say "-- demos on $REF ($(stat -c %s "$REF") bytes)"
 	say "-- demos, software"
-	demo_suite dsw sw
+	ELF=$REF demo_suite dsw sw
 	say "-- demos, hardware"
-	demo_suite dhw hw
+	ELF=$REF demo_suite dhw hw
 	say "-- demos, hardware with an out-of-memory injection every 200 frames"
-	demo_suite dhi hw -zoomevery 200
+	ELF=$REF demo_suite dhi hw -zoomevery 200
 }
 
 stage_sweep() {
