@@ -27,6 +27,9 @@
 #include "p_setup.h" // levelflats
 #include "byteptr.h"
 #include "dehacked.h"
+#if defined(PS2) && defined(PS2_PROFILE)
+#include "m_argv.h" // -flatstream / -flatcheck (PS2-180)
+#endif
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h" // HWR_LoadMapTextures
@@ -1067,6 +1070,195 @@ done:
 	return blocktex;
 }
 
+#if defined(PS2) && defined(PS2_PROFILE)
+// PS2-180 (OPT11-STAB): the flat of a big texture straight from its raw patches.
+// The generic route makes a texture that is used as a flat twice: the composite (W x H pixels, its posts and a mask) and then the flat (W x H again), so both sit in the arena at
+// once, and a composite that was just used is protected from the eviction that could make room for the flat. CLUDSSSS of MAPMG is 2048 x 2048 (four 1024 x 1024 raw patches):
+// the arena has room for one 4.2 MB block, not for two (software: "Not enough memory to draw map MAPMG: 4194304 bytes (PU_RENDERWORK)", the map did not open; hardware: the draws of the
+// plane were skipped).
+// Here the flat is written column by column from the patches themselves, read from the pack in windows of 32 KB: the same pixels as the composite route (the patches back to front, the
+// pixels of a post as they are, what no post covers is TRANSPARENTPIXEL) and nothing but the flat in the arena. Only for plain patches (raw, not PNG and not cooked, copy style, no flips);
+// every other texture takes the generic route. -flatcheck compares the two routes for every texture used as a flat (self-test), -flatstream takes this route for all of them.
+#define R_STREAM_MIN (1024u * 1024u) // texels of a texture that takes this route
+#define R_STREAM_WINDOW 32768u
+static int r_flatstream_mode = -1; // -flatstream: 1, -flatcheck: 2, otherwise 0
+
+static int R_FlatStreamMode(void)
+{
+	if (r_flatstream_mode < 0)
+		r_flatstream_mode = M_CheckParm("-flatcheck") ? 2 : M_CheckParm("-flatstream") ? 1 : 0;
+	return r_flatstream_mode;
+}
+
+static boolean R_TextureStreamable(const texture_t *texture)
+{
+	INT32 i;
+
+	if (texture->type == TEXTURETYPE_FLAT || texture->patchcount < 1)
+		return false;
+	for (i = 0; i < texture->patchcount; i++)
+	{
+		const texpatch_t *patch = &texture->patches[i];
+		const size_t len = W_LumpLengthPwad(patch->wad, patch->lump);
+		UINT8 header[PNG_HEADER_SIZE];
+
+		if (patch->style != AST_COPY || patch->flip || len < 8 + PNG_HEADER_SIZE)
+			return false;
+		W_ReadLumpHeaderPwad(patch->wad, patch->lump, header, PNG_HEADER_SIZE, 0);
+		if (Picture_IsLumpPNG(header, len)) // PNG and the cooked pictures of the packs
+			return false;
+	}
+	return true;
+}
+
+// the flat of texture `texnum`, a new PU_RENDERWORK block (the caller gives it an owner); NULL: not possible or no room (nothing is left allocated)
+static UINT8 *R_StreamTextureToFlat(size_t texnum)
+{
+	const texture_t *texture = textures[texnum];
+	const INT32 width = texture->width, height = texture->height;
+	const size_t flatsize = (size_t)width * (size_t)height;
+	UINT8 *flat, *win;
+	INT32 i;
+	boolean ok = true;
+
+	if (!R_TextureStreamable(texture))
+		return NULL;
+	flat = Z_TryMallocAlign(flatsize, PU_RENDERWORK, NULL, sizeof (void *));
+	if (!flat)
+		return NULL;
+	win = Z_TryMallocAlign(R_STREAM_WINDOW, PU_RENDERWORK, NULL, 2);
+	if (!win)
+	{
+		Z_Free(flat);
+		return NULL;
+	}
+	memset(flat, TRANSPARENTPIXEL, flatsize);
+
+	for (i = 0; ok && i < texture->patchcount; i++)
+	{
+		const texpatch_t *patch = &texture->patches[i];
+		const size_t len = W_LumpLengthPwad(patch->wad, patch->lump);
+		UINT8 head[8];
+		UINT32 *colofs;
+		INT32 pw, ph, x, x1, x2;
+		size_t winlo = 0, winhi = 0;
+
+		W_ReadLumpHeaderPwad(patch->wad, patch->lump, head, 8, 0);
+		pw = SHORT(*(INT16 *)(void *)head);
+		ph = SHORT(*(INT16 *)(void *)(head + 2));
+		if (pw <= 0 || ph <= 0 || (size_t)pw > (len - 8) / sizeof (UINT32))
+		{
+			ok = false;
+			break;
+		}
+		x1 = patch->originx;
+		x2 = x1 + pw;
+		if (x1 > width || x2 < 0)
+			continue; // not inside the texture (as R_GenerateTexture)
+		if (patch->originy > height || patch->originy + ph < 0)
+			continue;
+		colofs = Z_TryMallocAlign((size_t)pw * sizeof (UINT32), PU_RENDERWORK, NULL, sizeof (UINT32));
+		if (!colofs)
+		{
+			ok = false;
+			break;
+		}
+		if (W_ReadLumpHeaderPwad(patch->wad, patch->lump, colofs, (size_t)pw * sizeof (UINT32), 8) != (size_t)pw * sizeof (UINT32))
+			ok = false;
+		x = x1 < 0 ? 0 : x1;
+		if (x2 > width)
+			x2 = width;
+		for (; ok && x < x2; x++)
+		{
+			size_t off = (size_t)(UINT32)LONG(colofs[x - x1]), prevdelta = 0;
+
+			for (;;)
+			{
+				const UINT8 *post;
+				INT32 count, position;
+				size_t topdelta;
+				const UINT8 *source;
+				UINT8 *dest;
+
+				// the post header (and its pixels) must be in the window: reload it at this post when it is not
+				if (off < winlo || off + 4 > winhi || (off + 4 <= winhi && win[off - winlo] != 0xff && off + 4 + win[off - winlo + 1] > winhi))
+				{
+					size_t n = len > off ? len - off : 0;
+
+					if (n > R_STREAM_WINDOW)
+						n = R_STREAM_WINDOW;
+					if (n == 0 || W_ReadLumpHeaderPwad(patch->wad, patch->lump, win, n, off) != n)
+					{
+						ok = false; // truncated column
+						break;
+					}
+					winlo = off;
+					winhi = off + n;
+				}
+				post = win + (off - winlo);
+				if (post[0] == 0xff)
+					break;
+				if (winhi - off < 4 || (size_t)post[1] > winhi - off - 4)
+				{
+					ok = false; // truncated post
+					break;
+				}
+				topdelta = post[0];
+				if (topdelta <= prevdelta)
+					topdelta += prevdelta;
+				prevdelta = topdelta;
+				count = post[1];
+				source = post + 3;
+				position = patch->originy + (INT32)topdelta;
+				if (position < 0)
+				{
+					count += position;
+					source -= position;
+					position = 0;
+				}
+				if (position + count > height)
+					count = height - position;
+				dest = flat + (size_t)position * (size_t)width + (size_t)x;
+				for (; count > 0; count--, source++, dest += width)
+					*dest = *source;
+				off += (size_t)post[1] + 4;
+			}
+			if (!ok)
+				break;
+		}
+		Z_Free(colofs);
+	}
+	Z_Free(win);
+	if (!ok)
+	{
+		Z_Free(flat);
+		return NULL;
+	}
+	return flat;
+}
+
+// the flats of 1 MiB and more that the level uses, built first (at the start of the level, when the arena still has a big hole; see R_GetFlatForTexture)
+void R_LoadBigFlats(void)
+{
+	size_t i;
+
+	for (i = 0; i < numlevelflats; i++)
+	{
+		size_t texnum;
+		const texture_t *texture;
+
+		if (levelflats[i].type == LEVELFLAT_NONE)
+			continue;
+		texnum = (size_t)R_GetTextureNumForFlat(&levelflats[i]);
+		if (texnum >= (size_t)numtextures)
+			continue;
+		texture = textures[texnum];
+		if (texture->flat == NULL && texture->type != TEXTURETYPE_FLAT && (size_t)texture->width * (size_t)texture->height >= R_STREAM_MIN && R_TextureStreamable(texture))
+			(void)R_GetFlatForTexture(texnum);
+	}
+}
+#endif
+
 UINT8 *R_GetFlatForTexture(size_t texnum)
 {
 	if (texnum >= (unsigned)numtextures)
@@ -1131,13 +1323,51 @@ UINT8 *R_GetFlatForTexture(size_t texnum)
 	}
 	else
 	{
+#if defined(PS2) && defined(PS2_PROFILE)
+		// PS2-180: a big texture (or every one with -flatstream) is made straight from its patches (no composite next to the flat)
+		boolean streamed = false;
+
+		if ((R_FlatStreamMode() == 1 || (R_FlatStreamMode() == 0 && (size_t)texture->width * (size_t)texture->height >= R_STREAM_MIN)) && R_TextureStreamable(texture))
+		{
+			texture->flat = R_StreamTextureToFlat(texnum);
+			streamed = texture->flat != NULL;
+		}
+		if (!streamed)
+#endif
 		texture->flat = (UINT8 *)Picture_TextureToFlat(texnum);
 #ifdef PS2_PROFILE
 		// PS2-OPT-03: a texture used as a flat was converted into a PU_STATIC block that nothing ever released
 		// (MAP11: 50 blocks, 1.4 MB); like the plain flats it is a cache block now and is built again when it was evicted
 		Z_SetUser(texture->flat, (void **)&texture->flat);
+#if defined(PS2)
+		// PS2-180: a flat of 1 MiB and more lives as long as the level (a cache block of this size cannot be made again once the arena is fragmented: MAPMG, 4.2 MB between 64 KB flats)
+		Z_ChangeTag(texture->flat, streamed ? PU_LEVEL : PU_CACHE);
+		if (streamed)
+			CONS_Printf("FLATSTREAM texture %d %.8s (%dx%d): the flat is made from its patches, kept for the level\n", (int)texnum, texture->name, texture->width, texture->height);
+		else
+#else
 		Z_ChangeTag(texture->flat, PU_CACHE);
+#endif
 		R_ReleaseTextureCache((INT32)texnum); // conversion copied every column; only the independent flat is still held
+#if defined(PS2)
+		if (R_FlatStreamMode() == 2 && !streamed && R_TextureStreamable(texture)) // -flatcheck: the same texture by the other route, compared
+		{
+			UINT8 *other = R_StreamTextureToFlat(texnum);
+			const size_t size = (size_t)texture->width * (size_t)texture->height;
+
+			if (!other)
+				CONS_Printf("FLATCHECK texture %d (%dx%d): no second copy\n", (int)texnum, texture->width, texture->height);
+			else
+			{
+				size_t k, diff = 0;
+
+				for (k = 0; k < size; k++)
+					diff += ((UINT8 *)texture->flat)[k] != other[k];
+				CONS_Printf("FLATCHECK texture %d %.8s (%dx%d): %s%s%u texels differ\n", (int)texnum, texture->name, texture->width, texture->height, diff ? "DIFFER " : "equal ", "", (unsigned)diff);
+				Z_Free(other);
+			}
+		}
+#endif
 #endif
 	}
 
@@ -1161,6 +1391,17 @@ UINT8 *R_TryGetFlatForTexture(size_t texnum)
 	if (texture->flat != NULL || texture->type == TEXTURETYPE_FLAT)
 		return R_GetFlatForTexture(texnum);
 
+	flat = NULL;
+	if ((R_FlatStreamMode() == 1 || (R_FlatStreamMode() != 2 && (size_t)texture->width * (size_t)texture->height >= R_STREAM_MIN)) && R_TextureStreamable(texture))
+		flat = R_StreamTextureToFlat(texnum); // PS2-180: no composite next to the flat
+	if (flat)
+	{
+		texture->flat = flat;
+		Z_SetUser(flat, (void **)&texture->flat);
+		Z_ChangeTag(flat, PU_CACHE);
+		flatmemory += texture->width * texture->height;
+		return flat;
+	}
 	flat = (UINT8 *)Picture_TryTextureToFlat(texnum);
 	if (!flat)
 		return NULL;

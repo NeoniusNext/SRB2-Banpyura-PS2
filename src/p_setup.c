@@ -615,6 +615,9 @@ size_t P_PrecacheLevelFlats(void)
 
 	//SoM: 4/18/2000: New flat code to make use of levelflats.
 	flatmemory = 0;
+#if defined(PS2) && defined(PS2_PROFILE)
+	R_LoadBigFlats(); // PS2-180: the 4.2 MB flat of MAPMG is made while the arena still has a hole for it
+#endif
 	for (i = 0; i < numlevelflats; i++)
 	{
 #ifdef PS2_PROFILE

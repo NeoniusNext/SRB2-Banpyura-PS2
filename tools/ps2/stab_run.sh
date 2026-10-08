@@ -9,6 +9,7 @@
 #   files    damaged / garbage config, game data, saves                                                           (stab_files.py)
 #   packs    missing / truncated / corrupted data packs                                                           (stab_packs.py)
 #   hwfb     HW start without memory (-hwnomem), fallback and return at every map of a chain (-hwfbtest)
+#   flats    software chain of all maps with -flatcheck: the flat that is made straight from the patches (PS2-180) equals the composite route for every texture used as a flat
 #   lint     the VIF1 chain lint (-hwdbg 536870912): no FLUSH inside a GIF packet (the MAPMD/MAPME hang), maps with odd texture sizes   (PS2-HW-144)
 #   leak     50 map changes in software and in hardware (used bytes, C heap, stack must not grow)
 #   inject   out-of-memory injection sweeps: level load / frame, software and hardware                            (oom_inject.py)
@@ -29,7 +30,7 @@ case $ELF in /*) ;; *) ELF=$ROOT/$ELF ;; esac
 shift
 TAG=${1:-$(basename "$ELF" .ELF)}
 [ $# -gt 0 ] && shift
-STAGES=${*:-ui video files packs hwfb lint leak inject addons interp split net demos sweep soak}
+STAGES=${*:-ui video files packs hwfb lint flats leak inject addons interp split net demos sweep soak}
 PAK=${SRB2_STAB_PAK:-/home/user/SRB2-Banpyura-PS2/build/pak}
 FRAMES=${SRB2_STAB_FRAMES:-35}
 MINUTES=${SRB2_STAB_MINUTES:-20}
@@ -80,6 +81,12 @@ stage_hwfb() {
 		$OPT --name "$TAG-zdbg" --elf "$ZDBG" --pak "$PAK" --out build/runs --map MAP01 --timeout 3000 -- -zck -zheap 1 -zquit 150 -renderer Hardware -zoomtest 40,160 -zchain 02,03,04 >> "$L" 2>&1
 		grep_run "$TAG-zdbg" "ps2_hwfb\|OOM\|I_Error\|ZCHAIN" 200
 	fi
+}
+
+stage_flats() {
+	say "-- flat route self-test: -flatcheck over every map (software, one session chain); a DIFFER line is an error"
+	python3 tools/ps2/chain_sweep.py --elf "$ELF" --tag "$TAG-flats" --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames 12 -- -flatcheck >> "$L" 2>&1
+	grep -h "FLATCHECK\|FLATSTREAM" build/runs/sweep/$TAG-flats/*/boot.txt 2>/dev/null | cut -c1-200 | sort | uniq -c | sort -rn | head -60 >> "$L"
 }
 
 stage_lint() {
