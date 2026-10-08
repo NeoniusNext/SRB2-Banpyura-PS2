@@ -519,7 +519,7 @@ static void HWR_GCacheParse(void)
 	if (M_CheckParm("-hwgo") && M_IsNextParm())
 		hwr_geo_off = (UINT32)atoi(M_GetNextParm());
 	gc.mode_set = true;
-	gc.mode = 1; // ON by default since the round 2, walls and planes (a plane hit costs 630 cycles against 1100 for the calculation, the arena follows the level); -hwgc 0: off, -hwgc 5: the walls only
+	gc.mode = 1 | 4; // ON by default since the round 2, the walls only (with the block collection of PS2-HW-233 a plane hit costs about what the calculation does - 1100 cycles - and its record is the biggest: no gain on the 4 demos, more memory); -hwgc 0: off, -hwgc 1: the planes too
 	gc.kb = GC_DEFAULT_KB;
 	if (M_CheckParm("-hwgc") && M_IsNextParm())
 		gc.mode = atoi(M_GetNextParm());
