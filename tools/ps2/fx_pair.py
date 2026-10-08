@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 T = ROOT / 'tools/ps2'
-PCEXE = ROOT / 'build/pc-ref/bin/lsdlsrb2_claude/lucid-mayer-1izlqe'
+PCEXE = Path(os.environ.get('SRB2_PCEXE', str(ROOT / 'build/pc-ref/bin/lsdlsrb2_claude/lucid-mayer-1izlqe')))  # OPT11-MODEL: SRB2_PCEXE = own PC build
 
 
 def run(cmd, **kw):

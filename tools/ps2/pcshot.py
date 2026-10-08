@@ -80,7 +80,8 @@ def main():
     if a.keys:
         args += ['-ps2ref-keys', a.keys]
     args += a.extra
-    env = dict(os.environ, SRB2WADDIR='/opt/srb2-assets', SDL_AUDIODRIVER='dummy', LIBGL_ALWAYS_SOFTWARE='1')
+    # OPT11-MODEL: SRB2_PCWADDIR = a private directory of symlinks to the pk3 files with its own reference.cfg (and models/ + models.dat): the shared one is rewritten by every run
+    env = dict(os.environ, SRB2WADDIR=os.environ.get('SRB2_PCWADDIR', '/opt/srb2-assets'), SDL_AUDIODRIVER='dummy', LIBGL_ALWAYS_SOFTWARE='1')
     for attempt in range(3):
         try:
             p = subprocess.run(args, cwd=str(o), env=env, capture_output=True, text=True, timeout=a.timeout)
