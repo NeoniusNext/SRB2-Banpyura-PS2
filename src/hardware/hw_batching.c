@@ -102,6 +102,27 @@ static inline int HWR_ShaderOfTarget(int shader_target)
 }
 
 #define HWR_PS2_NOTEX_ID 0xFFFFFFFFu
+static UINT32 hwr_uid_ctr; // OPT11 round 2 (PS2-HW-207): numbers the textures that have no regen id (patches, sprites, the translated variants) in the order of their first use
+static UINT32 HWR_PS2_PatchUid(const GLMipmap_t *t)
+{
+	GLMipmap_t *m = (GLMipmap_t *)t;
+	if (!m->ps2_uid)
+		m->ps2_uid = ++hwr_uid_ctr;
+	return m->ps2_uid;
+}
+
+// The identity of the texture for the sort key of a polygon (the state hash that orders the polygons of one texture) and for the order of the textures. Not the
+// address of the structure: it depends on the memory layout (the cache of the geometry, the zone), and the order of the batches with the same texture
+// (which polygon is drawn over the other when two are in one plane) must not.
+static UINT32 HWR_PS2_TextureKey(const GLMipmap_t *t)
+{
+	if (hwr_geo_off & 8192) // -hwgo 8192: the key of the earlier builds, the address (to show what the memory layout does to the order of the batches)
+		return (UINT32)(uintptr_t)t;
+	if (t->regen_kind == 1 || t->regen_kind == 2)
+		return ((UINT32)t->regen_kind << 28) | ((UINT32)t->regen_id & 0xFFFFFu) | (t->ps2_twin ? 0x08000000u : 0u) | ((t->flags & 0xFFu) << 20);
+	return HWR_PS2_PatchUid(t) | 0x80000000u;
+}
+
 static UINT32 HWR_PS2_TextureId(const GLMipmap_t *t) // OPT11: the part of the order that does not depend on the frame (the geometry cache keeps it)
 {
 	if (!t)
@@ -110,7 +131,9 @@ static UINT32 HWR_PS2_TextureId(const GLMipmap_t *t) // OPT11: the part of the o
 		return (UINT32)t->regen_id & 0x1FFFu;
 	if (t->regen_kind == 2)
 		return 0x2000u | ((UINT32)t->regen_id & 0x1FFFu);
-	return (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18; // patches: any fixed order
+	if (hwr_geo_off & 8192)
+		return (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18;
+	return (HWR_PS2_PatchUid(t) * 2654435761u) >> 18; // patches: any fixed order (round 2: by the number of the first use, not by the address)
 }
 
 static inline UINT32 HWR_PS2_OrderOf(UINT32 id, UINT32 scan_dir)
@@ -138,6 +161,7 @@ static int rcap;
 // the walls, planes, sprites and the batcher that is meant not to change a picture (tools/ps2/gm_polycmp.py compares two logs).
 static int hwr_ph_on = -1;
 static UINT32 hwr_ph_a, hwr_ph_b, hwr_ph_n;
+static UINT32 hwr_ph_order = 0x811c9dc5u; // OPT11 round 2: the order of the polygons after the sort of HWR_RenderBatches (the numbers of the calls of HWR_ProcessPolygon, all batches of the frame): it must not depend on the memory layout
 static UINT32 hwr_ph_calls, hwr_ph_lo, hwr_ph_hi; // -hwpolyhash 2 LO HI: every polygon of the frames LO..HI is printed with its parts (HWPP lines), to find what differs between two runs
 
 static inline void HWR_PH_W(UINT32 x)
@@ -196,6 +220,16 @@ static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n,
 		HWR_PH_W(w[i]);
 }
 
+static void HWR_PolyHashOrder(const UINT32 *idx, UINT32 n) // called by HWR_RenderBatches after the sort
+{
+	UINT32 i, h = hwr_ph_order ^ n;
+
+	h *= 16777619u;
+	for (i = 0; i < n; i++)
+		h = (h ^ idx[i]) * 16777619u;
+	hwr_ph_order = h;
+}
+
 void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_video.c)
 {
 	if (hwr_ph_on < 0)
@@ -211,7 +245,8 @@ void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_v
 	if (!hwr_ph_on)
 		return;
 	hwr_ph_calls++;
-	I_OutputMsg("HWPH f=%d n=%u h=%08x%08x\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b);
+	I_OutputMsg("HWPH f=%d n=%u h=%08x%08x o=%08x\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b, hwr_ph_order);
+	hwr_ph_order = 0x811c9dc5u;
 	hwr_ph_a = 0x811c9dc5u;
 	hwr_ph_b = 0x9e3779b9u;
 	hwr_ph_n = 0;
@@ -429,7 +464,7 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			if (current_texture)
 			{
 #ifdef PS2 // PS2-HW-22: the texture's identity, not its GS handle: nothing is uploaded while polygons are collected, so every texture that is not resident has handle 0
-				DIGEST(hash, (UINT32)(uintptr_t)current_texture);
+				DIGEST(hash, HWR_PS2_TextureKey(current_texture));
 #else
 				DIGEST(hash, current_texture->downloaded);
 #endif
@@ -675,6 +710,8 @@ void HWR_RenderBatches(void)
 #endif
 	PS_STOP_TIMING(ps_hw_batchsorttime);
 #ifdef PS2_PROFILE
+	if (hwr_ph_on > 0)
+		HWR_PolyHashOrder(polygonIndexArray, (UINT32)polygonArraySize);
 	HWP_SPAN_END2(tb_sort, HWP_BATCHSORT, HWP_KB_SORT);
 #ifdef PS2_HWDETAIL
 	if (hwr_sprite_batch)
