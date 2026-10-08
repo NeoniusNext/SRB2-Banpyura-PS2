@@ -28,7 +28,7 @@ static struct
 	u32 s_imm, s_begin, s_emit, s_set_n, s_set_cyc, c_fans; // hw_DrawPolygon by part (imm_prepare, begin_draw, emit_fan), hw_SetTexture calls / cycles, the polygons of PS2HWD_DrawFans (all)
 	u32 vr_calls, vr_slow, vr_rows, vr_blk_slow, vr_same; // prow_ensure: calls, calls that walked the rows, rows walked, rows that needed clut_get
 	u32 vs_n, vs_c, vs_rows, vs_pass, vs_consts, vs_send, vs_light; // vu_plan_setup: calls, cycles, and by part (rows, pass_setup, constants build, constants send, light)
-	u32 s_vu, s_same, s_retarget, vs_reuse, b_retarget; // single polygons drawn through the VU1 program, of them: with the plan (key) of the previous single draw
+	u32 s_vu, s_same, s_retarget, vs_reuse, b_retarget, s_rec; // single polygons drawn through the VU1 program, of them: with the plan (key) of the previous single draw
 } G;
 
 // the outermost driver call: cycles minus the waits
@@ -64,8 +64,8 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF3 batches=%u fans=%u single=%u vu=%u fast=%u lit=%u cut=%u water=%u begin=%u/%u tris=%u vuchunks=%u planhit=%u planmiss=%u\n", G.batches / frames, G.fans / frames, G.single / frames,
 		G.p_vu / frames, G.p_fast / frames, G.p_lit / frames, G.p_cut / frames, G.p_water / frames, G.begin_n / frames, G.begin_cyc / frames, G.tri_n / frames, G.vu_chunks / frames, G.plan_hit / frames, G.plan_miss / frames);
 	I_OutputMsg("HWPROF9 cut_and_emit (repeats etc.) polys=%u cyc=%u\n", G.p_cutold / frames, G.c_cutold / frames);
-	I_OutputMsg("HWPROF23 driver total=%u (+ plan %u: the texture planner HWR_RenderBatches calls) | singles: imm=%u begin=%u emit=%u vu=%u same=%u retarget=%u | settex n=%u cyc=%u | DrawFans polys=%u batch retargets=%u\n", G.drv_cyc / frames, (unsigned)(ps2hwp_cyc[HWP_B_PLAN] / frames), G.s_imm / frames, G.s_begin / frames, G.s_emit / frames,
-		G.s_vu / frames, G.s_same / frames, G.s_retarget / frames, G.s_set_n / frames, G.s_set_cyc / frames, G.c_fans / frames, G.b_retarget / frames);
+	I_OutputMsg("HWPROF23 driver total=%u (+ plan %u: the texture planner HWR_RenderBatches calls) | singles: imm=%u begin=%u emit=%u vu=%u same=%u retarget=%u | settex n=%u cyc=%u | DrawFans polys=%u batch retargets=%u state records=%u\n", G.drv_cyc / frames, (unsigned)(ps2hwp_cyc[HWP_B_PLAN] / frames), G.s_imm / frames, G.s_begin / frames, G.s_emit / frames,
+		G.s_vu / frames, G.s_same / frames, G.s_retarget / frames, G.s_set_n / frames, G.s_set_cyc / frames, G.c_fans / frames, G.b_retarget / frames, G.s_rec / frames);
 	I_OutputMsg("HWPROF24 vu_plan_setup n=%u cyc=%u: light=%u rows=%u pass=%u build=%u send=%u | reuse=%u chunks=%u | prow_ensure calls=%u same=%u slow=%u rows=%u clut_get=%u\n", G.vs_n / frames, G.vs_c / frames, G.vs_light / frames, G.vs_rows / frames, G.vs_pass / frames, G.vs_consts / frames,
 		G.vs_send / frames, G.vs_reuse / frames, G.vu_chunks / frames, G.vr_calls / frames, G.vr_same / frames, G.vr_slow / frames, G.vr_rows / frames, G.vr_blk_slow / frames);
 	I_OutputMsg("HWPROF8 plan cache cycles: key=%u copy=%u touch=%u misc=%u miss=%u\n", G.pc_key / frames, G.pc_copy / frames, G.pc_touch / frames, G.pc_misc / frames, G.pc_miss / frames);

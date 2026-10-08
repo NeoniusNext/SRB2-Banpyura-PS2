@@ -255,6 +255,7 @@ boolean PS2HWD_Init(void)
 	memset(&H, 0, sizeof H);
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
 	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
 		vu_bretmask = atoi(M_GetNextParm());
 	tex_nosplit = M_CheckParm("-hwnosplit") != 0; // PS2-HW-70 off: images over 1024 rows are decimated

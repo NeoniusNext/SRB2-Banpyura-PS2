@@ -700,6 +700,72 @@ static inline int vu_key_cmp(const vukey_t *a, const vukey_t *b)
 	return 1;
 }
 
+// PS2-HW-111: the texture registers of a retargeted plan as a state record in the open chunk (the program sends the record's GIF packet with XGKICK between the polygons):
+// no end of the chunk, no MSCAL, no GS state through PATH2. Plans lit by colormap rows (P.pal) keep the other way: their rows are tracked by the program. Returns 1 when the
+// state of the new texture is in the chunk (or was the GS's already); 0 = nothing was changed (the caller makes the plan again).
+static int vu_state_rec(void)
+{
+	const pass_t *ps = &P.pass[0];
+	const texrec_t *r = P.r;
+	const u64 cld_mask = 7ull << 61;
+	u64 t0, t1, cl, vals[3];
+	u32 regs[3], cbp = 0;
+	int n = 0, i;
+	qw_t *o;
+
+	if (!VU.open || P.pal || !ps->tex || !r || vu_norecord)
+		return 0;
+	if ((H.gsr.valid & (RV_CLAMP | RV_TEX1 | RV_TEX0)) != (RV_CLAMP | RV_TEX1 | RV_TEX0))
+		return 0;
+	if (VU.chunk_n + 6 > VU_CHUNK_QW || H.wr + 6 + 3 > BUF_QW)
+		return 0; // (the worst case: the header, the GIF tag and three registers)
+	if (r->psm == PSM_T8)
+	{
+		if (ps->clut_kind)
+			cbp = clut_get(ps->clut_kind, ps->clut_param, ps->clut_keyed);
+		else
+			cbp = clut_get(r->clut == 3 ? CK_ALPHA : (r->clut == 2 ? CK_KEYED : CK_OPAQUE), 0, 0);
+		if (!VU.open || H.wr + 6 + 3 > BUF_QW)
+			return 0; // the CLUT had to be made: its upload closed the chunk
+	}
+	tex_regs(r, 0, 0, P.linear, cbp, ps->decal, &t0, &t1, &cl);
+	cl = P.clamp;
+	if (H.gsr.clamp != cl)
+	{
+		vals[n] = cl;
+		regs[n++] = GSR_CLAMP_1;
+		H.gsr.clamp = cl;
+	}
+	if (H.gsr.tex1 != t1)
+	{
+		vals[n] = t1;
+		regs[n++] = GSR_TEX1_1;
+		H.gsr.tex1 = t1;
+	}
+	if ((H.gsr.tex0 & ~cld_mask) != (t0 & ~cld_mask) || (t0 & cld_mask))
+	{
+		vals[n] = t0;
+		regs[n++] = GSR_TEX0_1;
+		H.gsr.tex0 = t0;
+	}
+	if (!n)
+		return 1;
+	o = H.ring[H.cur] + H.wr;
+	o[0].w[0] = 0; // n = 0: a state record
+	o[0].w[1] = 1u + (u32)n; // its length behind this header
+	o[0].w[2] = o[0].w[3] = 0;
+	o[1].d[0] = HWGIF_TAG((u32)n, 1, 0, 0, 0, 1);
+	o[1].d[1] = GIF_REGS_AD;
+	for (i = 0; i < n; i++)
+		ad_set(&o[2 + i], vals[i], regs[i]);
+	H.wr += 2 + (u32)n;
+	VU.chunk_n += 2 + (u32)n;
+	VU.npoly++;
+	H.st.state_writes += (u32)n;
+	G.s_rec++;
+	return 1;
+}
+
 // The plan of the last single draw (P, GS state, VU1 constants) for another texture of the same kind: what begin_draw_inner derives from the texture record. The kind
 // (psm, palette kind, wrap, npot, region, filter inputs) is equal by the key, so the passes, the cut flags and the filter stay.
 static void vu_retarget(const FSurfaceInfo *surf)
@@ -722,6 +788,8 @@ static void vu_retarget(const FSurfaceInfo *surf)
 		P.rs.lp.fade_start = surf->LightInfo.fade_start;
 		P.rs.lp.fade_end = surf->LightInfo.fade_end;
 	}
+	if (r && vu_state_rec())
+		return; // the texture registers are in the open chunk
 	VU.reuse = 1; // vu_plan_setup keeps the constants of the plan (the texture scale travels in the polygon header)
 	P.serial = H.serial - 1; // the GS state of the pass again (the texture registers)
 }

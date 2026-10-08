@@ -222,6 +222,8 @@ PolyLoop:
 		NOP					iaddiu		VI07,VI00,0
 		NOP					iaddiu		VI08,VI00,OCMASK
 		IDLE	4
+		NOP					ibeq		VI04,VI00,StateRec
+		NOP					NOP
 		addz.x		VF08,VF00,VF29z		iaddiu		VI09,VI04,0
 		addw.y		VF08,VF00,VF29w		NOP
 
@@ -585,6 +587,37 @@ PolyDone:
 		NOP					NOP
 Done:
 		NOP[E]				NOP
+		NOP					NOP
+; ---- a state record (PS2-HW-111): n = 0, y = m: the m quad words behind the header are a GIF packet (A+D, EOP) of the driver (the texture registers of a draw of another
+; texture of the plan); it goes out through XGKICK in its place between the polygons ----
+StateRec:
+		NOP					ilw.y		VI05,0(VI02)
+		NOP					ilw.y		VI10,K_SPILL2(VI00)
+		NOP					iaddiu		VI11,VI02,1
+		IDLE	4
+		NOP					iaddiu		VI12,VI10,0
+		NOP					iaddiu		VI09,VI05,0
+SRLoop:
+		NOP					lq			VF11,0(VI11)
+		NOP					iaddiu		VI11,VI11,1
+		NOP					isubiu		VI09,VI09,1
+		NOP					sq			VF11,0(VI12)
+		NOP					iaddiu		VI12,VI12,1
+		IDLE	2
+		NOP					ibne		VI09,VI00,SRLoop
+		NOP					NOP
+		NOP					xgkick		VI10
+		NOP					iaddiu		VI15,VI00,OUTSUM
+		IDLE	2
+		NOP					isub		VI10,VI15,VI10
+		NOP					iadd		VI02,VI02,VI05
+		NOP					isw.y		VI10,K_SPILL2(VI00)
+		NOP					iaddiu		VI02,VI02,1
+		NOP					isubiu		VI03,VI03,1
+		IDLE	2
+		NOP					ibne		VI03,VI00,PolyLoop
+		NOP					NOP
+		NOP					b			Done
 		NOP					NOP
 		.align	4
 VU1Draw_CodeEnd:
