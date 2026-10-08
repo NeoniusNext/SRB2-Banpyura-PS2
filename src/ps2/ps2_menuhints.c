@@ -807,7 +807,7 @@ static void Command_Go_f(void)
 	CONS_Printf("MHGO %d %s item %d hints %d\n", (int)idx, name, (int)M_PS2MenuCursor(-1), (int)cv_menuhints.value);
 }
 
-// -menuseq SPACING,M:I[:HINTS],P<N>,...: (P<N> = ps2_mhplace N) a picture series for -vidshot: from the 20th displayed frame on, every SPACING frames the next menu M of the crawler's list is brought up
+// -menuseq SPACING,M:I[:HINTS],P<N>,...: (P<N> = ps2_mhplace N) a picture series for -vidshot: from the 150th displayed frame on, every SPACING frames the next menu M of the crawler's list is brought up
 // with the cursor on item I (Command_Go_f); -vidshot m<N> takes the picture at the N-th frame of the series (the pace is that of displayed frames: a screen wipe or a slow
 // game tic does not move it)
 static const char *seqspec;
@@ -823,7 +823,7 @@ void PS2MenuHints_SeqTick(void)
 		if (M_CheckParm("-menuseq") && M_IsNextParm())
 			seqspec = M_GetNextParm();
 	}
-	if (!seqspec || ++seqcalls < 20)
+	if (!seqspec || ++seqcalls < 150) // the title screen is up after about 100 displayed frames
 		return;
 	seqframe++;
 	{

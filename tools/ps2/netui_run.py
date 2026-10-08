@@ -86,7 +86,7 @@ def main():
         (run / '.srb2' / dst).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, run / '.srb2' / dst)
     (run / 'grabs').mkdir(exist_ok=True)
-    for f in ('boot.txt', 'pcsx2.log'):
+    for f in ('boot.txt', 'pcsx2.log', 'reference.cfg'):  # reference.cfg in the run directory is the config that the engine SAVED at the end of the last run (a cvar set by a command, e.g. menuhints 0, would come back): every run starts from the staged .srb2/reference.cfg
         (run / f).unlink(missing_ok=True)
     args = ['-logfile', 'boot.txt', '-config', 'reference.cfg', '-nolog', '-noendtxt'] + a.extra
     (run / 'ps2args').write_text('\n'.join(args[2:]) + '\n')

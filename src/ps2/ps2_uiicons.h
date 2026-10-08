@@ -54,7 +54,7 @@ INT32 PS2UI_TokenWidth(UINT8 c);
 // the icon of a joystick key number of the engine (KEY_JOY1+n / KEY_HAT1+n, also the second pad), or -1; the text token of it ("" when none)
 INT32 PS2UI_KeyIcon(INT32 keynum);
 const char *PS2UI_KeyToken(INT32 keynum);
-// the text of a message box for the console: ESC / ENTER as words become the Circle / Cross icon, "Press a key" becomes "Press any button" (a zone copy: Z_Free it)
+// the text of a message box for the console: ESC / ENTER as words become the Circle / Cross icon, "Press a key" becomes "Press <Cross> or <Circle>" (a zone copy: Z_Free it)
 char *PS2UI_Message(const char *src);
 // the console command "ps2_icons" (a test card of all icons, drawn by M_Drawer: PS2UI_Card)
 void PS2UI_RegisterCommands(void);
