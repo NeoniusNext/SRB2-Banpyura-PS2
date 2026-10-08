@@ -103,3 +103,13 @@ src/r_translation.c -Os
 # OPT11 (GEOM): the GS driver unit (ps2_hwd.c includes all the ps2_hw_*.inc): -O3 is -0.23 M cycles per frame on DEMO_001 (10.64 -> 10.41, same ELF otherwise, polygon stream and picture unchanged:
 # -hwpolyhash equal on 1125 frames), +62 KB of code. -funroll-loops and -O3 on the engine side files of the renderer (hw_main.c, hw_batching.c, hw_cache.c ...) gave nothing more (-0.05).
 src/ps2/hw/ps2_hwd.c -O3
+# PS2-311: libvorbis 1.3.7 decode units (src/ps2/vorbis): no warnings from third-party code, no fused multiply-add (the results must equal the libvorbis.a members they replace)
+src/ps2/vorbis/codebook.c -O3 -funroll-loops -DHAVE_ALLOCA_H -DPS2_VORBIS_FAST -w -ffp-contract=off
+src/ps2/vorbis/floor1.c -O3 -funroll-loops -DHAVE_ALLOCA_H -DPS2_VORBIS_VU0 -w -ffp-contract=off
+src/ps2/vorbis/mapping0.c -O3 -funroll-loops -DHAVE_ALLOCA_H -DPS2_VORBIS_VU0 -w -ffp-contract=off
+src/ps2/vorbis/res0.c -O3 -funroll-loops -DHAVE_ALLOCA_H -w -ffp-contract=off
+src/ps2/vorbis/mdct.c -O3 -funroll-loops -DHAVE_ALLOCA_H -DPS2_VORBIS_VU0 -w -ffp-contract=off
+src/ps2/vorbis/synthesis.c -O3 -funroll-loops -DHAVE_ALLOCA_H -w -ffp-contract=off
+src/ps2/vorbis/block.c -O3 -funroll-loops -DHAVE_ALLOCA_H -DPS2_VORBIS_VU0 -w -ffp-contract=off
+src/ps2/ps2_music.c -O3 -funroll-loops -DPS2_VORBIS_VU0
+src/ps2/i_sound.c -DPS2_VORBIS_VU0

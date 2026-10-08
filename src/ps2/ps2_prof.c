@@ -293,6 +293,9 @@ static void Samp_Start(void)
 	samp_on = true;
 }
 
+// PS2-310: the audio decoder benchmark (i_sound.c -abench) samples only its own loop: -ps2sample, report with sample_report.py
+void PS2Prof_SampleBegin(void) { Samp_Start(); }
+void PS2Prof_SampleEnd(void);
 static void Samp_Stop(void)
 {
 	int i;
@@ -308,6 +311,7 @@ static void Samp_Stop(void)
 			I_OutputMsg("SM %08x %u\n", (unsigned)samp_pc[i], (unsigned)samp_cnt[i]);
 	I_OutputMsg("SMEND\n");
 }
+void PS2Prof_SampleEnd(void) { Samp_Stop(); }
 #endif
 
 static void Report(void)
