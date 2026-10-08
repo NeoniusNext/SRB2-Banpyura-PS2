@@ -960,6 +960,8 @@ static void Impl_HWStats(void)
 static void Impl_VidKeys(void);
 static void Impl_VidShot(void);
 
+extern void HWR_PolyHashFrame(INT32 frame); // hardware/hw_batching.c: -hwpolyhash
+
 static void Impl_FinishUpdateHW(void)
 {
 	if (!hwd_on || ps2gs_is_up())
@@ -969,6 +971,7 @@ static void Impl_FinishUpdateHW(void)
 	HWD.pfnFinishUpdate(cv_vidwait.value);
 	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
 	hwframes++;
+	HWR_PolyHashFrame(hwframes); // OPT11 GEOM: -hwpolyhash
 	if (hwprof)
 		Impl_HWProf();
 	if (gamestate == GS_TITLESCREEN && !WipeInAction)

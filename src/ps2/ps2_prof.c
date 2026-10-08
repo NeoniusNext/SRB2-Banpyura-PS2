@@ -357,14 +357,44 @@ static void Report(void)
 #ifdef PS2_PROF_DIRECT
 // PS2-94: LTO profile build (no linker wrappers): I_FinishUpdate reports every displayed frame; everything is "other"
 UINT32 ps2prof_interp; // frames drawn with 0 < rendertimefrac < FRACUNIT (d_main.c counts them)
+UINT64 ps2prof_c_tick, ps2prof_c_disp, ps2prof_c_snd; // PS2-200: cycles in TryRunTics / D_Display / S_UpdateSounds+LUA_Step (d_main.c)
+UINT32 ps2prof_real; // tics the clock asked for (the sum of realtics handed to TryRunTics)
 void PS2Prof_FrameEnd(void)
 {
 	static tic_t lasttic;
+	static UINT32 lastframe, maxframe, over5t;
+	static UINT32 bin[4]; // frame intervals in 60 Hz periods (16.67 ms): shorter than 0.5, 0.5..1.5, 1.5..2.5, longer
+	static UINT64 isum, isq; // sum and sum of squares of the intervals in units of 64 cycles (the spread of the pacing: core_tick.py)
+	if (Active())
+	{
+		const UINT32 now = count();
+		const UINT32 el = now - lastframe;
+		lastframe = now;
+		if (frames && el > maxframe)
+			maxframe = el;
+		if (frames)
+		{
+			const UINT32 period = 294912000u / 60u;
+			bin[el < period / 2 ? 0 : el < period * 3 / 2 ? 1 : el < period * 5 / 2 ? 2 : 3]++;
+			over5t += el > 294912000u / 35u * 5u; // longer than five tics (the lag clamp of TryRunTics)
+			isum += el >> 6;
+			isq += (UINT64)(el >> 6) * (el >> 6);
+		}
+	}
 	if (Active() && ++frames >= WINDOW_FRAMES)
 	{
 		tics = (UINT32)(gametic - lasttic);
 		lasttic = gametic;
 		I_OutputMsg("INTERP win=%u frames=%u fractional=%u\n", (unsigned)windows, (unsigned)frames, (unsigned)ps2prof_interp);
+		// TICK: tic logic per window (cycles), tics run, tics the clock asked for (lost = real - run), the longest frame, frames over two tics
+		I_OutputMsg("TICK win=%u frames=%u tics=%u real=%u tickcyc=%llu dispcyc=%llu sndcyc=%llu maxframe=%u over5tics=%u p0=%u p1=%u p2=%u p3=%u isum=%llu isq=%llu\n", (unsigned)windows, (unsigned)frames,
+			(unsigned)tics, (unsigned)ps2prof_real, (unsigned long long)ps2prof_c_tick, (unsigned long long)ps2prof_c_disp, (unsigned long long)ps2prof_c_snd,
+			(unsigned)maxframe, (unsigned)over5t, (unsigned)bin[0], (unsigned)bin[1], (unsigned)bin[2], (unsigned)bin[3], (unsigned long long)isum, (unsigned long long)isq);
+		ps2prof_c_tick = ps2prof_c_disp = ps2prof_c_snd = 0;
+		ps2prof_real = 0;
+		maxframe = over5t = 0;
+		bin[0] = bin[1] = bin[2] = bin[3] = 0;
+		isum = isq = 0;
 		ps2prof_interp = 0;
 		Report();
 	}

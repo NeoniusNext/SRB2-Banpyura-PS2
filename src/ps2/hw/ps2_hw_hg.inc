@@ -56,6 +56,7 @@ static inline void drv_out(void)
 #define HG_SKY(br, dt) do { if (ps2hwp_skyview) { G.sk_n[br]++; G.sk_c[br] += (dt); } } while (0)
 
 #ifdef __mips__ // (the x86 host tests have no log)
+extern void HWR_GCacheProf(unsigned int frames); // OPT11 GEOM: HWPROF32, the geometry cache (hardware/hw_gcache.inc)
 void PS2HWD_ProfExtra(unsigned int frames)
 {
 	if (!frames)
@@ -90,6 +91,21 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF18 plane cache key misses: height=%u light=%u flags=%u texture=%u offsets=%u epoch=%u poly=%u\n", ps2hwp_cnt[HWC_PKM_H] / frames, ps2hwp_cnt[HWC_PKM_L] / frames, ps2hwp_cnt[HWC_PKM_F] / frames,
 		ps2hwp_cnt[HWC_PKM_T] / frames, ps2hwp_cnt[HWC_PKM_O] / frames, ps2hwp_cnt[HWC_PKM_E] / frames, ps2hwp_cnt[HWC_PKM_P] / frames);
 	I_OutputMsg("HWPROF17 band_sweep: polys=%u pieces=%u ripple_planes=%u\n", G.wf_polys / frames, G.wf_pieces / frames, G.wf_bands / frames);
+	HWR_GCacheProf(frames);
+	I_OutputMsg("HWPROF37 HWR_RenderPlane parts: setup=%u buffer+flat=%u vertices=%u lightlevel=%u lighting=%u flags+shader=%u polygon=%u (the last, the sum of the two before it, is what HWR_ProcessPolygon takes)\n", (unsigned)(ps2hwp_cyc[HWP_PL_A] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_PL_B] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_C] / frames), 0u, (unsigned)(ps2hwp_cyc[HWP_PL_D] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_E] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_F] / frames));
+	I_OutputMsg("HWPROF36 HWR_DrawDropShadow parts: interp=%u groundz=%u checks=%u getpatch=%u verts=%u quadtest=%u setup=%u polygon=%u\n", (unsigned)(ps2hwp_cyc[HWP_SH_A] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_B] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_C] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_SH_D] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_E] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_F] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_G] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_H] / frames));
+	I_OutputMsg("HWPROF35 HWR_DrawSprite parts: quad=%u patch=%u aim=%u light=%u blend=%u polygon=%u\n", (unsigned)(ps2hwp_cyc[HWP_DS_A] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_B] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_C] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_DS_D] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_E] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_F] / frames));
+	I_OutputMsg("HWPROF34 HWR_ProcessSeg parts: setup=%u top/single=%u bottom=%u mid=%u sky=%u remaining=%u 3dfloors=%u\n", (unsigned)(ps2hwp_cyc[HWP_SG_A] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_B] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_SG_C] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_D] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_E] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_F] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_G] / frames));
+	I_OutputMsg("HWPROF33 HWR_ProjectSprite parts: interp=%u frame=%u offsets=%u position=%u quadtest=%u vissprite=%u | AddSprites total=%u\n", (unsigned)(ps2hwp_cyc[HWP_PS_A] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_B] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_PS_C] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_D] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_E] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_F] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames));
+	I_OutputMsg("HWPROF31 AddLine: calls=%u backface=%u clipped=%u empty=%u | boxes=%u rejected=%u\n", ps2hwp_cnt[HWC_AL_CALLS] / frames, ps2hwp_cnt[HWC_AL_BACK] / frames, ps2hwp_cnt[HWC_AL_CLIP] / frames,
+		ps2hwp_cnt[HWC_AL_EMPTY] / frames, ps2hwp_cnt[HWC_AL_BOX] / frames, ps2hwp_cnt[HWC_AL_BOXREJ] / frames);
+	I_OutputMsg("HWPROF30 complex segs by first reason: polyseg=%u ffloors=%u slope=%u heightsec=%u lights=%u midtex=%u back=%u\n", ps2hwp_cnt[HWC_SR_POLY] / frames, ps2hwp_cnt[HWC_SR_FFLOORS] / frames, ps2hwp_cnt[HWC_SR_SLOPE] / frames,
+		ps2hwp_cnt[HWC_SR_HEIGHTSEC] / frames, ps2hwp_cnt[HWC_SR_LIGHTS] / frames, ps2hwp_cnt[HWC_SR_MID] / frames, ps2hwp_cnt[HWC_SR_BACK] / frames);
 	I_OutputMsg("HWPROF16 segs: one-sided simple=%u two-sided simple=%u complex=%u\n", ps2hwp_cnt[HWC_SEG_SIMPLE1] / frames, ps2hwp_cnt[HWC_SEG_SIMPLE2] / frames, ps2hwp_cnt[HWC_SEG_COMPLEX] / frames);
 	I_OutputMsg("HWPROF15 sky dome (driver): calls=%u begin=%u xform=%u emit=%u clipped_tris=%u\n", G.dome_n / frames, G.dome_begin / frames, G.dome_xf / frames, G.dome_emit / frames, G.dome_tris / frames);
 	I_OutputMsg("HWPROF12 view set-up: skybox clear=%u dome=%u clip=%u | main setupview=%u clip=%u\n", (unsigned)(ps2hwp_cyc[HWP_K_CLR] / frames), (unsigned)(ps2hwp_cyc[HWP_K_DOME] / frames),

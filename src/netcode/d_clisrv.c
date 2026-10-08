@@ -1319,8 +1319,20 @@ static void NetSyncLog(void)
 
 boolean TryRunTics(tic_t realtics)
 {
+#ifdef PS2_OPT_CORE
+	// PS2-202 (OPT11-CORE): local play (no network game: single player, split screen, demos) runs off a lag that passes. A frame of more than five tics (143 ms; on the
+	// PS2 a texture build burst or a file read) used to run ONE tic and drop the rest: slow motion after every such frame. Here the first such frame runs all of its tics
+	// (at most half a second: 0.7..5.6 M cycles per tic, d_main.c clamps longer ones to one tic: a level load, a pause), and so does every following one as long as
+	// the lag gets shorter; a lag that does not shrink (the tics cost more than the clock gives, a sustained overload) is clamped as before, so there is no spiral.
+	static tic_t ps2_prevlag; // the lag (in tics) of the previous call when it was more than TICRATE/7, else 0
+	const boolean ps2_catchup = !netgame && realtics > TICRATE/7 && realtics <= TICRATE/2 && (!ps2_prevlag || realtics < ps2_prevlag);
+
+	ps2_prevlag = realtics > TICRATE/7 ? realtics : 0;
+	if (!ps2_catchup && realtics > TICRATE/7)
+#else
 	// the machine has lagged but it is not so bad
 	if (realtics > TICRATE/7)
+#endif
 	{
 		if (server)
 			realtics = 1;

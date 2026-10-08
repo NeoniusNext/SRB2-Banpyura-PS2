@@ -237,6 +237,7 @@ def main():
     ap.add_argument('--leaktrace', action='store_true', help='PS2-78: wrap malloc/calloc/realloc/free/memalign, LEAK lines after every -zchain level (src/ps2/ps2_mem.c); use SRB2_PS2_OUT=build/opt7-s/out-leak')
     ap.add_argument('--memprof', action='store_true', help='memcpy/memset caller statistics (MC lines, tools/ps2/sample_report.py --elf resolves callers)')
     ap.add_argument('--sample', action='store_true', help='-DPS2_SAMPLE: statistical PC sampler (run with -ps2sample, report with tools/ps2/sample_report.py); implies --prof')
+    ap.add_argument('--hwdetail', action='store_true', help='-DPS2_HWDETAIL: the fine laps inside the hardware renderer engine functions (HWPROF31, 33..37, OPT11 GEOM); implies --prof')
     ap.add_argument('--fprof', action='store_true', help='function-level profile (with --ps2ref): -finstrument-functions + FP lines, see tools/ps2/fprof_report.py')
     ap.add_argument('--debug', action='store_true', help='diagnostic build: no NDEBUG (ZDEBUG, RANGECHECK, PARANOIA); same as SRB2_PS2_RELEASE=0')
     ap.add_argument('--zdebug', action='store_true', help='define ZDEBUG (zone owner tracking); use SRB2_PS2_OUT=build/ps2-zdebug')
@@ -250,6 +251,9 @@ def main():
         CFLAGS.append('-DPS2_FPROF')
     if a.subprof:
         CFLAGS.append('-DPS2_SUBPROF')
+    if a.hwdetail:
+        CFLAGS.append('-DPS2_HWDETAIL')
+        a.prof = True
     if a.leaktrace:
         CFLAGS.append('-DPS2_LEAKTRACE')
         for fn in ('malloc', 'calloc', 'realloc', 'free', 'memalign', '_malloc_r', '_calloc_r', '_realloc_r', '_free_r', '_memalign_r'):

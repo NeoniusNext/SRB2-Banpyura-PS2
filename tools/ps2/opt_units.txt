@@ -100,3 +100,6 @@ src/ps2/soc_numbers.c -Os
 src/r_picformats.c -Os
 src/r_skins.c -Os
 src/r_translation.c -Os
+# OPT11 (GEOM): the GS driver unit (ps2_hwd.c includes all the ps2_hw_*.inc): -O3 is -0.23 M cycles per frame on DEMO_001 (10.64 -> 10.41, same ELF otherwise, polygon stream and picture unchanged:
+# -hwpolyhash equal on 1125 frames), +62 KB of code. -funroll-loops and -O3 on the engine side files of the renderer (hw_main.c, hw_batching.c, hw_cache.c ...) gave nothing more (-0.05).
+src/ps2/hw/ps2_hwd.c -O3

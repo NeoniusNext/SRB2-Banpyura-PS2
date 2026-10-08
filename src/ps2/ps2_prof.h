@@ -34,7 +34,14 @@ typedef enum
 void PS2Prof_Enter(ps2prof_phase_t phase);
 void PS2Prof_Leave(void);
 #ifdef PS2_PROF_DIRECT
+#include "../doomtype.h"
 void PS2Prof_FrameEnd(void); // frame counter of LTO profile builds (called from I_FinishUpdate)
+// PS2-200 (OPT11-CORE): the LTO profile build splits the frame by direct COP0 reads in D_RunFrame (no linker wrappers, no probes in the engine):
+// TICK = TryRunTics (the tic logic: G_Ticker/P_Ticker/Lua hooks/net), DISP = D_Display (render + HUD + I_FinishUpdate), SND = S_UpdateSounds/LUA_Step
+// after the display; the rest of the frame is "other" (idle wait, sleep). realtics = what the clock asked for, gametic delta = what ran: lost tics.
+extern UINT64 ps2prof_c_tick, ps2prof_c_disp, ps2prof_c_snd;
+extern UINT32 ps2prof_real;
+static inline UINT32 PS2Prof_Cyc(void) { UINT32 v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
 #endif
 
 #include "../ps2_sub.h"
