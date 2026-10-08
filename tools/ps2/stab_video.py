@@ -22,6 +22,7 @@ def main():
     ap.add_argument('--modes', default='0,1,3,7,9,10')
     ap.add_argument('--renderers', default='Software,Hardware')
     ap.add_argument('--timeout', type=int, default=600)
+    ap.add_argument('--judge-only', action='store_true', help='do not run, judge the runs that are already in build/runs')
     a = ap.parse_args()
     bad = 0
     for out in a.outputs.split(','):
@@ -33,7 +34,8 @@ def main():
                     extra += ['-renderer', 'Hardware']
                 cmd = [sys.executable, '-B', str(ROOT / 'tools/ps2/opt_run.py'), '--name', name, '--elf', a.elf, '--pak', PAK, '--out', str(ROOT / 'build/runs'),
                        '--timeout', str(a.timeout), '--until', 'ZQUIT DONE', '--'] + extra
-                subprocess.run(cmd, capture_output=True, text=True)
+                if not a.judge_only:
+                    subprocess.run(cmd, capture_output=True, text=True)
                 d = ROOT / 'build/runs' / name
                 text = (d / 'boot.txt').read_text(errors='replace') if (d / 'boot.txt').exists() else ''
                 errs = [l.strip()[:140] for l in text.splitlines() if 'I_Error' in l or 'OOM:' in l or 'WATCHDOG' in l or 'HEAP CHECK FAILED' in l]
@@ -43,7 +45,7 @@ def main():
                     with open(shots[0], 'rb') as f:
                         hdr = f.read(20).split()
                         dim = (int(hdr[1]), int(hdr[2])) if len(hdr) > 2 else None
-                ok = 'ZQUIT DONE' in text and not errs and dim == SIZES[m]
+                ok = ('ZQUIT DONE' in text or 'VIDSHOT COMPLETE' in text) and not errs and dim == SIZES[m]  # -vidshot ends the run itself
                 notes = [l.strip()[:120] for l in text.splitlines() if 'hardware renderer shows' in l.lower() or 'Output format' in l or l.startswith('Output ')]
                 bad += not ok
                 print(f'{name}: {"ok" if ok else "FAIL"} picture={dim} want={SIZES[m]} {errs[:1]} {notes[:1]}', flush=True)

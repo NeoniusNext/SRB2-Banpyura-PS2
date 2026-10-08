@@ -27,10 +27,11 @@ def run(a, name, files, extra=(), quit_arg=('-zquit', '90')):
     for src, dst in files:
         cmd += ['--home-file', f'{src}={dst}']
     cmd += ['--', '-skipintro'] + ([] if quit_arg[0] == '-zquitall' else ['-warp', 'MAP01']) + list(quit_arg) + ['-zck'] + list(extra) + a.extra.split()
-    subprocess.run(cmd, capture_output=True, text=True)
+    if not a.judge_only:
+        subprocess.run(cmd, capture_output=True, text=True)
     d = ROOT / 'build/runs' / f'{a.tag}-{name}'
     text = (d / 'boot.txt').read_text(errors='replace') if (d / 'boot.txt').exists() else ''
-    done = 'ZQUIT DONE' in text
+    done = 'ZQUIT DONE' in text or 'VIDSHOT COMPLETE' in text  # -vidshot ends the run itself
     ended = 'end of logstream' in text
     err = [l.strip()[:200] for l in text.splitlines() if 'I_Error' in l or 'ERROR' in l or 'WARNING' in l and ('config' in l.lower() or 'game data' in l.lower() or 'save' in l.lower())]
     verdict = 'works' if done else ('stopped with a message' if ended and err else ('ended without a message' if ended else 'HANG (no end of log)'))
@@ -45,8 +46,9 @@ def main():
     ap.add_argument('--only', default='')
     ap.add_argument('--timeout', type=int, default=300)
     ap.add_argument('--extra', default='')
+    ap.add_argument('--judge-only', action='store_true', help='do not run, judge the runs that are already in build/runs')
     a = ap.parse_args()
-    base = run(a, 'base', [])
+    base = run(a, 'base', [], quit_arg=('-zquitall', '400'))  # not -warp: a warp counts as a cheat and nothing is saved; the title map's load writes gamedata.dat
     gd = base / '.srb2' / 'gamedata.dat'
     good_gd = gd.read_bytes() if gd.exists() else b''
     print(f'gamedata.dat of the base run: {len(good_gd)} bytes')
