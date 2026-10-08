@@ -9,6 +9,7 @@
 #   files    damaged / garbage config, game data, saves                                                           (stab_files.py)
 #   packs    missing / truncated / corrupted data packs                                                           (stab_packs.py)
 #   hwfb     HW start without memory (-hwnomem), fallback and return at every map of a chain (-hwfbtest)
+#   lint     the VIF1 chain lint (-hwdbg 536870912): no FLUSH inside a GIF packet (the MAPMD/MAPME hang), maps with odd texture sizes   (PS2-HW-144)
 #   leak     50 map changes in software and in hardware (used bytes, C heap, stack must not grow)
 #   inject   out-of-memory injection sweeps: level load / frame, software and hardware                            (oom_inject.py)
 #   addons   Lua, limits, skins/sounds/music, UDMF map, Lua HUD (both renderers, + injection)                     (addon_compare.py, ftest_run.py)
@@ -28,7 +29,7 @@ case $ELF in /*) ;; *) ELF=$ROOT/$ELF ;; esac
 shift
 TAG=${1:-$(basename "$ELF" .ELF)}
 [ $# -gt 0 ] && shift
-STAGES=${*:-ui video files packs hwfb leak inject addons interp split net demos sweep soak}
+STAGES=${*:-ui video files packs hwfb lint leak inject addons interp split net demos sweep soak}
 PAK=${SRB2_STAB_PAK:-/home/user/SRB2-Banpyura-PS2/build/pak}
 FRAMES=${SRB2_STAB_FRAMES:-35}
 MINUTES=${SRB2_STAB_MINUTES:-20}
@@ -79,6 +80,16 @@ stage_hwfb() {
 		$OPT --name "$TAG-zdbg" --elf "$ZDBG" --pak "$PAK" --out build/runs --map MAP01 --timeout 3000 -- -zck -zheap 1 -zquit 150 -renderer Hardware -zoomtest 40,160 -zchain 02,03,04 >> "$L" 2>&1
 		grep_run "$TAG-zdbg" "ps2_hwfb\|OOM\|I_Error\|ZCHAIN" 200
 	fi
+}
+
+stage_lint() {
+	local M
+	say "-- chain lint of the VIF1 transport (HWVAL LINT errors must be 0, no WATCHDOG)"
+	for M in MAPMD MAPME MAP01 MAP23 MAP11; do
+		$OPT --name "$TAG-lint-$M" --elf "$ELF" --pak "$PAK" --out build/runs --map $M --timeout 900 --until "ZQUIT DONE" -- -zck -zquit 100 -renderer Hardware -hwdbg 536870912 >> "$L" 2>&1
+		say "$M:"
+		grep_run "$TAG-lint-$M" "HWVAL LINT\|WATCHDOG: GIF\|I_Error" 200
+	done
 }
 
 stage_leak() {

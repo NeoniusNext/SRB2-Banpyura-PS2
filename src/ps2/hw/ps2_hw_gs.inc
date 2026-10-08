@@ -358,11 +358,13 @@ static void pk_ref(const void *data, u32 qwc)
 // (VIF1 stuck on FLUSH, GIF in the middle of the packet with an empty FIFO, VU1 idle: "GIF DMA ownership timeout (ring_wait)" for good). So it is a run of its own whose VIF
 // codes are NOP + DIRECT 1, and the run after it is the ordinary one again. Called right after pk_ref (the open run is the empty one behind the reference; the caller has made
 // room for two more slots).
+static int pk_oldtail; // -hwoldtail (test): the tail behind the FLUSH of an ordinary run as before PS2-HW-144 (the chain lint must find it, and MAPMD hangs)
+
 static void pk_ref_tail(const void *src, u32 nbytes)
 {
 	qw_t *b = H.ring[H.cur], *t;
 
-	if (H.wr > H.run + 1) // no reference in front (less than a quadword of image data): the tail goes in the run of the header, which has its FLUSH in front of the header already
+	if (pk_oldtail || H.wr > H.run + 1) // no reference in front (less than a quadword of image data): the tail goes in the run of the header, which has its FLUSH in front of the header already
 	{
 		t = pk_alloc(1);
 		t->d[0] = t->d[1] = 0;

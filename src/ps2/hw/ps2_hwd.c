@@ -301,6 +301,7 @@ boolean PS2HWD_Init(void)
 	wd_last_flips = ~0u;
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	pk_oldtail = M_CheckParm("-hwoldtail") != 0;
 	if (M_CheckParm("-hwvudump") && M_IsNextParm())
 		vu_dump_frame = (u32)atoi(M_GetNextParm());
 	if (M_CheckParm("-hwvustop") && M_IsNextParm())
