@@ -38,6 +38,22 @@ void HWR_SetCurrentTexture(GLMipmap_t *texture);
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader, boolean horizonSpecial);
 void HWR_RenderBatches(void);
 #ifdef PS2_PROFILE
+// OPT11 (GEOM, PS2-HW-80): the geometry cache (hw_gcache.inc, included by hw_main.c). While a seg or a plane is calculated for the cache, the three
+// sinks of the BSP walk (HWR_ProcessPolygon, HWR_SetCurrentTexture, HWR_AddTransparentWall) append what they are given to the record.
+extern boolean hwr_grec_on;
+extern UINT32 hwr_geo_off; // -hwgo: OPT11 optimisations switched off (hw_gcache.inc)
+void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon);
+void HWR_GCRecTex(GLMipmap_t *texture);
+UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIELD PolyFlags, int shader_target); // the 16 bit state hash of the sort key
+UINT32 HWR_GCTexId(const GLMipmap_t *tex); // the frame independent part of the texture order
+void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial, UINT32 texid, UINT32 h16, UINT32 scan_dir);
+extern GLMipmap_t *current_texture; // the texture of the next polygon (HWR_SetCurrentTexture)
+void HWR_GCacheFlush(void); // everything cached is dropped (a new level, the texture records or the light tables go away, a setting changed)
+void HWR_PolyHashFrame(INT32 frame); // -hwpolyhash: the HWPH line of the frame just ended
+UINT32 HWR_PS2_TexTransparent(INT32 tex); // hw_cache.c: TF_TRANSPARENT of the mipmap of a (translated) map texture
+#endif
+
+#ifdef PS2_PROFILE
 // PS2-HW-52: the sprite loop (HWR_DrawSprites) collects the polygons of opaque sprites and their shadows and draws them as batches
 extern boolean hwr_sprite_batch; // HWR_ProcessPolygon flushes the batch at the first polygon that is not order independent
 extern boolean hwr_sprite_shadow; // the polygon is a drop shadow

@@ -67,13 +67,26 @@ enum
 	HWP_B_TEX, // HWD.pfnSetTexture between the batches
 	HWP_KB_DB,
 	HWP_KB_TEX,
+	// OPT11 (GEOM): HWR_ProjectSprite by parts (HWPROF33): interpolation, frame and angle, offsets and shadow, position and culling, quad test, vissprite
+	HWP_PS_A, HWP_PS_B, HWP_PS_C, HWP_PS_D, HWP_PS_E, HWP_PS_F,
+	// HWR_ProcessSeg by parts (HWPROF34): set-up, two sided: top texture / bottom / middle / sky; one sided: wall, (sky walls: E), the rest up to the 3D floors, 3D floors
+	HWP_SG_A, HWP_SG_B, HWP_SG_C, HWP_SG_D, HWP_SG_E, HWP_SG_F, HWP_SG_G,
+	// HWR_DrawSprite by parts (HWPROF35): quad, patch (HWR_GetMappedPatch), flip / aim, lighting, blend set-up, HWR_ProcessPolygon
+	HWP_DS_A, HWP_DS_B, HWP_DS_C, HWP_DS_D, HWP_DS_E, HWP_DS_F,
+	// HWR_DrawDropShadow by parts (HWPROF36): interpolation, ground height, patch lookup, HWR_GetPatch, vertices, quad test, set-up, polygon
+	HWP_SH_A, HWP_SH_B, HWP_SH_C, HWP_SH_D, HWP_SH_E, HWP_SH_F, HWP_SH_G, HWP_SH_H,
+	// HWR_RenderPlane by parts (HWPROF37): set-up and slope, buffer and flat size, vertex loop, slope light, lighting, polygon (HWR_ProcessPolygon)
+	HWP_PL_A, HWP_PL_B, HWP_PL_C, HWP_PL_D, HWP_PL_E, HWP_PL_F,
 	HWP_NUM
 };
 
 extern unsigned long long ps2hwp_cyc[HWP_NUM];
 
 // OPT10 (HG): event counters of the engine side (HWPROF3 line, per frame)
-enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_SPR_ON, HWC_SPR_FLUSH, HWC_SPR_SOLO, HWC_SPR_SHADOW, HWC_PLANE_HIT, HWC_PLANE_MISS, HWC_PLANE_KEYMISS, HWC_PLANE_BYPASS, HWC_PLANE_BAD, HWC_SEG_SIMPLE1, HWC_SEG_SIMPLE2, HWC_SEG_COMPLEX, HWC_PKM_H, HWC_PKM_L, HWC_PKM_F, HWC_PKM_T, HWC_PKM_O, HWC_PKM_E, HWC_PKM_P, HWC_NUM };
+enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_SPR_ON, HWC_SPR_FLUSH, HWC_SPR_SOLO, HWC_SPR_SHADOW, HWC_PLANE_HIT, HWC_PLANE_MISS, HWC_PLANE_KEYMISS, HWC_PLANE_BYPASS, HWC_PLANE_BAD, HWC_SEG_SIMPLE1, HWC_SEG_SIMPLE2, HWC_SEG_COMPLEX, HWC_PKM_H, HWC_PKM_L, HWC_PKM_F, HWC_PKM_T, HWC_PKM_O, HWC_PKM_E, HWC_PKM_P,
+	// OPT11 (GEOM): why a seg is not simple (first reason that applies), HWPROF30
+	HWC_SR_POLY, HWC_SR_FFLOORS, HWC_SR_SLOPE, HWC_SR_HEIGHTSEC, HWC_SR_LIGHTS, HWC_SR_MID, HWC_SR_BACK,
+	HWC_AL_CALLS, HWC_AL_BACK, HWC_AL_CLIP, HWC_AL_EMPTY, HWC_AL_BOX, HWC_AL_BOXREJ, HWC_NUM };
 extern unsigned int ps2hwp_cnt[HWC_NUM];
 extern int ps2hwp_skyview; // 1 while HWR_RenderSkyboxView runs (the counters of the driver are split by view)
 #define HWC_ADD(i) (ps2hwp_cnt[i]++)
@@ -93,7 +106,20 @@ static inline unsigned int ps2hwp_now(void)
 #define HWP_SPAN_END(name, idx) do { ps2hwp_cyc[idx] += (unsigned int)(ps2hwp_now() - (name)); } while (0)
 // the same, also added to idxk while the skybox view runs
 #define HWP_SPAN_END2(name, idx, idxk) do { const unsigned int d_ = (unsigned int)(ps2hwp_now() - (name)); ps2hwp_cyc[idx] += d_; if (ps2hwp_skyview) ps2hwp_cyc[idxk] += d_; } while (0)
+#ifdef PS2_HWDETAIL
+// OPT11 (GEOM): the fine laps inside the engine functions (HWPROF33..37) and the counters of AddLine (HWPROF31) cost 10 cycles each: only in a build.py --hwdetail build
+#define HWD_LOCAL HWP_LOCAL
+#define HWD_LAP(idx) HWP_LAP(idx)
+#define HWD_ADD(i) HWC_ADD(i)
 #else
+#define HWD_LOCAL ((void)0)
+#define HWD_LAP(idx) ((void)0)
+#define HWD_ADD(i) ((void)0)
+#endif
+#else
+#define HWD_LOCAL ((void)0)
+#define HWD_LAP(idx) ((void)0)
+#define HWD_ADD(i) ((void)0)
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
 #define HWP_SPAN_BEGIN(name) ((void)0)
