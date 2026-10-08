@@ -1046,6 +1046,166 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 	return i;
 }
 
+// ---- PS2-HW-233: the polygons of a batch as blocks of the pool (hardware/hw_pbatch.inc), already in the form of the chunk ----
+// A block is the polygon of the chunk (header, texture scale / repeat quadword, two quadwords a vertex) except for the quadword (sb, tb, tsx, tsy), which holds the extent of s, t
+// the collection made (s min, t min, s extent, t extent) and is made here, when the plan (the texture's scale, the repeat limit of its size) is known. The vertices go into the ring
+// with quadword moves.
+static inline void vu_qcopy(qw_t *dst, const qw_t *src, u32 cnt)
+{
+#ifdef __mips__
+	while (cnt >= 4)
+	{
+		__asm__ volatile(
+			"lq $8, 0(%1)\n lq $9, 16(%1)\n lq $10, 32(%1)\n lq $11, 48(%1)\n"
+			"sq $8, 0(%0)\n sq $9, 16(%0)\n sq $10, 32(%0)\n sq $11, 48(%0)\n"
+			: : "r"(dst), "r"(src) : "$8", "$9", "$10", "$11", "memory");
+		dst += 4;
+		src += 4;
+		cnt -= 4;
+	}
+	while (cnt--)
+	{
+		__asm__ volatile("lq $8, 0(%1)\n sq $8, 0(%0)\n" : : "r"(dst), "r"(src) : "$8", "memory");
+		dst++;
+		src++;
+	}
+#else
+	memcpy(dst, src, (size_t)cnt * sizeof(qw_t));
+#endif
+}
+
+// one block through the general entry (the plan's constants, the chunk's begin and end): the same as vu_poly for a polygon of the engine's vertices. 1 = taken.
+static int vu_poly_blk(const qw_t *b)
+{
+	const u32 n = b[0].w[0];
+	float sb = 0.0f, tb = 0.0f;
+	u32 need;
+	qw_t *o;
+
+	if (n < 3 || n > VU_MAXVERT)
+		return 0;
+	if (!VU.consts_ok || P.serial != H.serial)
+	{
+		if (!vu_plan_setup())
+		{
+			P.vu = 0;
+			P.vuok = 0;
+			VU.stat_fallback++;
+			return 0;
+		}
+	}
+	need = 2 + 2 * n;
+	if (VU.open && (VU.chunk_n + need > VU_CHUNK_QW || H.wr + need + 3 > BUF_QW))
+		vu_chunk_end();
+	if (!VU.open)
+		vu_chunk_begin();
+	if (H.wr + need + 3 > BUF_QW)
+	{
+		vu_chunk_end();
+		pk_flush();
+		vu_chunk_begin();
+	}
+	if (P.textured && (P.wrapx || P.wrapy))
+	{
+		const float smin = b[1].f[0], tmin = b[1].f[1];
+
+		if ((P.wrapx && b[1].f[2] * (float)P.r->w > UV_EXTENT) || (P.wrapy && b[1].f[3] * (float)P.r->h > UV_EXTENT))
+			return 0; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
+		sb = (P.wrapx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
+		tb = (P.wrapy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
+	}
+	o = H.ring[H.cur] + H.wr;
+	vu_qcopy(o + 2, b + 2, 2 * n);
+	o[0].w[0] = n;
+	o[0].w[1] = b[0].w[1]; // the light level (a float)
+	o[1].f[0] = sb;
+	o[1].f[1] = tb;
+	o[1].f[2] = P.tsx;
+	o[1].f[3] = P.tsy;
+	H.st.polys++;
+	H.st.verts_in += n;
+	H.wr += need;
+	VU.chunk_n += need;
+	VU.npoly++;
+	return 1;
+}
+
+// The blocks blks[i..] of one batch, the loop of vu_fans: the values of the plan in locals, the position in the chunk in locals. Returns the index of the first block that was not taken.
+static u32 vu_blocks(const qw_t *pool, const u32 *blks, u32 i, u32 nfans)
+{
+	const int wrap = P.textured && (P.wrapx || P.wrapy);
+	const int wx = P.wrapx, wy = P.wrapy;
+	const float tsx = P.tsx, tsy = P.tsy;
+	const int ilx = wx ? fbits(UV_EXTENT / (float)P.r->w) : 0x7F7FFFFF, ily = wy ? fbits(UV_EXTENT / (float)P.r->h) : 0x7F7FFFFF; // (PS2-HW-228)
+	qw_t *ring = NULL;
+	u32 wr = 0, cn = 0, np = 0, nv = 0, ready = 0;
+
+	while (i < nfans)
+	{
+		const qw_t *b = pool + blks[i];
+		const u32 n = b[0].w[0];
+		const u32 need = 2 + 2 * n;
+		qw_t *o;
+		float sb = 0.0f, tb = 0.0f;
+
+		if (!ready || n - 3 > VU_MAXVERT - 3 || cn + need > VU_CHUNK_QW || wr + need + 3 > BUF_QW)
+		{
+			if (ready)
+			{
+				H.wr = wr;
+				VU.chunk_n = cn;
+				VU.npoly += np;
+				H.st.polys += np;
+				H.st.verts_in += nv;
+				np = nv = 0;
+				ready = 0;
+			}
+			if (!vu_poly_blk(b))
+				break;
+			i++;
+			if (VU.open && VU.consts_ok && P.serial == H.serial)
+			{
+				ring = H.ring[H.cur];
+				wr = H.wr;
+				cn = VU.chunk_n;
+				ready = 1;
+			}
+			continue;
+		}
+		if (wrap)
+		{
+			const float smin = b[1].f[0], tmin = b[1].f[1];
+
+			if (fbits(b[1].f[2]) > ilx || fbits(b[1].f[3]) > ily)
+				break; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
+			sb = (wx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
+			tb = (wy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
+		}
+		o = ring + wr;
+		vu_qcopy(o + 2, b + 2, 2 * n);
+		o[0].w[0] = n;
+		o[0].w[1] = b[0].w[1];
+		o[1].f[0] = sb;
+		o[1].f[1] = tb;
+		o[1].f[2] = tsx;
+		o[1].f[3] = tsy;
+		np++;
+		nv += n;
+		wr += need;
+		cn += need;
+		i++;
+	}
+	if (ready)
+	{
+		H.wr = wr;
+		VU.chunk_n = cn;
+		VU.npoly += np;
+		H.st.polys += np;
+		H.st.verts_in += nv;
+	}
+	return i;
+}
+
 #else // host test build: no VU1
 static int vu1_boot(void)
 {
@@ -1076,6 +1236,14 @@ static inline u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nf
 {
 	(void)base;
 	(void)desc;
+	(void)nfans;
+	return i;
+}
+
+static inline u32 vu_blocks(const qw_t *pool, const u32 *blks, u32 i, u32 nfans)
+{
+	(void)pool;
+	(void)blks;
 	(void)nfans;
 	return i;
 }

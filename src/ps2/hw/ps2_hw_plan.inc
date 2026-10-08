@@ -390,6 +390,72 @@ static void plan_xform_vu0(const FOutVector *verts, int n, int *ocs, int *and_ou
 	*and_out = and_;
 	*or_out = or_;
 }
+
+// PS2-HW-234: the same from the block of the batch pool (hw_pbatch.inc: a quadword x y z (w not read) and a quadword s t for each vertex, 16 byte aligned): the vertices go
+// into VU0 from the pool itself (no staging copy), the lanes of a vertex that is not there (the last group) read the first
+static void plan_xform_vu0_blk(const qw_t *b, int n, int *ocs, int *and_out, int *or_out)
+{
+	int g, k, and_ = 0x3F, or_ = 0;
+	const qw_t *vq = b + 2; // vertex i: vq[2i] (x y z), vq[2i + 1] (s t)
+
+	vu0b_mvp();
+	for (g = 0; g < n; g += 4)
+	{
+		const int cnt = n - g < 4 ? n - g : 4;
+		const qw_t *p0 = vq + 2 * g, *p1 = cnt > 1 ? p0 + 2 : p0, *p2 = cnt > 2 ? p0 + 4 : p0, *p3 = cnt > 3 ? p0 + 6 : p0;
+		u32 f;
+
+		__asm__ volatile(
+			"lqc2 $vf25, 0x00(%1)\n"
+			"lqc2 $vf26, 0x00(%2)\n"
+			"lqc2 $vf27, 0x00(%3)\n"
+			"lqc2 $vf28, 0x00(%4)\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf25\n"
+			"vmadday $ACC, $vf22, $vf25\n"
+			"vmaddz $vf29, $vf23, $vf25\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf26\n"
+			"vmadday $ACC, $vf22, $vf26\n"
+			"vmaddz $vf30, $vf23, $vf26\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf27\n"
+			"vmadday $ACC, $vf22, $vf27\n"
+			"vmaddz $vf31, $vf23, $vf27\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf28\n"
+			"vmadday $ACC, $vf22, $vf28\n"
+			"vmaddz $vf20, $vf23, $vf28\n"
+			"vclipw.xyz $vf29, $vf29\n"
+			"vclipw.xyz $vf30, $vf30\n"
+			"vclipw.xyz $vf31, $vf31\n"
+			"vclipw.xyz $vf20, $vf20\n"
+			"sqc2 $vf29, 0x00(%5)\n"
+			"sqc2 $vf30, %6(%5)\n"
+			"sqc2 $vf31, %7(%5)\n"
+			"sqc2 $vf20, %8(%5)\n"
+			"cfc2 %0, $vi18\n"
+			: "=&r"(f) : "r"(p0), "r"(p1), "r"(p2), "r"(p3), "r"(&vbuf_a[g]), "i"(sizeof(cv_t)), "i"(2 * sizeof(cv_t)), "i"(3 * sizeof(cv_t)) : "memory");
+		for (k = 0; k < cnt; k++)
+		{
+			cv_t *d = &vbuf_a[g + k];
+			const qw_t *st = vq + 2 * (g + k) + 1;
+			const u32 fk = f >> (6 * (3 - k)); // VU0: bit 0 = +x ... bit 5 = -z; the clipper: bit 0 = -x (left), bit 1 = +x ...
+			int oc = (int)((((fk & 0x15u) << 1) | ((fk >> 1) & 0x15u)));
+
+			d->a[0] = st->f[0];
+			d->a[1] = st->f[1];
+			if (fbits(d->w) <= 0)
+				oc = 0x3F;
+			ocs[g + k] = oc;
+			and_ &= oc;
+			or_ |= oc;
+		}
+	}
+	*and_out = and_;
+	*or_out = or_;
+}
+
 #endif
 
 static int plan_part_x(int ref, cv_t *poly, int n, int or_, float *s, float *area)
@@ -397,26 +463,11 @@ static int plan_part_x(int ref, cv_t *poly, int n, int or_, float *s, float *are
 	return ref ? plan_part_ref(poly, n, or_, s, area) : plan_part(poly, n, or_, s, area);
 }
 
-static int plan_measure_impl(const GLMipmap_t *m, const FOutVector *verts, unsigned int n, int ref)
+// the measure after the vertices are transformed (vbuf_a) and classified (ocs, and_, or_)
+static int plan_measure_after(const GLMipmap_t *m, unsigned int n, const int *ocs, int and_, int or_, int ref)
 {
-	static int ocs[PS2HWD_MAXPOLY];
-	int i, and_ = 0x3F, or_ = 0, cnt = 0;
+	int i, cnt = 0;
 
-#ifdef HW_VU0
-	if (!ref)
-		plan_xform_vu0(verts, (int)n, ocs, &and_, &or_);
-	else
-#endif
-		for (i = 0; i < (int)n; i++)
-		{
-			int oc;
-
-			xform_vertex(&verts[i], NULL, &vbuf_a[i]);
-			oc = vbuf_a[i].w <= 0.0f ? 0x3F : outcode(&vbuf_a[i], 1.0f, 1.0f);
-			ocs[i] = oc;
-			and_ &= oc;
-			or_ |= oc;
-		}
 	if (and_)
 		return 0; // wholly outside the view volume: it draws nothing
 	poly_plane(vbuf_a, (int)n, (float)m->width, (float)m->height);
@@ -447,6 +498,29 @@ static int plan_measure_impl(const GLMipmap_t *m, const FOutVector *verts, unsig
 		for (i = 0; i < cnt; i++)
 			CONS_Printf("HWLOD %s %ux%u n=%u planar=%d part=%d s=%.3f area=%.1f\n", HWR_PS2_TexName(m), (unsigned)m->width, (unsigned)m->height, n, lodc_planar, i, pm_s[i], pm_a[i]);
 	return cnt;
+}
+
+static int plan_measure_impl(const GLMipmap_t *m, const FOutVector *verts, unsigned int n, int ref)
+{
+	static int ocs[PS2HWD_MAXPOLY];
+	int i, and_ = 0x3F, or_ = 0;
+
+#ifdef HW_VU0
+	if (!ref)
+		plan_xform_vu0(verts, (int)n, ocs, &and_, &or_);
+	else
+#endif
+		for (i = 0; i < (int)n; i++)
+		{
+			int oc;
+
+			xform_vertex(&verts[i], NULL, &vbuf_a[i]);
+			oc = vbuf_a[i].w <= 0.0f ? 0x3F : outcode(&vbuf_a[i], 1.0f, 1.0f);
+			ocs[i] = oc;
+			and_ &= oc;
+			or_ |= oc;
+		}
+	return plan_measure_after(m, n, ocs, and_, or_, ref);
 }
 
 // PS2-HW-229: -hwplan 0 (default) the VU0 transform and the lean arithmetic, 1 the scalar transform of PS2-HW-34/37 and plan_part_ref, 2 both on every polygon, the
@@ -570,6 +644,61 @@ void PS2HWD_PlanPolygon(GLMipmap_t *m, const void *vp, unsigned int n)
 		const u32 t0 = cyc();
 
 		cnt = plan_measure(m, (const FOutVector *)vp, n);
+		TX.plan_np++;
+		TX.plan_mcyc += cyc() - t0;
+	}
+	if (!cnt)
+		TX.plan_inv++;
+	for (i = 0; i < cnt; i++)
+		plan_add(pi, pm_s[i], pm_a[i]);
+}
+
+// PS2-HW-234: the polygon in the form of the batch pool (hw_pbatch.inc), measured with the same arithmetic (the VU0 transform reads the block itself; the reference and the
+// comparing modes of -hwplan take the engine's vertices made from it)
+static int plan_measure_blk(const GLMipmap_t *m, const qw_t *b, unsigned int n)
+{
+#ifdef HW_VU0
+	if (plan_mode == 0)
+	{
+		static int ocs[PS2HWD_MAXPOLY];
+		int and_, or_;
+
+		plan_xform_vu0_blk(b, (int)n, ocs, &and_, &or_);
+		return plan_measure_after(m, n, ocs, and_, or_, 0);
+	}
+#endif
+	{
+		FOutVector tmp[PS2HWD_MAXPOLY];
+		unsigned int i;
+
+		for (i = 0; i < n; i++)
+		{
+			tmp[i].x = b[2 + 2 * i].f[0];
+			tmp[i].y = b[2 + 2 * i].f[1];
+			tmp[i].z = b[2 + 2 * i].f[2];
+			tmp[i].s = b[3 + 2 * i].f[0];
+			tmp[i].t = b[3 + 2 * i].f[1];
+		}
+		return plan_measure(m, tmp, n);
+	}
+}
+
+void PS2HWD_PlanBlock(GLMipmap_t *m, const void *vb)
+{
+	const qw_t *b = (const qw_t *)vb;
+	const unsigned int n = b[0].w[0];
+	planinfo_t *pi;
+	int i, cnt;
+
+	if (!plan_active || n < 3 || n > PS2HWD_MAXPOLY)
+		return; // (the texture is one the plan wants: the batch listed the polygon for that)
+	pi = plan_key(m);
+	if (!pi)
+		return;
+	{
+		const u32 t0 = cyc();
+
+		cnt = plan_measure_blk(m, b, n);
 		TX.plan_np++;
 		TX.plan_mcyc += cyc() - t0;
 	}

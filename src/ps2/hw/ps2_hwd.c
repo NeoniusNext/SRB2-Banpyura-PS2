@@ -1168,6 +1168,157 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	drv_out();
 }
 
+// PS2-HW-233: the polygon of a block of the batch pool as the engine's vertices (the general path, the splitter and the reference planner take those). One conversion is alive at a time.
+static FOutVector *blk_tmp;
+static unsigned int blk_tmp_cap;
+
+static const FOutVector *blk_fov(const qw_t *b)
+{
+	const unsigned int n = b[0].w[0];
+	unsigned int i;
+
+	if (n > blk_tmp_cap)
+	{
+		FOutVector *nv = realloc(blk_tmp, (size_t)(n + 16) * sizeof *nv);
+
+		if (!nv)
+		{
+			hw_failure("polygon staging allocation failed; polygon rejected");
+			return NULL;
+		}
+		blk_tmp = nv;
+		blk_tmp_cap = n + 16;
+	}
+	for (i = 0; i < n; i++)
+	{
+		blk_tmp[i].x = b[2 + 2 * i].f[0];
+		blk_tmp[i].y = b[2 + 2 * i].f[1];
+		blk_tmp[i].z = b[2 + 2 * i].f[2];
+		blk_tmp[i].s = b[3 + 2 * i].f[0];
+		blk_tmp[i].t = b[3 + 2 * i].f[1];
+	}
+	return blk_tmp;
+}
+
+// PS2HWD_DrawFans for the blocks of the pool (hardware/hw_pbatch.inc): the polygon is a block (vertex count and light level in its header), the same plan for all of them, the VU1 program takes
+// the blocks it can in one loop (vu_blocks), the others go the general way in order.
+void PS2HWD_DrawBlocks(void *surf, const void *pool, unsigned int nfans, unsigned int flags, const unsigned int *blks)
+{
+	const qw_t *pl = (const qw_t *)pool;
+	unsigned int i;
+	vukey_t k;
+	int how = 0;
+
+	if (!H.up)
+		return;
+	drv_in();
+	G.c_fans += nfans;
+	if (TRACING())
+	{
+		const texrec_t *tr = H.cur_tex != NOREC ? &H.rec[H.cur_tex] : NULL;
+
+		CONS_Printf("HWT fans n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u psm=%d clut=%d\n", nfans, flags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
+			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u, tr ? (int)tr->psm : -1, tr ? (int)tr->clut : -1);
+	}
+	G.batches++;
+	G.fans += nfans;
+	G.sk_batches += ps2hwp_skyview;
+	G.sk_fans += ps2hwp_skyview ? nfans : 0;
+	if (split_active(flags))
+	{
+		for (i = 0; i < nfans; i++) // PS2-HW-70: a texture of two images: every polygon is cut along its pieces
+		{
+			const qw_t *b = pl + blks[i];
+			const FOutVector *fv = blk_fov(b);
+
+			if (fv)
+				split_draw((const FSurfaceInfo *)surf, flags, fv, (int)b[0].w[0]);
+		}
+		drv_out();
+		return;
+	}
+	if (V.on && V.ready)
+	{
+		vu_key_make(&k, (u32)flags, (const FSurfaceInfo *)surf);
+		if (vu_plan_valid && VU.consts_ok && P.serial == H.serial)
+			how = vu_key_cmp(&k, &VK);
+		if (how == 1 && vu_nobretarget)
+			how = 0;
+		if ((how == 1 && !(vu_bretmask & (P.pal ? 1 : 2))) || (how == 2 && !(vu_bretmask & 4)))
+			how = 0;
+	}
+	if (how)
+	{
+		if (how == 1)
+		{
+			vu_retarget((const FSurfaceInfo *)surf);
+			G.b_retarget++;
+		}
+		P.vu = 1;
+	}
+	else
+	{
+		if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+		{
+			drv_out();
+			return;
+		}
+		if (P.vuok && nfans >= VU_MIN_FANS)
+		{
+			P.vu = 1;
+			VU.consts_ok = 0;
+		}
+	}
+	for (i = 0; i < nfans; i++)
+	{
+		const qw_t *b;
+		const FOutVector *fv;
+		int fn;
+		float fl; // the light level of the sector of the polygon (the batch's state leaves it out when the VU1 program lights by rows)
+
+		if (P.vu)
+		{
+			const unsigned int i0 = i;
+
+			i = vu_blocks(pl, blks, i, nfans);
+			G.p_vu += i - i0;
+			if (i >= nfans)
+				break;
+			vu_sync();
+		}
+		b = pl + blks[i];
+		fn = (int)b[0].w[0];
+		fl = b[0].f[1];
+		fv = blk_fov(b);
+		if (!fv)
+			continue;
+		if (fl != P.rs.lp.light)
+		{
+			P.rs.lp.light = fl;
+			lit_fast_plan();
+		}
+		if (P.vu)
+		{
+			P.vu = 0;
+			emit_fan(fv, NULL, fn, NULL);
+			P.vu = P.vuok;
+			P.serial = H.serial - 1;
+			continue;
+		}
+		emit_fan(fv, NULL, fn, NULL);
+	}
+	if (P.vu)
+	{
+		if (VU.consts_ok && P.serial == H.serial)
+		{
+			VK = k;
+			vu_plan_valid = 1;
+		}
+		P.vu = 0;
+	}
+	drv_out();
+}
+
 static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, UINT32 *IndexArray)
 {
 	if (!H.up)

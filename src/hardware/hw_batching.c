@@ -292,6 +292,10 @@ static int HWR_BatchCapacity(int old, int required, size_t element)
 	return (int)cap;
 }
 
+#ifdef PS2
+#include "hw_pbatch.inc" // OPT11 round 2 (VU2, PS2-HW-233): the polygons collected as VU1 blocks into their states (buckets); -hwgo 65536: the earlier collection below
+#endif
+
 #ifdef PS2_PROFILE
 // OPT10-HF (PS2-HW-79): the batch arrays grow to the busiest frame seen and are non-purgeable, so after the vertex-heavy maps (THZ2, ACZ1: 32 000
 // vertices a frame) they stay 1.45 MB big (0.42 MB on the light maps) for the rest of the session: the next big level (12 MB of PU_LEVEL) then did not fit.
@@ -310,6 +314,7 @@ void HWR_ReleaseBatching(void)
 	Z_Free(bgrp);
 	bgrp = NULL;
 	bgcap = 0;
+	HWR_PBFree();
 	finalVertexIndexArray = NULL;
 	polygonArray = NULL;
 	polygonIndexArray = NULL;
@@ -382,25 +387,30 @@ static void HWR_BenchProcess(int reps)
 	}
 	for (k = 3; k <= 4; k++)
 	{
-		unsigned int t0, t1 = 0;
+		unsigned int t0, t1 = 0, tmin = ~0u, dt;
 		int rep;
 
 		current_texture = &tex;
-		for (rep = 0; rep < reps; rep++) // (more than one repetition: for the sampler, which needs a few thousand samples)
+		for (rep = 0; rep < reps; rep++) // (more than one repetition: for the sampler, which needs a few thousand samples; the least of the passes is printed: an interrupt in a pass adds to it)
 		{
 			t0 = ps2hwp_now();
 			for (i = 0; i < 1000; i++)
 				HWR_ProcessPolygon(&surf, v, (FUINT)k, 0x9101, SHADER_WALL, false);
-			t1 += ps2hwp_now() - t0;
+			dt = ps2hwp_now() - t0;
+			t1 += dt;
+			if (dt < tmin)
+				tmin = dt;
 			if (rep + 1 < reps)
 			{
 				polygonArraySize = 0;
 				unsortedVertexArraySize = 0;
+				HWR_PBReset();
 			}
 		}
-		I_OutputMsg("HWBENCH2 HWR_ProcessPolygon n=%d: %u cycles a polygon (%d polygons collected)\n", k, t1 / (1000u * (unsigned int)reps), polygonArraySize);
+		I_OutputMsg("HWBENCH2 HWR_ProcessPolygon n=%d: %u cycles a polygon (least of %d passes; mean %u; %d polygons collected)\n", k, tmin / 1000u, reps, t1 / (1000u * (unsigned int)reps), polygonArraySize + (int)pb_n);
 		polygonArraySize = 0;
 		unsortedVertexArraySize = 0;
+		HWR_PBReset();
 	}
 	current_texture = NULL;
 }
@@ -412,6 +422,11 @@ void HWR_StartBatching(void)
 		I_Error("Repeat call to HWR_StartBatching without HWR_RenderBatches");
 
 	// init arrays if that has not been done yet
+#ifdef PS2
+	if (HWR_PBOn())
+		HWR_PBAlloc();
+	else
+#endif
 	if (!polygonArray)
 	{
 #ifndef PS2
@@ -490,7 +505,30 @@ static void __attribute__((noinline)) HWR_BatchRoom(FUINT iNumPts)
 // If batching is enabled, this function collects the polygon data and the chosen texture
 // for later use in HWR_RenderBatches. Otherwise the rendering backend is used to
 // render the polygon immediately.
+#ifdef PS2
+static void __attribute__((noinline)) HWR_ProcessPolygonSlow(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial);
+
+// PS2-HW-233: the common case (a batched world polygon: nothing hashes or records it, no sprite batch to flush) goes straight to the collection, without the frame of the general function
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
+{
+	if (iNumPts < 3)
+		return; // no triangles; do not advance the fan writer past its allocation
+	if (currently_batching && !hwr_sprite_batch && !hwr_grec_on && !(hwr_ph_on > 0) && HWR_PBOn())
+	{
+		ps2hwp_cnt[HWC_PROC]++; // (the counters of HWPROF4)
+		ps2hwp_cnt[HWC_PROC_BATCH]++;
+		if (HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial))
+			return;
+		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+		return;
+	}
+	HWR_ProcessPolygonSlow(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+}
+
+static void HWR_ProcessPolygonSlow(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
+#else
+void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
+#endif
 {
     if (iNumPts < 3)
         return; // no triangles; do not advance the fan writer past its allocation
@@ -530,6 +568,15 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		const unsigned int sf_t0 = ps2hwp_now();
 #endif
 #ifdef PS2
+		if (HWR_PBOn())
+		{
+			HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
+#ifdef PS2_HWDETAIL
+			if (hwr_sprite_batch)
+				ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);
+#endif
+			return;
+		}
 		// PS2-HW-232 (OPT11 round 2, VU2): the entry is written through a pointer, from the two counters read once (the stores of ints into the entry may alias the counters as far
 		// as the compiler knows: every store reloaded them and made the address of the entry again), one test for the room, the digest of the state in one block
 		PolygonArrayEntry *pe;
@@ -734,6 +781,11 @@ void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FU
 	HWC_ADD(HWC_PROC_BATCH);
 	if (hwr_ph_on > 0)
 		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+	if (HWR_PBOn())
+	{
+		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233: the digest the record keeps (texid, h16) is not needed
+		return;
+	}
 	if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
 		I_Error("Hardware batch geometry exceeds addressable storage");
 	if (polygonArraySize == polygonArrayAllocSize)
@@ -1602,6 +1654,8 @@ static void HWR_RenderBatchesOld(void)
 void HWR_RenderBatches(void)
 {
 #ifdef PS2
+	if (currently_batching && pb_n > 0 && HWR_PBOn() && HWR_PBRender())
+		return;
 	if (currently_batching && polygonArraySize > 0 && !(hwr_geo_off & 64) && HWR_RenderBatchesV2())
 		return;
 #endif
