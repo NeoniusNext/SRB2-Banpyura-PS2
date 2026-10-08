@@ -40,6 +40,8 @@ def main():
     mad_r = float(d[mask].mean()) if n else 0.0
     over = float((d.max(axis=2)[mask] > 48).mean() * 100) if n else 0.0
     print(f'region {n} px ({100 * n / (h * w):.2f}%) MAD {mad_r:.2f} over48 {over:.1f}% | whole MAD {float(d.mean()):.2f} | PC-on vs PC-off whole {float(np.abs(on - off).mean()):.2f}')
+    if n:
+        print('region mean PC (%.1f %.1f %.1f) HW (%.1f %.1f %.1f)' % (*on[mask].mean(axis=0), *hw[mask].mean(axis=0)))
     if a.out:
         z = a.zoom
         ys, xs = np.nonzero(mask)

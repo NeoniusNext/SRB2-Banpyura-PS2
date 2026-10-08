@@ -71,7 +71,7 @@ def main():
             cmd += ['--sw']
         if a.tree:
             cmd += ['--tree', str(Path(a.tree).resolve())]
-        pcx = a.pcargs.split() + (['-file', str(Path(a.addon).resolve())] if a.addon else [])
+        pcx = a.pcargs.split() + [y for f in a.addon.split(',') if f for y in ('-file', str(Path(f).resolve()))]  # OPT11-MODEL: --addon a.lua,b.lua
         if pcx:
             cmd += ['--'] + pcx
         rc, out = run(cmd)
@@ -82,7 +82,7 @@ def main():
     if not a.norun:
         cmd = [sys.executable, str(T / 'hf_run.py'), runname, '--elf', a.elf, '--timeout', str(a.timeout), '--cfg', a.cfg]
         if a.addon:
-            cmd += ['--files', str(Path(a.addon).resolve())]
+            cmd += ['--files', ','.join(str(Path(f).resolve()) for f in a.addon.split(',') if f)]
         if a.tree:
             cmd += ['--tree', str(Path(a.tree).resolve())]
         if a.emu:

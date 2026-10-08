@@ -3,7 +3,7 @@
 -- frame and the tics it had at spawn, so both renderers draw the same pose. The set is chosen by the console variable-less convention below:
 --   MDL_SET (a global set by the first line of a variant file) or the default: the first 15 types found, in sprite-name order.
 -- Output (console log): "MDLSCENE spr=NAME mt=N frame=F" for every spawned object.
-local want = MDL_SET or {"POSS", "SPOS", "BUZZ", "CRAB", "RING", "SPRB", "SPRY", "PTER", "BMCE", "BGAR", "FISH", "SKIM", "PNTY", "JETB", "EGGM"}
+local want = rawget(_G, "MDL_SET") or {"POSS", "SPOS", "BUZZ", "CRAB", "RING", "SPRB", "SPRY", "PTER", "BMCE", "BGAR", "FISH", "SKIM", "PNTY", "JETB", "EGGM"}
 local MDL_ROWS_PER = 5
 
 local function find_type(spr)
@@ -36,7 +36,8 @@ addHook("MapLoad", function()
 			if mo and mo.valid then
 				mo.flags = MF_NOTHINK | MF_NOGRAVITY | MF_NOBLOCKMAP | MF_NOCLIP | MF_NOCLIPHEIGHT | MF_SCENERY
 				mo.angle = ang + ANGLE_180 + (n % 3) * ANGLE_45
-				if MDL_FX then MDL_FX(mo, n) end
+				local fx = rawget(_G, "MDL_FX")
+				if fx then fx(mo, n) end
 				print(string.format("MDLSCENE spr=%s mt=%d frame=%d", name, mt, mo.frame & FF_FRAMEMASK))
 				n = n + 1
 			end

@@ -22,7 +22,6 @@ typedef struct
 static mdlwork_t *mdlw; // made when the first model is drawn (zone block: a game without models does not pay for it)
 static float mdl_lf[256]; // the light factor by the byte of the normal: index = c + 128
 static int mdl_lf_ready;
-static u32 mdl_draws, mdl_meshes, mdl_tris, mdl_verts, mdl_slow;
 
 static void mdl_init_tables(void)
 {
@@ -160,7 +159,7 @@ static void mdl_mesh_corners(const mesh_t *mesh, int fi, int ni, float lerp, int
 			continue;
 		}
 		emit_tris(mdlw->v, mdlw->idx, (u32)n, light ? mdlw->l : NULL);
-		mdl_slow++;
+		G.md_slow++;
 	}
 }
 
@@ -169,6 +168,7 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 	UINT8 flipped, UINT8 hflipped, FSurfaceInfo *surf)
 {
 	float saved_mv[16], object_mv[16], lerp = 0.0f;
+	const u32 t0 = cyc();
 	u32 flags;
 	int mi;
 	const int light_on = H.model_light && !(ps2hwd_model_ab & 2);
@@ -177,7 +177,7 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 		return;
 	if (!mdl_work_get())
 		return;
-	mdl_draws++;
+	G.md_draws++;
 	if (duration > 0.0f && tics >= 0.0f)
 		lerp = clampf((duration - tics) / duration, 0.0f, 1.0f);
 	memcpy(saved_mv, H.mv, sizeof saved_mv);
@@ -234,13 +234,13 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 			P.vcol = 1; // the vertices carry their light factor (a[2]); the polygon's colour modulates it (put_vertex format 6)
 			P.vlight = 1;
 		}
-		mdl_meshes++;
-		mdl_tris += (u32)mesh->numTriangles;
+		G.md_meshes++;
+		G.md_tris += (u32)mesh->numTriangles;
 		if (tiny && mesh->numVertices <= MDL_MAXV && !(ps2hwd_model_ab & 1))
 		{
 			int start, total = mesh->numTriangles * 3;
 
-			mdl_verts += (u32)mesh->numVertices;
+			G.md_verts += (u32)mesh->numVertices;
 			mdl_interp(mesh, fi, ni, lerp, light);
 			for (start = 0; start < total; start += MDL_MAXI)
 			{
@@ -263,4 +263,5 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 	P.cull = 0;
 	memcpy(H.mv, saved_mv, sizeof H.mv);
 	H.mat_dirty = 1;
+	G.md_cyc += cyc() - t0;
 }
