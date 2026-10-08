@@ -328,11 +328,25 @@ static void LoadPalette(const char *lumpname)
 
 	Cubeapply = InitCube();
 
+#ifdef PS2
+	// PS2-173 (OPT11-STAB): both new tables first, then the old ones go: an allocation that jumps out (z_zone.h, Z_GUARD_TRY) between the frees and the
+	// assignments left both pointers on freed memory, and the next load freed them twice
+	{
+		RGBA_t *newlocal = Z_Malloc(sizeof (*pLocalPalette)*palsize, PU_STATIC, NULL);
+		RGBA_t *newmaster = Z_Malloc(sizeof (*pMasterPalette)*palsize, PU_STATIC, NULL);
+
+		Z_Free(pLocalPalette);
+		Z_Free(pMasterPalette);
+		pLocalPalette = newlocal;
+		pMasterPalette = newmaster;
+	}
+#else
 	Z_Free(pLocalPalette);
 	Z_Free(pMasterPalette);
 
 	pLocalPalette = Z_Malloc(sizeof (*pLocalPalette)*palsize, PU_STATIC, NULL);
 	pMasterPalette = Z_Malloc(sizeof (*pMasterPalette)*palsize, PU_STATIC, NULL);
+#endif
 
 	pal = W_CacheLumpNum(lumpnum, PU_CACHE);
 	for (i = 0; i < palsize; i++)

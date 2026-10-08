@@ -142,7 +142,7 @@ EXTRA_SOURCES = []
 # Without the variable the software-only build is unchanged.
 HW_BUILD = os.environ.get('SRB2_PS2_HW') == '1'
 if HW_BUILD:
-    CFLAGS = [f for f in CFLAGS if f != '-DNOHW'] + ['-DHWRENDER', '-Werror']
+    CFLAGS = [f for f in CFLAGS if f != '-DNOHW'] + ['-DHWRENDER', '-Werror', '-Wno-format-truncation']  # OPT11-STAB: the truncation warnings exist only without LTO (they stop the fast SRB2_PS2_LTO=0 build: ps2_curl.c, d_netfil.c)
 
 
 def hw_sources():

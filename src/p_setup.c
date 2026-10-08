@@ -93,6 +93,10 @@
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
 #endif
+#ifdef PS2
+#include "ps2/ps2_hwfb.h" // PS2-170
+#include "r_segs.h" // PS2-172
+#endif
 
 //
 // Map MD5, calculated on level load.
@@ -7668,6 +7672,13 @@ static boolean P_LoadMapFromFile(void)
 	udmf = textmap != NULL;
 #endif
 
+#ifdef PS2
+	{
+		const virtlump_t *ssectors = udmf ? NULL : vres_Find(virt, "SSECTORS");
+
+		PS2HWFB_PreLoad(ssectors ? (UINT32)(ssectors->size / 4) : 0); // PS2-170: a map too big for the hardware renderer's memory leaves it before it is loaded
+	}
+#endif
 	ZCK("map-begin");
 	if (!P_LoadMapData(virt))
 		return false;
@@ -8383,6 +8394,31 @@ static void P_InitGametype(void)
   * \param fromnetsave If true, skip some stuff because we're loading a netgame snapshot.
   * \todo Clean up, refactor, split up; get rid of the bloat.
   */
+#ifdef PS2
+// PS2-173 (OPT11-STAB): a level load that ran out of memory (ps2_hwfb.c, PS2HWFB_LoadLevel) is left half built, after the blocks of the level before it were freed.
+// Nothing may point at what is gone: the next P_LoadLevel starts by walking these arrays (LUA_InvalidateLevel, the attached lists of the sectors, the thinkers, the slopes).
+void P_AbandonLevelLoad(void)
+{
+	P_InitThinkers();
+	slopelist = NULL;
+	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
+	vertexes = NULL;
+	segs = NULL;
+	sectors = NULL;
+	subsectors = NULL;
+	nodes = NULL;
+	lines = NULL;
+	sides = NULL;
+	mapthings = NULL;
+	levelflats = NULL;
+	PolyObjects = NULL;
+	numvertexes = numsegs = numsectors = numsubsectors = numnodes = numlines = numsides = nummapthings = 0;
+	numlevelflats = 0;
+	numPolyObjects = 0;
+	mobjcache = NULL;
+}
+#endif
+
 boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 {
 	// use gamemap to get map number.
@@ -8563,6 +8599,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
 #ifdef PS2
 	Z_FlushCache(); // PS2-72: the level starts from an arena without the last level's caches between its blocks
+	R_ReleaseDrawSegScales(); // PS2-172: the busiest view of the earlier levels does not stay in the arena
 #endif
 	mobjcache = NULL;
 #ifdef PS2_OPT_REND
@@ -8650,8 +8687,12 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	HWR_FreeExtraSubsectors();
 
 	// Create plane polygons.
+#ifdef PS2
+	PS2HWFB_BuildLevel(); // PS2-170: a level that does not fit in the hardware renderer's memory continues in software
+#else
 	if (rendermode == render_opengl)
 		HWR_LoadLevel();
+#endif
 #endif
 
 	// oh god I hope this helps
@@ -8733,6 +8774,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	R_ResetViewInterpolation(0);
 	R_ResetViewInterpolation(0);
 	R_UpdateMobjInterpolators();
+#ifdef PS2
+	PS2HWFB_LevelLoaded(); // PS2-170: the hardware renderer, given up for an earlier level, is tried again
+#endif
 
 	// Title card!
 	G_StartTitleCard();

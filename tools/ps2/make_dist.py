@@ -63,9 +63,9 @@ on a PS2 server type "punch <client address> <client port>" in the console (clie
 
 Аргументы запуска / Start-up arguments (ps2args, по одному на строку / one per line)
 ------------------------------------------------------------------------------------
--renderer Hardware       аппаратный рендерер GS (рекомендуется -zreserve 1536: резерв C-кучи под данные драйвера; 3072 забирает у зоны слишком много и часть карт не грузится)
-                         / GS hardware renderer (use -zreserve 1536: the C heap reserve of the driver; 3072 takes too much from the zone and some maps fail to load)
--zreserve 1536
+-renderer Hardware       аппаратный рендерер GS (-zreserve не нужен). Не хватило памяти (большая карта, много текстур): игра сама переходит на software до конца карты
+                         и пробует Hardware снова на следующей / GS hardware renderer (no -zreserve needed). When memory runs out (a very big map, many textures) the game
+                         switches to the software renderer for the rest of that map and tries Hardware again on the next one
 -ntsc | -pal | -480p     формат вывода / video output
 -connect <адрес>         сразу подключиться к серверу / join a server at start-up
 -server                  запустить сервер / start a server
@@ -106,7 +106,6 @@ AUTOLOAD_README = """Put add-ons here (.pk3 .wad .soc .lua): every file of this 
 
 PS2ARGS = """# Start-up arguments, one per line ('#' starts a comment). Rename this file to ps2args.
 # -renderer Hardware
-# -zreserve 1536
 # +name "PS2 player test"     (player name; "+command" lines go to the console; or type: name "PS2 player test")
 # -connect 192.168.1.10
 # -ntsc
