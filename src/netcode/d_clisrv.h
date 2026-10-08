@@ -87,6 +87,14 @@ void NetUpdate(void);
 void NetKeepAlive(void);
 
 void GetPackets(void);
+#ifdef PS2
+boolean D_NetEarlyActive(void);
+INT32 D_NetTicBuffer(void);
+boolean D_NetEarlyTic(boolean clockpass);
+void D_NetEarlyState(INT32 *buffer, UINT32 *starves);
+void D_NetEarlyPassEnd(boolean ran);
+fixed_t D_NetEarlyFrac(void);
+#endif
 void ResetNode(INT32 node);
 INT16 Consistancy(void);
 

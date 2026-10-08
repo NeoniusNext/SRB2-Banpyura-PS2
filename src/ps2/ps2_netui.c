@@ -54,7 +54,7 @@ static struct
 } ui;
 
 static INT32 opt_slow_ms = -1;   // -netslow MS: every step stays at least this long on the screen (tests and pictures)
-static INT32 opt_ready_ms = -1;  // -netuiready MS: how long "Network ready" stays (default 2500)
+static INT32 opt_ready_ms = -1;  // -netuiready MS: how long "Network ready" stays (default 700; 2500 before OPT12)
 static INT32 opt_fail_s = -1;    // -netuifail S: how long the failure window waits for a key (default 45)
 
 static INT32 Opt(const char *name, INT32 def)
@@ -369,7 +369,7 @@ boolean PS2NetUI_Begin(boolean dhcp)
 	ui.dhcp = dhcp;
 	ui.on = true;
 	opt_slow_ms = Opt("-netslow", 0);
-	opt_ready_ms = Opt("-netuiready", 2500);
+	opt_ready_ms = Opt("-netuiready", 700); // PS2-NET-7: 2500 before; the screen stays for the player to read the address, not to wait
 	opt_fail_s = Opt("-netuifail", 45);
 	// no picture: a dedicated server has no screen, a call from inside a frame (a Lua HUD hook asking for HTTP) must not draw a second frame in the first,
 	// and a call from inside a Lua call must not run the title hooks of Lua in it

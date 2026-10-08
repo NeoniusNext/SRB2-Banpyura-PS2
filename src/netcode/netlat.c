@@ -27,6 +27,8 @@ static boolean nl_on, nl_checked;
 static UINT64 nl_prec;           // precise units per second
 static tic_t nl_next;            // I_GetTime() of the next line
 
+static INT32 nl_passtype, nl_passreal, nl_trace_left = -1;
+static precise_t nl_take[NL_RING];   // client: when the game took the datagram with tic N off the ring
 static precise_t nl_made[NL_RING];   // server: when tic N was made
 static precise_t nl_arrive[NL_RING]; // client: when tic N arrived
 static nl_stat_t nl_rtt[NL_NODES];   // server: round trip of a tic per client node
@@ -37,6 +39,9 @@ static nl_stat_t nl_tcgap;           // client: time between two PT_SERVERTICS p
 static precise_t nl_tclast;
 static UINT32 nl_tcpkts, nl_tcdup;
 static nl_stat_t nl_runwait;         // client: arrival of a tic -> its run
+static nl_stat_t nl_rxage;           // PS2: arrival of a datagram on the socket -> the game takes it
+static UINT64 nl_arrival;            // arrival time of the datagram being handled (0: unknown)
+static nl_stat_t nl_rungap;          // client: time between two passes of the main loop that ran tics (28.6 ms when the picture moves evenly)
 static nl_stat_t nl_poll;            // time between two looks at the socket
 static precise_t nl_polllast;
 static nl_stat_t nl_frame;           // time between two passes of the main loop
@@ -125,6 +130,33 @@ void NetLat_ClientPacket(INT32 node, tic_t was, tic_t acked)
 		Add(&nl_rtt[node], Us(now - nl_made[(acked - 1) % NL_RING])); // the round trip of the newest tic the packet confirms
 }
 
+void NetLat_RxAge(UINT64 arrival)
+{
+	if (!On())
+		return;
+	nl_arrival = arrival;
+	Add(&nl_rxage, Us(I_GetPreciseTime() - arrival));
+}
+
+void NetLat_Pass(INT32 type, INT32 realtics)
+{
+	nl_passtype = type;
+	nl_passreal = realtics;
+}
+
+void NetLat_RunPass(void)
+{
+	static precise_t last;
+	precise_t now;
+
+	if (!On() || !client || !netgame)
+		return;
+	now = I_GetPreciseTime();
+	if (last)
+		Add(&nl_rungap, Us(now - last));
+	last = now;
+}
+
 void NetLat_ServerTics(tic_t first, tic_t end, tic_t neededtic_before)
 {
 	precise_t now;
@@ -132,7 +164,7 @@ void NetLat_ServerTics(tic_t first, tic_t end, tic_t neededtic_before)
 
 	if (!On())
 		return;
-	now = I_GetPreciseTime();
+	now = nl_arrival ? (precise_t)nl_arrival : I_GetPreciseTime(); // the moment the datagram reached the socket, when the receive thread knows it
 	nl_tcpkts++;
 	if (nl_tclast)
 		Add(&nl_tcgap, Us(now - nl_tclast));
@@ -143,7 +175,10 @@ void NetLat_ServerTics(tic_t first, tic_t end, tic_t neededtic_before)
 		return;
 	}
 	for (t = first > neededtic_before ? first : neededtic_before; t < end; t++)
+	{
 		nl_arrive[t % NL_RING] = now;
+		nl_take[t % NL_RING] = I_GetPreciseTime();
+	}
 }
 
 void NetLat_TicRun(tic_t tic, INT32 backlog)
@@ -155,6 +190,15 @@ void NetLat_TicRun(tic_t tic, INT32 backlog)
 	now = I_GetPreciseTime();
 	if (nl_arrive[tic % NL_RING])
 		Add(&nl_runwait, Us(now - nl_arrive[tic % NL_RING]));
+	if (nl_trace_left < 0)
+		nl_trace_left = M_CheckParm("-netlattrace") ? 700 : 0;
+	if (nl_trace_left > 0 && tic > 300)
+	{
+		nl_trace_left--;
+		CONS_Printf("NETLATTRACE tic=%u arrive->take=%u take->run=%u arrive->run=%u us backlog=%d pass=%s realtics=%d\n", (unsigned)tic,
+			(unsigned)Us(nl_take[tic % NL_RING] - nl_arrive[tic % NL_RING]), (unsigned)Us(now - nl_take[tic % NL_RING]),
+			(unsigned)Us(now - nl_arrive[tic % NL_RING]), (int)backlog, nl_passtype ? "early" : "clock", (int)nl_passreal);
+	}
 	Add(&nl_backlog, (UINT32)(backlog > 0 ? backlog : 0) * 1000);
 }
 
@@ -202,10 +246,20 @@ void NetLat_Frame(void)
 	nl_next = t + 2 * TICRATE;
 	if (!netgame)
 		return;
-	CONS_Printf("NETLAT --- t=%u gametic=%u maketic=%u neededtic=%u ping=%u ms sent=%u (%u B)\n", (unsigned)t, (unsigned)gametic, (unsigned)maketic, (unsigned)neededtic,
-		(unsigned)playerpingtable[consoleplayer], (unsigned)nl_sent, (unsigned)nl_sentbytes);
+	{
+		INT32 buf = 0;
+		UINT32 starves = 0;
+
+#ifdef PS2
+		D_NetEarlyState(&buf, &starves);
+#endif
+		CONS_Printf("NETLAT --- t=%u gametic=%u maketic=%u neededtic=%u ping=%u ms sent=%u (%u B) buf=%d starves=%u\n", (unsigned)t, (unsigned)gametic, (unsigned)maketic, (unsigned)neededtic,
+			(unsigned)playerpingtable[consoleplayer], (unsigned)nl_sent, (unsigned)nl_sentbytes, (int)buf, (unsigned)starves);
+	}
 	Print("frame", "", &nl_frame);
 	Print("poll", "", &nl_poll);
+	Print("rx-age", "", &nl_rxage);
+	Print("run-gap", "", &nl_rungap);
 	if (client)
 	{
 		CONS_Printf("NETLAT tics packets=%u duplicate=%u\n", (unsigned)nl_tcpkts, (unsigned)nl_tcdup);
@@ -226,6 +280,8 @@ void NetLat_Frame(void)
 		}
 	Reset(&nl_frame);
 	Reset(&nl_poll);
+	Reset(&nl_rxage);
+	Reset(&nl_rungap);
 	Reset(&nl_tcgap);
 	Reset(&nl_runwait);
 	Reset(&nl_backlog);

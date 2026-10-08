@@ -118,6 +118,7 @@ src/netcode/mserv.c
 src/netcode/netlat.c
 src/netcode/http-mserv.c
 src/ps2/ps2_net.c
+src/ps2/ps2_netsvc.c
 src/ps2/ps2_netui.c
 src/ps2/ps2_uiicons.c
 src/ps2/ps2_menuhints.c

@@ -19,6 +19,12 @@ void NetLat_ServerTics(tic_t first, tic_t end, tic_t neededtic_before);
 void NetLat_TicRun(tic_t tic, INT32 backlog);
 // both: the packet reader looked at the socket
 void NetLat_Poll(void);
+// PS2: a datagram that the receive thread took off the socket at `arrival` (GetTimerSystemTime) is handed to the game now
+void NetLat_RxAge(UINT64 arrival);
+// client: a pass of the main loop ran tics (the time since the previous such pass is the "run-gap")
+void NetLat_RunPass(void);
+// client: the kind of the pass that is about to run tics (0 = the clock ticked, 1 = early) and its realtics (-netlattrace)
+void NetLat_Pass(INT32 type, INT32 realtics);
 // both: once per main loop pass (printing, frame time)
 void NetLat_Frame(void);
 // both: a packet of the game connection went out / came in (type, size)
@@ -29,6 +35,9 @@ void NetLat_Sent(INT32 type, INT32 bytes);
 #define NetLat_ServerTics(f, e, n) ((void)0)
 #define NetLat_TicRun(t, b) ((void)0)
 #define NetLat_Poll() ((void)0)
+#define NetLat_RxAge(a) ((void)0)
+#define NetLat_RunPass() ((void)0)
+#define NetLat_Pass(t, r) ((void)0)
 #define NetLat_Frame() ((void)0)
 #define NetLat_Sent(t, b) ((void)0)
 #endif

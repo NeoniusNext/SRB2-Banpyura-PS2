@@ -22,6 +22,10 @@
 #include "ps2_net.h"
 #include "ps2_menuhints.h"
 #include "ps2_netui.h"
+#include "ps2_netsvc.h"
+#include "../netcode/d_clisrv.h"
+#include "../netcode/client_connection.h"
+#include "../doomstat.h"
 #include "ps2_uiicons.h"
 
 static INT32 netstate; // 0 not up (a new attempt is allowed), 1 up, -1 the network modules did not start (permanent)
@@ -219,6 +223,27 @@ static void BoostNetThreads(void)
 		}
 }
 
+// PS2-NET-7 (OPT12): the DHCP wait. The lease is in the router's hands after 20 ms (DISCOVER, OFFER, REQUEST, ACK: the log of PCSX2 shows both answers 1 ms after each request),
+// but lwIP then checks the offered address for a conflict (ACD: three ARP probes, one to two seconds apart, then announcements two seconds apart) and the interface gets its
+// address only when that is over: 5.5..7.5 s in which nothing happens (dhcp_status 8, "checking"). acd_tmr() is the function lwIP's own 100 ms timer calls; while the state is
+// "checking" it is called ten times for every 100 ms of our loop, from lwIP's thread (tcpip_callback), so the check takes a tenth of the time (the same probes and announcements,
+// 100..200 ms apart instead of 1..2 s: a host that owns the address answers an ARP probe within a millisecond).
+// (weak: a strong reference made the linker take lwIP's own copies of ip4_addr.o and others from libps2_drivers.a ahead of the stack's, "multiple definition of ip_addr_any";
+// both functions are in the ELF anyway, the stack uses them)
+extern void acd_tmr(void) __attribute__((weak));
+extern signed char tcpip_callback(void (*function)(void *ctx), void *ctx) __attribute__((weak));
+#define DHCP_STATE_CHECKING 8
+#define ACD_SPEEDUP 10
+
+static void AcdBurst(void *ctx)
+{
+	INT32 i;
+
+	(void)ctx;
+	for (i = 1; i < ACD_SPEEDUP; i++)
+		acd_tmr();
+}
+
 static nb_t Bringup(void)
 {
 	t_ip_info info;
@@ -304,6 +329,8 @@ static nb_t Bringup(void)
 			// the library's test: DHCP is on and bound (lwIP DHCP_BOUND = 10; 0 = off), plus an address that is not 0.0.0.0
 			if (libcglue_ps2ip_getconfig("sm0", &info) >= 0 && info.dhcp_enabled && info.ipaddr.s_addr != 0 && (info.dhcp_status == 10 || info.dhcp_status == 0))
 				break;
+			if (info.dhcp_status == DHCP_STATE_CHECKING && acd_tmr && tcpip_callback && !M_CheckParm("-netnoacdfast"))
+				tcpip_callback(AcdBurst, NULL);
 			if (MsSince(t0) >= limit_ms)
 				return NB_DHCP;
 			if (!NetWait(100))
@@ -506,6 +533,17 @@ void PS2Net_Frame(void)
 
 	if (netstate > 0 && thread_dumps < 2 && M_CheckParm("-netthreads") && (thread_dumps == 0 || ++thread_wait > 140))
 		ListThreads(thread_dumps++ ? "later" : "up");
+
+	// PS2-NET-5: the receive thread acknowledges the tics of the server for a joined client
+	PS2NetSvc_SetClient(netstate > 0 && netgame && client && gamestate == GS_LEVEL && cl_mode == CL_CONNECTED);
+	if (netstate > 0 && PS2NetSvc_Running() && M_CheckParm("-netdebug") && frames % 70 == 0)
+	{
+		nsv_stats_t ns;
+
+		PS2NetSvc_GetStats(&ns);
+		CONS_Printf("NETSVC frame %u: received %u dropped %u early-acks %u early-mis %u (errors %u) max-depth %u\n", (unsigned)frames, (unsigned)ns.received, (unsigned)ns.dropped,
+			(unsigned)ns.early_acks, (unsigned)ns.early_mis, (unsigned)ns.early_ack_errors, (unsigned)ns.max_depth);
+	}
 
 	PS2MenuHints_Frame(); // PS2-339: the crawler's step (the command and the options are set up at the first call)
 	if (!parsed)
