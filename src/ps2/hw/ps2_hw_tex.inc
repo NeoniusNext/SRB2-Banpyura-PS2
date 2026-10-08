@@ -1279,8 +1279,9 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 		bytes = W2 * nr;
 		nqw = (bytes + 15) >> 4;
 		full = bytes >> 4;
-		if (H.wr + 8 > BUF_QW)
-			pk_flush(); // the header and its reference stay in one buffer
+		// the header, its reference and the partial last quadword (pk_ref_tail: two more slots) stay in one buffer
+		if (H.wr + 8 + ((bytes & 15) ? 2 : 0) > BUF_QW)
+			pk_flush();
 		h = pk_alloc(6);
 		h[0].d[0] = HWGIF_TAG(4, 0, 0, 0, 0, 1);
 		h[0].d[1] = GIF_REGS_AD;
@@ -1293,12 +1294,7 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 		if (full)
 			pk_ref(data + (size_t)r0 * W2, full);
 		if (bytes & 15)
-		{
-			qw_t *t = pk_alloc(1);
-
-			t->d[0] = t->d[1] = 0;
-			memcpy(t, data + (size_t)r0 * W2 + (size_t)(full << 4), bytes & 15);
-		}
+			pk_ref_tail(data + (size_t)r0 * W2 + (size_t)(full << 4), bytes & 15);
 	}
 	p = ad_alloc(1);
 	ad_set(p, 0, GSR_TEXFLUSH);
