@@ -365,6 +365,7 @@ static struct
 
 int ps2hwd_dbg_flags;
 int ps2hwd_force_lt = -1;
+int ps2hwd_water_ab = 0;
 int ps2hwd_hash_on; // -hwhash (OPT10 HG): a 64 bit hash of every GIF packet buffer of a frame is printed (HWHASH lines): equal streams of two runs = equal pictures, bit for bit
 static u64 hash_frame;
 

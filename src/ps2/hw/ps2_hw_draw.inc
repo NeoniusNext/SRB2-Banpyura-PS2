@@ -1489,7 +1489,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		o[0].d[0] = HWGIF_TAG(cnt, 1, 1, ptype | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)), 0, pk.nreg);
 		o[0].d[1] = pack_regdesc(pk.fmt);
 		o++;
-		if (pc->ripple && (pk.fmt == 0 || pk.fmt == 1) && !pk.ramp && !(ps2hwd_dbg_flags & 0x40000)) // -hwdbg 262144: put_vertex for the water strips too (A/B)
+		if (pc->ripple && (pk.fmt == 0 || pk.fmt == 1) && !pk.ramp && !(ps2hwd_water_ab & 4)) // -hwwater 4: put_vertex for the water strips too (A/B)
 		{
 			o = ws_pack(o, v, cnt, &pk);
 		}

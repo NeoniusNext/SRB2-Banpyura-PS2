@@ -285,13 +285,13 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 // and every point (a vertex of the polygon or the crossing of a chain with a plane) becomes a strip vertex as it is made: no copies, one GIF packet.
 // ======================================================================================================================================
 
-#define HWDBG_WATERBANDS 0x10000 // -hwdbg 65536: the OPT10 sweep (a constant shift per band, ripple to z = 320): A/B of PS2-HW-120
+#define HWDBG_WATERBANDS 1 // -hwwater 1: the OPT10 sweep (a constant shift per band, ripple to z = 320): A/B of PS2-HW-120 (the bit of ps2hwd_water_ab, not of -hwdbg: 0x10000 of -hwdbg is the plane cache of hw_main.c)
 #define RT_NCLASS 5 // texture widths 32, 64, 128, 256, 512 (a power of two class; wider textures use the last)
 #define RT_MAXN 120 // planes of a table
 #define WS_NPLANE 160 // planes of one polygon (ripple planes + darkness steps)
 #define RP_EPS 0.70f // pixels of chord error the table plans for (half of it remains between the nodes)
 #define RP_GAP 3.0f // planes closer than this on the screen (pixels) are left out
-#define HWDBG_WATERNOGAP 0x20000 // -hwdbg 131072: every plane of the table (A/B of the screen distance rule)
+#define HWDBG_WATERNOGAP 2 // -hwwater 2: every plane of the table (A/B of the screen distance rule)
 #define RP_PX_FULL 1.50f // amplitude in pixels at which the fade-out starts
 #define RP_PX_END 0.80f // ... and ends
 #define RP_DZ_MIN 8.0f
@@ -587,7 +587,7 @@ static int water_sweep(const cv_t *v, const void *pv, int cnt, piece_t pc, int n
 		const float L = sqrtf(sx * sx + sy * sy) * (1.0f / 16.0f), zz = z0 < 8.0f ? 8.0f : z0;
 
 		gapk = RP_GAP * (z1 - zz) / (L * zz * z1 + 1e-3f);
-		if (ps2hwd_dbg_flags & HWDBG_WATERNOGAP)
+		if (ps2hwd_water_ab & HWDBG_WATERNOGAP)
 			gapk = 0.0f;
 	}
 	// merge the ripple planes and the darkness steps in depth order; interval j lies between plane j - 1 and plane j
@@ -832,7 +832,7 @@ static void ripple_bake(cv_t *p, int n, const rtab_t *t)
 	}
 }
 
-// put_vertex for the formats 0 / 1 (ST, RGBAQ, XYZ2 / XYZF2) with the constants of the plan in registers: the packets are the same, bit for bit (-hwdbg 262144 uses
+// put_vertex for the formats 0 / 1 (ST, RGBAQ, XYZ2 / XYZF2) with the constants of the plan in registers: the packets are the same, bit for bit (-hwwater 4 uses
 // put_vertex: the host test compares both). The plan is a global, and the stores of the packet (floats) may alias it, so put_vertex reloads a dozen constants per vertex.
 static qw_t *ws_pack(qw_t *o, const cv_t *v, int cnt, const pack_t *pk)
 {
@@ -1039,7 +1039,7 @@ static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na, int big,
 			emit_water_poly_old(v, cnt, pc, na);
 		return;
 	}
-	if (dbg & HWDBG_WATERBANDS)
+	if (ps2hwd_water_ab & HWDBG_WATERBANDS)
 	{
 		if (big)
 			cut_and_emit(v, cnt, 0, pc, na);

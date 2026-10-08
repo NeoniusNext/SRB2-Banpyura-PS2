@@ -1,7 +1,7 @@
 #!/bin/bash
 # OPT11-FX: the water scenes of the final check (PC OpenGL reference | PS2-HW): the grid texture FXFLAT.wad on the water of DSZ1 (seams, far ripple, angled views)
 # and the plain water from four directions, GFZ1 / GFZ2 water pits (under water). The PC references are cached in build/ref/fx_<scene>.
-# usage: fx_water.sh TAG ELF [hwargs]       e.g.  fx_water.sh a3 build/out/SRB2.ELF   and   fx_water.sh a3o build/out/SRB2.ELF "-hwdbg 65536" (the OPT10 sweep)
+# usage: fx_water.sh TAG ELF [hwargs]       e.g.  fx_water.sh a3 build/out/SRB2.ELF   and   fx_water.sh a3o build/out/SRB2.ELF "-hwwater 1" (the OPT10 sweep)
 TAG=$1
 ELF=$2
 HWARGS=$3

@@ -134,6 +134,7 @@ void PS2HWD_TextureTest(void);
 // Negative controls: bit 0 = ignore Z test, bit 1 = ignore alpha test, bit 2 = ignore blending, bit 3 = never write Z.
 extern int ps2hwd_hash_on; // -hwhash: HWHASH lines (a hash of the GIF stream of every frame)
 extern int ps2hwd_dbg_flags;
+extern int ps2hwd_water_ab; // -hwwater N (OPT11 FX, A/B of the water): bit 0 the OPT10 sweep (a constant shift per band), bit 1 every plane of the ripple table, bit 2 put_vertex for the strips (not -hwdbg: its low bits belong to hw_main.c)
 extern int ps2hwd_force_lt; // -hwlt N (OPT11 FX, diagnostics): the water ripple phase of level time N whatever the frame (pictures comparable with the PC engine at tic N)
 
 #endif

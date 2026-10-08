@@ -421,7 +421,7 @@ static void test_water(void)
 		H.shader = 4;
 		for (pass = 0; pass < 2; pass++)
 		{
-			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDWATER | HWDBG_WATERPOL : HWDBG_WATERBANDS | HWDBG_WATERPOL; /* PS2-HW-120: the OPT10 sweep is the A/B flag now */
+			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDWATER | HWDBG_WATERPOL : HWDBG_WATERPOL; ps2hwd_water_ab = pass == 0 ? 0 : HWDBG_WATERBANDS; /* PS2-HW-120: the OPT10 sweep is the A/B switch now */
 			if (pass == 1 && neg == 1)
 				H.leveltime += 7; /* negative control 1: the sweep ripples with another time */
 			cap_reset();
@@ -436,7 +436,7 @@ static void test_water(void)
 			decode_fans(pass);
 			total_pieces[pass] += nfans[pass];
 		}
-		ps2hwd_dbg_flags = 0;
+		ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 0;
 		polys++;
 		if (nfans[0] == 0 && nfans[1] == 0)
 			continue;
@@ -600,7 +600,7 @@ static void test_ripple(void)
 			surf.LightInfo.fade_end = 31;
 			H.shaders_on = 1;
 			H.shader = 4;
-			ps2hwd_dbg_flags = mode == 0 ? (neg == 9 ? HWDBG_WATERNOGAP : 0) : HWDBG_WATERBANDS; /* mode 0: PS2-HW-120, mode 1: the OPT10 sweep */
+			ps2hwd_dbg_flags = 0; ps2hwd_water_ab = mode == 0 ? (neg == 9 ? HWDBG_WATERNOGAP : 0) : HWDBG_WATERBANDS; /* mode 0: PS2-HW-120, mode 1: the OPT10 sweep */
 			cap_reset();
 			H.gsr.valid = 0;
 			H.clut_loaded = 0;
@@ -622,7 +622,7 @@ static void test_ripple(void)
 				if (n0 <= (1u << 16))
 				{
 					memcpy(chk, cap, (size_t)n0 * sizeof(qw_t));
-					ps2hwd_dbg_flags = 0x40000;
+					ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 4;
 					cap_reset();
 					H.gsr.valid = 0;
 					H.clut_loaded = 0; /* the first run loaded the CLUT: the second would not (TEX0.CLD) */
@@ -649,7 +649,7 @@ static void test_ripple(void)
 					rp_packchk++;
 					memcpy(cap, chk, (size_t)n0 * sizeof(qw_t));
 					cap_n = n0;
-					ps2hwd_dbg_flags = 0;
+					ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 0;
 				}
 			}
 			if (neg == 8 && trial == 1 && mode == 0)
@@ -666,7 +666,7 @@ static void test_ripple(void)
 					for (i = 0; i < fans[0][f].n; i++)
 						printf("HG dbg out fan %d v %d: x %d y %d q %.5f s/q %.4f t/q %.4f\n", f, i, fans[0][f].v[i].x, fans[0][f].v[i].y, fans[0][f].v[i].q, fans[0][f].v[i].s / fans[0][f].v[i].q, fans[0][f].v[i].t / fans[0][f].v[i].q);
 			}
-			ps2hwd_dbg_flags = 0;
+			ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 0;
 			if (!nf)
 				continue;
 			if (mode == 0)
