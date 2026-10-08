@@ -684,12 +684,27 @@ static void HWR_PlanPass(void)
 	HWP_SPAN_BEGIN(tb_plan);
 #endif
 	PS2HWD_PlanBegin();
-	for (i = 0; i < polygonArraySize; i++)
 	{
-		const PolygonArrayEntry *pa = &polygonArray[i];
+		// PS2-HW-230: the driver plans only the big map textures and flats (palette images of at least PLAN_MIN_TEXELS texels, ps2_hw_plan.inc: plan_wants, KEEP IN STEP): 9 polygons
+		// in 10 are not, and the call (and its prologue) cost 40 cycles for each. The verdict of the texture of the polygon before is kept.
+		const GLMipmap_t *last = NULL;
+		int lastwants = 0;
 
-		if (pa->texture && !(pa->polyFlags & PF_NoTexture))
-			PS2HWD_PlanPolygon(pa->texture, &unsortedVertexArray[pa->vertsIndex], pa->numVerts);
+		for (i = 0; i < polygonArraySize; i++)
+		{
+			const PolygonArrayEntry *pa = &polygonArray[i];
+			const GLMipmap_t *m = pa->texture;
+
+			if (!m || (pa->polyFlags & PF_NoTexture))
+				continue;
+			if (m != last)
+			{
+				last = m;
+				lastwants = (m->regen_kind == 1 || m->regen_kind == 2) && m->format == GL_TEXFMT_P_8 && (UINT32)m->width * m->height >= 65536u;
+			}
+			if (lastwants)
+				PS2HWD_PlanPolygon(pa->texture, &unsortedVertexArray[pa->vertsIndex], pa->numVerts);
+		}
 	}
 	PS2HWD_PlanEnd();
 #ifdef PS2_PROFILE
