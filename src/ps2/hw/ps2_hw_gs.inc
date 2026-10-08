@@ -113,19 +113,35 @@ static void wd_diag(const char *why)
 // A GIF DMA / GS wait ran out: stop channel 2, forget the queued buffers (they are never started: the ring is free again) and go on
 // with the next frame instead of sleeping forever. The frame in progress is lost; the state the GS knew is invalid. After
 // WD_MAX_RECOVERIES the engine is stopped with the diagnostics above.
+static u32 wd_last_flips = ~0u; // the flip count of the last recovery
+
 static void wd_recover(const char *why)
 {
 	u32 irq;
 
 	H.st.timeouts++;
 	wd_diag(why);
-	if (++H.st.wd_recoveries > WD_MAX_RECOVERIES)
+	// OPT11-STAB: a second hang with no frame shown in between is the same hang (a VU1 program that does not end: MAPMD, frame 57 of the merged tree): every wait is 2 s
+	// of a frozen picture, six of them (the old limit) took 12 s before the engine gave the hardware renderer up
+	if (++H.st.wd_recoveries > WD_MAX_RECOVERIES || H.flips == wd_last_flips)
 		hw_failure("PS2 GS watchdog: the GS/DMA stays stuck after repeated resets");
+	wd_last_flips = H.flips;
 	irq = DIntr();
 	*D2_CHCR = 0; // stop channel 2
 	if (V.on)
 		*D1_CHCR = 0; // PS2-HW-44: and the VIF channel
 	__asm__ volatile("sync.l");
+	// OPT11-STAB: the GIF and the VIF1 are reset too (as PS2HWD_Abort does): a GIF that was cut off in the middle of an IMAGE packet swallows every packet that follows as
+	// image data, so the next frame hung in the same place and the six recoveries (12 s of a frozen picture) did nothing (MAPMD, frame 57)
+	*(volatile u32 *)0x10003000 = 1; // GIF_CTRL.RST
+	if (V.on)
+		*VIF1_FBRST = 1;
+	if (!(ps2hwd_dbg_flags & HWDBG_NOZC))
+	{
+		// the hang goes away without the zero-copy texture uploads (-hwdbg 2097152; MAPMD: a GIF packet is cut off in the first frame with the world): from here on the texels go by copy
+		ps2hwd_dbg_flags |= HWDBG_NOZC;
+		I_OutputMsg("HWD WATCHDOG: zero-copy texture uploads are off from now on\n");
+	}
 	H.dma_busy = 0;
 	H.q_n = 0;
 	H.q_head = 0;

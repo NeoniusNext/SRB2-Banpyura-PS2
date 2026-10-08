@@ -853,6 +853,37 @@ static void vu_chunk_flush(void)
 		vu_chunk_end();
 }
 
+// -hwvudump N (OPT11-STAB, diagnosis of a VU1 program that does not end): every polygon the VU1 path takes in the frame number N (H.frame_no) is printed with its light level
+// and vertices (x y z s t), in the order of the chunk
+static u32 vu_dump_frame;
+static u32 vu_max_poly, vu_poly_seen, vu_poly_frame; // -hwvumax K (with -hwvudump N): only the first K polygons of frame N take the VU1 path (bisecting a hang)
+
+static u32 vu_stop_frame; // -hwvustop N: from frame N on the VU1 path takes nothing (bisecting a hang by frame)
+
+static int vu_over_limit(void)
+{
+	if (vu_stop_frame && H.frame_no >= vu_stop_frame)
+		return 1;
+	if (!vu_max_poly || !vu_dump_frame || H.frame_no != vu_dump_frame)
+		return 0;
+	if (vu_poly_frame != H.frame_no)
+	{
+		vu_poly_frame = H.frame_no;
+		vu_poly_seen = 0;
+	}
+	return vu_poly_seen >= vu_max_poly;
+}
+
+static void vu_dump(const FOutVector *base, int n, float light)
+{
+	int i;
+
+	I_OutputMsg("VUPOLY f%u n=%d light=%g", (unsigned)H.frame_no, n, (double)light);
+	for (i = 0; i < n; i++)
+		I_OutputMsg(" [%g %g %g %g %g]", (double)base[i].x, (double)base[i].y, (double)base[i].z, (double)base[i].s, (double)base[i].t);
+	I_OutputMsg("\n");
+}
+
 // Called by emit_poly (before anything else) for a plan that is VU1 capable. Returns 1 when the polygon was taken (drawn or dropped).
 // The polygon goes into the chunk in one pass over its vertices (PS2-HW-107: the extent of s, t for the texture repeat is found while the vertices are copied,
 // the w lanes and the zero lanes are not written: the program does not read them; the header carries the texture scale of the polygon).
@@ -863,7 +894,7 @@ static int vu_poly(const FOutVector *base, int n, float light)
 	u32 need;
 	qw_t *o, *v;
 
-	if (n < 3 || n > VU_MAXVERT)
+	if (n < 3 || n > VU_MAXVERT || vu_over_limit())
 		return 0;
 	if (!VU.consts_ok || P.serial != H.serial)
 	{
@@ -934,6 +965,11 @@ static int vu_poly(const FOutVector *base, int n, float light)
 	H.wr += need;
 	VU.chunk_n += need;
 	VU.npoly++;
+	if (vu_dump_frame && H.frame_no == vu_dump_frame)
+	{
+		vu_poly_seen++;
+		vu_dump(base, n, light);
+	}
 	return 1;
 }
 
@@ -956,6 +992,9 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 		qw_t *o, *v;
 		float sb = 0.0f, tb = 0.0f;
 		u32 k;
+
+		if (vu_over_limit())
+			break;
 
 		if (!VU.open || !VU.consts_ok || P.serial != H.serial || n - 3 > VU_MAXVERT - 3 || VU.chunk_n + need > VU_CHUNK_QW || H.wr + need + 3 > BUF_QW)
 		{
@@ -1011,12 +1050,18 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 		H.wr += need;
 		VU.chunk_n += need;
 		VU.npoly++;
+		if (vu_dump_frame && H.frame_no == vu_dump_frame)
+		{
+			vu_poly_seen++;
+			vu_dump(fv, (int)n, light);
+		}
 		i++;
 	}
 	return i;
 }
 
 #else // host test build: no VU1
+static u32 vu_dump_frame, vu_max_poly, vu_stop_frame;
 static int vu1_boot(void)
 {
 	return 0;

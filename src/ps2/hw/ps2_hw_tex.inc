@@ -1265,6 +1265,11 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 		band = 16;
 	SyncDCache((void *)data, (void *)(data + (size_t)W2 * H2));
 	TX.sync_cyc += cyc() - c0;
+	// OPT11-STAB: an open VU1 chunk is closed BEFORE the header of the image is written: pk_ref closes it (vu_chunk_flush), and that put the chunk between the GIF tag of the
+	// image (path 2) and its data, a path 1 packet inside a path 2 image: "GIF DMA ownership timeout (ring_wait)" for good (MAPMD, first frame with the world: HWD WATCHDOG
+	// twice, six times before, the hardware renderer is given up; -hwdbg 2097152 (no zero copy) or -hwdbg 268435456 (no VU1) do not hang)
+	if (V.chunk_open)
+		vu_chunk_flush();
 	for (r0 = 0; r0 < H2; r0 += nr)
 	{
 		qw_t *h;

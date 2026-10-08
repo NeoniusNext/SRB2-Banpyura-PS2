@@ -297,8 +297,15 @@ boolean PS2HWD_Init(void)
 	if (!hwbig_alloc())
 		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
+	wd_last_flips = ~0u;
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	if (M_CheckParm("-hwvudump") && M_IsNextParm())
+		vu_dump_frame = (u32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwvustop") && M_IsNextParm())
+		vu_stop_frame = (u32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwvumax") && M_IsNextParm())
+		vu_max_poly = (u32)atoi(M_GetNextParm());
 	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
 	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
 		vu_bretmask = atoi(M_GetNextParm());
