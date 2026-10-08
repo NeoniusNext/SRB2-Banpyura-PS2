@@ -252,6 +252,22 @@ static void spr_flush_list(int which)
 	spr_view_make(SPR.cur_vw);
 	if (SPR.valid && memcmp(SPR.vw, SPR.cur_vw, sizeof SPR.vw))
 		SPR.valid = 0;
+	// the textures first: every one of the list resident before the first record is written. A texture that is still to be drawn weighs 60 against eviction (hw: evict_weight, batch
+	// phase 2), the others at most 31: the uploads of this loop take the room of the textures that are not pending, and what the loop below draws is never uploaded again (a patch whose
+	// data the zone dropped after its upload cannot be made again here: it would be skipped)
+	for (i = 0; i < n; i++)
+	{
+		if (!rec_of(e[i].tex))
+		{
+			texrec_t *r;
+
+			SPR.st_uploads++;
+			settex_now(e[i].tex);
+			r = rec_of(e[i].tex);
+			if (r)
+				H.rec[img_of((int)(r - H.rec))].done = 0; // (settex_now marked it drawn: it is not yet)
+		}
+	}
 	for (i = 0; i < n; i++, e++)
 	{
 		texrec_t *r = rec_of(e->tex);
@@ -259,17 +275,7 @@ static void spr_flush_list(int which)
 		int idx;
 
 		if (!r)
-		{
-			const u32 s0 = H.serial;
-
-			SPR.st_uploads++;
-			settex_now(e->tex);
-			r = rec_of(e->tex);
-			if (!r)
-				continue; // not resident (no room or no data): the draw is skipped, as the batch skips it
-			if (SPR.valid && SPR.serial == s0)
-				SPR.serial = H.serial; // the upload wrote the transfer registers and the texture flush only: the GS state of the plan stands
-		}
+			continue; // not resident (no room or no data): the draw is skipped, as the batch skips it
 		idx = (int)(r - H.rec);
 		if (r->psm != PSM_T8 || (r->clut != 1 && r->clut != 2) || r->screen || r->wrapx || r->wrapy)
 		{
@@ -298,15 +304,18 @@ static void spr_flush_list(int which)
 	}
 }
 
+// both lists: the shadows, then the sprites (one residency pass over the textures of both)
 void PS2HWD_SprFlush(int which)
 {
 	u32 t0;
 
-	if (!SPR.n[which])
+	(void)which;
+	if (!SPR.n[0] && !SPR.n[1])
 		return;
 	t0 = cyc();
 	drv_in();
-	spr_flush_list(which);
+	spr_flush_list(0);
+	spr_flush_list(1);
 	drv_out();
 	G.spr_cyc += cyc() - t0;
 }

@@ -619,7 +619,7 @@ void HWR_RenderBatches(void)
 #ifdef PS2
 	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
 #ifdef PS2_PROFILE
-	PS2HWD_SprFlush(0); // PS2-HW-255: the drop shadows of the sprite stream come first, as in the batch (they are drawn before the sprites)
+	PS2HWD_SprFlush(0); // PS2-HW-255: the drop shadows and the sprites of the sprite stream come first (before the uploads of the batch: their textures are resident now and are not needed again)
 #endif
 #endif
 	if (!polygonArraySize)
@@ -628,9 +628,6 @@ void HWR_RenderBatches(void)
 			= ps_hw_numtextures.value.i = ps_hw_numpolyflags.value.i
 			= ps_hw_numcolors.value.i = 0;
 #ifdef PS2
-#ifdef PS2_PROFILE
-		PS2HWD_SprFlush(1); // PS2-HW-255: the sprites of the stream
-#endif
 		PS2HWD_BatchEnd();
 #endif
 		return;// nothing to draw
@@ -973,9 +970,6 @@ void HWR_RenderBatches(void)
 		HWP_SPAN_BEGIN(tb_end);
 #endif
 #ifdef PS2
-#ifdef PS2_PROFILE
-	PS2HWD_SprFlush(1); // PS2-HW-255: the sprites of the stream come after the polygons of the batch
-#endif
 	PS2HWD_BatchEnd();
 #endif
 #ifdef PS2_PROFILE
