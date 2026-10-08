@@ -68,10 +68,57 @@ void PS2HWD_PlanBegin(void)
 	}
 }
 
+// ---- OPT11 round 2 (VU2): what the planner's arithmetic costs on the machine the profile is made on (-hwbench) ----
+// A multiply costs 4 cycles (nothing overlaps), a floating point compare with its branch 5, an add 1; a vector times a matrix on VU0 in macro mode 11 for the four
+// components. The transform of the polygon's vertices (12 multiplies a vertex, 100+ cycles with the loads) goes to VU0; the per vertex arithmetic of plan_part is
+// written with the multiplies it needs (15 instead of 26), the maxima with max.s instead of compare and branch.
+#ifdef HW_VU0
+static u32 pm_ver = ~0u; // xf_ver of the matrix in vf21..vf24
+
+// the model-view-projection matrix into vf21..vf24 (the registers of the plans, vf1..vf18, are not touched: the plan of the draw that is going on stays loaded)
+static inline void vu0b_mvp(void)
+{
+	if (H.mat_dirty)
+		xf_update();
+	if (pm_ver != xf_ver)
+	{
+		const float *m = H.mvp;
+
+		__asm__ volatile(
+			"lqc2 $vf21, 0x00(%0)\n"
+			"lqc2 $vf22, 0x10(%0)\n"
+			"lqc2 $vf23, 0x20(%0)\n"
+			"lqc2 $vf24, 0x30(%0)\n"
+			: : "r"(m) : "memory");
+		pm_ver = xf_ver;
+	}
+}
+#endif
+
 // Sutherland-Hodgman against the six planes of the view volume (x, y, z, w only); the vertices are in `a`, `b` is scratch; returns the count, *res the result
+// PS2-HW-224: the distance of a vertex to the plane is made once (it was made for both ends of every edge, through a switch), "inside" (d >= 0, -0 included) is read from the
+// bits (a floating point compare and its branch cost 5 cycles), and only x, y, z, w are copied (one quadword): the planner needs no more of a clipped vertex.
+static inline int plan_inside(float d)
+{
+	return (unsigned)fbits(d) <= 0x80000000u;
+}
+
+static inline void plan_vcopy(cv_t *dst, const cv_t *src)
+{
+#ifdef __mips__
+	__asm__ volatile("lq $8, 0(%1)\n sq $8, 0(%0)\n" : : "r"(dst), "r"(src) : "$8", "memory");
+#else
+	dst->x = src->x;
+	dst->y = src->y;
+	dst->z = src->z;
+	dst->w = src->w;
+#endif
+}
+
 static int plan_clip(cv_t *a, cv_t *b, int n, int mask, cv_t **res)
 {
 	cv_t *in = a, *out = b, *t;
+	float dd[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA + 1];
 	int p, i;
 
 	for (p = 0; p < 6 && n > 0; p++)
@@ -80,16 +127,45 @@ static int plan_clip(cv_t *a, cv_t *b, int n, int mask, cv_t **res)
 
 		if (!(mask & (1 << p)))
 			continue;
+		switch (p)
+		{
+			case 0:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].x + in[i].w;
+				break;
+			case 1:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].w - in[i].x;
+				break;
+			case 2:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].y + in[i].w;
+				break;
+			case 3:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].w - in[i].y;
+				break;
+			case 4:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].z + in[i].w;
+				break;
+			default:
+				for (i = 0; i < n; i++)
+					dd[i] = in[i].w - in[i].z;
+				break;
+		}
 		for (i = 0; i < n; i++)
 		{
-			const cv_t *v0 = &in[i], *v1 = &in[i + 1 == n ? 0 : i + 1];
-			float d0 = plane_dist(v0, p, 1.0f, 1.0f), d1 = plane_dist(v1, p, 1.0f, 1.0f);
+			const int j = i + 1 == n ? 0 : i + 1;
+			const float d0 = dd[i], d1 = dd[j];
+			const int in0 = plan_inside(d0);
 
-			if (d0 >= 0.0f)
-				out[m++] = *v0;
-			if ((d0 >= 0.0f) != (d1 >= 0.0f))
+			if (in0)
+				plan_vcopy(&out[m++], &in[i]);
+			if (in0 != plan_inside(d1))
 			{
-				float tt = d0 / (d0 - d1);
+				const cv_t *v0 = &in[i], *v1 = &in[j];
+				const float tt = d0 / (d0 - d1);
 				cv_t *o = &out[m++];
 
 				o->x = v0->x + (v1->x - v0->x) * tt;
@@ -113,7 +189,7 @@ static int plan_clip(cv_t *a, cv_t *b, int n, int mask, cv_t **res)
 // the screen but no texel size) counts as a texel of 1e6 pixels: full size.
 static float pm_s[PS2HWD_MAXPOLY], pm_a[PS2HWD_MAXPOLY];
 
-static int plan_part(cv_t *poly, int n, int or_, float *s, float *area)
+static int plan_part_ref(cv_t *poly, int n, int or_, float *s, float *area)
 {
 	static float sx[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA], sy[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA];
 	cv_t *v = poly;
@@ -176,27 +252,177 @@ static int plan_part(cv_t *poly, int n, int or_, float *s, float *area)
 	return 1;
 }
 
-static int plan_measure(const GLMipmap_t *m, const FOutVector *verts, unsigned int n)
+// PS2-HW-224: plan_part with the arithmetic of the per vertex density folded. The screen position of a vertex is (X px, Y py) with X = x / w, Y = y / w (NDC), and the
+// size of a texel along u at the vertex is |(dx, dy)| with dx = px (Lx - X Lw) / w, dy = py (Ly - Y Lw) / w, L = d(x, y, w) / du (lodc): the coefficients are scaled by
+// px, py once per polygon, the area is made in NDC and scaled once, and the maxima are kept as squares. The values are those of plan_part_ref up to the last bits of
+// the floats (-hwplan 2 compares the two on every polygon).
+static int plan_part(cv_t *poly, int n, int or_, float *s, float *area)
+{
+	static float sx[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA], sy[PS2HWD_MAXPOLY + PS2HWD_CLIPEXTRA];
+	cv_t *v = poly;
+	int cnt = n, i, j, ok = lodc_ok;
+	const float px = 0.5f * H.vpw, py = 0.5f * H.vph;
+	float su = 0.0f, sv = 0.0f, sum = 0.0f;
+	float au = 0.0f, bu = 0.0f, cu = 0.0f, du = 0.0f, av = 0.0f, bv = 0.0f, cvv = 0.0f, dv = 0.0f;
+
+	if (or_)
+	{
+		cnt = plan_clip(poly, vbuf_b, n, or_, &v);
+		if (cnt < 3)
+			return 0;
+	}
+	if (ok)
+	{
+		au = lodc[0][0] * px;
+		bu = lodc[2][0] * px;
+		cu = lodc[1][0] * py;
+		du = lodc[2][0] * py;
+		av = lodc[0][1] * px;
+		bv = lodc[2][1] * px;
+		cvv = lodc[1][1] * py;
+		dv = lodc[2][1] * py;
+	}
+	for (i = 0; i < cnt; i++)
+	{
+		float iw, X, Y;
+
+		if (fbits(v[i].w) < 0x38D1B717) // w < 1e-4
+		{
+			ok = 0; // cannot be measured (the polygon is drawn: full size)
+			sx[i] = sy[i] = 0.0f;
+			continue;
+		}
+		iw = 1.0f / v[i].w;
+		X = v[i].x * iw;
+		Y = v[i].y * iw;
+		sx[i] = X;
+		sy[i] = Y;
+		if (ok)
+		{
+			const float dxu = au - X * bu, dyu = cu - Y * du, dxv = av - X * bv, dyv = cvv - Y * dv, iw2 = iw * iw;
+
+			su = hw_maxf(su, (dxu * dxu + dyu * dyu) * iw2);
+			sv = hw_maxf(sv, (dxv * dxv + dyv * dyv) * iw2);
+		}
+	}
+	for (i = 0, j = cnt - 1; i < cnt; j = i++)
+		sum += sx[j] * sy[i] - sx[i] * sy[j];
+	*area = 0.5f * px * py * fabsf(sum);
+	if (*area < 0.05f)
+		return 0; // no area: it draws nothing
+	if (!ok || cnt < 3)
+	{
+		*s = 1.0e6f;
+		return 1;
+	}
+	*s = hw_maxf(sqrtf(su), sqrtf(sv));
+	return 1;
+}
+
+#ifdef HW_VU0
+// the clip coordinates and outcodes of the vertices on VU0: one vertex at a time through the matrix (4 COP2 instructions), the clip test of the result against |w| (vclipw: 6 flags
+// at once). VU0 compares with |w|, the outcode of the clipper with w (a vertex behind the eye is outside everything), so w <= 0 gives all six bits.
+static void plan_xform_vu0(const FOutVector *verts, int n, int *ocs, int *and_out, int *or_out)
+{
+	static float in4[16] __attribute__((aligned(16))) = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
+	int g, k, and_ = 0x3F, or_ = 0;
+
+	vu0b_mvp();
+	// four vertices at a time (a quad is one group): the four chains are independent and overlap in the VU0 pipeline (one vertex alone waits for the whole chain, the
+	// clip flags and the store: 75 cycles; four together 55), one read of the clip flag history gives the flags of all four (the newest vertex in the low six bits)
+	for (g = 0; g < n; g += 4)
+	{
+		const int cnt = n - g < 4 ? n - g : 4;
+		u32 f;
+
+		for (k = 0; k < cnt; k++)
+		{
+			in4[4 * k] = verts[g + k].x;
+			in4[4 * k + 1] = verts[g + k].y;
+			in4[4 * k + 2] = verts[g + k].z;
+		}
+		__asm__ volatile(
+			"lqc2 $vf25, 0x00(%1)\n"
+			"lqc2 $vf26, 0x10(%1)\n"
+			"lqc2 $vf27, 0x20(%1)\n"
+			"lqc2 $vf28, 0x30(%1)\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf25\n"
+			"vmadday $ACC, $vf22, $vf25\n"
+			"vmaddz $vf29, $vf23, $vf25\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf26\n"
+			"vmadday $ACC, $vf22, $vf26\n"
+			"vmaddz $vf30, $vf23, $vf26\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf27\n"
+			"vmadday $ACC, $vf22, $vf27\n"
+			"vmaddz $vf31, $vf23, $vf27\n"
+			"vmulaw $ACC, $vf24, $vf0\n"
+			"vmaddax $ACC, $vf21, $vf28\n"
+			"vmadday $ACC, $vf22, $vf28\n"
+			"vmaddz $vf20, $vf23, $vf28\n"
+			"vclipw.xyz $vf29, $vf29\n"
+			"vclipw.xyz $vf30, $vf30\n"
+			"vclipw.xyz $vf31, $vf31\n"
+			"vclipw.xyz $vf20, $vf20\n"
+			"sqc2 $vf29, 0x00(%2)\n"
+			"sqc2 $vf30, %3(%2)\n"
+			"sqc2 $vf31, %4(%2)\n"
+			"sqc2 $vf20, %5(%2)\n"
+			"cfc2 %0, $vi18\n"
+			: "=&r"(f) : "r"(in4), "r"(&vbuf_a[g]), "i"(sizeof(cv_t)), "i"(2 * sizeof(cv_t)), "i"(3 * sizeof(cv_t)) : "memory");
+		for (k = 0; k < cnt; k++)
+		{
+			cv_t *d = &vbuf_a[g + k];
+			const u32 fk = f >> (6 * (3 - k)); // VU0: bit 0 = +x ... bit 5 = -z; the clipper: bit 0 = -x (left), bit 1 = +x ...
+			int oc = (int)((((fk & 0x15u) << 1) | ((fk >> 1) & 0x15u)));
+
+			d->a[0] = verts[g + k].s;
+			d->a[1] = verts[g + k].t;
+			if (fbits(d->w) <= 0)
+				oc = 0x3F;
+			ocs[g + k] = oc;
+			and_ &= oc;
+			or_ |= oc;
+		}
+	}
+	*and_out = and_;
+	*or_out = or_;
+}
+#endif
+
+static int plan_part_x(int ref, cv_t *poly, int n, int or_, float *s, float *area)
+{
+	return ref ? plan_part_ref(poly, n, or_, s, area) : plan_part(poly, n, or_, s, area);
+}
+
+static int plan_measure_impl(const GLMipmap_t *m, const FOutVector *verts, unsigned int n, int ref)
 {
 	static int ocs[PS2HWD_MAXPOLY];
 	int i, and_ = 0x3F, or_ = 0, cnt = 0;
 
-	for (i = 0; i < (int)n; i++)
-	{
-		int oc;
+#ifdef HW_VU0
+	if (!ref)
+		plan_xform_vu0(verts, (int)n, ocs, &and_, &or_);
+	else
+#endif
+		for (i = 0; i < (int)n; i++)
+		{
+			int oc;
 
-		xform_vertex(&verts[i], NULL, &vbuf_a[i]);
-		oc = vbuf_a[i].w <= 0.0f ? 0x3F : outcode(&vbuf_a[i], 1.0f, 1.0f);
-		ocs[i] = oc;
-		and_ &= oc;
-		or_ |= oc;
-	}
+			xform_vertex(&verts[i], NULL, &vbuf_a[i]);
+			oc = vbuf_a[i].w <= 0.0f ? 0x3F : outcode(&vbuf_a[i], 1.0f, 1.0f);
+			ocs[i] = oc;
+			and_ &= oc;
+			or_ |= oc;
+		}
 	if (and_)
 		return 0; // wholly outside the view volume: it draws nothing
 	poly_plane(vbuf_a, (int)n, (float)m->width, (float)m->height);
 	if (!lodc_ok || lodc_planar)
 	{
-		if (plan_part(vbuf_a, (int)n, or_, &pm_s[0], &pm_a[0]))
+		if (plan_part_x(ref, vbuf_a, (int)n, or_, &pm_s[0], &pm_a[0]))
 			cnt = 1;
 	}
 	else
@@ -213,7 +439,7 @@ static int plan_measure(const GLMipmap_t *m, const FOutVector *verts, unsigned i
 			tri[1] = vbuf_a[i];
 			tri[2] = vbuf_a[i + 1];
 			poly_plane(tri, 3, (float)m->width, (float)m->height);
-			if (plan_part(tri, 3, oc, &pm_s[cnt], &pm_a[cnt]))
+			if (plan_part_x(ref, tri, 3, oc, &pm_s[cnt], &pm_a[cnt]))
 				cnt++;
 		}
 	}
@@ -221,6 +447,40 @@ static int plan_measure(const GLMipmap_t *m, const FOutVector *verts, unsigned i
 		for (i = 0; i < cnt; i++)
 			CONS_Printf("HWLOD %s %ux%u n=%u planar=%d part=%d s=%.3f area=%.1f\n", HWR_PS2_TexName(m), (unsigned)m->width, (unsigned)m->height, n, lodc_planar, i, pm_s[i], pm_a[i]);
 	return cnt;
+}
+
+// PS2-HW-224: -hwplan 0 (default) the VU0 transform and the lean arithmetic, 1 the scalar transform of PS2-HW-34/37 and plan_part_ref, 2 both on every polygon, the
+// differences counted (a different number of parts, a texel size or an area that differs by more than 1 per mille: HWPLANCMP)
+static int plan_measure(const GLMipmap_t *m, const FOutVector *verts, unsigned int n)
+{
+#ifdef HW_VU0
+	if (plan_mode == 0)
+		return plan_measure_impl(m, verts, n, 0);
+	if (plan_mode == 2)
+	{
+		float rs[PS2HWD_MAXPOLY], ra[PS2HWD_MAXPOLY];
+		int rc = plan_measure_impl(m, verts, n, 1), c, i;
+
+		for (i = 0; i < rc; i++)
+		{
+			rs[i] = pm_s[i];
+			ra[i] = pm_a[i];
+		}
+		c = plan_measure_impl(m, verts, n, 0);
+		pm_cmp++;
+		if (c != rc)
+			pm_dcnt++;
+		else
+			for (i = 0; i < c; i++)
+				if (fabsf(pm_s[i] - rs[i]) > 1e-3f * rs[i] + 1e-6f || fabsf(pm_a[i] - ra[i]) > 1e-3f * ra[i] + 1e-3f)
+				{
+					pm_dval++;
+					break;
+				}
+		return c;
+	}
+#endif
+	return plan_measure_impl(m, verts, n, 1);
 }
 
 // is m a texture the plan handles: a map texture or flat of palette indices with at least PLAN_MIN_TEXELS texels
@@ -313,6 +573,8 @@ void PS2HWD_PlanPolygon(GLMipmap_t *m, const void *vp, unsigned int n)
 		TX.plan_np++;
 		TX.plan_mcyc += cyc() - t0;
 	}
+	if (!cnt)
+		TX.plan_inv++;
 	for (i = 0; i < cnt; i++)
 		plan_add(pi, pm_s[i], pm_a[i]);
 }
@@ -740,30 +1002,30 @@ static int quad_hidden_ref(const void *vp)
 // compared (HWSPRCULL prints the number of differences).
 
 #ifdef HW_VU0
-static u32 qh_ver = ~0u;
+// floor and ceil of a float of moderate size (the box passed the 8 pixel test and is not wholly outside the view volume: it lies near the screen) from the truncating conversion
+static inline int qh_floor_i(float v)
+{
+	const int i = (int)v;
+
+	return i - ((unsigned)fbits(v - (float)i) > 0x80000000u);
+}
+
+static inline int qh_ceil_i(float v)
+{
+	const int i = (int)v;
+
+	return i - (fbits((float)i - v) >> 31);
+}
 
 static int quad_hidden_vu0(const FOutVector *v)
 {
 	static float in[16] __attribute__((aligned(16))) = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f};
 	static float cl[16] __attribute__((aligned(16)));
-	float hx, hy, cx, cy, nw, x0, x1, y0, y1;
-	float sx, sy, iw;
+	float hx, hy, cx, cy, x0, x1, y0, y1, minx, maxx, miny, maxy;
 	u32 f;
-	int k;
+	int k, nwb;
 
-	xf_update();
-	if (qh_ver != xf_ver)
-	{
-		const float *m = H.mvp;
-
-		__asm__ volatile(
-			"lqc2 $vf21, 0x00(%0)\n"
-			"lqc2 $vf22, 0x10(%0)\n"
-			"lqc2 $vf23, 0x20(%0)\n"
-			"lqc2 $vf24, 0x30(%0)\n"
-			: : "r"(m) : "memory");
-		qh_ver = xf_ver;
-	}
+	vu0b_mvp();
 	in[0] = v[0].x;
 	in[1] = v[0].y;
 	in[2] = v[0].z;
@@ -807,46 +1069,47 @@ static int quad_hidden_vu0(const FOutVector *v)
 		"sqc2 $vf20, 0x30(%2)\n"
 		"cfc2 %0, $vi18\n"
 		: "=&r"(f) : "r"(in), "r"(cl) : "memory");
-	nw = 2.0f * H.near_plane;
-	if (cl[3] < nw || cl[7] < nw || cl[11] < nw || cl[15] < nw)
-	{
-		qh_near++;
+	// (the comparisons are made on the bits of the floats, integer compares: a positive float orders like its bits, a negative one is below every positive one)
+	nwb = fbits(H.near_plane + H.near_plane);
+	if ((fbits(cl[3]) < nwb) | (fbits(cl[7]) < nwb) | (fbits(cl[11]) < nwb) | (fbits(cl[15]) < nwb))
 		return 0; // near the eye (or behind it): the clipper decides
-	}
 	if (f & (f >> 6) & (f >> 12) & (f >> 18) & 0x3Fu)
 	{
-		qh_and++;
 		spr_hid_yes++;
 		return 1; // wholly outside the view volume
+	}
+	// the screen box: the extremes of x / w and y / w, scaled once (the scale is positive)
+	minx = miny = 1.0e30f;
+	maxx = maxy = -1.0e30f;
+	for (k = 0; k < 4; k++)
+	{
+		const float iw = 1.0f / cl[4 * k + 3], X = cl[4 * k] * iw, Y = cl[4 * k + 1] * iw;
+
+		minx = hw_minf(minx, X);
+		maxx = hw_maxf(maxx, X);
+		miny = hw_minf(miny, Y);
+		maxy = hw_maxf(maxy, Y);
 	}
 	hx = H.vpw * 0.5f;
 	hy = H.vph * 0.5f;
 	cx = H.vpx + hx - 0.5f;
 	cy = H.vpy + hy - 0.5f;
-	x0 = y0 = 1.0e30f;
-	x1 = y1 = -1.0e30f;
-	for (k = 0; k < 4; k++)
-	{
-		iw = 1.0f / cl[4 * k + 3];
-		sx = cx + cl[4 * k] * iw * hx;
-		sy = cy - cl[4 * k + 1] * iw * hy;
-		x0 = hw_minf(x0, sx);
-		x1 = hw_maxf(x1, sx);
-		y0 = hw_minf(y0, sy);
-		y1 = hw_maxf(y1, sy);
-	}
-	if (x1 - x0 > 8.0f || y1 - y0 > 8.0f)
-	{
-		qh_big++;
+	x0 = cx + minx * hx;
+	x1 = cx + maxx * hx;
+	y0 = cy - maxy * hy;
+	y1 = cy - miny * hy;
+	if (fbits(hw_maxf(x1 - x0, y1 - y0)) > fbits(8.0f))
 		return 0; // big: it covers a centre for sure
-	}
-	if (quad_no_centre(x0, x1, y0, y1))
+	// no integer point in the box widened by QUAD_MARGIN (quad_no_centre of ps2_hw_quad.h with floor and ceil from a conversion: libm's cost 40 cycles each)
 	{
-		qh_nocen++;
-		spr_hid_yes++;
-		return 1; // no pixel centre in the box
+		const int cx0 = qh_ceil_i(x0 - QUAD_MARGIN), fx1 = qh_floor_i(x1 + QUAD_MARGIN), cy0 = qh_ceil_i(y0 - QUAD_MARGIN), fy1 = qh_floor_i(y1 + QUAD_MARGIN);
+
+		if (cx0 > fx1 || cy0 > fy1)
+		{
+			spr_hid_yes++;
+			return 1; // no pixel centre in the box
+		}
 	}
-	qh_vis++;
 	return 0;
 }
 #endif

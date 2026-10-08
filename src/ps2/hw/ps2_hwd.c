@@ -62,6 +62,7 @@
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
 #include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
+#include "ps2_hw_bench.inc" // OPT11 round 2: -hwbench, what the instructions cost
 
 static FOutVector *sky_vertices;
 static float *sky_colors;
@@ -301,6 +302,10 @@ boolean PS2HWD_Init(void)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	if (M_CheckParm("-hwbench"))
+		PS2HWD_Bench();
+	if (M_CheckParm("-hwplan") && M_IsNextParm())
+		plan_mode = atoi(M_GetNextParm()); // PS2-HW-224: 0 = VU0 transform and lean arithmetic of the planner, 1 = scalar as before, 2 = both, compared
 	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
 	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
 		vu_bretmask = atoi(M_GetNextParm());
@@ -1011,19 +1016,37 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 // are 93 without it), and must be: a plan that is not the palette rows (fog classes of the GLSL equations, water, a texture of 32 bit colours) keeps the level in its key.
 // What it asks is what begin_draw_inner decides at draw time (the shader state is the base shader slot of the polygon), as far as it can be known before the
 // texture is uploaded: map textures and flats (P_8) and the patches whose record is a palette image already.
+// PS2-HW-227 (OPT11 round 2, VU2): asked for every polygon of the frame (2000 times in DEMO_001, 80 cycles a call: fourteen tests, each a compare with a branch and a
+// delay slot that stays empty). What does not depend on the polygon (the driver and VU1 program are up, the shaders are on, the debug switches, the palette mode) is one
+// word made once a frame; the flags of the polygon are tested with two masks.
+static int pallit_frame_gate(void)
+{
+	static u32 frame = ~0u, shaders = ~0u;
+	static int on;
+
+	if (frame != H.frame_no || shaders != (u32)H.shaders_on)
+	{
+		frame = H.frame_no;
+		shaders = (u32)H.shaders_on;
+		on = H.up && V.on && V.ready && H.shaders_on && !(ps2hwd_dbg_flags & (2048 | 8192 | HWDBG_NOVU1 | HWDBG_NOLIGHTMERGE)) && palette_mode_fr();
+	}
+	return on;
+}
+
 int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int shader)
 {
 	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
 	const GLMipmap_t *m = (const GLMipmap_t *)vtex;
-	const u32 blend = flags & PF_Blending;
+	u32 lt;
 
-	if (!H.up || !V.on || !V.ready || !H.shaders_on || !surf || !m || !(flags & PF_ColorMapped) || shader < 0 || shader > 5)
+	if (!H.up || !pallit_frame_gate() || !surf || !m || (unsigned int)shader > 5u)
 		return 0;
-	if ((flags & (PF_NoTexture | PF_Invisible | PF_Ripple | PF_Corona | PF_WireFrame)) || blend == PF_Fog || blend == (PF_Multiplicative & PF_Blending))
+	if ((flags & (PF_ColorMapped | PF_NoTexture | PF_Invisible | PF_Ripple | PF_Corona | PF_WireFrame)) != PF_ColorMapped)
 		return 0;
-	if ((ps2hwd_dbg_flags & (2048 | 8192 | HWDBG_NOVU1 | HWDBG_NOLIGHTMERGE)) || !palette_mode_fr())
+	if ((flags & PF_Blending) == PF_Fog || (flags & PF_Blending) == (PF_Multiplicative & PF_Blending))
 		return 0;
-	if (!surf->LightTableId || !lt_ok(surf->LightTableId) || surf->LightTableId >= PR_TBL)
+	lt = surf->LightTableId;
+	if (lt - 1u >= (u32)(PR_TBL - 1) || lt >= LT_MAX || !lt_idx[lt])
 		return 0;
 	if (m->format == GL_TEXFMT_P_8)
 		return 1;
@@ -1529,15 +1552,23 @@ static void hw_SetTexture(GLMipmap_t *TexInfo)
 // Only the frame stamp is set: the order of the LRU list is the order of DRAWING (PS2-HW-31).
 void PS2HWD_TouchTexture(GLMipmap_t *TexInfo)
 {
+	static GLMipmap_t *last; // PS2-HW-227: a texture is stamped once a frame (a run of polygons of one texture, 60 cycles each, was stamped again and again)
+	static u32 last_frame = ~0u;
 	texrec_t *r;
 
 	if (!H.up || !TexInfo)
+		return;
+	if (TexInfo == last && last_frame == H.frame_no)
 		return;
 	r = rec_of(TexInfo);
 	if (!r)
 		r = twin_rec(TexInfo);
 	if (r)
+	{
 		H.rec[img_of((int)(r - H.rec))].stamp = H.frame_no;
+		last = TexInfo;
+		last_frame = H.frame_no;
+	}
 }
 
 static void hw_UpdateTexture(GLMipmap_t *TexInfo)

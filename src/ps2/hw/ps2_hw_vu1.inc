@@ -910,8 +910,8 @@ static int vu_poly(const FOutVector *base, int n, float light)
 		}
 		if ((P.wrapx && (smax - smin) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin) * (float)P.r->h > UV_EXTENT))
 			return 0; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
-		sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
-		tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
+		sb = (P.wrapx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
+		tb = (P.wrapy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
 	}
 	else
 	{
@@ -946,7 +946,9 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 	const int wrap = P.textured && (P.wrapx || P.wrapy);
 	const int wx = P.wrapx, wy = P.wrapy;
 	const float tsx = P.tsx, tsy = P.tsy;
-	const float rw = wrap ? (float)P.r->w : 0.0f, rh = wrap ? (float)P.r->h : 0.0f;
+	// PS2-HW-228: the extent test (smax - smin) * width > UV_EXTENT as a compare of the bits of (smax - smin) with the limit (the difference is not negative): no multiply, no
+	// floating point compare (4 + 5 cycles an axis); a power of two texture side makes the product exact, the others differ from it by a rounding in the last bit of the limit
+	const int ilx = wx ? fbits(UV_EXTENT / (float)P.r->w) : 0x7F7FFFFF, ily = wy ? fbits(UV_EXTENT / (float)P.r->h) : 0x7F7FFFFF;
 	// PS2-HW-223: the chunk position in locals (the stores into the ring may alias any global as far as the compiler knows: every polygon reloaded and stored six of them), the
 	// counters of the frame added once at the end
 	qw_t *ring = NULL;
@@ -1005,10 +1007,10 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 				tmin = hw_minf(tmin, t);
 				tmax = hw_maxf(tmax, t);
 			}
-			if ((wx && (smax - smin) * rw > UV_EXTENT) || (wy && (tmax - tmin) * rh > UV_EXTENT))
+			if (fbits(smax - smin) > ilx || fbits(tmax - tmin) > ily)
 				break; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
-			sb = (wx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
-			tb = (wy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
+			sb = (wx && (fbits(smin) & 0x7FFFFFFF) > 0x40800000) ? floorf(smin) : 0.0f; // |smin| > 4
+			tb = (wy && (fbits(tmin) & 0x7FFFFFFF) > 0x40800000) ? floorf(tmin) : 0.0f;
 		}
 		else
 		{
