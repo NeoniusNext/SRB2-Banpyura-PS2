@@ -7,6 +7,7 @@
 #include "z_zone.h"
 #include "ps2_mem.h"
 #ifdef _EE
+#include "ps2_hwfb.h"
 #include "ps2_boot.h"
 #include "ps2_net.h"
 #endif
@@ -995,8 +996,18 @@ void PS2Mem_Checkpoint(const char *name)
 		if (!ZA_ISFREE(b))
 			bytes[ZA_TAG(b)] += ZA_SIZE(b);
 	ZA_Stats(&st);
-	if (M_CheckParm("-zmap") && !strcmp(name, "precache"))
+	if (M_CheckParm("-zmap") && (!strcmp(name, "precache") || !strcmp(name, "level-free-after")))
 		PS2Mem_Map(200);
+	if (M_CheckParm("-zmap") && !strcmp(name, "level-free-after"))
+	{
+		// OPT11-STAB: what stands next to the holes that are left after a level (the tags of the neighbours) and every block of 16 KB and more that is still there
+		size_t pos = 0;
+
+		PS2Mem_FreeList(64u << 10);
+		for (b = ZA_First(); b; pos += ZA_SIZE(b), b = ZA_Next(b))
+			if (!ZA_ISFREE(b) && ZA_SIZE(b) >= (16u << 10))
+				I_OutputMsg("[zblk] +%07lx %9lu B tag %d (%s)\n", (unsigned long)pos, (unsigned long)ZA_SIZE(b), (int)ZA_TAG(b), PS2Mem_TagName(ZA_TAG(b)));
+	}
 	{
 		struct mallinfo mi = mallinfo();
 		I_OutputMsg("[zlibc] %-22s libc in use outside the arena %ld B, free chunks %lu B, growth left %lu B\n", name,
@@ -1182,6 +1193,7 @@ void PS2Mem_Report(int owners)
 		(unsigned long)PS2Mem_HeapAvailable(PS2Mem_RamBytes(), PS2Mem_HeapLimit(), (size_t)sbrk(0), 0));
 	I_OutputMsg("ps2_mem: C heap peak above the arena %lu B; main stack used %lu B of %lu B (0 = -zstack off)\n",
 		(unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_StackUsed(), (unsigned long)za_stack_size);
+	PS2HWFB_Report();
 	{
 		size_t sn, sp, sb, st2, sf, sx;
 
@@ -1574,6 +1586,8 @@ static void PS2Mem_NullGuard(int init)
 	}
 }
 
+extern void PS2MemHud_Check(void); // ps2_memhud.c
+
 void PS2Mem_Frame(void)
 {
 	static int init;
@@ -1751,6 +1765,7 @@ void PS2Mem_Frame(void)
 			(unsigned long)st.largestfree, (unsigned long)st.evictions, (unsigned long)st.evictedbytes, (unsigned long)st.failures,
 			(unsigned long)PS2Mem_LibcFree(), (unsigned long)Z_TestFlushes(), (unsigned long)PS2Mem_LibcPeak(), (unsigned long)PS2Mem_StackUsed(), (unsigned long)sp_peak, (unsigned long)sp_now,
 			(unsigned long)PS2Mem_Ms());
+		PS2MemHud_Check(); // OPT11-MEM (PS2-HW-300): what showmem shows, from a fresh reading
 		I_OutputMsg("ZQUIT DONE\n");
 		I_Quit();
 	}
@@ -1779,6 +1794,7 @@ void PS2Mem_Init(void)
 #ifdef _EE
 	if (M_CheckParm("-zstack"))
 		PS2Mem_StackFill();
+	PS2HWFB_Init(); // PS2-170
 #endif
 	COM_AddCommand("ps2_mem", Command_Ps2Mem_f, 0);
 }

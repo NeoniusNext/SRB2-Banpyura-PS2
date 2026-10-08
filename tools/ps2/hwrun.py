@@ -60,7 +60,7 @@ def main():
             until = parts[1] if len(parts) > 1 else 'gametics in'
         if until:
             cmd += ['--until', until]
-        cmd += ['--', '-renderer', 'Hardware', '-zreserve', '3072', '-ps2prof'] + per_run + extra
+        cmd += ['--', '-renderer', 'Hardware'] + ([] if '-zreserve' in per_run + extra else ['-zreserve', '3072']) + ['-ps2prof'] + per_run + extra  # (OPT11 round 2: -zreserve N in the engine args replaces the default)
         out = open(ROOT / 'build/runs' / (name + '.out'), 'w') if (ROOT / 'build/runs').exists() else open('/dev/null', 'w')
         p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)
         procs.append((name, p))

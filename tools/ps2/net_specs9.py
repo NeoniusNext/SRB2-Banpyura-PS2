@@ -221,6 +221,15 @@ write('server-kill', {
     'nodes': [dict(pcsrv(start=0, longto=False), stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0}),
               ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
                   files={'pad.txt': pad(*crosses(200, 1100))}, start=8)],
+    # the PC server is stopped with SIGINT: its I_Quit sends the "server shutdown" packet and the client leaves at once (PT_ServerShutdown -> D_QuitNetGame, CL_Reset);
+    # a server that is simply gone is the next scenario (server-kill-hard): the client waits for its own time-out
+    'until': [{'node': 'cli', 'text': 'PS2 net: server timeout'}, {'node': 'cli', 'text': 'PS2 net: CL_Reset netgame 0'}], 'any': True, 'grace': 3})
+
+write('server-kill-hard', {
+    'timeout': 900,
+    'nodes': [dict(pcsrv(start=0, longto=False), stop_when={'node': 'cli', 'text': 'NETSYNC gametic=700', 'delay': 0, 'signal': 'KILL'}),
+              ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt'],
+                  files={'pad.txt': pad(*crosses(200, 1100))}, start=8)],
     'until': [{'node': 'cli', 'text': 'PS2 net: server timeout'}], 'grace': 3})
 
 write('client-kill', {

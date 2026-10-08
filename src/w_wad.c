@@ -2627,6 +2627,18 @@ boolean W_IsPatchCached(lumpnum_t lumpnum, void *ptr)
 	return W_IsPatchCachedPwad(WADFILENUM(lumpnum),LUMPNUM(lumpnum), ptr);
 }
 
+#ifdef PS2_PROFILE
+// OPT11-FX3 (PS2-HW-257c): the patch of a lump when it is in memory, NULL when it is not: nothing is loaded, no tag changes, the block is not touched
+void *W_PeekPatchNum(lumpnum_t lumpnum)
+{
+	const UINT16 wad = WADFILENUM(lumpnum), lump = LUMPNUM(lumpnum);
+
+	if (!TestValidLump(wad, lump))
+		return NULL;
+	return wadfiles[wad]->patchcache[lump];
+}
+#endif
+
 // ==========================================================================
 // W_CacheLumpName
 // ==========================================================================

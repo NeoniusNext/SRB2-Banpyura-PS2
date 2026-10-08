@@ -398,7 +398,8 @@ void PS2HWD_BatchEnd(void)
 // When no free hole is big enough, the cheapest aligned window of the pool is emptied: its cost is the sum of the per-block
 // weights of the records it overlaps (older = cheaper), and a window that touches a record that must stay is not a candidate.
 // A request that no window can satisfy fails WITHOUT evicting anything (a failed 1 MiB sky must not flush the working set).
-static u16 blk_owner[VRAM_BLOCKS];
+static u16 (*blk_owner_p)[VRAM_BLOCKS]; // PS2-171: the VRAM block owner map: zone memory while the driver runs (hwbig_alloc, ps2_hwd.c)
+#define blk_owner (*blk_owner_p)
 
 static void own_set(int ri)
 {
@@ -672,7 +673,7 @@ static inline u32 clut_slot(u32 i) // CT32 CLUT in CSM1: bits 3 and 4 of the ind
 // 16x16 CT32 image into VRAM (the CLUT format of a PSMT8 CSM1 CLUT)
 static void clut_write(u32 blk, const u32 *entries)
 {
-	qw_t *h = pk_alloc(1 + 4 + 1 + 64);
+	qw_t *h = pk_alloc(1 + 4 + 1 + 64 + 2);
 	qw_t *d;
 	int i;
 
@@ -694,6 +695,11 @@ static void clut_write(u32 blk, const u32 *entries)
 		d[i].w[2] = entries[i * 4 + 2];
 		d[i].w[3] = entries[i * 4 + 3];
 	}
+	// PS2-HW-102 (real GS, not PCSX2): a CLUT image written over a slot that was loaded before (the row of a light table, a palette change) must not come out of
+	// the texture cache of the GS: TEXFLUSH behind the transfer (the program of the VU1 path reloads CLUTs of the cache with TEX2 / CLD all the time)
+	d[64].d[0] = HWGIF_TAG(1, 1, 0, 0, 0, 1);
+	d[64].d[1] = GIF_REGS_AD;
+	ad_set(&d[65], 0, GSR_TEXFLUSH);
 	if (blk == H.clut_loaded)
 		H.clut_loaded = 0; // the GS holds a copy of the old contents
 	H.st.clut_uploads++;
@@ -805,6 +811,7 @@ static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
 	static u32 sw[256] __attribute__((aligned(64)));
 	int i;
 
+	H.clut_epoch++; // PS2-HW-101
 	clut_entries(kind, param, keyed, e);
 	for (i = 0; i < 256; i++)
 		sw[clut_slot((u32)i)] = e[i];
@@ -1258,6 +1265,11 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 		band = 16;
 	SyncDCache((void *)data, (void *)(data + (size_t)W2 * H2));
 	TX.sync_cyc += cyc() - c0;
+	// OPT11-STAB: an open VU1 chunk is closed BEFORE the header of the image is written: pk_ref closes it (vu_chunk_flush), and that put the chunk between the GIF tag of the
+	// image (path 2) and its data, a path 1 packet inside a path 2 image: "GIF DMA ownership timeout (ring_wait)" for good (MAPMD, first frame with the world: HWD WATCHDOG
+	// twice, six times before, the hardware renderer is given up; -hwdbg 2097152 (no zero copy) or -hwdbg 268435456 (no VU1) do not hang)
+	if (V.chunk_open)
+		vu_chunk_flush();
 	for (r0 = 0; r0 < H2; r0 += nr)
 	{
 		qw_t *h;
@@ -1267,8 +1279,9 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 		bytes = W2 * nr;
 		nqw = (bytes + 15) >> 4;
 		full = bytes >> 4;
-		if (H.wr + 8 > BUF_QW)
-			pk_flush(); // the header and its reference stay in one buffer
+		// the header, its reference and the partial last quadword (pk_ref_tail: two more slots) stay in one buffer
+		if (H.wr + 8 + ((bytes & 15) ? 2 : 0) > BUF_QW)
+			pk_flush();
 		h = pk_alloc(6);
 		h[0].d[0] = HWGIF_TAG(4, 0, 0, 0, 0, 1);
 		h[0].d[1] = GIF_REGS_AD;
@@ -1281,12 +1294,7 @@ static void upload_ref(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, const u8 *data
 		if (full)
 			pk_ref(data + (size_t)r0 * W2, full);
 		if (bytes & 15)
-		{
-			qw_t *t = pk_alloc(1);
-
-			t->d[0] = t->d[1] = 0;
-			memcpy(t, data + (size_t)r0 * W2 + (size_t)(full << 4), bytes & 15);
-		}
+			pk_ref_tail(data + (size_t)r0 * W2 + (size_t)(full << 4), bytes & 15);
 	}
 	p = ad_alloc(1);
 	ad_set(p, 0, GSR_TEXFLUSH);
@@ -1338,31 +1346,41 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
 	u32 x;
 
-	if (!c->dx && !(c->W2 & 3) && !((uintptr_t)s & 7) && !((uintptr_t)dst & 3))
+	if (!c->dx && !((uintptr_t)s & 7) && ((ps2hwd_fx2 & FX3_NOFILL) ? (!(c->W2 & 3) && !((uintptr_t)dst & 3)) : c->W2 >= 4))
 	{
 		// four texels (index, alpha pairs) in one 64-bit load: the index bytes are gathered, the alpha bytes that are zero become 0xFF (mode 0: a hole is index 255)
+		// PS2-HW-252 (FX3): any width and any alignment of the row (a patch is stored at the size of its picture: 3 of 4 rows of the patches were made texel by texel): four bytes
+		// at a time (an unaligned store is the swl / swr pair), the last 1..3 texels by the byte loop below
 		const u64 *s8 = (const u64 *)(const void *)s;
-		u32 *d4 = (u32 *)(void *)dst;
 		const int keyed = c->mode != 0;
+		const u32 x4 = c->W2 & ~3u;
+		u8 *dp = dst;
 
-		for (x = 0; x < c->W2; x += 4)
+		for (x = 0; x < x4; x += 4)
 		{
 			const u64 v = *s8++;
-			const u32 idx = (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
+			u32 idx = (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
 
-			if (keyed)
-			{
-				*d4++ = idx;
-			}
-			else
+			if (!keyed)
 			{
 				const u64 av = v >> 8;
 				const u32 a = (u32)(av & 0xFFu) | (u32)((av >> 8) & 0xFF00u) | (u32)((av >> 16) & 0xFF0000u) | (u32)((av >> 24) & 0xFF000000u);
 				const u32 nz = (((a & 0x7F7F7F7Fu) + 0x7F7F7F7Fu) | a) & 0x80808080u; // bit 7 of every byte that is not zero
 				const u32 zero = ~nz & 0x80808080u;
 
-				*d4++ = idx | ((zero >> 7) * 0xFFu);
+				idx |= (zero >> 7) * 0xFFu;
 			}
+			if ((uintptr_t)dp & 3)
+				memcpy(dp, &idx, 4);
+			else
+				*(u32 *)(void *)dp = idx;
+			dp += 4;
+		}
+		for (; x < c->W2; x++) // the last texels of the row (W2 not a multiple of 4)
+		{
+			const u8 *t = s + (size_t)x * 2;
+
+			dst[x] = (!keyed && t[1] == 0) ? 255 : t[0];
 		}
 		if (ps2hwd_dbg_flags & HWDBG_COMPOSE) // -hwdbg 16777216: the row is made again by the byte loop and compared (PS2-HW-71)
 		{
@@ -1794,6 +1812,76 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 	return ne;
 }
 
+// The classification of the picture of a patch (AP_88: index, alpha) for tex_upload: partial alpha anywhere (a partial one ends the scan: the others are not valid then), a hole (alpha 0),
+// an opaque texel of index 255, a hole whose index is not 255 and whose colour is not the hole colour of the palette. fast: four texels in one 64-bit word (PS2-HW-252, FX3).
+static void ap88_scan(const u16 *d16, u32 sw, u32 cw, u32 ch, u32 pal255, int fast, int *partial, int *hole, int *opaque255, int *hole_rgb)
+{
+	u32 y, x;
+
+	for (y = 0; y < ch && !*partial; y++)
+	{
+		const u16 *row = d16 + (size_t)y * sw;
+
+		x = 0;
+		if (fast)
+		{
+			// The alpha of a lane (0..255) is 255 when (A + 1) has bit 8 set, not 0 when (A + 255) has it; a lane that is one but not the other is a partial alpha.
+			const u64 *r8 = (const u64 *)(const void *)row;
+			const u64 lanes = 0x00FF00FF00FF00FFull, one = 0x0001000100010001ull, bit8 = 0x0100010001000100ull;
+			const u32 x4 = cw & ~3u;
+
+			for (; x < x4; x += 4)
+			{
+				const u64 v = *r8++, a = (v >> 8) & lanes, iv = v & lanes;
+				const u64 ge1 = (a + lanes) & bit8; // alpha != 0
+				const u64 ff = (a + one) & bit8; // alpha == 255
+				const u64 i255 = (iv + one) & bit8; // index == 255
+				u64 zero;
+
+				if (ge1 != ff)
+				{
+					*partial = 1;
+					return;
+				}
+				*opaque255 |= (ff & i255) != 0;
+				zero = bit8 & ~ge1; // lanes with alpha 0
+				if (zero)
+				{
+					*hole = 1;
+					if (zero & ~i255) // a hole whose index is not 255: its colour decides
+					{
+						u32 k;
+
+						for (k = 0; k < 4; k++)
+							if (((zero >> (16 * k + 8)) & 1u) && ((iv >> (16 * k)) & 255u) != 255u && H.pal[(iv >> (16 * k)) & 255u] != pal255)
+								*hole_rgb = 1;
+					}
+				}
+			}
+		}
+		for (; x < cw; x++)
+		{
+			const u32 v = row[x], a = v >> 8, idx = v & 255u;
+
+			if (a == 255)
+			{
+				*opaque255 |= idx == 255;
+			}
+			else if (a == 0)
+			{
+				*hole = 1;
+				if (idx != 255 && H.pal[idx] != pal255)
+					*hole_rgb = 1;
+			}
+			else
+			{
+				*partial = 1;
+				return;
+			}
+		}
+	}
+}
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -1927,32 +2015,24 @@ static int tex_upload(GLMipmap_t *m)
 				// one pass over the stored part (the real picture of a patch): binary alpha (0 / 255), holes, an opaque texel of index 255, holes whose colour is not
 				// the hole colour of the palette
 				const u16 *d16 = (const u16 *)(const void *)data;
-				const u32 pal255 = H.pal[255];
-				u32 y, x;
+				const int fast = !(ps2hwd_fx2 & FX3_NOFILL) && !((uintptr_t)d16 & 7) && !(sw & 3);
 
-				for (y = 0; y < ch && !partial; y++)
+				ap88_scan(d16, sw, cw, ch, H.pal[255], fast, &partial, &hole, &opaque255, &hole_rgb);
+				if (fast && (ps2hwd_dbg_flags & HWDBG_COMPOSE)) // -hwdbg 16777216: the scan again texel by texel, the same answer
 				{
-					const u16 *row = d16 + (size_t)y * sw;
+					static unsigned scanned, sbad;
+					int p2 = 0, h2 = 0, o2 = 0, r2 = 0;
 
-					for (x = 0; x < cw; x++)
+					ap88_scan(d16, sw, cw, ch, H.pal[255], 0, &p2, &h2, &o2, &r2);
+					scanned++;
+					if (partial != p2 || (!partial && (hole != h2 || opaque255 != o2 || hole_rgb != r2)))
 					{
-						const u32 v = row[x], a = v >> 8, idx = v & 255u;
-
-						if (a == 255)
-						{
-							opaque255 |= idx == 255;
-						}
-						else if (a == 0)
-						{
-							hole = 1;
-							if (idx != 255 && H.pal[idx] != pal255)
-								hole_rgb = 1;
-						}
-						else
-						{
-							partial = 1;
-							break;
-						}
+						sbad++;
+						CONS_Printf("HWC scan MISMATCH %u of %u (%dx%d: %d %d %d %d against %d %d %d %d)\n", sbad, scanned, (int)cw, (int)ch, partial, hole, opaque255, hole_rgb, p2, h2, o2, r2);
+					}
+					else if (!(scanned & 255))
+					{
+						CONS_Printf("HWC scan check: %u patches, %u differ\n", scanned, sbad);
 					}
 				}
 			}
@@ -2387,12 +2467,16 @@ static void poly_plane(const cv_t *un, int n, float sw, float sh)
 	}
 	if (third >= n)
 		return;
-	for (k = 0; k < 3; k++)
 	{
-		float c0 = k == 0 ? un[0].x : k == 1 ? un[0].y : un[0].w, c1 = k == 0 ? un[1].x : k == 1 ? un[1].y : un[1].w, cc = k == 0 ? un[third].x : k == 1 ? un[third].y : un[third].w;
+		const float rdet = 1.0f / det; // PS2-HW-229: one division instead of six
 
-		lodc[k][0] = ((c1 - c0) * v2 - (cc - c0) * v1) / det;
-		lodc[k][1] = ((cc - c0) * u1 - (c1 - c0) * u2) / det;
+		for (k = 0; k < 3; k++)
+		{
+			float c0 = k == 0 ? un[0].x : k == 1 ? un[0].y : un[0].w, c1 = k == 0 ? un[1].x : k == 1 ? un[1].y : un[1].w, cc = k == 0 ? un[third].x : k == 1 ? un[third].y : un[third].w;
+
+			lodc[k][0] = ((c1 - c0) * v2 - (cc - c0) * v1) * rdet;
+			lodc[k][1] = ((cc - c0) * u1 - (c1 - c0) * u2) * rdet;
+		}
 	}
 	lodc_ok = 1;
 	lodc_planar = 1;
@@ -2509,25 +2593,34 @@ static void lod_frame_end(void)
 
 // HWTEX line of the window just ended (per-frame averages of the block counts; counts of uploads are window totals)
 static unsigned spr_hid_test, spr_hid_yes; // PS2-HW-72 (ps2_hw_plan.inc)
+static int qh_mode; // PS2-HW-220
+static int plan_mode; // PS2-HW-229 (-hwplan)
+static unsigned pm_cmp, pm_dcnt, pm_dval; // PS2-HW-229: -hwplan 2: polygons compared, different number of parts, different values
+static unsigned qh_diff;
 
 static void tx_report(void)
 {
 	static int win;
 	u32 f = TX.frames ? TX.frames : 1;
 
-	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u plancyc=%u immcyc=%u mkpatch=%u/%u allocfail=%u/%u/%u thrash=%u/%u pct=%u lvlcyc=%u synccyc=%u planpoly=%u planmeas=%u\n",
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u plancyc=%u immcyc=%u mkpatch=%u/%u allocfail=%u/%u/%u thrash=%u/%u pct=%u lvlcyc=%u synccyc=%u planpoly=%u planmeas=%u planinv=%u\n",
 		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
 		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
 		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
 		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
 		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
 		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.downgrades, (unsigned)TX.invisible,
-		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f, (unsigned)TX.alloc_fail, (unsigned)TX.alloc_frag, (unsigned)TX.alloc_frag_blk, (unsigned)(TX.thrash_n / f), (unsigned)(TX.thrash_blk / f), (unsigned)H.plan_pct, (unsigned)(TX.lvl_cyc / f), (unsigned)(TX.sync_cyc / f), (unsigned)(TX.plan_np / f), (unsigned)(TX.plan_mcyc / f));
+		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f, (unsigned)TX.alloc_fail, (unsigned)TX.alloc_frag, (unsigned)TX.alloc_frag_blk, (unsigned)(TX.thrash_n / f), (unsigned)(TX.thrash_blk / f), (unsigned)H.plan_pct, (unsigned)(TX.lvl_cyc / f), (unsigned)(TX.sync_cyc / f), (unsigned)(TX.plan_np / f), (unsigned)(TX.plan_mcyc / f), (unsigned)(TX.plan_inv / f));
 	ps2hwt_mkpatch_n = ps2hwt_mkpatch_cyc = 0;
 	if (spr_hid_test)
 	{
-		CONS_Printf("HWSPRCULL win=%d tests=%u hidden=%u (per frame %u / %u)\n", win - 1, spr_hid_test, spr_hid_yes, spr_hid_test / f, spr_hid_yes / f);
+		CONS_Printf("HWSPRCULL win=%d tests=%u hidden=%u (per frame %u / %u) differ=%u\n", win - 1, spr_hid_test, spr_hid_yes, spr_hid_test / f, spr_hid_yes / f, qh_diff);
 		spr_hid_test = spr_hid_yes = 0;
+	}
+	if (pm_cmp)
+	{
+		CONS_Printf("HWPLANCMP win=%d compared=%u cntdiff=%u valdiff=%u\n", win - 1, pm_cmp, pm_dcnt, pm_dval);
+		pm_cmp = pm_dcnt = pm_dval = 0;
 	}
 	if (TX.split_up || TX.split_poly)
 		CONS_Printf("HWSPLIT win=%d uploads=%u polygons=%u parts=%u\n", win - 1, (unsigned)TX.split_up, (unsigned)TX.split_poly, (unsigned)TX.split_sub);

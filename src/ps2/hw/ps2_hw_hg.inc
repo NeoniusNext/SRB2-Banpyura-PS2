@@ -11,6 +11,8 @@ static struct
 	u32 single; // hw_DrawPolygon calls (not batched: sprites, HUD, sky wall...)
 	u32 p_vu, p_fast, p_lit, p_cut, p_water; // polygons by the way emit_poly drew them
 	u32 begin_n, begin_cyc; // begin_draw calls and cycles
+	u32 vc_n, vc_pieces, vc_cyc, vc_ee; // PS2-HW-236: polygons cut for the program (vu_cut_blk), pieces written, cycles, polygons left to the EE
+	u32 bb_n, bb_cyc, bb_same, bb_diff[8]; // begin_draw of a batch (DrawBlocks): calls, cycles, plans the key of the last draw equalled (how = 2), first difference of the key (flags / colour / tint / fade / light table, ..)
 	u32 tri_n; // emit_tris calls
 	u32 vu_chunks;
 	u32 sing_by[8]; // hw_DrawPolygon calls by (PF_NoTexture 1 | PF_NoDepthTest 2 | PF_Occlude 4)
@@ -24,18 +26,57 @@ static struct
 	u32 dome_n, dome_begin, dome_xf, dome_emit, dome_tris; // sky_dome_fast: calls, cycles of begin_draw / vu0 transform of the mesh / strips and clipped triangles, clipped triangles
 	u32 cw_n[7], cw_c[7]; // the polygons of cut_and_emit by reason (HWPROF20): polygons, cycles
 	u32 sk_single, sk_begin, sk_batches, sk_fans; // hw_DrawPolygon / begin_draw / PS2HWD_DrawFans calls in the skybox view
+	u32 drv_cyc; // OPT11 (VU): EE cycles inside the hwdriver_s entry points (outermost call, waits for the GS / the DMA / the flip taken out): the cost of the driver
+	u32 s_imm, s_begin, s_emit, s_set_n, s_set_cyc, c_fans; // hw_DrawPolygon by part (imm_prepare, begin_draw, emit_fan), hw_SetTexture calls / cycles, the polygons of PS2HWD_DrawFans (all)
+	u32 vr_calls, vr_slow, vr_rows, vr_blk_slow, vr_same; // prow_ensure: calls, calls that walked the rows, rows walked, rows that needed clut_get
+	u32 vs_n, vs_c, vs_rows, vs_pass, vs_consts, vs_send, vs_light; // vu_plan_setup: calls, cycles, and by part (rows, pass_setup, constants build, constants send, light)
+	u32 md_draws, md_meshes, md_tris, md_verts, md_cyc, md_slow, md_lod, md_over, md_c1, md_c2, md_c3, md_ctx; // OPT11 MODEL (HWPROF40): draw_model calls, meshes, triangles, vertices interpolated, cycles inside draw_model, emit_tris calls of the corner path
+	u32 s_vu, s_same, s_retarget, vs_reuse, b_retarget, s_rec; // single polygons drawn through the VU1 program, of them: with the plan (key) of the previous single draw
+	u32 spr_cyc; // OPT11 round 3 (FX3): cycles of the flushes of the sprite stream (PS2HWD_SprFlush)
 } G;
+
+// the outermost driver call: cycles minus the waits
+static u32 drv_depth, drv_t0, drv_w0;
+static inline void drv_in(void)
+{
+	if (drv_depth++ == 0)
+	{
+		drv_t0 = cyc();
+		drv_w0 = H.st.cyc_wait + H.st.cyc_flipwait;
+	}
+}
+
+static inline void drv_out(void)
+{
+	if (--drv_depth == 0)
+	{
+		const u32 w = H.st.cyc_wait + H.st.cyc_flipwait - drv_w0, d = cyc() - drv_t0;
+
+		if (d > w && w < 0x80000000u)
+			G.drv_cyc += d - w;
+	}
+}
 
 #define HG_SKY(br, dt) do { if (ps2hwp_skyview) { G.sk_n[br]++; G.sk_c[br] += (dt); } } while (0)
 
 #ifdef __mips__ // (the x86 host tests have no log)
+extern void PS2Models_Stats(unsigned int *out); // OPT11 MODEL (ps2_models.c)
+extern void HWR_PBProf(unsigned int frames); // OPT11 round 2 VU2: HWPROF50, the collection of the batch (hardware/hw_pbatch.inc)
+extern void HWR_GCacheProf(unsigned int frames); // OPT11 GEOM: HWPROF32, the geometry cache (hardware/hw_gcache.inc)
 void PS2HWD_ProfExtra(unsigned int frames)
 {
 	if (!frames)
 		frames = 1;
 	I_OutputMsg("HWPROF3 batches=%u fans=%u single=%u vu=%u fast=%u lit=%u cut=%u water=%u begin=%u/%u tris=%u vuchunks=%u planhit=%u planmiss=%u\n", G.batches / frames, G.fans / frames, G.single / frames,
 		G.p_vu / frames, G.p_fast / frames, G.p_lit / frames, G.p_cut / frames, G.p_water / frames, G.begin_n / frames, G.begin_cyc / frames, G.tri_n / frames, G.vu_chunks / frames, G.plan_hit / frames, G.plan_miss / frames);
+	I_OutputMsg("HWPROF51 batches that needed a plan: %u of %u (%u cycles) | key differs in: flags=%u colour=%u tint=%u fade=%u ltable=%u texkind=%u rest(light, texture, view)=%u plan-invalid=%u\n", G.bb_n / frames, G.batches / frames, G.bb_cyc / frames,
+		G.bb_diff[0] / frames, G.bb_diff[1] / frames, G.bb_diff[2] / frames, G.bb_diff[3] / frames, G.bb_diff[4] / frames, G.bb_diff[5] / frames, G.bb_diff[6] / frames, G.bb_diff[7] / frames);
+	I_OutputMsg("HWPROF52 cut for the VU1 program (PS2-HW-236): polygons=%u pieces=%u cycles=%u | left to the EE: %u\n", G.vc_n / frames, G.vc_pieces / frames, G.vc_cyc / frames, G.vc_ee / frames);
 	I_OutputMsg("HWPROF9 cut_and_emit (repeats etc.) polys=%u cyc=%u\n", G.p_cutold / frames, G.c_cutold / frames);
+	I_OutputMsg("HWPROF23 driver total=%u (+ plan %u: the texture planner HWR_RenderBatches calls) | singles: imm=%u begin=%u emit=%u vu=%u same=%u retarget=%u | settex n=%u cyc=%u | DrawFans polys=%u batch retargets=%u state records=%u\n", G.drv_cyc / frames, (unsigned)(ps2hwp_cyc[HWP_B_PLAN] / frames), G.s_imm / frames, G.s_begin / frames, G.s_emit / frames,
+		G.s_vu / frames, G.s_same / frames, G.s_retarget / frames, G.s_set_n / frames, G.s_set_cyc / frames, G.c_fans / frames, G.b_retarget / frames, G.s_rec / frames);
+	I_OutputMsg("HWPROF24 vu_plan_setup n=%u cyc=%u: light=%u rows=%u pass=%u build=%u send=%u | reuse=%u chunks=%u | prow_ensure calls=%u same=%u slow=%u rows=%u clut_get=%u\n", G.vs_n / frames, G.vs_c / frames, G.vs_light / frames, G.vs_rows / frames, G.vs_pass / frames, G.vs_consts / frames,
+		G.vs_send / frames, G.vs_reuse / frames, G.vu_chunks / frames, G.vr_calls / frames, G.vr_same / frames, G.vr_slow / frames, G.vr_rows / frames, G.vr_blk_slow / frames);
 	I_OutputMsg("HWPROF8 plan cache cycles: key=%u copy=%u touch=%u misc=%u miss=%u\n", G.pc_key / frames, G.pc_copy / frames, G.pc_touch / frames, G.pc_misc / frames, G.pc_miss / frames);
 	I_OutputMsg("HWPROF4 segs=%u subsecs=%u planes=%u sprites=%u proc=%u procbatch=%u\n", ps2hwp_cnt[HWC_SEGS] / frames, ps2hwp_cnt[HWC_SUBSECS] / frames, ps2hwp_cnt[HWC_PLANES] / frames,
 		ps2hwp_cnt[HWC_SPRITES] / frames, ps2hwp_cnt[HWC_PROC] / frames, ps2hwp_cnt[HWC_PROC_BATCH] / frames);
@@ -59,6 +100,34 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	I_OutputMsg("HWPROF18 plane cache key misses: height=%u light=%u flags=%u texture=%u offsets=%u epoch=%u poly=%u\n", ps2hwp_cnt[HWC_PKM_H] / frames, ps2hwp_cnt[HWC_PKM_L] / frames, ps2hwp_cnt[HWC_PKM_F] / frames,
 		ps2hwp_cnt[HWC_PKM_T] / frames, ps2hwp_cnt[HWC_PKM_O] / frames, ps2hwp_cnt[HWC_PKM_E] / frames, ps2hwp_cnt[HWC_PKM_P] / frames);
 	I_OutputMsg("HWPROF17 band_sweep: polys=%u pieces=%u ripple_planes=%u\n", G.wf_polys / frames, G.wf_pieces / frames, G.wf_bands / frames);
+	I_OutputMsg("HWPROF40 models: draws=%u meshes=%u tris=%u verts=%u slow=%u lod=%u over=%u cyc=%u c1=%u c2=%u c3=%u ctx=%u\n", G.md_draws / frames, G.md_meshes / frames, G.md_tris / frames, G.md_verts / frames, G.md_slow / frames, G.md_lod / frames, G.md_over / frames, G.md_cyc / frames, G.md_c1 / frames, G.md_c2 / frames, G.md_c3 / frames, G.md_ctx / frames);
+	{
+		unsigned int ms[10];
+
+		PS2Models_Stats(ms);
+		I_OutputMsg("HWPROF41 model memory: alive=%u (%u KiB) loads=%u frees=%u reclaims=%u refused(memory)=%u damaged=%u load cycles total=%u max=%u injected=%u\n", ms[0], ms[1], ms[2], ms[3], ms[4], ms[5], ms[6], ms[7], ms[8], ms[9]);
+	}
+	HWR_GCacheProf(frames);
+	HWR_PBProf(frames);
+	I_OutputMsg("HWPROF37 HWR_RenderPlane parts: setup=%u buffer+flat=%u vertices=%u lightlevel=%u lighting=%u flags+shader=%u polygon=%u (the last, the sum of the two before it, is what HWR_ProcessPolygon takes)\n", (unsigned)(ps2hwp_cyc[HWP_PL_A] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_PL_B] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_C] / frames), 0u, (unsigned)(ps2hwp_cyc[HWP_PL_D] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_E] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_F] / frames));
+	I_OutputMsg("HWPROF36 HWR_DrawDropShadow parts: interp=%u groundz=%u checks=%u getpatch=%u verts=%u quadtest=%u setup=%u polygon=%u\n", (unsigned)(ps2hwp_cyc[HWP_SH_A] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_B] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_C] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_SH_D] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_E] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_F] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_G] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_H] / frames));
+	I_OutputMsg("HWPROF35 HWR_DrawSprite parts: quad=%u patch=%u aim=%u light=%u blend=%u polygon=%u\n", (unsigned)(ps2hwp_cyc[HWP_DS_A] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_B] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_C] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_DS_D] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_E] / frames), (unsigned)(ps2hwp_cyc[HWP_DS_F] / frames));
+	I_OutputMsg("HWPROF34 HWR_ProcessSeg parts: setup=%u top/single=%u bottom=%u mid=%u sky=%u remaining=%u 3dfloors=%u\n", (unsigned)(ps2hwp_cyc[HWP_SG_A] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_B] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_SG_C] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_D] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_E] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_F] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_G] / frames));
+	I_OutputMsg("HWPROF33 HWR_ProjectSprite parts: interp=%u frame=%u offsets=%u position=%u quadtest=%u vissprite=%u | AddSprites total=%u\n", (unsigned)(ps2hwp_cyc[HWP_PS_A] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_B] / frames),
+		(unsigned)(ps2hwp_cyc[HWP_PS_C] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_D] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_E] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_F] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames));
+	I_OutputMsg("HWPROF41 sprite batch (FX2): collect=%u | flush: sort=%u plan=%u draw=%u all=%u (in draw: settex=%u drawbatch=%u; in drawbatch: begin_draw=%u vu_fans=%u) calls=%u begin=%u retarget=%u same=%u polys=%u\n", (unsigned)(ps2hwp_cyc[HWP_SF_COLLECT] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_SORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_PLAN] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_DRAW] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_ALL] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_SETTEX] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_DRAWB] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_BEGIN] / frames), (unsigned)(ps2hwp_cyc[HWP_SF_VUFANS] / frames),
+		ps2hwp_cnt[HWC_SF_CALLS] / frames, ps2hwp_cnt[HWC_SF_BEGIN] / frames, ps2hwp_cnt[HWC_SF_RET] / frames, ps2hwp_cnt[HWC_SF_SAME] / frames, ps2hwp_cnt[HWC_SF_POLYS] / frames);
+	PS2HWD_SprProf(frames); // HWPROF42 (ps2_hw_spr.inc)
+	I_OutputMsg("HWPROF40 sprites (FX2): things=%u projected=%u behind=%u quadhidden=%u vissprites=%u shadows=%u shadowhidden=%u prefiltered=%u drawn_hidden=%u drawn_with_shadow=%u rolled=%u noext=%u\n", ps2hwp_cnt[HWC_FX_THINGS] / frames, ps2hwp_cnt[HWC_FX_PROJ] / frames, ps2hwp_cnt[HWC_FX_BEHIND] / frames,
+		ps2hwp_cnt[HWC_FX_QHID] / frames, ps2hwp_cnt[HWC_FX_VIS] / frames, ps2hwp_cnt[HWC_FX_SHADOW] / frames, ps2hwp_cnt[HWC_FX_SHQHID] / frames, ps2hwp_cnt[HWC_FX_PRE] / frames, ps2hwp_cnt[HWC_FX_SPRHID] / frames, ps2hwp_cnt[HWC_FX_SPRSH] / frames, ps2hwp_cnt[HWC_FX_ROLL] / frames, ps2hwp_cnt[HWC_FX_NOEXT] / frames);
+	I_OutputMsg("HWPROF31 AddLine: calls=%u backface=%u clipped=%u empty=%u | boxes=%u rejected=%u | vertex angle hits=%u\n", ps2hwp_cnt[HWC_AL_CALLS] / frames, ps2hwp_cnt[HWC_AL_BACK] / frames, ps2hwp_cnt[HWC_AL_CLIP] / frames,
+		ps2hwp_cnt[HWC_AL_EMPTY] / frames, ps2hwp_cnt[HWC_AL_BOX] / frames, ps2hwp_cnt[HWC_AL_BOXREJ] / frames, ps2hwp_cnt[HWC_AL_VHIT] / frames);
+	I_OutputMsg("HWPROF30 complex segs by first reason: polyseg=%u ffloors=%u slope=%u heightsec=%u lights=%u midtex=%u back=%u\n", ps2hwp_cnt[HWC_SR_POLY] / frames, ps2hwp_cnt[HWC_SR_FFLOORS] / frames, ps2hwp_cnt[HWC_SR_SLOPE] / frames,
+		ps2hwp_cnt[HWC_SR_HEIGHTSEC] / frames, ps2hwp_cnt[HWC_SR_LIGHTS] / frames, ps2hwp_cnt[HWC_SR_MID] / frames, ps2hwp_cnt[HWC_SR_BACK] / frames);
 	I_OutputMsg("HWPROF16 segs: one-sided simple=%u two-sided simple=%u complex=%u\n", ps2hwp_cnt[HWC_SEG_SIMPLE1] / frames, ps2hwp_cnt[HWC_SEG_SIMPLE2] / frames, ps2hwp_cnt[HWC_SEG_COMPLEX] / frames);
 	I_OutputMsg("HWPROF15 sky dome (driver): calls=%u begin=%u xform=%u emit=%u clipped_tris=%u\n", G.dome_n / frames, G.dome_begin / frames, G.dome_xf / frames, G.dome_emit / frames, G.dome_tris / frames);
 	I_OutputMsg("HWPROF12 view set-up: skybox clear=%u dome=%u clip=%u | main setupview=%u clip=%u\n", (unsigned)(ps2hwp_cyc[HWP_K_CLR] / frames), (unsigned)(ps2hwp_cyc[HWP_K_DOME] / frames),

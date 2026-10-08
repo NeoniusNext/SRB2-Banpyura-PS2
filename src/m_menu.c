@@ -71,6 +71,8 @@
 #include "i_joy.h" // for joystick menu controls
 #ifdef PS2
 #include "ps2/ps2_osk.h" // PS2-135: on-screen keyboard
+#include "ps2/ps2_uiicons.h" // PS2-336: pad button icons in hints
+#include "ps2/ps2_menuhints.h" // PS2-338: button hints along the bottom edge of the menus
 #endif
 
 #include "p_saveg.h" // Only for NEWSKINSAVES
@@ -90,6 +92,14 @@
 
 #if defined (__GNUC__) && (__GNUC__ >= 4)
 #define FIXUPO0
+#endif
+
+// PS2-332: the "please wait" boxes of the network menus are drawn and the blocking request follows at once. Software flips the picture (I_FinishUpdate) so that the box
+// is seen; the Hardware renderer never did (its frame stayed open: the menu stood frozen without a word). On the PS2 both present the frame.
+#ifdef PS2
+#define M_PRESENT_WAITBOX() (rendermode != render_none)
+#else
+#define M_PRESENT_WAITBOX() (rendermode == render_soft)
 #endif
 
 #define SKULLXOFF -32
@@ -314,6 +324,11 @@ static void M_RejoinMenu(INT32 choice);
 static void M_ConnectMenuModChecks(INT32 choice);
 static void M_RejoinMenuModChecks(INT32 choice);
 static void M_Refresh(INT32 choice);
+#ifdef PS2
+#define PS2_PRESS_ESC_EXIT (PS2MenuHints_Shows(PS2UI_CIRCLE) ? "" : (PS2MenuHints_Log("native:exit", PS2I_CIRCLE " Exit"), PS2I_CIRCLE " Exit")) // PS2-336, PS2-341: one hint, one place
+#else
+#define PS2_PRESS_ESC_EXIT M_GetText("Press ESC to exit")
+#endif
 static void M_RefreshRejoins(INT32 choice);
 static void M_Connect(INT32 choice);
 static void M_RejoinConnect(INT32 choice);
@@ -1382,6 +1397,11 @@ enum
 #else
 #define VOFS(n) (n)
 #endif
+#ifdef PS2
+#define VOFM(n) (VOFS(n) + 5) // OPT11-MEM (PS2-HW-300): one item ("Show RAM/VRAM") above
+#else
+#define VOFM(n) VOFS(n)
+#endif
 
 static menuitem_t OP_VideoOptionsMenu[] =
 {
@@ -1436,13 +1456,16 @@ static menuitem_t OP_VideoOptionsMenu[] =
 
 	{IT_HEADER, NULL, "Diagnostic", NULL, VOFS(184)},
 	{IT_STRING | IT_CVAR, NULL, "Show FPS",                  &cv_ticrate,         VOFS(190)},
-	{IT_STRING | IT_CVAR, NULL, "Clear Before Redraw",       &cv_homremoval,      VOFS(195)},
-	{IT_STRING | IT_CVAR, NULL, "Show \"FOCUS LOST\"",       &cv_showfocuslost,   VOFS(200)},
+#ifdef PS2
+	{IT_STRING | IT_CVAR, NULL, "Show RAM/VRAM",             &cv_showmem,         VOFS(195)}, // OPT11-MEM (PS2-HW-300): the items below move down by VOFM
+#endif
+	{IT_STRING | IT_CVAR, NULL, "Clear Before Redraw",       &cv_homremoval,      VOFM(195)},
+	{IT_STRING | IT_CVAR, NULL, "Show \"FOCUS LOST\"",       &cv_showfocuslost,   VOFM(200)},
 
 #ifdef HWRENDER
-	{IT_HEADER, NULL, "Renderer", NULL, VOFS(208)},
-	{IT_CALL | IT_STRING, NULL, HWR_RENDERER_NAME " Options...",         M_OpenGLOptionsMenu, VOFS(214)},
-	{IT_STRING | IT_CVAR, NULL, "FPS Cap",                   &cv_fpscap,          VOFS(219)},
+	{IT_HEADER, NULL, "Renderer", NULL, VOFM(208)},
+	{IT_CALL | IT_STRING, NULL, HWR_RENDERER_NAME " Options...",         M_OpenGLOptionsMenu, VOFM(214)},
+	{IT_STRING | IT_CVAR, NULL, "FPS Cap",                   &cv_fpscap,          VOFM(219)},
 #endif
 };
 
@@ -1493,30 +1516,39 @@ static menuitem_t OP_ColorOptionsMenu[] =
 };
 
 #ifdef HWRENDER
+#ifdef PS2_PROFILE
+#define GLY(y) ((y) + 10) // OPT11-MODEL: the "Detail" item (gr_modeldetail) makes room for one more line
+#else
+#define GLY(y) (y)
+#endif
 static menuitem_t OP_OpenGLOptionsMenu[] =
 {
 	{IT_HEADER, NULL, "3D Models", NULL, 0},
 	{IT_STRING|IT_CVAR,         NULL, "Models",              &cv_glmodels,             12},
 	{IT_STRING|IT_CVAR,         NULL, "Frame interpolation", &cv_glmodelinterpolation, 22},
 	{IT_STRING|IT_CVAR,         NULL, "Ambient lighting",    &cv_glmodellighting,      32},
+#ifdef PS2_PROFILE
+	{IT_STRING|IT_CVAR,         NULL, "Detail",              &cv_glmodeldetail,        42}, // OPT11-MODEL: how many models a frame (High / Medium / Low)
+#endif
 
-	{IT_HEADER, NULL, "General", NULL, 51},
-	{IT_STRING|IT_CVAR,         NULL, "Shaders",             &cv_glshaders,            63},
-	{IT_STRING|IT_CVAR,         NULL, "Palette rendering",   &cv_glpaletterendering,   73},
-	{IT_STRING|IT_CVAR,         NULL, "Lack of perspective", &cv_glshearing,           83},
-	{IT_STRING|IT_CVAR,         NULL, "Field of view",       &cv_fov,                  93},
+	{IT_HEADER, NULL, "General", NULL, GLY(51)},
+	{IT_STRING|IT_CVAR,         NULL, "Shaders",             &cv_glshaders,            GLY(63)},
+	{IT_STRING|IT_CVAR,         NULL, "Palette rendering",   &cv_glpaletterendering,   GLY(73)},
+	{IT_STRING|IT_CVAR,         NULL, "Lack of perspective", &cv_glshearing,           GLY(83)},
+	{IT_STRING|IT_CVAR,         NULL, "Field of view",       &cv_fov,                  GLY(93)},
 
-	{IT_HEADER, NULL, "Miscellaneous", NULL, 112},
-	{IT_STRING|IT_CVAR,         NULL, "Bit depth",           &cv_scr_depth,           124},
-	{IT_STRING|IT_CVAR,         NULL, "Texture filter",      &cv_glfiltermode,        134},
-	{IT_STRING|IT_CVAR,         NULL, "Anisotropic",         &cv_glanisotropicmode,   144},
+	{IT_HEADER, NULL, "Miscellaneous", NULL, GLY(112)},
+	{IT_STRING|IT_CVAR,         NULL, "Bit depth",           &cv_scr_depth,           GLY(124)},
+	{IT_STRING|IT_CVAR,         NULL, "Texture filter",      &cv_glfiltermode,        GLY(134)},
+	{IT_STRING|IT_CVAR,         NULL, "Anisotropic",         &cv_glanisotropicmode,   GLY(144)},
 #ifdef ALAM_LIGHTING
-	{IT_SUBMENU|IT_STRING,      NULL, "Lighting...",         &OP_OpenGLLightingDef,   154},
+	{IT_SUBMENU|IT_STRING,      NULL, "Lighting...",         &OP_OpenGLLightingDef,   GLY(154)},
 #endif
 #if defined (_WINDOWS) && (!(defined (__unix__) || defined (UNIXCOMMON) || defined (HAVE_SDL)))
-	{IT_STRING|IT_CVAR,         NULL, "Fullscreen",          &cv_fullscreen,          164},
+	{IT_STRING|IT_CVAR,         NULL, "Fullscreen",          &cv_fullscreen,          GLY(164)},
 #endif
 };
+#undef GLY
 
 #ifdef ALAM_LIGHTING
 static menuitem_t OP_OpenGLLightingMenu[] =
@@ -1628,6 +1660,10 @@ static menuitem_t OP_BanpyuraOptionsMenu[] =
 #ifdef HWRENDER
 	{IT_HEADER, 				NULL, "Rendering (" HWR_RENDERER_NAME ")", 			        NULL,		   113},
 	{IT_STRING|IT_CVAR,         NULL, "Light Dithering",     	   &cv_gllightdither,          119},
+#endif
+#ifdef PS2
+	{IT_HEADER, 				NULL, "Console", 			        			NULL,		   129},
+	{IT_STRING|IT_CVAR,         NULL, "Menu Button Hints",     	      &cv_menuhints,          135}, // PS2-338
 #endif
 };
 
@@ -3816,6 +3852,10 @@ void M_Drawer(void)
 {
 	boolean wipe = WipeInAction;
 
+#ifdef PS2
+	PS2MenuHints_MenuStart(); // PS2-339: the 2D draws of this frame are noted from here (unless the HUD did it)
+#endif
+
 	if (currentMenu == &MessageDef)
 		menuactive = true;
 
@@ -3861,6 +3901,8 @@ void M_Drawer(void)
 
 #ifdef PS2
 	PS2OSK_Draw(); // PS2-135 (also over the chat line: nothing is drawn while it is closed)
+	PS2MenuHints_Draw(); // PS2-338: the buttons of the highlighted item along the bottom edge (cvar menuhints)
+	PS2UI_Card(); // PS2-336: the test card of "ps2_icons" (nothing unless asked for)
 #endif
 }
 
@@ -4808,7 +4850,11 @@ static void M_DrawControlsDefMenu(void)
 	V_DrawRightAlignedString(BASEVIDWIDTH - currentMenu->x, currentMenu->y + 80, MENUCOLOR|MENUCAPS, PlaystyleNames[opt]);
 }
 
+#ifdef PS2
+#define scrollareaheight 68 // PS2-339: one row less (8 px), so that the button hints have the bottom of the screen to themselves
+#else
 #define scrollareaheight 72
+#endif
 
 // note that alphakey is multiplied by 2 for scrolling menus to allow greater usage in UINT8 range.
 static void M_DrawGenericScrollMenu(void)
@@ -6348,8 +6394,16 @@ menu_t MessageDef =
 void M_StartMessage(const char *string, void *routine, menumessagetype_t itemtype)
 {
 	static char *message;
+#ifdef PS2
+	char *consolestring = PS2UI_Message(string); // PS2-336: "Press ESC" -> "Press <Circle>", "(Press a key)" -> "(Press any button)"
+#endif
 	Z_Free(message);
+#ifdef PS2
+	message = V_WordWrap(0,0,V_ALLOWLOWERCASE,consolestring);
+	Z_Free(consolestring);
+#else
 	message = V_WordWrap(0,0,V_ALLOWLOWERCASE,string);
+#endif
 	DEBFILE(message);
 
 	M_StartControlPanel(); // can't put menuactive to true
@@ -6410,6 +6464,9 @@ static void M_DrawMessageMenu(void)
 
 	M_DrawTextBox(currentMenu->x, currentMenu->y - 8, 2+V_StringWidth(msg, 0)/8, V_StringHeight(msg, V_RETURN8)/8);
 	V_DrawCenteredString(BASEVIDWIDTH/2, currentMenu->y, V_ALLOWLOWERCASE|V_RETURN8, msg);
+#ifdef PS2
+	PS2MenuHints_Log("message", msg); // PS2-341: the check for hints said twice
+#endif
 }
 
 // default message handler
@@ -10207,7 +10264,7 @@ void M_DrawTimeAttackMenu(void)
 						'\x1D' | MENUCOLOR, false);
 			}
 			// Draw press ESC to exit string on main record attack menu
-			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, M_GetText("Press ESC to exit"));
+			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, PS2_PRESS_ESC_EXIT);
 		}
 
 		em = M_GetLevelEmblems(cv_nextmap.value);
@@ -10472,7 +10529,7 @@ void M_DrawNightsAttackMenu(void)
 						'\x1D' | MENUCOLOR, false);
 			}
 			// Draw press ESC to exit string on main record attack menu
-			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, M_GetText("Press ESC to exit"));
+			V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, PS2_PRESS_ESC_EXIT);
 		}
 
 		// Draw selected character's NiGHTS sprite
@@ -11297,7 +11354,7 @@ void M_DrawMarathon(void)
 	V_DrawString(currentMenu->x, cursory, MENUCOLOR|MENUCAPS, currentMenu->menuitems[itemOn].text);
 
 	// Draw press ESC to exit string on main record attack menu
-	V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, M_GetText("Press ESC to exit"));
+	V_DrawString(104-72, 180, V_TRANSLUCENT|MENUCAPS, PS2_PRESS_ESC_EXIT);
 }
 
 // ========
@@ -11410,7 +11467,7 @@ static void M_Refresh(INT32 choice)
 	V_DrawCenteredString(BASEVIDWIDTH/2, (BASEVIDHEIGHT/2)+12, MENUCAPS, "Please wait.");
 	I_OsPolling();
 	I_UpdateNoBlit();
-	if (rendermode == render_soft)
+	if (M_PRESENT_WAITBOX())
 		I_FinishUpdate(); // page flip or blit buffer
 
 	// note: this is the one case where 0 is a valid room number
@@ -11864,7 +11921,7 @@ static void M_RoomMenu(INT32 choice)
 	V_DrawCenteredString(BASEVIDWIDTH/2, (BASEVIDHEIGHT/2)+12, 0, "Please wait.");
 	I_OsPolling();
 	I_UpdateNoBlit();
-	if (rendermode == render_soft)
+	if (M_PRESENT_WAITBOX())
 		I_FinishUpdate(); // page flip or blit buffer
 
 	for (i = 1; i < NUM_LIST_ROOMS+1; ++i)
@@ -12212,7 +12269,7 @@ static void M_ConnectIP(INT32 choice)
 	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT/2, 0, "Connecting to server...");
 	I_OsPolling();
 	I_UpdateNoBlit();
-	if (rendermode == render_soft)
+	if (M_PRESENT_WAITBOX())
 		I_FinishUpdate(); // page flip or blit buffer
 }
 
@@ -13783,9 +13840,86 @@ static void M_Setup2PControlsMenu(INT32 choice)
 	M_SetupNextMenu(&OP_ChangeControlsDef);
 }
 
+#ifdef PS2
+#define controlheight 16 // PS2-339: two rows less, the button hints stand under the last one
+#else
 #define controlheight 18
+#endif
+
+// The name of a key in the controls list. PS2-336: a pad button (either pad) is its icon, the rest keeps its name
+static const char *M_ControlKeyName(INT32 key)
+{
+#ifdef PS2
+	const char *token = PS2UI_KeyToken(key);
+
+	if (*token)
+		return token;
+#endif
+	return G_KeyNumToName(key);
+}
 
 // Draws the Customise Controls menu
+#ifdef PS2
+// PS2-340: the names of the keys of a control for the column on the right of Setup Controls ("SPACE or <Cross>"). The column is measured with the icons in it (V_StringWidth knows them) and
+// has to end 24 px from the edge (the overscan of a television) and leave 8 px to the name of the control: when "A or B" is too wide the long key names are cut short
+// (LEFT ARROW -> LEFT, LSHIFT -> LSHFT, KEYPAD 4 -> KP4 ...), and when that is still too wide only the first key is shown.
+static const char *M_ShortKeyName(const char *name, char *buf, size_t n)
+{
+	static const struct { const char *from, *to; } cut[] =
+	{
+		{"LEFT ARROW", "LEFT"}, {"RIGHT ARROW", "RIGHT"}, {"UP ARROW", "UP"}, {"DOWN ARROW", "DOWN"}, {"LSHIFT", "LSHFT"}, {"RSHIFT", "RSHFT"}, {"LCTRL", "LCTL"}, {"RCTRL", "RCTL"},
+		{"SPACE", "SPC"}, {"BACKSPACE", "BKSP"}, {"ENTER", "ENTR"}, {"ESCAPE", "ESC"}, {"MOUSE WHEEL ", "WHL "}, {"WHEEL ", "WHL "},
+	};
+	size_t i;
+
+	if (!strncmp(name, "KEYPAD ", 7))
+	{
+		snprintf(buf, n, "KP%s", name + 7);
+		return buf;
+	}
+	for (i = 0; i < sizeof cut / sizeof cut[0]; i++)
+		if (!strncmp(name, cut[i].from, strlen(cut[i].from)))
+		{
+			snprintf(buf, n, "%s%s", cut[i].to, name + strlen(cut[i].from));
+			return buf;
+		}
+	return name;
+}
+
+static void M_PS2ControlText(char *dst, size_t n, const INT32 keys[2], const char *label, INT32 x)
+{
+	const INT32 avail = (BASEVIDWIDTH - x) - (x + V_StringWidth(label, MENUCAPS) + 8);
+	INT32 pass, k;
+
+	if (keys[0] == KEY_NULL && keys[1] == KEY_NULL)
+	{
+		strlcpy(dst, "---", n);
+		return;
+	}
+	for (pass = 0; pass < 3; pass++) // 0: the names, 1: short names, 2: the first key only
+	{
+		char short0[24], short1[24];
+
+		dst[0] = '\0';
+		for (k = 0; k < 2; k++)
+		{
+			const char *name;
+
+			if (keys[k] == KEY_NULL || (pass == 2 && k == 1 && keys[0] != KEY_NULL))
+				continue;
+			name = M_ControlKeyName(keys[k]);
+			if (pass >= 1 && !(*name && (UINT8)*name < 0x16))
+				name = M_ShortKeyName(name, k ? short1 : short0, sizeof short0);
+			if (dst[0])
+				strlcat(dst, " or ", n);
+			strlcat(dst, name, n);
+		}
+		if (V_StringWidth(dst, V_YELLOWMAP|MENUCAPS) <= avail)
+			return;
+	}
+}
+#endif
+
 static void M_DrawControl(void)
 {
 	char     tmp[50];
@@ -13847,9 +13981,30 @@ static void M_DrawControl(void)
 			V_DrawCenteredString(BASEVIDWIDTH/2, 30, MENUCAPS, "Exit the Tutorial to change the controls");
 	}
 	else
+#ifdef PS2
+	{
+		// PS2-336 (the menu keys of the pad: Cross = Enter, Square = Backspace); PS2-341: one hint, one place - what the corner hints say (Assign, Clear) is not said here again
+		char line[40] = "";
+
+		if (setupcontrols_secondaryplayer)
+			strcpy(line, "Set controls for secondary player");
+		else
+		{
+			if (!PS2MenuHints_Shows(PS2UI_CROSS))
+				strcat(line, PS2I_CROSS " Change");
+			if (!PS2MenuHints_Shows(PS2UI_SQUARE))
+				strcat(line, line[0] ? "     " PS2I_SQUARE " Clear" : PS2I_SQUARE " Clear");
+			if (line[0])
+				PS2MenuHints_Log("native:controls", line);
+		}
+		if (line[0])
+			V_DrawCenteredString(BASEVIDWIDTH/2, 30, MENUCAPS, line);
+	}
+#else
 		V_DrawCenteredString(BASEVIDWIDTH/2, 30, MENUCAPS,
 		    (setupcontrols_secondaryplayer ? "Set controls for secondary player" :
 		                                     "Press Enter to change, Backspace to clear"));
+#endif
 
 	if (i)
 		V_DrawString(currentMenu->x - 16, y-(skullAnimCounter/5), MENUCOLOR, "\x1A"); // up arrow
@@ -13871,6 +14026,9 @@ static void M_DrawControl(void)
 			keys[1] = setupcontrols[currentMenu->menuitems[i].alphaKey][1];
 
 			tmp[0] ='\0';
+#ifdef PS2
+			M_PS2ControlText(tmp, sizeof tmp, keys, currentMenu->menuitems[i].text, x); // PS2-340: the column is measured with the icons in it
+#else
 			if (keys[0] == KEY_NULL && keys[1] == KEY_NULL)
 			{
 				strcpy(tmp, "---");
@@ -13878,16 +14036,17 @@ static void M_DrawControl(void)
 			else
 			{
 				if (keys[0] != KEY_NULL)
-					strcat (tmp, G_KeyNumToName (keys[0]));
+					strcat (tmp, M_ControlKeyName(keys[0]));
 
 				if (keys[0] != KEY_NULL && keys[1] != KEY_NULL)
 					strcat(tmp," or ");
 
 				if (keys[1] != KEY_NULL)
-					strcat (tmp, G_KeyNumToName (keys[1]));
+					strcat (tmp, M_ControlKeyName(keys[1]));
 
 
 			}
+#endif
 			V_DrawRightAlignedString(BASEVIDWIDTH-currentMenu->x, y, V_YELLOWMAP|MENUCAPS, tmp);
 		}
 		/*else if (currentMenu->menuitems[i].status == IT_GRAYEDOUT2)
@@ -14010,8 +14169,13 @@ static void M_ChangeControl(INT32 choice)
 		return;
 
 	controltochange = currentMenu->menuitems[choice].alphaKey;
+#ifdef PS2
+	// PS2-341: every button of the pad is taken as the new control (Circle too: M_ChangecontrolResponse gets the raw event), so the pad cannot cancel here: the box does not promise it
+	sprintf(tmp, "Press a button for\n%s", currentMenu->menuitems[choice].text);
+#else
 	sprintf(tmp, M_GetText("Hit the new key for\n%s\nESC for Cancel"),
 		currentMenu->menuitems[choice].text);
+#endif
 	strlcpy(controltochangetext, currentMenu->menuitems[choice].text, 33);
 
 	M_StartMessage(tmp, M_ChangecontrolResponse, MM_EVENTHANDLER);
@@ -14244,12 +14408,28 @@ static void M_DrawVideoMode(void)
 			va("Previewing mode %c%dx%d",
 				(SCR_IsAspectCorrect(vid.width, vid.height)) ? 0x83 : 0x80,
 				vid.width, vid.height));
+#ifdef PS2
+		// PS2-336 / PS2-341: the buttons of the pad, and not said again when the corner hints say them
+		if (!PS2MenuHints_Shows(PS2UI_CROSS))
+		{
+			PS2MenuHints_Log("native:vmode", "Press " PS2I_CROSS " again to keep this mode");
+			V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 138, MENUCAPS, "Press " PS2I_CROSS " again to keep this mode");
+		}
+		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 150, MENUCAPS,
+			va("Wait %d second%s", testtime, (testtime > 1) ? "s" : ""));
+		if (!PS2MenuHints_Shows(PS2UI_CIRCLE))
+		{
+			PS2MenuHints_Log("native:vmode", "or press " PS2I_CIRCLE " to return");
+			V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 158, MENUCAPS, "or press " PS2I_CIRCLE " to return");
+		}
+#else
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 138, MENUCAPS,
 			"Press ENTER again to keep this mode");
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 150, MENUCAPS,
 			va("Wait %d second%s", testtime, (testtime > 1) ? "s" : ""));
 		V_DrawCenteredString(BASEVIDWIDTH/2, OP_VideoModeDef.y + 158, MENUCAPS,
 			"or press ESC to return");
+#endif
 	}
 	else
 	{
@@ -14667,6 +14847,249 @@ static void M_QuitSRB2(INT32 choice)
 }
 
 #ifdef PS2
+// PS2-338: what kind of item the cursor stands on, for the button hints (ps2_menuhints.c). The classes are those of the key handling in M_Responder.
+INT32 M_PS2MenuKind(void)
+{
+	const menuitem_t *it;
+	UINT16 st;
+
+	if (!currentMenu)
+		return PS2MH_SELECT;
+	if (currentMenu == &MessageDef)
+	{
+		switch (currentMenu->menuitems[0].alphaKey)
+		{
+			case MM_YESNO: return PS2MH_YESNO;
+			case MM_EVENTHANDLER: return PS2MH_CAPTURE; // Setup Controls waits for the new button: any button is taken
+			default: return PS2MH_MESSAGE;
+		}
+	}
+	if (currentMenu == &MainDef)
+		return PS2MH_MAIN;
+	if (currentMenu == &OP_VideoModeDef && vidm_testingmode > 0)
+		return PS2MH_VMCONFIRM;
+	if (currentMenu->drawroutine == M_DrawImageDef)
+		return PS2MH_NONE; // a picture over the whole screen: the hints would stand on it
+	if (itemOn < 0 || itemOn >= currentMenu->numitems)
+		return PS2MH_SELECT;
+	it = &currentMenu->menuitems[itemOn];
+	st = it->status;
+	if (currentMenu == &MP_ConnectDef && itemOn >= FIRSTSERVERLINE)
+		return PS2MH_SERVER;
+	if (st == IT_CONTROL)
+		return PS2MH_CONTROL;
+	switch (st & IT_TYPE)
+	{
+		case IT_CVAR:
+			return (st & IT_CVARTYPE) == IT_CV_STRING ? PS2MH_TEXT : PS2MH_ARROWS;
+		case IT_ARROWS:
+			return PS2MH_ARROWS;
+		case IT_KEYHANDLER:
+		{
+			const void *h = (const void *)it->itemaction; // the handler tells what the buttons do here
+
+			if (h == (void *)M_HandleConnectIP)
+				return PS2MH_ADDRESS;
+			if (h == (void *)M_HandleSetupMultiPlayer)
+				return itemOn == 0 ? PS2MH_PLAYERNAME : PS2MH_CHANGE;
+			if (h == (void *)M_HandleLevelPlatter)
+				return PS2MH_PLATTER;
+			if (h == (void *)M_HandleLoadSave)
+				return PS2MH_LOADSAVE;
+			if (h == (void *)M_HandleChoosePlayerMenu)
+				return PS2MH_CHOOSEPLAYER;
+			if (h == (void *)M_HandleSoundTest)
+				return PS2MH_SOUNDTEST;
+			if (h == (void *)M_HandleChecklist || h == (void *)M_HandleLevelStats)
+				return PS2MH_SCROLL;
+#ifdef HAS_ADDONS
+			if (h == (void *)M_HandleAddons)
+				return PS2MH_ADDONS;
+#endif
+			if (h == (void *)M_HandleVideoMode)
+				return PS2MH_VIDEOMODE;
+			if (h == (void *)M_HandlePlaystyleMenu || h == (void *)M_HandleTimeAttackLevelSelect || h == (void *)M_HandleMarathonChoosePlayer || h == (void *)M_HandleServerPage)
+				return PS2MH_CHANGE;
+			return PS2MH_SELECT;
+		}
+		default:
+			return PS2MH_SELECT;
+	}
+}
+
+// PS2-339: every menu definition (and four boxes of MessageDef), for the crawler of the button hints (ps2_menucrawl)
+INT32 M_PS2MenuList(INT32 i, menu_t **menu, const char **name)
+{
+#define E(x) {&x, #x}
+	static const struct { menu_t *menu; const char *name; } all[] =
+	{
+	E(MainDef),
+#ifdef HAS_ADDONS
+	E(MISC_AddonsDef),
+#endif
+	E(MAPauseDef),
+	E(SPauseDef),
+	E(MPauseDef),
+	E(MISC_ScrambleTeamDef),
+	E(MISC_ChangeTeamDef),
+	E(MISC_ChangeLevelDef),
+	E(MISC_HelpDef),
+	E(SR_PandoraDef),
+	E(SR_MainDef),
+	E(SR_LevelSelectDef),
+	E(SR_UnlockChecklistDef),
+	E(SR_SoundTestDef),
+	E(SR_EmblemHintDef),
+	E(SP_MainDef),
+	E(SP_LoadDef),
+	E(SP_LevelSelectDef),
+	E(SP_PauseLevelSelectDef),
+	E(SP_LevelStatsDef),
+	E(SP_TimeAttackLevelSelectDef),
+	E(SP_TimeAttackDef),
+	E(SP_ReplayDef),
+	E(SP_GuestReplayDef),
+	E(SP_GhostDef),
+	E(SP_NightsAttackLevelSelectDef),
+	E(SP_NightsAttackDef),
+	E(SP_NightsReplayDef),
+	E(SP_NightsGuestReplayDef),
+	E(SP_NightsGhostDef),
+	E(SP_MarathonDef),
+	E(SP_PlayerDef),
+	E(MP_SplitServerDef),
+	E(MP_MainDef),
+	E(MP_ServerDef),
+	E(MP_ConnectDef),
+	E(MP_RejoinDef),
+	E(MP_RoomDef),
+	E(MP_PlayerSetupDef),
+	E(OP_MainDef),
+	E(OP_ChangeControlsDef),
+	E(OP_P1ControlsDef),
+	E(OP_P2ControlsDef),
+	E(OP_MouseOptionsDef),
+	E(OP_Mouse2OptionsDef),
+	E(OP_Joystick1Def),
+	E(OP_Joystick2Def),
+	E(OP_JoystickSetDef),
+	E(OP_CameraOptionsDef),
+	E(OP_Camera2OptionsDef),
+	E(OP_PlaystyleDef),
+	E(OP_VideoOptionsDef),
+	E(OP_VideoModeDef),
+	E(OP_ColorOptionsDef),
+	E(OP_SoundOptionsDef),
+	E(OP_SoundAdvancedDef),
+	E(OP_ServerOptionsDef),
+	E(OP_MonitorToggleDef),
+#ifdef HWRENDER
+	E(OP_OpenGLOptionsDef),
+#ifdef ALAM_LIGHTING
+	E(OP_OpenGLLightingDef),
+#endif
+#endif
+	E(OP_DataOptionsDef),
+	E(OP_BanpyuraOptionsDef),
+	E(OP_P1BanpyuraOptionsDef),
+	E(OP_P2BanpyuraOptionsDef),
+	E(OP_ScreenshotOptionsDef),
+#ifdef HAS_ADDONS
+	E(OP_AddonsOptionsDef),
+#endif
+	E(OP_EraseDataDef),
+	{&OP_ChangeControlsDef, "OP_ChangeControlsDef P2"}, // the same list, for the second player (the keys of the second pad)
+	{&MessageDef, "MessageDef short"}, {&MessageDef, "MessageDef long"}, {&MessageDef, "MessageDef yes/no"}, {&MessageDef, "MessageDef capture"},
+	{&MP_ConnectDef, "OSK over MP_ConnectDef"}, {&MP_PlayerSetupDef, "OSK over MP_PlayerSetupDef"}, // the on-screen keyboard over a text field (PS2-135)
+	{&OP_VideoModeDef, "OP_VideoModeDef confirm"} // the mode was changed: "Press <Cross> again to keep this mode"
+	};
+#undef E
+	const INT32 n = (INT32)(sizeof all / sizeof all[0]);
+
+	if (i >= 0 && i < n)
+	{
+		*menu = all[i].menu;
+		*name = all[i].name;
+	}
+	return n;
+}
+
+// PS2-339: the crawler brings a menu up the way the game does (the entry function of the item that leads to it, which sets up what the drawing needs: the list of
+// saves, the level platter, the player skins), then makes it the current one whatever the entry did. The end of the list holds the variants of a screen: Setup Controls of
+// the second player (total - 8), the four boxes of MessageDef (total - 7 .. total - 4), two menus with the on-screen keyboard open over them (total - 3, total - 2) and the
+// video mode menu in its "keep this mode?" state (total - 1).
+static void M_PS2EnterLoad(INT32 choice) // M_LoadGame asks about the tutorial first when the game was never started: the list of saves is what the menu needs
+{
+	(void)choice;
+	M_ReadSaveStrings();
+	M_SetupNextMenu(&SP_LoadDef);
+}
+
+INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
+{
+	static const struct { menu_t *menu; void (*entry)(INT32); } entries[] =
+	{
+		{&SR_PandoraDef, M_PandorasBox}, {&SR_MainDef, M_SecretsMenu}, {&SR_LevelSelectDef, M_CustomLevelSelect}, {&SR_SoundTestDef, M_SoundTest},
+		{&SR_EmblemHintDef, M_EmblemHints}, {&SP_MainDef, M_SinglePlayerMenu}, {&SP_LoadDef, M_PS2EnterLoad}, {&SP_LevelSelectDef, M_LoadGameLevelSelect},
+		{&SP_PauseLevelSelectDef, M_PauseLevelSelect}, {&SP_LevelStatsDef, M_Statistics}, {&SP_TimeAttackLevelSelectDef, M_TimeAttackLevelSelect},
+		{&SP_TimeAttackDef, M_TimeAttack}, {&SP_NightsAttackLevelSelectDef, M_NightsAttackLevelSelect}, {&SP_NightsAttackDef, M_NightsAttack},
+		{&SP_MarathonDef, M_Marathon}, {&SP_PlayerDef, M_SetupChoosePlayer}, {&MP_SplitServerDef, M_StartSplitServerMenu}, {&MP_ServerDef, M_StartServerMenu},
+		{&MP_PlayerSetupDef, M_SetupMultiPlayer}, {&OP_MainDef, M_Options}, {&OP_ChangeControlsDef, M_Setup1PControlsMenu}, {&OP_PlaystyleDef, M_Setup1PPlaystyleMenu},
+		{&OP_VideoOptionsDef, M_VideoOptions}, {&OP_VideoModeDef, M_VideoModeMenu}, {&OP_ScreenshotOptionsDef, M_ScreenshotOptions}, {&OP_ServerOptionsDef, M_ServerOptions},
+#ifdef HAS_ADDONS
+		{&MISC_AddonsDef, M_Addons}, {&OP_AddonsOptionsDef, M_AddonsOptions},
+#endif
+	};
+	size_t i;
+
+	hidetitlemap = false; // (the character select sets it: the title map would stay hidden behind the next menus)
+	PS2OSK_TestClose();
+	vidm_testingmode = 0;
+	if (m == &OP_ChangeControlsDef && index == total - 8)
+	{
+		M_Setup2PControlsMenu(0);
+		currentMenu = m;
+		return 1;
+	}
+	if (m == &MessageDef && index >= total - 7 && index < total - 3)
+	{
+		static const char *const texts[4] =
+		{
+			"Short message.\n\n(Press a key)\n",
+			"A longer message that runs over\nseveral lines of the menu font,\nso that its box is tall and wide:\n\nthe box is centred on the screen,\nthe hints stand under it.\n\n(Press a key)\n",
+			"Do you really want to do it?\n\n(Y/N)\n",
+			"Press the new button for this control\n",
+		};
+		const INT32 v = index - (total - 7);
+
+		M_StartMessage(texts[v & 3], NULL, v == 2 ? MM_YESNO : v == 3 ? MM_EVENTHANDLER : MM_NOTHING); // (the kind of the box is kept in alphaKey)
+		return 1;
+	}
+	for (i = 0; i < sizeof entries / sizeof entries[0]; i++)
+		if (entries[i].menu == m)
+		{
+			entries[i].entry(0);
+			currentMenu = m;
+			if (index >= total - 3 && index < total - 1)
+				PS2OSK_TestOpen();
+			if (index == total - 1) // (the timer is long: the mode is not switched back during the crawl)
+				vidm_testingmode = 100000;
+			return 1;
+		}
+	currentMenu = m;
+	if (index >= total - 3 && index < total - 1)
+		PS2OSK_TestOpen();
+	return 0;
+}
+
+// the cursor of the menu (set >= 0: put it there), for the crawler
+INT32 M_PS2MenuCursor(INT32 set)
+{
+	if (set >= 0)
+		itemOn = (INT16)set;
+	return itemOn;
+}
+
 // PS2-135: the highlighted item takes typed text: the on-screen keyboard (src/ps2/ps2_osk.c) can be opened on it
 boolean M_PS2TextFieldActive(void)
 {

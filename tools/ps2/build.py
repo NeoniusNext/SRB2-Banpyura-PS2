@@ -142,7 +142,7 @@ EXTRA_SOURCES = []
 # Without the variable the software-only build is unchanged.
 HW_BUILD = os.environ.get('SRB2_PS2_HW') == '1'
 if HW_BUILD:
-    CFLAGS = [f for f in CFLAGS if f != '-DNOHW'] + ['-DHWRENDER', '-Werror']
+    CFLAGS = [f for f in CFLAGS if f != '-DNOHW'] + ['-DHWRENDER', '-Werror', '-Wno-format-truncation']  # OPT11-STAB: the truncation warnings exist only without LTO (they stop the fast SRB2_PS2_LTO=0 build: ps2_curl.c, d_netfil.c)
 
 
 def hw_sources():
@@ -237,6 +237,7 @@ def main():
     ap.add_argument('--leaktrace', action='store_true', help='PS2-78: wrap malloc/calloc/realloc/free/memalign, LEAK lines after every -zchain level (src/ps2/ps2_mem.c); use SRB2_PS2_OUT=build/opt7-s/out-leak')
     ap.add_argument('--memprof', action='store_true', help='memcpy/memset caller statistics (MC lines, tools/ps2/sample_report.py --elf resolves callers)')
     ap.add_argument('--sample', action='store_true', help='-DPS2_SAMPLE: statistical PC sampler (run with -ps2sample, report with tools/ps2/sample_report.py); implies --prof')
+    ap.add_argument('--hwdetail', action='store_true', help='-DPS2_HWDETAIL: the fine laps inside the hardware renderer engine functions (HWPROF31, 33..37, OPT11 GEOM); implies --prof')
     ap.add_argument('--fprof', action='store_true', help='function-level profile (with --ps2ref): -finstrument-functions + FP lines, see tools/ps2/fprof_report.py')
     ap.add_argument('--debug', action='store_true', help='diagnostic build: no NDEBUG (ZDEBUG, RANGECHECK, PARANOIA); same as SRB2_PS2_RELEASE=0')
     ap.add_argument('--zdebug', action='store_true', help='define ZDEBUG (zone owner tracking); use SRB2_PS2_OUT=build/ps2-zdebug')
@@ -250,6 +251,9 @@ def main():
         CFLAGS.append('-DPS2_FPROF')
     if a.subprof:
         CFLAGS.append('-DPS2_SUBPROF')
+    if a.hwdetail:
+        CFLAGS.append('-DPS2_HWDETAIL')
+        a.prof = True
     if a.leaktrace:
         CFLAGS.append('-DPS2_LEAKTRACE')
         for fn in ('malloc', 'calloc', 'realloc', 'free', 'memalign', '_malloc_r', '_calloc_r', '_realloc_r', '_free_r', '_memalign_r'):
@@ -315,15 +319,16 @@ def main():
     elf = OUT / a.target
     objs = [str(obj_for(s)) for s in srcs]
     if HW_BUILD:  # PS2-HW-45: the VU1 microcode of the polygon program (dvp-as; its symbols are used by ps2_hw_vu1.inc)
-        vsm = ROOT/'src/ps2/hw/vu1/ps2_hw_vu1.vsm'
-        if vsm.is_file():
-            vobj = OBJ/'ps2_hw_vu1_vsm.o'
-            if not vobj.exists() or vobj.stat().st_mtime < vsm.stat().st_mtime:
-                pv = subprocess.run([str(DEV/('dvp/bin/dvp-as' + EXE)), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
-                if pv.returncode or pv.stdout.strip() or pv.stderr.strip():
-                    print('FAIL dvp-as', vsm, (pv.stdout + pv.stderr)[-3000:])
-                    return 1
-            objs.append(str(vobj))
+        for vname in ('ps2_hw_vu1', 'ps2_hw_vu1_spr'):  # OPT11 round 3 (PS2-HW-255): the sprite program next to the polygon program
+            vsm = ROOT/('src/ps2/hw/vu1/%s.vsm' % vname)
+            if vsm.is_file():
+                vobj = OBJ/('%s_vsm.o' % vname)
+                if not vobj.exists() or vobj.stat().st_mtime < vsm.stat().st_mtime:
+                    pv = subprocess.run([str(DEV/('dvp/bin/dvp-as' + EXE)), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
+                    if pv.returncode or pv.stdout.strip() or pv.stderr.strip():
+                        print('FAIL dvp-as', vsm, (pv.stdout + pv.stderr)[-3000:])
+                        return 1
+                objs.append(str(vobj))
     if LTO:
         merged = OBJ / 'engine_lto.o'
         rcmd = [str(CC), '-r', '-nostdlib', '-flto=%d' % a.jobs, '-flinker-output=nolto-rel', '-O2', '-ffunction-sections', '-fdata-sections'] + [f for f in CFLAGS if f.startswith('-G') or f == '-mno-abicalls'] + objs + ['-o', str(merged)]

@@ -1,0 +1,12 @@
+SRB2-PS2-OPT11-r1.ELF: сборка после первого раунда OPT11 (ветка claude/lucid-mayer-1izlqe, коммит 18f8cc5 + этот файл).
+Конфигурация: полная (Lua, UDMF, аддоны, лимиты как у ПК, сеть, мастер-сервер), software + GS hardware, релиз с LTO:
+  SRB2_PS2_NO= SRB2_PS2_HW=1 python3 tools/ps2/build.py --jobs 2   (EE GCC 15.2.0)
+Что внутри (слиты CORE, GEOM, FX, VU и снимок STAB): VU1-конвейер по умолчанию, вода без швов с фазой как у ПК, откат HW -> software при нехватке памяти,
+быстрые пути тика. Отчёты: docs/GATES/g1/opt11-*.md, docs/OPT11_ROUND2.md.
+Запуск: см. docs/OPT10_RESULTS.md раздел 6 и tools/ps2/make_dist.py (данные игры упаковать своими файлами SRB2 2.2.15: tools/ps2/cook.py).
+  Hardware: меню Options -> Video или аргумент -renderer Hardware в ps2args (-zreserve не нужен).
+Проверено в PCSX2 2.6.3 (32 МБ, программный GS), НЕ на настоящей консоли:
+  DEMO_001: software 1051 тик за 1046 realtics, HW за 992 realtics (35 TPS держится);
+  DEMO_003 в HW доходит до конца (1051 тик за 1412 realtics; раньше падал OOM); MAP11 в HW сам переходит на software;
+  golden software на 4 демо: 0 differ; физика совпадает с ПК.
+Известное: HW примерно равен software по скорости (D1 8.5 М тактов/кадр, D4 13.5 М против 8.7 и 12.3); до 60 FPS далеко.

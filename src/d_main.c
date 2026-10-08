@@ -20,6 +20,9 @@
 #endif
 
 #include "ps2_sub.h" // PS2SUB probes (inert without -DPS2_SUBPROF)
+#ifdef PS2_PROF_DIRECT
+#include "ps2/ps2_prof.h" // PS2-200: tick/display/sound split of the LTO profile build
+#endif
 
 #if defined (__unix__) || defined (__APPLE__) || defined (UNIXCOMMON)
 #include <sys/stat.h>
@@ -118,6 +121,10 @@ static addfilelist_t startuppwads;
 #endif
 #if defined (PS2) && defined (HAS_ADDONS)
 #include "ps2/ps2_addons.h"
+#endif
+#ifdef PS2
+#include "ps2/ps2_hwfb.h" // PS2-170
+#include "ps2/ps2_menuhints.h" // PS2-339: PS2MenuHints_Begin
 #endif
 
 boolean devparm = false; // started game with -devparm
@@ -566,6 +573,9 @@ static void D_Display(void)
 
 			if (gamestate == GS_LEVEL)
 			{
+#ifdef PS2
+				PS2MenuHints_Begin(); // PS2-339: from the HUD on, the 2D drawing of this frame is noted (the menu button hints keep clear of the counters)
+#endif
 				ST_Drawer();
 				F_TextPromptDrawer();
 				HU_Drawer();
@@ -842,6 +852,9 @@ static void D_RunFrame(void)
 		entertic = I_GetTime();
 		realtics = entertic - oldentertics;
 		oldentertics = entertic;
+#ifdef PS2_PROF_DIRECT
+		ps2prof_real += (UINT32)realtics; // what the clock asked for, before any of the clamps below and in TryRunTics
+#endif
 
 		if (demoplayback && gamestate == GS_LEVEL)
 		{
@@ -868,12 +881,24 @@ static void D_RunFrame(void)
 		{
 			// don't skip more than 10 frames at a time
 			// (fadein / fadeout cause massive frame skip!)
+#ifdef PS2_OPT_CORE
+			if (realtics > (netgame ? 8 : TICRATE/2)) // PS2-202: local play runs off a lag of up to half a second (see TryRunTics)
+#else
 			if (realtics > 8)
+#endif
 				realtics = 1;
 
 			// process tics (but maybe not if realtic == 0)
 			PS2SUB_B(33);
+#ifdef PS2_PROF_DIRECT
+			{
+				const UINT32 pc0 = PS2Prof_Cyc();
+				TryRunTics(realtics);
+				ps2prof_c_tick += PS2Prof_Cyc() - pc0;
+			}
+#else
 			TryRunTics(realtics);
+#endif
 			PS2SUB_E(33);
 
 			if (lastdraw || singletics || gametic > rendergametic)
@@ -927,6 +952,18 @@ static void D_RunFrame(void)
 			{
 				rendertimefrac = FRACUNIT;
 			}
+#ifdef PS2_PROFILE
+			{
+				extern INT32 ps2_fxfrac; // -fxfrac N (OPT11 round 2, FX2, measurements): every frame is drawn N percent of the way between two tics (a time demo draws whole tics only)
+
+				extern boolean ps2_lockstep; // d_clisrv.c (-singletics on a map)
+
+				if (ps2_fxfrac > 0 && ps2_fxfrac < 100 && !(paused || P_AutoPause()))
+					rendertimefrac = (fixed_t)(((INT64)FRACUNIT * ps2_fxfrac) / 100);
+				else if (ps2_lockstep && !demoplayback && !netgame)
+					rendertimefrac = FRACUNIT; // OPT11 GEOM2 (PS2-HW-208): a frame locked run draws whole tics (the clock must not decide where between two tics a moving view is drawn)
+			}
+#endif
 		}
 		else
 		{
@@ -944,7 +981,17 @@ static void D_RunFrame(void)
 			}
 #endif
 			PS2SUB_B(34);
+#ifdef PS2_PROF_DIRECT
+			{
+				const UINT32 pc0 = PS2Prof_Cyc();
+				PS2HWFB_Display(D_Display); // PS2-170 (also in the profile build)
+				ps2prof_c_disp += PS2Prof_Cyc() - pc0;
+			}
+#elif defined(PS2)
+			PS2HWFB_Display(D_Display); // PS2-170: running out of memory in the frame leaves the hardware renderer / draws the frame again, it does not end the game
+#else
 			D_Display();
+#endif
 			PS2SUB_E(34);
 #ifdef PS2_PROFILE
 			Z_NextFrame(); // PS2-21: displayed-frame boundary for the zone's LRU eviction (z_zone.c)
@@ -957,6 +1004,9 @@ static void D_RunFrame(void)
 		if (takescreenshot)
 			M_DoScreenShot();
 
+#ifdef PS2_PROF_DIRECT
+		const UINT32 pcs0 = PS2Prof_Cyc();
+#endif
 		// consoleplayer -> displayplayers (hear sounds from viewpoint)
 		S_UpdateSounds(); // move positional sounds
 		if (realtics > 0 || singletics)
@@ -968,6 +1018,30 @@ static void D_RunFrame(void)
 
 		LUA_Step();
 		LUA_HTTPProcessCallbacks();
+#ifdef PS2_PROF_DIRECT
+		ps2prof_c_snd += PS2Prof_Cyc() - pcs0;
+#endif
+
+#ifdef PS2_PROF_DIRECT
+		{
+			// -ps2stall MS EVERY (tests of the profile build only): a stall of MS milliseconds after every EVERY-th frame (a texture burst, a file read), to see how
+			// the tic clock runs off a lag (TryRunTics, PS2-202)
+			static INT32 stallms = -1, stallevery;
+			static UINT32 stallframe;
+
+			if (stallms < 0)
+			{
+				stallms = stallevery = 0;
+				if (M_CheckParm("-ps2stall") && M_IsNextParm())
+				{
+					stallms = atoi(M_GetNextParm());
+					stallevery = M_IsNextParm() ? atoi(M_GetNextParm()) : 100;
+				}
+			}
+			if (stallms > 0 && stallevery > 0 && ++stallframe % (UINT32)stallevery == 0)
+				I_SleepDuration((precise_t)stallms * I_GetPrecisePrecision() / 1000);
+		}
+#endif
 
 		// Fully completed frame made.
 		finishprecise = I_GetPreciseTime();
@@ -1652,6 +1726,14 @@ void D_SRB2Main(void)
 	// this must be done after loading gamedata,
 	// to avoid setting off the corrupted gamedata code in G_LoadGameData if a SOC with custom gamedata is added
 	// -- Monster Iestyn 20/02/20
+#ifdef PS2_PROFILE
+	if (M_CheckParm("-singletics"))
+	{
+		extern boolean ps2_lockstep; // d_clisrv.c
+		singletics = true; // OPT11 GEOM2: one game tic for every frame drawn, as in a timedemo, so that two runs of a map show the same frames whatever each frame costs (-hwpolyhash comparisons)
+		ps2_lockstep = true; // and on a map the tic is made by TryRunTics, not by the clock (PS2-HW-208)
+	}
+#endif
 	if (M_CheckParm("-warp") && M_IsNextParm())
 	{
 		const char *word = M_GetNextParm();

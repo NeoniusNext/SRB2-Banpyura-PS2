@@ -20,6 +20,7 @@ static int module_ok = 1, rpc_init_ok = 1, queue_bytes, sent, fail_transfer, fai
 static int write_limit = -1;
 static const char *expected_chunk;
 static int16_t first_pcm;
+static unsigned silent_blocks;
 static unsigned callback_a, callback_b;
 
 void CONS_Printf(const char *fmt, ...) { (void)fmt; }
@@ -28,6 +29,7 @@ boolean PS2Boot_LoadAudio(void) { return module_ok; }
 precise_t I_GetPreciseTime(void) { return clock_ticks; }
 precise_t I_GetPrecisePrecision(void) { return 1000000; }
 size_t __real_W_LumpLength(lumpnum_t lump) { return lengths[lump]; }
+size_t W_LumpLength(lumpnum_t lump) { return lengths[lump]; }
 size_t W_LumpLengthPwad(uint16_t w, uint16_t l) { CHECK(w == 0); return lengths[l]; }
 size_t W_ReadLumpHeader(lumpnum_t l, void *dst, size_t n, size_t off)
 { CHECK(l < 8 && off <= lengths[l] && n <= lengths[l]-off); memcpy(dst,lumpdata[l]+off,n); return n; }
@@ -72,7 +74,7 @@ int audsrv_play_audio(const char *p, int n)
 	if (write_limit >= 0 && n > write_limit) n = write_limit;
 	if (!n) return 0;
 	if (expected_chunk) expected_chunk += n;
-	memcpy(&first_pcm,p,sizeof first_pcm); sent += n; queue_bytes += n; return n;
+	{ int16_t v; memcpy(&v,p,sizeof v); if (v) first_pcm = v; else silent_blocks++; } sent += n; queue_bytes += n; return n;
 }
 static void CallbackB(void) { callback_b++; }
 static void CallbackA(void) { callback_a++; CHECK(I_FadeSong(100,100,CallbackB)); }
@@ -167,7 +169,7 @@ int main(int argc, char **argv)
 	S_sfx[1].name = "test"; S_sfx[1].lumpnum = LUMPERROR;
 	CHECK(I_GetSfx(&S_sfx[1]) && allocated > 0);
 	h = I_StartSound(1,255,128,128,0,0); CHECK(h >= 0 && I_SoundIsPlaying(h));
-	I_UpdateSound(); CHECK(sent == 2048 && first_pcm == 32512 && !I_SoundIsPlaying(h));
+	I_UpdateSound(); CHECK(sent >= 2048 && first_pcm == 32512 && !I_SoundIsPlaying(h)); /* PS2-300: silence follows the sound (ring flush) */
 	h = I_StartSound(1,255,128,128,0,0); I_FreeSfx(&S_sfx[1]); CHECK(!I_SoundIsPlaying(h) && !allocated);
 	CHECK(I_StartSound(1,255,128,128,0,0) == -1);
 	fail_alloc = 1; CHECK(!I_GetSfx(&S_sfx[1])); fail_alloc = 0;
@@ -180,7 +182,7 @@ int main(int argc, char **argv)
 	for (i = 44; i < sizeof wav; i += 2) LE16(wav+i,10000);
 	lumpdata[2] = wav; lengths[2] = sizeof wav;
 	CHECK(!I_LoadSong(NULL,lengths[2]));
-	CHECK(__wrap_W_LumpLength(2) == lengths[2]); CHECK(I_LoadSong(NULL,lengths[2]));
+	ps2_music_lump = 2; /* PS2-70: S_LoadMusic stores the lump */ CHECK(I_LoadSong(NULL,lengths[2]));
 	CHECK(I_SongType() == MU_WAV && I_GetSongLength() == 1000 && I_PlaySong(true));
 	// The IOP can return short/zero writes after the space query. Preserve
 	// every unsent byte and do not advance the decoder again during retries.
@@ -190,7 +192,10 @@ int main(int argc, char **argv)
 	{
 		UINT32 position = I_GetSongPosition();
 		I_UpdateSound(); CHECK(I_GetSongPosition() == position && sent == old_sent);
-		write_limit = 512; I_UpdateSound();
+		// PS2-301: a short write ends the wake-up (the next one retries the exact suffix). Room for this block only (2048 + the 4 guard bytes
+		// + 4), so the wake-up that completes it renders nothing more and the chunk pointer stays comparable.
+		queue_bytes = 20480 - 2048 - 8; write_limit = 512;
+		for (i = 0; i < 4; i++) I_UpdateSound();
 		CHECK(sound_started && sent == old_sent + 2048 && !output_pending);
 		CHECK(expected_chunk == (const char *)output + sizeof output && I_GetSongPosition() == position);
 	}

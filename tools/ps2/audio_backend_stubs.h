@@ -9,7 +9,10 @@
 #include "ps2_audio.h"
 #include "ps2_music.h"
 #include <audsrv.h>
+#ifdef _MSC_VER
 #define __attribute__(x)
+#define strncasecmp _strnicmp
+#endif
 #define UINT8 uint8_t
 #define UINT16 uint16_t
 #define UINT32 uint32_t
@@ -18,7 +21,6 @@
 #define INT32 int32_t
 #define INT64 int64_t
 #define min(a,b) ((a)<(b)?(a):(b))
-#define strncasecmp _strnicmp
 #define true 1
 #define false 0
 #define PU_SOUND 11
@@ -31,6 +33,7 @@ typedef uint64_t precise_t;
 typedef uint32_t lumpnum_t;
 typedef int sfxenum_t;
 enum { sfx_None, NUMSFX = 8 };
+#define LIMIT_NUMSFX NUMSFX
 typedef struct { const char *name; void *data; size_t length; lumpnum_t lumpnum; } sfxinfo_t;
 typedef enum { MU_NONE, MU_WAV, MU_MOD, MU_MID, MU_OGG, MU_MP3 } musictype_t;
 enum { CM_NOCOMPRESSION, CM_LZ4 };
@@ -45,6 +48,8 @@ boolean PS2Boot_LoadAudio(void);
 precise_t I_GetPreciseTime(void);
 precise_t I_GetPrecisePrecision(void);
 size_t W_LumpLengthPwad(uint16_t wad, uint16_t lump);
+size_t W_LumpLength(lumpnum_t lump);
+extern lumpnum_t ps2_music_lump;
 size_t W_ReadLumpHeader(lumpnum_t lump, void *dst, size_t n, size_t off);
 void W_ReadLump(lumpnum_t lump, void *dst);
 const char *W_CheckNameForNum(lumpnum_t lump);

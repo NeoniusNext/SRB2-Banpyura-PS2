@@ -6,7 +6,10 @@
 // program (ps2_hw_vu1.inc, vu1/ps2_hw_vu1.vsm) writes its GIF packets with XGKICK (PATH1), and FLUSH in front of every DIRECT run keeps the order
 // between the two. V.on is chosen at start (-hwvu1); without it the ring is exactly what it was.
 
-#define HWDBG_VU1 0x4000000 // VIF1 transport + VU1 polygon program (PS2-HW-44/45)
+#define HWDBG_VU1 0x4000000 // (OPT9/OPT10: switched VIF1 + VU1 on; since OPT11 they are the default and this bit does nothing)
+#define HWDBG_NOVU1 0x10000000 // OPT11 (PS2-HW-100): -hwdbg 268435456: no VIF1 / VU1 path, the EE transforms, clips, cuts and packs every polygon (A/B and the fallback for a GS that has no VU1)
+#define HWDBG_NOLIGHTMERGE 0x08000000 // OPT11 (PS2-HW-106): -hwdbg 134217728: the light level of the sector stays in the key of a batch (A/B of the merge)
+static int vu_noretarget, vu_nobretarget, vu_norecord, vu_nocut, vu_bretmask = 7; // (-hwnobretarget: the batches only) // OPT11 (PS2-HW-107): -hwnoretarget: a draw of the plan of the last VU1 draw with another texture makes its own plan (A/B of the retarget)
 #define HWDBG_NOUP 0x80000000u // -hwdbg -2147483648 (bit 31: the bits 0x8000000 and 0x10000000 are HT's LODDBG and IMMDBG). MEASUREMENT ONLY (OPT10 HG): every texture is one resident 256x256 dummy, nothing is uploaded: the CPU cost of the geometry without the texture traffic. The picture is wrong.
 
 #define D1_CHCR ((volatile u32 *)0x10009000)

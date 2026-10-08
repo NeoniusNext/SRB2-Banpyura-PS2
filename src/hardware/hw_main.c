@@ -51,17 +51,26 @@
 #include "../lua_banpyura.h"
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hw_prof.h" // PS2-HW-15: COP0 phase accumulators of the hardware renderer (HWPROF lines)
+#include "../ps2/hw/ps2_hw_fx2.h" // OPT11 round 2 (FX2): -hwfx bits, the sphere test data of the driver
+#include "../ps2/hw/ps2_hwd.h" // PS2HWD_TouchTexture (the sprite stream, PS2-HW-256)
 unsigned long long ps2hwp_cyc[HWP_NUM];
 unsigned int ps2hwp_cnt[HWC_NUM];
 int ps2hwp_skyview;
 extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
+extern boolean Cubeapply; // v_video.c (the colour cube): HWR_Lighting
+extern float Cubepal[2][2][2][3];
 static boolean HWR_PS2_NoCull(void);
+static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
 #define HWP_SPAN_BEGIN(name) ((void)0)
 #define HWP_SPAN_END(name, idx) ((void)0)
+#define HWC_ADD(i) ((void)0)
+#define HWD_LOCAL ((void)0)
+#define HWD_LAP(idx) ((void)0)
+#define HWD_ADD(i) ((void)0)
 #endif
 
 // ==========================================================================
@@ -152,10 +161,47 @@ static boolean HWR_IsWireframeMode(void)
 	return (cv_glwireframe.value && cv_debug);
 }
 
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-205): the light table of the default colormap and whether palette rendering is on do not change inside a view; they are asked once per view (validcount is
+// the view's) and again after the light tables were cleared (HWR_GCacheFlush bumps hwr_lt_epoch). -hwgo 2048: asked for every surface, as before.
+static UINT32 hwr_lt_epoch;
+static INT32 hl_view = -1;
+static UINT32 hl_epoch, hl_id;
+#endif
+
 void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap)
 {
 	RGBA_t poly_color, tint_color, fade_color;
 	HWP_SPAN_BEGIN(hwp_tlight);
+
+#ifdef PS2_PROFILE
+	// OPT11 PS2-HW-83: the common surface (no colormap of the sector, shaders on, no colour cube): what the code below makes of it without the two V_CubeApply calls, the
+	// colour arithmetic of the other branch and the generic look-ups (-hwgo 8: the long way). The light table of the default colormap is asked as before.
+	if (!colormap && !Cubeapply && cv_glshaders.value && gl_shadersavailable && !(hwr_geo_off & 8))
+	{
+		light_level = min(max(light_level, cv_secbright.value), 255);
+		Surface->PolyColor.rgba = 0xFFFFFFFF;
+		Surface->TintColor.rgba = 0x00000000;
+		Surface->FadeColor.rgba = 0xFF000000;
+		Surface->LightInfo.light_level = light_level;
+		Surface->LightInfo.fade_start = 0;
+		Surface->LightInfo.fade_end = 31;
+		if (hwr_geo_off & 2048)
+			Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+		else
+		{
+			if (hl_view != (INT32)validcount || hl_epoch != hwr_lt_epoch)
+			{
+				hl_id = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+				hl_view = (INT32)validcount;
+				hl_epoch = hwr_lt_epoch;
+			}
+			Surface->LightTableId = hl_id;
+		}
+		HWP_SPAN_END(hwp_tlight, HWP_LIGHT);
+		return;
+	}
+#endif
 
 	poly_color.rgba = 0xFFFFFFFF;
 	tint_color.rgba = (colormap != NULL) ? (UINT32)colormap->rgba : 0x00000000;
@@ -282,11 +328,30 @@ static FUINT HWR_CalcWallLight(FUINT lightnum, fixed_t v1x, fixed_t v1y, fixed_t
 
 		if (cv_glfakecontrast.value == 2) // Smooth setting
 		{
+#ifdef PS2_PROFILE
+			// OPT11 PS2-HW-84: the extra light is a function of the two differences only (an arc tangent table look-up, a division and a multiplication): a wall that is split
+			// by 3D floors or lights asks for the same one again and again; the last answer is kept (-hwgo 16: always calculated)
+			static fixed_t cw_dx = -1, cw_dy = -1, cw_extra;
+			const fixed_t dx = abs(v1x - v2x), dy = abs(v1y - v2y);
+
+			if (dx == cw_dx && dy == cw_dy && !(hwr_geo_off & 16))
+				extralight = cw_extra;
+			else
+			{
+				extralight = (-(contrast<<FRACBITS) +
+				FixedDiv(AngleFixed(R_PointToAngle2(0, 0, dx, dy)), 90<<FRACBITS)
+				* (contrast * 2)) >> FRACBITS;
+				cw_dx = dx;
+				cw_dy = dy;
+				cw_extra = extralight;
+			}
+#else
 			extralight = (-(contrast<<FRACBITS) +
 			FixedDiv(AngleFixed(R_PointToAngle2(0, 0,
 				abs(v1x - v2x),
 				abs(v1y - v2y))), 90<<FRACBITS)
 			* (contrast * 2)) >> FRACBITS;
+#endif
 		}
 		else
 		{
@@ -456,121 +521,20 @@ static UINT8 HWR_CeilingLightLevel(sector_t *sector, INT16 base_lightlevel)
 // ==========================================================================
 
 #ifdef PS2_PROFILE
-// PS2-HW-55: cache of the polygons HWR_RenderPlane makes.
-// A floor or ceiling polygon is a function of the subsector's convex polygon (fixed for the level), the height, the flags, the light level, the
-// flat (its size), the colormap, the sector's flat offset / scale / angle and the lighting settings: nothing of the view. For a flat that is not
-// sloped and a subsector without a horizon line the previous result is kept and handed to HWR_ProcessPolygon again when all of those are the
-// same (about 3 000 cycles for the vertices with their texture coordinates and the lighting, against a few hundred for the compare). The key
-// holds every input, so a moving platform, a scrolling flat or a light change simply misses.
-// OFF by default: it saves 0.36 M of 10.7 M cycles on DEMO_001 but needs 230 KB (C heap or zone) and MAP02 of the test set has no 230 KB to spare
-// (zone OOM "request 1048576 B tag 26" in frame 6..8 with the cache, none without). -hwdbg 65536: on; -hwdbg 32768 (with 65536): every hit is also
-// calculated and compared (HWPLANECHECK lines: the number of differences must be 0).
-extern boolean Cubeapply;
-extern float Cubepal[2][2][2][3];
+// OPT11 (GEOM, PS2-HW-80): the geometry cache of the BSP walk replaces the plane cache of PS2-HW-55 (hw_gcache.inc)
+static INT32 hwr_gc_src, hwr_gc_tnum; // the side (number + 1) whose midtexture the polygons being made take (3D floors), and the translated texture number: set by HWR_ProcessSeg, read by the records of the cache
+#include "hw_gcache.inc"
 
-typedef struct
-{
-	const sector_t *fof; // the tag (with xsub and isceiling)
-	const extracolormap_t *colormap; // the inputs
-	const poly_t *poly;
-	fixed_t fixedheight, xscale, yscale, xoff, yoff;
-	angle_t angle;
-	FBITFIELD flags_in, flags_out;
-	FOutVector *verts; // the polygon: vertices in parena, the surface
-	FSurfaceInfo surf;
-	float p0x, p0y; // the first point of the polygon (a stale entry of another level would have to match this too)
-	UINT16 xsub, epoch, used;
-	INT16 lightlevel, texnum;
-	UINT8 isceiling, alpha, shader, nverts, cap, valid;
-} planecache_t;
-
-#define PCACHE_SETS 256
-#define PCACHE_WAYS 4
-#define PCACHE_ARENA_VERTS 6144
-// The tables live on the C heap, not in the zone: the zone has to keep one contiguous megabyte for the renderer's construction scratch
-// (PU_RENDERWORK), and a PU_LEVEL block of 200 KB taken on the first frame of a tight level (GFZ2) made that request fail ("OOM ... frame 6").
-// A failed allocation turns the cache off. The tables are dropped when the level changes (the map's subsector array, its size or the level time
-// going back), and every entry also holds the first point of its polygon.
-static planecache_t *pcache; // PCACHE_SETS sets of PCACHE_WAYS ways
-static FOutVector *parena; // the vertices of the entries: bumped
-static size_t parena_used;
 static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
 static size_t subhoriz_n;
-static const void *pc_owner;
-static size_t pc_nsub;
-static tic_t pc_time;
-static boolean pcache_dead;
-static UINT32 plane_epoch, plane_epoch_sig, plane_reports;
-static boolean pcache_on; // set per view by HWR_PlaneCacheFrame
-
-// the lighting settings of the frame the cached surfaces were made with (called once per view); false: no cache (memory)
-static boolean HWR_PlaneCacheFrame(void)
-{
-	UINT32 sig = (UINT32)cv_secbright.value * 2654435761u;
-	const float *cp = &Cubepal[0][0][0][0];
-	int i;
-
-	if (!(ps2hwd_dbg_flags & 0x10000) || pcache_dead) // OPT-IN (-hwdbg 65536): 230 KB of the C heap made MAP02 run out of zone memory (see above)
-		return false;
-	if (!pcache)
-	{
-		pcache = calloc(PCACHE_SETS * PCACHE_WAYS, sizeof(planecache_t));
-		parena = malloc(PCACHE_ARENA_VERTS * sizeof(FOutVector));
-		if (!pcache || !parena)
-		{
-			free(pcache);
-			free(parena);
-			pcache = NULL;
-			parena = NULL;
-			pcache_dead = true; // no room on the heap
-			return false;
-		}
-		pc_owner = NULL;
-	}
-	if (pc_owner != (const void *)extrasubsectors || pc_nsub != addsubsector || leveltime < pc_time)
-	{
-		// another level (or the same one started again): nothing of the old tables is valid
-		memset(pcache, 0, PCACHE_SETS * PCACHE_WAYS * sizeof(planecache_t));
-		parena_used = 0;
-		plane_epoch_sig = 0;
-		free(subhoriz);
-		subhoriz = NULL;
-		subhoriz_n = 0;
-		pc_owner = extrasubsectors;
-		pc_nsub = addsubsector;
-	}
-	pc_time = leveltime;
-	sig ^= (UINT32)cv_glshaders.value << 3;
-	sig ^= (UINT32)gl_shadersavailable << 5;
-	sig ^= (UINT32)HWR_ShouldUsePaletteRendering() << 7;
-	sig ^= (UINT32)Cubeapply << 9;
-	if (Cubeapply)
-		for (i = 0; i < 24; i++)
-		{
-			union { float f; UINT32 u; } c;
-
-			c.f = cp[i];
-			sig = (sig << 5) + sig + c.u;
-		}
-	if (sig != plane_epoch_sig)
-	{
-		plane_epoch_sig = sig;
-		plane_epoch++;
-	}
-	return true;
-}
 
 // a new level: nothing of the cache and of the horizon flags is valid
 static void HWR_PlaneCacheReset(void)
 {
-	if (pcache)
-		memset(pcache, 0, PCACHE_SETS * PCACHE_WAYS * sizeof(planecache_t));
-	parena_used = 0;
-	plane_epoch_sig = 0;
 	free(subhoriz);
 	subhoriz = NULL;
 	subhoriz_n = 0;
-	pc_owner = NULL;
+	HWR_GCacheLevel();
 }
 
 static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
@@ -598,53 +562,27 @@ static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
 	}
 	return subhoriz[n] == 2;
 }
+#endif
 
-// the entry of this plane (*hit: its tag matches) or the one to fill
-static planecache_t *HWR_PlaneCacheFind(UINT16 xsub, const sector_t *fof, UINT8 isceiling, boolean *hit)
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-211): the flat of a plane is chosen (HWR_GetLevelFlat) before HWR_RenderPlane, which made the texture current for a plane that the cache then served from its record, and
+// the record holds the texture itself. The choice is kept here and made by HWR_RenderPlane when the plane is not served from the cache (-hwgo 32768: made at once, as before).
+static levelflat_t *hwr_lf_flat;
+static boolean hwr_lf_pending, hwr_lf_chroma;
+
+static void HWR_PlaneFlat(levelflat_t *levelflat, boolean chromakeyed)
 {
-	UINT32 h = (UINT32)xsub * 2u + isceiling;
-	planecache_t *set, *victim;
-	int w;
-
-	h ^= (UINT32)(uintptr_t)fof >> 4;
-	h = (h * 2654435761u) >> 24; // 8 bits
-	set = &pcache[(h & (PCACHE_SETS - 1)) * PCACHE_WAYS];
-	*hit = true;
-	for (w = 0; w < PCACHE_WAYS; w++)
-		if (set[w].valid && set[w].xsub == xsub && set[w].fof == fof && set[w].isceiling == isceiling)
-			return &set[w];
-	*hit = false;
-	victim = &set[0];
-	for (w = 0; w < PCACHE_WAYS; w++)
+	if (gc.on && currently_batching && !(gc.mode & 4) && !(hwr_geo_off & 32768))
 	{
-		if (!set[w].valid)
-			return &set[w]; // an empty way (or one that held a plane that did not fit the arena: its tag is dropped)
-		if ((INT16)(set[w].used - victim->used) < 0)
-			victim = &set[w]; // the least recently used
+		hwr_lf_flat = levelflat;
+		hwr_lf_chroma = chromakeyed;
+		hwr_lf_pending = true;
+		return;
 	}
-	return victim;
+	HWR_GetLevelFlat(levelflat, chromakeyed);
 }
-
-static void HWR_PlaneCacheStore(planecache_t *e, const FSurfaceInfo *surf, const FOutVector *verts, UINT32 nverts, FBITFIELD flags, INT32 shader)
-{
-	if (!e->verts || e->cap < nverts)
-	{
-		if (parena_used + nverts > PCACHE_ARENA_VERTS)
-		{
-			e->valid = 0; // the arena is full: this plane is not cached
-			return;
-		}
-		e->verts = &parena[parena_used];
-		parena_used += nverts;
-		e->cap = (UINT8)nverts;
-	}
-	memcpy(e->verts, verts, nverts * sizeof(FOutVector));
-	e->surf = *surf;
-	e->flags_out = flags;
-	e->shader = (UINT8)shader;
-	e->nverts = (UINT8)nverts;
-	e->valid = 1;
-}
+#else
+#define HWR_PlaneFlat HWR_GetLevelFlat
 #endif
 
 // -----------------+
@@ -661,10 +599,13 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	size_t nrPlaneVerts;
 	INT32 i;
 #ifdef PS2_PROFILE
-	planecache_t *pce = NULL; // PS2-HW-55
-	boolean pc_hit = false;
-	UINT8 pc_xs = 0;
-	const unsigned int pc_t0 = ps2hwp_now();
+	gcent_t *gce = NULL; // OPT11 PS2-HW-80: the geometry cache entry this plane is recorded into
+	boolean lfpend = hwr_lf_pending; // the flat the caller chose is not set yet (HWR_PlaneFlat): the cache does not need it for a hit
+	const boolean lfchroma = hwr_lf_chroma;
+	UINT32 gckey[GC_KEYMAX];
+	int gckn = 0;
+	boolean gccheck = false;
+	UINT32 gcid = 0, gcid2 = 0;
 #endif
 
 	float height; // constant y for all points on the convex flat polygon
@@ -679,6 +620,13 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	static FOutVector *planeVerts = NULL;
 	static UINT16 numAllocedPlaneVerts = 0;
 
+	HWD_LOCAL; // OPT11: the parts of this function (HWPROF37, --hwdetail)
+
+#ifdef PS2_PROFILE
+	hwr_lf_pending = false;
+	if (hwr_geo_off & 16384) // (measurement only)
+		return;
+#endif
 	if (!r_renderfloors)
 		return;
 
@@ -709,89 +657,74 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	}
 
 #ifdef PS2_PROFILE
-	if (!slope && pcache_on && (!subsector || !HWR_PlaneHasHorizon(subsector)) && nrPlaneVerts < 250 && lightlevel >= -32768 && lightlevel < 32768)
+	// OPT11 PS2-HW-80: the polygon of this plane is served from the geometry cache when everything it is made of is as it was (hw_gcache.inc)
+	if (gc.on && lfpend && currently_batching && nrPlaneVerts < 250 && !(gc.mode & 4) && (!subsector || !HWR_PlaneHasHorizon(subsector)))
 	{
-		const sector_t *ss = FOFsector ? FOFsector : gl_frontsector;
-		const INT32 texnum = levelflat ? R_GetTextureNumForFlat(levelflat) : -1;
-		fixed_t kxs = FRACUNIT, kys = FRACUNIT, kxo = 0, kyo = 0;
-		angle_t kang = 0;
+		const UINT32 t0 = ps2hwp_now();
+		const sector_t *src = FOFsector ? FOFsector : gl_frontsector;
+		boolean hit;
 
-		if (ss)
+		gcid = ((UINT32)(xsub - extrasubsectors) * 2u + (isceiling ? 1u : 0u)) * 2u + 1u;
+		gcid2 = (UINT32)(uintptr_t)FOFsector;
+		gce = gc_plane_slot((UINT32)(xsub - extrasubsectors), isceiling, gcid, gcid2, &hit);
+		if (!gce)
+			goto gc_plane_nocache; // (a subsector the table does not know: made without the cache)
+		if (hit)
 		{
-			if (!isceiling)
+			const gcrh_t *rh = (const gcrh_t *)(gc.ar + gce->off);
+
+			gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, (UINT32 *)(rh + 1), false);
+			gc.c_key += ps2hwp_now() - t0;
+			if (gckn == (int)rh->keyw)
 			{
-				kxs = ss->floorxscale;
-				kys = ss->flooryscale;
-				kxo = ss->floorxoffset;
-				kyo = ss->flooryoffset;
-				kang = ss->floorangle;
+				if (!(gccheck = gc_check_this()))
+				{
+					const UINT32 t1 = ps2hwp_now();
+
+					if ((rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize)
+						|| HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+					{
+						rh = gc_promote(gce, rh);
+						gc_replay(rh, (UINT32)gce->len);
+						gc.s_pl_hit++;
+						gc.w_q++;
+						gc.w_hit++;
+						gc.c_hit += ps2hwp_now() - t1;
+						return;
+					}
+					gce = NULL; // (the allocation took the cache's memory: this plane is made the long way, nothing is recorded)
+					goto gc_plane_nocache;
+				}
 			}
-			else
+			if (!gccheck) // (a valid entry that is being checked is not a miss)
 			{
-				kxs = ss->ceilingxscale;
-				kys = ss->ceilingyscale;
-				kxo = ss->ceilingxoffset;
-				kyo = ss->ceilingyoffset;
-				kang = ss->ceilingangle;
+				gc.s_stale++;
+				gc.mmp[gckn < 0 ? (gc.mmpos < 33 ? gc.mmpos : 33) : 0]++;
 			}
 		}
-		if (texnum < 32000)
+		else
+			gc.s_new++;
+		gc.w_q++;
+		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, gckey, true);
+		if (gckn >= 0 && HWR_GCReserve(1, (UINT32)nrPlaneVerts + 8u, 0))
+			gc_rec_begin(gccheck, gckey, gckn);
+		else
 		{
-			boolean tag;
-
-			pce = HWR_PlaneCacheFind((UINT16)(xsub - extrasubsectors), FOFsector, (UINT8)isceiling, &tag);
-			if (tag && pce->fixedheight == fixedheight && pce->flags_in == PolyFlags && pce->lightlevel == (INT16)lightlevel && pce->texnum == (INT16)texnum
-				&& pce->colormap == planecolormap && pce->alpha == alpha && pce->xscale == kxs && pce->yscale == kys && pce->xoff == kxo && pce->yoff == kyo
-				&& pce->angle == kang && pce->epoch == (UINT16)plane_epoch && pce->poly == xsub->planepoly && pce->p0x == pv->x && pce->p0y == pv->y)
-			{
-				pce->used = (UINT16)validcount;
-				if (!(ps2hwd_dbg_flags & 32768))
-				{
-					HWC_ADD(HWC_PLANE_HIT);
-					if (!levelflat)
-						HWR_SetCurrentTexture(NULL);
-					HWR_ProcessPolygon(&pce->surf, pce->verts, pce->nverts, pce->flags_out, pce->shader, false);
-					ps2hwp_cyc[HWP_PL_HIT] += (unsigned int)(ps2hwp_now() - pc_t0);
-					return;
-				}
-				pc_hit = true; // check mode: calculated below and compared with the entry
-			}
-			else
-			{
-				HWC_ADD(tag ? HWC_PLANE_KEYMISS : HWC_PLANE_MISS);
-				if (tag) // which input changed (the first that differs)
-					HWC_ADD(pce->fixedheight != fixedheight ? HWC_PKM_H : pce->lightlevel != (INT16)lightlevel ? HWC_PKM_L : (pce->flags_in != PolyFlags || pce->alpha != alpha) ? HWC_PKM_F
-						: (pce->texnum != (INT16)texnum || pce->colormap != planecolormap) ? HWC_PKM_T : (pce->xscale != kxs || pce->yscale != kys || pce->xoff != kxo || pce->yoff != kyo || pce->angle != kang) ? HWC_PKM_O
-						: pce->epoch != (UINT16)plane_epoch ? HWC_PKM_E : HWC_PKM_P);
-				pc_hit = false;
-				pce->fof = FOFsector;
-				pce->xsub = (UINT16)(xsub - extrasubsectors);
-				pce->isceiling = (UINT8)isceiling;
-				pce->fixedheight = fixedheight;
-				pce->flags_in = PolyFlags;
-				pce->lightlevel = (INT16)lightlevel;
-				pce->texnum = (INT16)texnum;
-				pce->colormap = planecolormap;
-				pce->alpha = alpha;
-				pce->xscale = kxs;
-				pce->yscale = kys;
-				pce->xoff = kxo;
-				pce->yoff = kyo;
-				pce->angle = kang;
-				pce->epoch = (UINT16)plane_epoch;
-				pce->poly = xsub->planepoly;
-				pce->p0x = pv->x;
-				pce->p0y = pv->y;
-				pce->used = (UINT16)validcount;
-				pce->valid = 0; // set by the store
-			}
-			pc_xs = 1;
+			gce = NULL;
+			gc.s_pl_skip++;
 		}
 	}
 	else
-		HWC_ADD(HWC_PLANE_BYPASS);
+	{
+		gce = NULL;
+		gc.s_pl_skip++;
+	}
+gc_plane_nocache:
+	if (lfpend) // (not served from the cache: the flat is set now, inside the record when there is one)
+		HWR_GetLevelFlat(levelflat, lfchroma);
 #endif
 
+	HWD_LAP(HWP_PL_A);
 	height = FixedToFloat(fixedheight);
 
 	// Allocate plane-vertex buffer if we need to
@@ -886,6 +819,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		vert->z = (vy);\
 }
 
+	HWD_LAP(HWP_PL_B);
 #ifdef PS2_PROFILE
 	if (!slope)
 	{
@@ -929,10 +863,12 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	for (i = 0, v3d = planeVerts; i < (INT32)nrPlaneVerts; i++,v3d++,pv++)
 		SETUP3DVERT(v3d, pv->x, pv->y);
 
+	HWD_LAP(HWP_PL_C);
 	if (slope)
 		lightlevel = HWR_CalcSlopeLight(lightlevel, R_PointToAngle2(0, 0, slope->normal.x, slope->normal.y), abs(slope->zdelta));
 
 	HWR_Lighting(&Surf, lightlevel, planecolormap);
+	HWD_LAP(HWP_PL_D);
 
 	if (PolyFlags & (PF_Translucent|PF_Fog|PF_Additive|PF_Subtractive|PF_ReverseSubtract|PF_Multiplicative|PF_Environment))
 	{
@@ -954,33 +890,23 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		PolyFlags |= PF_ColorMapped;
 	}
 
-#ifdef PS2_PROFILE
-	if (pc_xs)
-	{
-		if (pc_hit)
-		{
-			// check mode: the entry against what was just calculated
-			if (pce->nverts != (UINT8)nrPlaneVerts || memcmp(pce->verts, planeVerts, nrPlaneVerts * sizeof(FOutVector)) || pce->surf.PolyColor.rgba != Surf.PolyColor.rgba
-				|| pce->surf.TintColor.rgba != Surf.TintColor.rgba || pce->surf.FadeColor.rgba != Surf.FadeColor.rgba || pce->surf.LightTableId != Surf.LightTableId
-				|| pce->surf.LightInfo.light_level != Surf.LightInfo.light_level || pce->surf.LightInfo.fade_start != Surf.LightInfo.fade_start
-				|| pce->surf.LightInfo.fade_end != Surf.LightInfo.fade_end || pce->flags_out != PolyFlags || pce->shader != (UINT8)shader)
-			{
-				HWC_ADD(HWC_PLANE_BAD);
-				if (plane_reports++ < 8)
-					I_OutputMsg("HWPLANECHECK mismatch: xsub %u ceiling %d fof %p height %d light %d tex %d nverts %u/%u flags %lx/%lx shader %u/%d\n", (unsigned)pce->xsub, (int)isceiling, (const void *)FOFsector,
-						(int)fixedheight, (int)lightlevel, (int)pce->texnum, (unsigned)pce->nverts, (unsigned)nrPlaneVerts, (unsigned long)pce->flags_out, (unsigned long)PolyFlags, (unsigned)pce->shader, (int)shader);
-			}
-			else
-				HWC_ADD(HWC_PLANE_HIT);
-		}
-		else
-			HWR_PlaneCacheStore(pce, &Surf, planeVerts, (UINT32)nrPlaneVerts, PolyFlags, shader);
-	}
-#endif
-
+	HWD_LAP(HWP_PL_E);
 	HWR_ProcessPolygon(&Surf, planeVerts, nrPlaneVerts, PolyFlags, shader, false);
+	HWD_LAP(HWP_PL_F);
 
 #ifdef PS2_PROFILE
+	if (gce)
+	{
+		const UINT32 t1 = ps2hwp_now();
+
+		gc_rec_end(gce, gcid, gcid2, gccheck, "plane", gcid >> 1);
+		gce = NULL;
+		if (gccheck)
+			gc.s_pl_hit++;
+		else
+			gc.s_pl_miss++;
+		gc.c_miss += ps2hwp_now() - t1;
+	}
 	if (subsector && HWR_PlaneHasHorizon(subsector)) // PS2-HW-58b: the flag is made once per subsector; the loop below looked at every line of the subsector (a seg and its linedef) for every plane
 #else
 	if (subsector)
@@ -1076,9 +1002,6 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 #ifdef ALAM_LIGHTING
 	// add here code for dynamic lighting on planes
 	HWR_PlaneLighting(planeVerts, nrPlaneVerts);
-#endif
-#ifdef PS2_PROFILE
-	ps2hwp_cyc[pc_xs ? HWP_PL_MISS : HWP_PL_BYP] += (unsigned int)(ps2hwp_now() - pc_t0);
 #endif
 }
 
@@ -1624,6 +1547,7 @@ static void HWR_RenderMidtexture(INT32 gl_midtexture, float cliplow, float cliph
 // Sort of like GLWall::Process in GZDoom
 static void HWR_ProcessSeg(void)
 {
+	HWD_LOCAL; // OPT11: the parts of this function (HWPROF34, --hwdetail)
 	FOutVector wallVerts[4];
 	v2d_t vs, ve; // start, end vertices of 2d line (view from above)
 
@@ -1703,6 +1627,7 @@ static void HWR_ProcessSeg(void)
 	INT32 gl_midtexture = R_GetTextureNum(gl_sidedef->midtexture);
 	GLMapTexture_t *grTex = NULL;
 
+	HWD_LAP(HWP_SG_A);
 	// two sided line
 	if (gl_backsector)
 	{
@@ -1733,6 +1658,7 @@ static void HWR_ProcessSeg(void)
 		if (!bothfloorssky)
 			gl_bottomtexture = R_GetTextureNum(gl_sidedef->bottomtexture);
 
+		HWD_LAP(HWP_SG_B);
 		// check TOP TEXTURE
 		if ((worldhighslope < worldtopslope || worldhigh < worldtop) && gl_toptexture)
 		{
@@ -1823,6 +1749,7 @@ static void HWR_ProcessSeg(void)
 				HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);
 		}
 
+		HWD_LAP(HWP_SG_C);
 		// check BOTTOM TEXTURE
 		if ((worldlowslope > worldbottomslope || worldlow > worldbottom) && gl_bottomtexture)
 		{
@@ -1908,12 +1835,14 @@ static void HWR_ProcessSeg(void)
 				HWR_ProjectWall(wallVerts, &Surf, PF_Masked, lightnum, colormap);
 		}
 
+		HWD_LAP(HWP_SG_D);
 		// Render midtexture if there's one
 		if (gl_midtexture)
 			HWR_RenderMidtexture(gl_midtexture, cliplow, cliphigh, worldtop, worldbottom, worldhigh, worldlow, worldtopslope, worldbottomslope, worldhighslope, worldlowslope, lightnum, wallVerts);
 
 		if (!gl_curline->polyseg) // Don't do it for polyobjects
 		{
+			HWD_LAP(HWP_SG_E);
 			// Sky culling
 			// No longer so much a mess as before!
 			if (gl_frontsector->ceilingpic == skyflatnum
@@ -1937,6 +1866,7 @@ static void HWR_ProcessSeg(void)
 	}
 	else
 	{
+		HWD_LAP(HWP_SG_B);
 		// Single sided line... Deal only with the middletexture (if one exists)
 		if (gl_midtexture && gl_linedef->special != SPECIAL_HORIZON_LINE) // (Ignore horizon line for OGL)
 		{
@@ -2013,6 +1943,7 @@ static void HWR_ProcessSeg(void)
 		}
 	}
 
+	HWD_LAP(HWP_SG_F);
 	//Hurdler: 3d-floors test
 	if (gl_backsector && !Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags) && (gl_backsector->ffloors || gl_frontsector->ffloors))
 	{
@@ -2077,6 +2008,10 @@ static void HWR_ProcessSeg(void)
 				}
 
 				texnum = R_GetTextureNum(side->midtexture);
+#ifdef PS2_PROFILE
+				hwr_gc_src = (INT32)(side - sides) + 1; // OPT11 (PS2-HW-213): everything this floor puts out until the next one is made with the animated texture of this side (the cache patches it)
+				hwr_gc_tnum = texnum;
+#endif
 
 				h  = P_GetFFloorTopZAt   (rover, v1x, v1y);
 				hS = P_GetFFloorTopZAt   (rover, v2x, v2y);
@@ -2233,6 +2168,10 @@ static void HWR_ProcessSeg(void)
 				}
 
 				texnum = R_GetTextureNum(side->midtexture);
+#ifdef PS2_PROFILE
+				hwr_gc_src = (INT32)(side - sides) + 1; // OPT11 (PS2-HW-213): everything this floor puts out until the next one is made with the animated texture of this side (the cache patches it)
+				hwr_gc_tnum = texnum;
+#endif
 
 				h  = P_GetFFloorTopZAt   (rover, v1x, v1y);
 				hS = P_GetFFloorTopZAt   (rover, v2x, v2y);
@@ -2346,27 +2285,135 @@ static void HWR_ProcessSeg(void)
 		}
 	}
 #undef SLOPEPARAMS
+	HWD_LAP(HWP_SG_G);
 //Hurdler: end of 3d-floors test
 }
 
-#ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the wall builder (HWPROF2 "seg")
-static void HWR_ProcessSegTimed(void)
+#ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the wall builder (HWPROF2 "seg"); OPT11 PS2-HW-80: it is served from the geometry cache when it can be
+static void HWR_ProcessSegC(void)
 {
 	HWP_SPAN_BEGIN(t);
-	HWC_ADD(HWC_SEGS);
-	{
-		// the segs a polygon cache could serve: no polyobject, no 3D floors, slopes or fake floors on either side, no two-sided middle texture
-		const seg_t *sg = gl_curline;
-		const sector_t *fs = sg->frontsector, *bs = sg->backsector;
-		const boolean simple = !sg->polyseg && !fs->ffloors && !fs->c_slope && !fs->f_slope && fs->heightsec == -1 && !fs->numlights
-			&& (!bs || (!bs->ffloors && !bs->c_slope && !bs->f_slope && bs->heightsec == -1 && !bs->numlights && !sg->sidedef->midtexture));
+	seg_t *sg = gl_curline;
 
-		HWC_ADD(simple ? (bs ? HWC_SEG_SIMPLE2 : HWC_SEG_SIMPLE1) : HWC_SEG_COMPLEX);
+	HWC_ADD(HWC_SEGS);
+	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
+		return;
+	if (!gc.on || sg->polyseg || !currently_batching || (gc.mode & 8))
+	{
+		gc.s_seg_skip++;
+		HWR_ProcessSeg();
 	}
-	HWR_ProcessSeg();
+	else
+	{
+		UINT32 gckey[GC_KEYMAX];
+		const UINT32 id = (UINT32)(sg - segs);
+		boolean hit, check = false;
+		gcent_t *e = gc_seg_slot(id, &hit);
+		int kn;
+		const UINT32 t0 = ps2hwp_now();
+
+		if (hit)
+		{
+			const gcrh_t *rh = (const gcrh_t *)(gc.ar + e->off);
+
+			kn = gc_seg_words(sg, gl_frontsector, gl_backsector, (UINT32 *)(rh + 1), false);
+			gc.c_key += ps2hwp_now() - t0;
+			if (kn == (int)rh->keyw && !(check = gc_check_this()) && (!(rh->flags & 2) || gc_src_ok(rh, e->len)))
+			{
+				const UINT32 t1 = ps2hwp_now();
+
+				if (!(rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize) // (room, no allocation: the usual case)
+					&& !HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+				{
+					HWR_ProcessSeg(); // (the allocation took the cache's memory: this seg is made the long way)
+					HWP_SPAN_END(t, HWP_SEG);
+					return;
+				}
+				rh = gc_promote(e, rh);
+				if (rh->flags & 2)
+					gc_src_patch((gcrh_t *)rh, (UINT32)e->len);
+				gl_sidedef = sg->sidedef;
+				gl_linedef = sg->linedef;
+				gc_replay(rh, (UINT32)e->len);
+				gc.s_seg_hit++;
+				gc.w_q++;
+				gc.w_hit++;
+				gc.c_hit += ps2hwp_now() - t1;
+				HWP_SPAN_END(t, HWP_SEG);
+				return;
+			}
+			// (an entry that does not match is made again; one that does and is being checked falls through with check set)
+			if (!check)
+			{
+				gc.s_stale++;
+				gc.mm[kn < 0 ? (gc.mmpos < 33 ? gc.mmpos : 33) : 0]++;
+			}
+		}
+		else
+			gc.s_new++;
+		gc.w_q++;
+		kn = gc_seg_words(sg, gl_frontsector, gl_backsector, gckey, true);
+		if (kn < 0)
+		{
+			gc.s_seg_skip++;
+			HWR_ProcessSeg();
+		}
+		else if (!HWR_GCReserve(48, 512, 16))
+		{
+			HWR_ProcessSeg(); // (the cache went)
+		}
+		else
+		{
+			const UINT32 t1 = ps2hwp_now();
+			const UINT32 bad0 = gc.s_bad;
+
+			gc_rec_begin(check, gckey, kn);
+			HWR_ProcessSeg();
+			gc_rec_end(e, id * 2u, 0, check, "seg", id);
+			{
+				const UINT32 cyc = ps2hwp_now() - t1;
+				const UINT32 bk = cyc >> 9 < 9 ? cyc >> 9 : 9;
+
+				gc.ch[bk]++;
+				gc.cl[bk] += gc.blk ? gc.rec_pos - gc.rec_start : 0;
+			}
+			if (gc.s_bad != bad0 && gc.reports <= 24)
+				I_OutputMsg("HWGC seg %u: line %d special %d front sector %d (ff %d lights %d fslope %d/%d hs %d) back %d (ff %d lights %d slopes %d/%d hs %d) tex %d/%d/%d sd off %d/%d polyseg %d\n", (unsigned)(sg - segs), (int)(sg->linedef - lines), (int)sg->linedef->special,
+					(int)(sg->frontsector - sectors), sg->frontsector->ffloors ? 1 : 0, (int)sg->frontsector->numlights, sg->frontsector->f_slope ? 1 : 0, sg->frontsector->c_slope ? 1 : 0, (int)sg->frontsector->heightsec,
+					sg->backsector ? (int)(sg->backsector - sectors) : -1, sg->backsector && sg->backsector->ffloors ? 1 : 0, sg->backsector ? (int)sg->backsector->numlights : 0,
+					sg->backsector && sg->backsector->f_slope ? 1 : 0, sg->backsector && sg->backsector->c_slope ? 1 : 0, sg->backsector ? (int)sg->backsector->heightsec : 0,
+					(int)sg->sidedef->toptexture, (int)sg->sidedef->midtexture, (int)sg->sidedef->bottomtexture, (int)sg->sidedef->textureoffset, (int)sg->sidedef->rowoffset, sg->polyseg ? 1 : 0);
+			if (check)
+				gc.s_seg_hit++;
+			else
+				gc.s_seg_miss++;
+			gc.c_miss += ps2hwp_now() - t1;
+		}
+	}
 	HWP_SPAN_END(t, HWP_SEG);
 }
-#define HWR_ProcessSeg HWR_ProcessSegTimed
+#define HWR_ProcessSeg HWR_ProcessSegC
+#endif
+
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-200): R_FakeFlat makes a copy of the sector only when it has a height sector (water) and no colormap; for all the others it returns the sector itself after
+// working out the two light levels. That is what runs for nearly every call of the BSP walk (a subsector and a two sided seg each), so it is done here without the call.
+// -hwgo 1024: R_FakeFlat for all.
+static inline sector_t *HWR_FakeFlat(sector_t *sec, sector_t *tempsec, INT32 *floorlightlevel, INT32 *ceilinglightlevel, boolean back)
+{
+	if ((sec->extra_colormap || sec->heightsec == -1) && !(hwr_geo_off & 1024))
+	{
+		if (floorlightlevel)
+			*floorlightlevel = sec->floorlightsec == -1 ?
+				(sec->floorlightabsolute ? sec->floorlightlevel : max(0, min(255, sec->lightlevel + sec->floorlightlevel))) : sectors[sec->floorlightsec].lightlevel;
+		if (ceilinglightlevel)
+			*ceilinglightlevel = sec->ceilinglightsec == -1 ?
+				(sec->ceilinglightabsolute ? sec->ceilinglightlevel : max(0, min(255, sec->lightlevel + sec->ceilinglightlevel))) : sectors[sec->ceilinglightsec].lightlevel;
+		return sec;
+	}
+	return R_FakeFlat(sec, tempsec, floorlightlevel, ceilinglightlevel, back);
+}
+#define R_FakeFlat HWR_FakeFlat
 #endif
 
 // From PrBoom:
@@ -2472,12 +2519,47 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 // Notes            : gl_cursectorlight is set to the current subsector -> sector -> light value
 //                  : (it may be mixed with the wall's own flat colour in the future ...)
 // -----------------+
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-206): R_PointToAngle64 of a vertex of the map once per view (it is a function of the point and of the eye only). The segs of a subsector follow each other,
+// but the vertex is also an end of the segs of the next subsectors and of the other side of the line. -hwgo 4096: calculated every time.
+static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
+{
+	if (v && gc.on && !(hwr_geo_off & 4096))
+	{
+		const size_t i = (size_t)(v - vertexes);
+
+		if (i < gc.nvert)
+		{
+			const size_t k = i & gc.vmask; // (a place with a tag: another vertex with the same low bits takes it)
+
+			if (gc.vtag[k] == (UINT32)i + 1u && gc.vst[k] == (UINT32)validcount)
+			{
+				HWD_ADD(HWC_AL_VHIT);
+				return gc.vang[k];
+			}
+			gc.vtag[k] = (UINT32)i + 1u;
+			gc.vst[k] = (UINT32)validcount;
+			return gc.vang[k] = R_PointToAngle64(x, y);
+		}
+	}
+	return R_PointToAngle64(x, y);
+}
+#endif
+
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-214): half of the calls of HWR_AddLine are segs that face away: they are rejected after the two angles, and the function saved and restored ten registers for
+// the part that follows. The rest is a function of its own; the front keeps what the rejected seg needs.
+static void HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2);
+#endif
+
 static void HWR_AddLine(seg_t * line)
 {
 	angle_t angle1, angle2;
 
+#ifndef PS2_PROFILE
 	// SoM: Backsector needs to be run through R_FakeFlat
 	static sector_t tempsec;
+#endif
 
 	fixed_t v1x, v1y, v2x, v2y; // the seg's vertexes as fixed_t
 	if (line->polyseg && !(line->polyseg->flags & POF_RENDERSIDES))
@@ -2507,17 +2589,54 @@ static void HWR_AddLine(seg_t * line)
 	}
 
 	// OPTIMIZE: quickly reject orthogonal back sides.
+#ifdef PS2_PROFILE
+	{
+		// OPT11 PS2-HW-81: the segs of a subsector follow one another: the second vertex of the one is mostly the first of the next. R_PointToAngle64 is a function of the
+		// point and of the eye only, so the angle of the last second vertex is the angle of this first one (-hwgo 1: both angles every time)
+		static fixed_t al_x, al_y, al_vx, al_vy;
+		static angle_t al_angle;
+		static boolean al_valid;
+
+		if (al_valid && !(hwr_geo_off & 1) && v1x == al_x && v1y == al_y && viewx == al_vx && viewy == al_vy)
+			angle1 = al_angle;
+		else
+			angle1 = HWR_VertAngle(gl_curline->pv1 ? NULL : gl_curline->v1, v1x, v1y);
+		angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
+		al_x = v2x;
+		al_y = v2y;
+		al_vx = viewx;
+		al_vy = viewy;
+		al_angle = angle2;
+		al_valid = true;
+	}
+#else
 	angle1 = R_PointToAngle64(v1x, v1y);
 	angle2 = R_PointToAngle64(v2x, v2y);
+#endif
+	HWD_ADD(HWC_AL_CALLS);
 
 	// PrBoom: Back side, i.e. backface culling - read: endAngle >= startAngle!
 	if (angle2 - angle1 < ANGLE_180)
+	{
+		HWD_ADD(HWC_AL_BACK);
 		return;
+	}
+
+#ifdef PS2_PROFILE
+	HWR_AddLineSeen(line, angle1, angle2);
+}
+
+static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2)
+{
+	// SoM: Backsector needs to be run through R_FakeFlat
+	static sector_t tempsec;
+#endif
 
 	// PrBoom: use REAL clipping math YAYYYYYYY!!!
 
 	if (!gld_clipper_SafeCheckRange(angle2, angle1))
     {
+		HWD_ADD(HWC_AL_CLIP);
 		return;
     }
 
@@ -2564,7 +2683,10 @@ static void HWR_AddLine(seg_t * line)
 		//  identical light levels on both sides,
 		//  and no middle texture.
 		if (checkforemptylines && R_IsEmptyLine(line, gl_frontsector, gl_backsector))
+		{
+			HWD_ADD(HWC_AL_EMPTY);
 			return;
+		}
     }
 
 	HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
@@ -2599,6 +2721,7 @@ static boolean HWR_CheckBBox(fixed_t *bspcoord)
 	else
 		boxpos |= 2<<2;
 
+	HWD_ADD(HWC_AL_BOX);
 	if (boxpos == 5)
 		return true;
 
@@ -2609,7 +2732,12 @@ static boolean HWR_CheckBBox(fixed_t *bspcoord)
 
 	angle1 = R_PointToAngle64(px1, py1);
 	angle2 = R_PointToAngle64(px2, py2);
-	return gld_clipper_SafeCheckRange(angle2, angle1);
+	if (!gld_clipper_SafeCheckRange(angle2, angle1))
+	{
+		HWD_ADD(HWC_AL_BOXREJ);
+		return false;
+	}
+	return true;
 }
 
 //
@@ -2940,6 +3068,9 @@ static void HWR_Subsector(size_t num)
 	locFloorHeight    = P_GetSectorFloorZAt  (gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 	locCeilingHeight  = P_GetSectorCeilingZAt(gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 
+#ifdef PS2_PROFILE
+	if (gl_frontsector->ffloors || (hwr_geo_off & 1024)) // OPT11 (PS2-HW-200): the function does nothing for a sector without 3D floors
+#endif
 	R_CheckSectorLightLists(sub->sector, gl_frontsector, &floorlightlevel, &ceilinglightlevel, &floorcolormap, &ceilingcolormap);
 
 	sub->sector->extra_colormap = gl_frontsector->extra_colormap;
@@ -2952,7 +3083,7 @@ static void HWR_Subsector(size_t num)
 		{
 			if (sub->validcount != validcount)
 			{
-				HWR_GetLevelFlat(&levelflats[gl_frontsector->floorpic], false);
+				HWR_PlaneFlat(&levelflats[gl_frontsector->floorpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], false,
 					// Hack to make things continue to work around slopes.
 					locFloorHeight == cullFloorHeight ? locFloorHeight : gl_frontsector->floorheight,
@@ -2968,7 +3099,7 @@ static void HWR_Subsector(size_t num)
 		{
 			if (sub->validcount != validcount)
 			{
-				HWR_GetLevelFlat(&levelflats[gl_frontsector->ceilingpic], false);
+				HWR_PlaneFlat(&levelflats[gl_frontsector->ceilingpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], true,
 					// Hack to make things continue to work around slopes.
 					locCeilingHeight == cullCeilingHeight ? locCeilingHeight : gl_frontsector->ceilingheight,
@@ -3043,7 +3174,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_GetLevelFlat(&levelflats[*rover->bottompic], rover->fofflags & FOF_SPLAT);
+					HWR_PlaneFlat(&levelflats[*rover->bottompic], rover->fofflags & FOF_SPLAT);
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, viewz < bottomCullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], false, *rover->bottomheight, HWR_RippleBlend(gl_frontsector, rover, false)|PF_Occlude,
 					                HWR_FloorLightLevel(rover->master->frontsector, *gl_frontsector->lightlist[light].lightlevel),
@@ -3089,7 +3220,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_GetLevelFlat(&levelflats[*rover->toppic], rover->fofflags & FOF_SPLAT);
+					HWR_PlaneFlat(&levelflats[*rover->toppic], rover->fofflags & FOF_SPLAT);
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, viewz < topCullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], true, *rover->topheight, HWR_RippleBlend(gl_frontsector, rover, false)|PF_Occlude,
 					                  HWR_CeilingLightLevel(rover->master->frontsector, *gl_frontsector->lightlist[light].lightlevel),
@@ -3228,6 +3359,134 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 static UINT32 gl_visspritecount;
 static gl_vissprite_t *gl_visspritechunks[MAXVISSPRITES >> VISSPRITECHUNKBITS] = {NULL};
 
+#ifdef PS2_PROFILE
+#define HWR_USING_INTERP() (hwr_fx_interp)
+#else
+#define HWR_USING_INTERP() (R_UsingFrameInterpolation() && !paused)
+#endif
+
+#ifdef PS2_PROFILE
+// PS2-HW-240: the reaches of the sprites (HWR_FX_ThingHidden)
+typedef struct
+{
+	float hr, vr; // the largest horizontal reach of a picture of the sprite from its position, and vertical (in pixels, scale 1)
+	SINT8 ok; // 0: not made, 1: made, -1: the sprite has no pictures
+} hwr_fx_ext_t;
+
+static hwr_fx_ext_t hwr_fx_ext[NUMSPRITES];
+static size_t hwr_fx_ext_lumps;
+static UINT16 hwr_fx_ext_wads;
+static boolean hwr_fx_interp; // R_UsingFrameInterpolation() && !paused, once per view (HWR_ClearSprites)
+static boolean hwr_fx_lerp; // this frame's things are drawn between two tics (rendertimefrac < 1): their positions are bounded by the old ones
+static patch_t *hwr_fx_dshadow; // the picture of the drop shadow of this frame (PS2-HW-242)
+static boolean hwr_fx_blok; // R_BlendLevelVisible(AST_TRANSLUCENT, 0) (a thing of full alpha and the default blend mode), made once per view
+static boolean hwr_fx_viewok; // the view's object has not been removed (R_ThingVisible asks for every thing)
+static mobj_t *hwr_fx_follow; // ... and the object that follows the view's player
+static boolean hwr_fx_plain; // PS2-HW-254: HWR_ProjectPlain may be tried (this view draws sprites, not models)
+static float hwr_fx_rsin, hwr_fx_rcos; // the right vector of the view (sprites that face the viewer), made once per view
+static boolean HWR_ProjectPlain(mobj_t *thing);
+static UINT16 hwr_fx_fullcnt[1024]; // census (-hwdbg 1073741824): the things that take HWR_ProjectSprite, by sprite, and why
+static UINT32 hwr_fx_fullwhy[12];
+static void HWR_FX_ProjectChecked(mobj_t *thing);
+static UINT32 hwr_fx_view; // counts the views (HWR_ClearSprites): the patch cache and the surfaces below are made again in every view
+static int hwr_fx_spr_shader; // the shader slot of SHADER_SPRITE (what HWR_ProcessPolygon asks of HWR_ShaderOfTarget)
+static ps2spr_t hwr_fx_chk; // check mode (-hwfx 2): what the stream's builder made of the sprite, HWR_DrawSprite compares it with the polygon it makes
+static boolean hwr_fx_chk_ok;
+static struct { UINT32 view; UINT8 level; extracolormap_t *cm; FSurfaceInfo surf; } hwr_fx_lc[8]; // PS2-HW-259: the surfaces HWR_Lighting makes of (light level, colormap of the sector) in this view
+
+static const FSurfaceInfo *HWR_FX_LightSurf(UINT8 level, extracolormap_t *cm)
+{
+	const UINT32 h = ((UINT32)level + ((UINT32)((uintptr_t)cm >> 4)) * 5u) & 7u;
+
+	if (hwr_fx_lc[h].view != hwr_fx_view || hwr_fx_lc[h].level != level || hwr_fx_lc[h].cm != cm)
+	{
+		hwr_fx_lc[h].surf.PolyFlags = 0;
+		HWR_Lighting(&hwr_fx_lc[h].surf, level, cm);
+		hwr_fx_lc[h].view = hwr_fx_view;
+		hwr_fx_lc[h].level = level;
+		hwr_fx_lc[h].cm = cm;
+	}
+	return &hwr_fx_lc[h].surf;
+}
+static boolean hwr_fx_useshader; // HWR_UseShader() of this view
+static int hwr_fx_shchk; // check mode: what the shadow builder said of the shadow being drawn the old way (1 built, 2 nothing to draw)
+static void HWR_FX_SpriteCheck(const FSurfaceInfo *surf, const FOutVector *v, FBITFIELD flags, int shader_target);
+static boolean hwr_fx_cheap; // PS2-HW-257 on for this view
+static const ps2cull_t *hwr_fx_cs; // the view of the driver for the sphere tests of this sector's things (HWR_AddSprites), NULL: not valid
+static struct { lumpnum_t ln; UINT32 view; patch_t *p; } hwr_fx_pc[256]; // the patches of the sprite lumps of this view (W_CachePatchNum is two calls and a tag change: 150 cycles for each of the 300 sprites of a frame)
+
+// PS2-HW-248: R_ThingVisible with what does not change in a view made once per view (it was 70 cycles for each of the 1771 things of a DEMO_004 frame)
+static inline boolean HWR_FX_ThingVisible(mobj_t *thing)
+{
+	if (thing->sprite == SPR_NULL || (thing->flags2 & MF2_DONTDRAW) || (thing->drawonlyforplayer && thing->drawonlyforplayer != viewplayer))
+		return false;
+	if (thing->alpha == FRACUNIT && thing->blendmode == AST_TRANSLUCENT)
+	{
+		if (!hwr_fx_blok)
+			return false;
+	}
+	else if (!R_BlendLevelVisible(thing->blendmode, R_GetThingTransTable(thing->alpha, 0)))
+		return false;
+	if (hwr_fx_viewok && (r_viewmobj == thing || hwr_fx_follow == thing || r_viewmobj == thing->dontdrawforviewmobj))
+		return false;
+	return true;
+}
+
+
+// the sphere of radius R around (X, Y, Z) (the coordinates of FOutVector: x, height, y) lies wholly outside one side of the view volume, with every point of it at least
+// twice the near plane away from the eye: a quad inside it is hidden for PS2HWD_QuadHidden
+static inline boolean HWR_FX_SphereHidden(const ps2cull_t *cs, float X, float Y, float Z, float R)
+{
+	float cx, cy, cw;
+
+	cw = cs->r[3][0] * X + cs->r[3][1] * Y + cs->r[3][2] * Z + cs->r[3][3];
+	if (cw - cs->nw * R < cs->w2)
+		return false; // a corner could be near the eye: the clipper decides
+	cx = cs->r[0][0] * X + cs->r[0][1] * Y + cs->r[0][2] * Z + cs->r[0][3];
+	if ((cx - cw) - cs->nxm * R > 0.0f || (cx + cw) + cs->nxp * R < 0.0f)
+		return true;
+	cy = cs->r[1][0] * X + cs->r[1][1] * Y + cs->r[1][2] * Z + cs->r[1][3];
+	return (cy - cw) - cs->nym * R > 0.0f || (cy + cw) + cs->nyp * R < 0.0f;
+}
+// PS2-HW-251 (FX3): PS2HWD_QuadHidden of a quad whose corners 1 and 3 are the neighbours of the corner 0 and the corner 2 is the fourth of a parallelogram (the drop shadow:
+// the square on the floor or on a slope, the shape of the sprite of cv_shadow 2): from the rows of the transform, without the four transforms. -hwfx 16384: as before.
+static boolean HWR_FX_QuadHidden(const FOutVector *v)
+{
+	if (!(ps2hwd_fx2 & FX3_NOPARA))
+	{
+		const ps2cull_t *cs = PS2HWD_CullSetup();
+
+		if (cs->valid)
+		{
+			const float p0[3] = {v[0].x, v[0].y, v[0].z};
+			const float r[3] = {v[1].x - v[0].x, v[1].y - v[0].y, v[1].z - v[0].z};
+			const float u[3] = {v[3].x - v[0].x, v[3].y - v[0].y, v[3].z - v[0].z};
+			const boolean h = PS2HWD_ParaHidden(cs, p0, r, u) != 0;
+
+			if (ps2hwd_fx2 & FX2_PRECHECK)
+			{
+				static unsigned chk, bad;
+				const boolean o = PS2HWD_QuadHidden(v) != 0;
+
+				chk++;
+				if (o != h)
+				{
+					bad++;
+					if (bad <= 20)
+						CONS_Printf("HWC shadow para MISMATCH %u of %u: new %d old %d\n", bad, chk, (int)h, (int)o);
+				}
+				else if (!(chk & 1023))
+				{
+					CONS_Printf("HWC shadow para check: %u quads, %u differ\n", chk, bad);
+				}
+			}
+			return h;
+		}
+	}
+	return PS2HWD_QuadHidden(v) != 0;
+}
+#endif
+
 // --------------------------------------------------------------------------
 // HWR_ClearSprites
 // Called at frame start.
@@ -3235,6 +3494,27 @@ static gl_vissprite_t *gl_visspritechunks[MAXVISSPRITES >> VISSPRITECHUNKBITS] =
 static void HWR_ClearSprites(void)
 {
 	gl_visspritecount = 0;
+#ifdef PS2_PROFILE
+	hwr_fx_dshadow = NULL;
+	hwr_fx_blok = R_BlendLevelVisible(AST_TRANSLUCENT, 0);
+	hwr_fx_viewok = !P_MobjWasRemoved(r_viewmobj);
+	hwr_fx_follow = (hwr_fx_viewok && r_viewmobj->player) ? r_viewmobj->player->followmobj : NULL;
+	hwr_fx_interp = R_UsingFrameInterpolation() && !paused; // PS2-HW-245: asked once per view (the answer costs 100 cycles: the refresh rate of the display mode is looked up), not by every thing
+	hwr_fx_lerp = hwr_fx_interp && rendertimefrac != FRACUNIT; // (PS2-HW-240)
+	hwr_fx_plain = !cv_glmodels.value && r_renderthings && !(ps2hwd_fx2 & FX3_NOPLAIN); // PS2-HW-254
+	hwr_fx_useshader = HWR_UseShader();
+	hwr_fx_cheap = !(ps2hwd_fx2 & FX3_NOLEAN2);
+	hwr_fx_view++;
+	hwr_fx_spr_shader = HWR_GetShaderFromTarget(SHADER_SPRITE);
+	hwr_fx_rsin = FIXED_TO_FLOAT(FINESINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
+	hwr_fx_rcos = FIXED_TO_FLOAT(FINECOSINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
+	if (hwr_fx_ext_lumps != numspritelumps || hwr_fx_ext_wads != numwadfiles)
+	{
+		memset(hwr_fx_ext, 0, sizeof hwr_fx_ext); // the sprite pictures have changed (an add-on): the reaches are made again
+		hwr_fx_ext_lumps = numspritelumps;
+		hwr_fx_ext_wads = numwadfiles;
+	}
+#endif
 }
 
 // --------------------------------------------------------------------------
@@ -3274,13 +3554,35 @@ typedef struct
 } zbuffersprite_t;
 
 // this list is used to store data about linkdraw sprites
+#ifdef PS2
+// PS2-171 (OPT11-STAB): 172 KB of .bss that a software game never uses: the list grows in the zone (64 entries at first) and is given back with the renderer
+static zbuffersprite_t *linkdrawlist;
+static UINT32 linkdrawcap;
+#else
 zbuffersprite_t linkdrawlist[MAXVISSPRITES];
+#endif
 UINT32 linkdrawcount = 0;
 
 // add the necessary data to the list for delayed z-buffer drawing
 static void HWR_LinkDrawHackAdd(FOutVector *verts, gl_vissprite_t *spr)
 {
+#ifdef PS2
+	if (linkdrawcount >= linkdrawcap && linkdrawcap < MAXVISSPRITES)
+	{
+		const UINT32 ncap = linkdrawcap ? (linkdrawcap * 2 < MAXVISSPRITES ? linkdrawcap * 2 : MAXVISSPRITES) : 64;
+		zbuffersprite_t *n = linkdrawlist ? Z_TryReallocAlign(linkdrawlist, ncap * sizeof *linkdrawlist, PU_STATIC, NULL, 4)
+			: Z_TryMallocAlign(ncap * sizeof *linkdrawlist, PU_STATIC, NULL, 4);
+
+		if (n) // no room: this sprite's depth-only pass is dropped (a link-draw sprite is a tiny part of a frame)
+		{
+			linkdrawlist = n;
+			linkdrawcap = ncap;
+		}
+	}
+	if (linkdrawcount < linkdrawcap)
+#else
 	if (linkdrawcount < MAXVISSPRITES)
+#endif
 	{
 		memcpy(linkdrawlist[linkdrawcount].verts, verts, sizeof(FOutVector) * 4);
 		linkdrawlist[linkdrawcount].spr = spr;
@@ -3309,7 +3611,190 @@ static void HWR_LinkDrawHackFinish(void)
 	linkdrawcount = 0;
 }
 
+#ifdef PS2_PROFILE
+// --------------------------------------------------------------------------
+// PS2-HW-259 (OPT11 round 3, FX3): the drop shadow of a plain sprite of the sprite batch straight into the sprite stream.
+// HWR_DrawDropShadow makes four vertices, a surface and the flags for HWR_ProcessPolygon, which the stream's hook takes apart again into the record it keeps (the parallelogram P0 = corner 0,
+// R = corner 1 - corner 0, U = corner 3 - corner 0, the s/t of its sides); for the common shadow (the default shadow mode, a level floor, no colormap or 3D light in the sector, none of
+// the special sectors, the DSHADOW picture in the GS pool) the record is written at once, from the same numbers in the same operations (the corners are rounded the way the vertices
+// are). Returns 0: not this shadow (nothing was done, HWR_DrawDropShadow makes it), 1: the record is in *e, 2: no shadow is drawn (a floor too far away, a sphere around the quad that
+// lies outside the view). -hwfx 2 (check mode): the old function runs for every shadow and the polygon it makes is compared with the record built here (HWC stream MISMATCH).
+// -hwfx 16777216 (FX3_NOSHADOW2): this builder is off.
+// --------------------------------------------------------------------------
+static int HWR_FX_ShadowBuild(gl_vissprite_t *spr, mobj_t *thing, fixed_t scale, ps2spr_t *e)
+{
+	patch_t *gpatch = hwr_fx_dshadow;
+	const GLPatch_t *gp;
+	GLMipmap_t *m;
+	sector_t *sector;
+	extracolormap_t *colormap = NULL;
+	interpmobjstate_t interp = {0};
+	fixed_t groundz, floordiff, scalemul;
+	pslope_t *groundslope;
+	INT32 phs;
+	UINT16 alpha;
+	float fscale, fx, fy, offset, shadowlift, x0, x2, z0, z1, y0, y1, y3;
+	const SINT8 flip = P_MobjFlip(thing);
+
+	if (cv_shadow.value != 1 || !spr || spr->mobj != thing || !spr->ps2_iok || !gpatch || !hwr_fx_cheap || !hwr_fx_useshader || (ps2hwd_fx2 & (FX2_NOSHADOW | FX3_NOSHADOW2)) || HWR_PS2_NoCull())
+		return PS2HWD_SprNote(1), 0;
+	gp = (const GLPatch_t *)gpatch->hardware;
+	if (!gp || !gp->mipmap || !gp->mipmap->format || !gp->mipmap->downloaded)
+		return PS2HWD_SprNote(2), 0;
+	m = gp->mipmap;
+	sector = thing->subsector->sector;
+	if (!(thing->renderflags & RF_NOCOLORMAPS))
+	{
+		if (sector->numlights)
+			return PS2HWD_SprNote(3), 0; // (the colormap of the light at the floor: the old function)
+		colormap = sector->extra_colormap;
+	}
+	phs = (viewplayer->mo && viewplayer->mo->subsector) ? viewplayer->mo->subsector->sector->heightsec : -1;
+	if (sector->heightsec != -1 && phs != -1)
+		return PS2HWD_SprNote(4), 0;
+
+	interp.x = spr->ps2_ix;
+	interp.y = spr->ps2_iy;
+	interp.z = spr->ps2_iz;
+	interp.radius = spr->ps2_ir;
+	interp.height = spr->ps2_ih;
+	interp.subsector = spr->ps2_isub ? spr->ps2_isub : R_PointInSubsector(interp.x, interp.y);
+	groundz = R_GetShadowZInterp(thing, &interp, &groundslope);
+
+	floordiff = abs((flip < 0 ? interp.height : 0) + interp.z - groundz);
+	alpha = floordiff / (4*FRACUNIT) + 75;
+	if (alpha >= 255)
+		return PS2HWD_SprNote(6), 2;
+	alpha = 255 - alpha;
+
+	scalemul = FixedMul(FRACUNIT - floordiff/640, scale);
+	scalemul = FixedMul(scalemul, (interp.radius*2) / gpatch->height);
+	fscale = FIXED_TO_FLOAT(scalemul);
+	fx = FIXED_TO_FLOAT(interp.x);
+	fy = FIXED_TO_FLOAT(interp.y);
+	if (fabsf(fscale - 1.0f) > 1.0E-36f)
+		offset = ((gpatch->height)/2) * fscale;
+	else
+		offset = (float)((gpatch->height)/2);
+	{
+		const float sdx = fx - gl_viewx, sdy = fy - gl_viewy, sdz = gl_viewz - FIXED_TO_FLOAT(groundz);
+		float sh = fabsf(sdz), lift;
+
+		sh = sh < 16.0f ? 16.0f : sh;
+		lift = (sdx * sdx + sdy * sdy + sdz * sdz) * (1.0f / 640.0f) / sh;
+		shadowlift = lift < 0.05f ? 0.05f : lift > 6.0f ? 6.0f : lift;
+	}
+	if (!groundslope && !(ps2hwd_fx2 & FX2_PRECHECK))
+	{
+		const ps2cull_t *cs = PS2HWD_CullSetup();
+
+		if (cs->valid && HWR_FX_SphereHidden(cs, fx, FIXED_TO_FLOAT(groundz) + flip * shadowlift, fy, offset * 1.4143f + shadowlift + 0.5f))
+			return PS2HWD_SprNote(7), 2;
+	}
+
+	// the corners: [0] (fx - offset, fy + offset), [1] (fx - offset, fy - offset), [2] (fx + offset, fy - offset), [3] (fx + offset, fy + offset), each x and z rounded as fx + (x - fx)
+	x0 = fx - offset;
+	x2 = fx + offset;
+	z0 = fy + offset;
+	z1 = fy - offset;
+	x0 = fx + (x0 - fx);
+	x2 = fx + (x2 - fx);
+	z0 = fy + (z0 - fy);
+	z1 = fy + (z1 - fy);
+	if (groundslope)
+	{
+		// a slope: the height of each corner (the old function: P_GetSlopeZAt of the corner rounded to a fixed point number); the quad stays a parallelogram if corner 2 is within 0.01 of P0 + R + U
+		float y2;
+
+		y0 = FIXED_TO_FLOAT(P_GetSlopeZAt(groundslope, FLOAT_TO_FIXED(x0), FLOAT_TO_FIXED(z0))) + flip * shadowlift;
+		y1 = FIXED_TO_FLOAT(P_GetSlopeZAt(groundslope, FLOAT_TO_FIXED(x0), FLOAT_TO_FIXED(z1))) + flip * shadowlift;
+		y2 = FIXED_TO_FLOAT(P_GetSlopeZAt(groundslope, FLOAT_TO_FIXED(x2), FLOAT_TO_FIXED(z1))) + flip * shadowlift;
+		y3 = FIXED_TO_FLOAT(P_GetSlopeZAt(groundslope, FLOAT_TO_FIXED(x2), FLOAT_TO_FIXED(z0))) + flip * shadowlift;
+		if (fabsf(y2 - (y0 + (y1 - y0) + (y3 - y0))) > 0.01f)
+			return PS2HWD_SprNote(5), 0;
+	}
+	else
+	{
+		y0 = y1 = y3 = FIXED_TO_FLOAT(groundz) + flip * shadowlift;
+	}
+	PS2HWD_SprNote(0);
+	e->p0[0] = x0;
+	e->p0[1] = y0;
+	e->p0[2] = z0;
+	e->r[0] = x0 - x0;
+	e->r[1] = y1 - y0;
+	e->r[2] = z1 - z0;
+	e->u[0] = x2 - x0;
+	e->u[1] = y3 - y0;
+	e->u[2] = z0 - z0;
+	e->sl = 0;
+	e->sr = gp->max_s;
+	e->tt = 0;
+	e->tb = gp->max_t;
+
+	e->surf = *HWR_FX_LightSurf(0, colormap);
+	e->surf.PolyColor.s.alpha = FixedMul(thing->alpha, alpha);
+	e->surf.LightInfo.light_level = 0;
+	e->flags = (unsigned int)(PF_Translucent | PF_Modulated | PF_ColorMapped);
+	e->shader = hwr_fx_spr_shader;
+	e->tex = m;
+	return 1;
+}
+
+// the shadow goes to the stream (true), or nothing is drawn for it (true), or HWR_DrawDropShadow makes it (false)
+static boolean HWR_FX_ShadowFast(gl_vissprite_t *spr)
+{
+	ps2spr_t *e;
+	GLMipmap_t *m;
+	int r;
+
+	if (!(currently_batching && hwr_sprite_batch) || (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX3_NOSHADOW2 | FX2_PRECHECK)))
+		return false;
+	e = PS2HWD_SprSlot(1);
+	if (!e)
+		return false;
+	r = HWR_FX_ShadowBuild(spr, spr->mobj, spr->mobj->shadowscale, e);
+	if (r == 2)
+		return true;
+	if (r != 1)
+		return false;
+	m = (GLMipmap_t *)e->tex;
+	PS2HWD_TouchTexture(m);
+	if (m->data)
+		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+	return PS2HWD_SprCommit(1) != 0;
+}
+
+static void HWR_DrawDropShadowGen(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale);
+
 static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale)
+{
+	if (ps2hwd_fx2 & FX2_PRECHECK)
+	{
+		// check mode: the polygon of the old function is compared with the record of the builder (HWR_FX_SpriteCheck at the polygon), and a shadow the builder made that the old
+		// function does not draw (or the other way round) is reported
+		hwr_fx_shchk = (currently_batching && hwr_sprite_batch) ? HWR_FX_ShadowBuild(spr, thing, scale, &hwr_fx_chk) : 0;
+		hwr_fx_chk_ok = hwr_fx_shchk == 1;
+		HWR_DrawDropShadowGen(thing, spr, scale);
+		if (hwr_fx_shchk == 1)
+		{
+			static unsigned bad;
+
+			CONS_Printf("HWC shadow stream MISMATCH %u: built, the old function drew none\n", ++bad);
+		}
+		hwr_fx_shchk = 0;
+		hwr_fx_chk_ok = false;
+		return;
+	}
+	if (HWR_FX_ShadowFast(spr))
+		return;
+	HWR_DrawDropShadowGen(thing, spr, scale);
+}
+
+static void HWR_DrawDropShadowGen(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale)
+#else
+static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale)
+#endif
 {
 	patch_t *gpatch;
 	FOutVector shadowVerts[4];
@@ -3329,11 +3814,42 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	fixed_t groundz;
 	fixed_t slopez;
 	pslope_t *groundslope;
+	float shadowlift = 0.05f; // how far above the floor the shadow lies (PS2-HW-124)
+
+	HWD_LOCAL; // OPT11: the parts of this function (HWPROF36, --hwdetail)
 
 	// uncapped/interpolation
 	interpmobjstate_t interp = {0};
 
-	if (R_UsingFrameInterpolation() && !paused)
+#ifdef PS2_PROFILE
+	if (spr && spr->mobj == thing && spr->ps2_iok)
+	{
+		// PS2-HW-245: the state HWR_ProjectSprite made for this frame (between two tics: the lerp of x, y, z, the BSP descent for the subsector, once more for every use)
+		interp.x = spr->ps2_ix;
+		interp.y = spr->ps2_iy;
+		interp.z = spr->ps2_iz;
+		interp.radius = spr->ps2_ir;
+		interp.height = spr->ps2_ih;
+		interp.subsector = spr->ps2_isub ? spr->ps2_isub : R_PointInSubsector(interp.x, interp.y);
+		HWD_LAP(HWP_SH_A);
+		groundz = R_GetShadowZInterp(thing, &interp, &groundslope);
+	}
+	else if (!(ps2hwd_fx2 & FX2_NOSHADOW) && !hwr_fx_lerp)
+	{
+		// PS2-HW-242: no frame between two tics: the state is the thing's own (R_InterpolateMobjState with FRACUNIT copies these fields), and R_GetShadowZ does not make it again
+		interp.x = thing->x;
+		interp.y = thing->y;
+		interp.z = thing->z;
+		interp.radius = thing->radius;
+		interp.height = thing->height;
+		interp.subsector = thing->subsector;
+		HWD_LAP(HWP_SH_A);
+		groundz = R_GetShadowZInterp(thing, &interp, &groundslope);
+	}
+	else
+#endif
+	{
+	if (HWR_USING_INTERP())
 	{
 		R_InterpolateMobjState(thing, rendertimefrac, &interp);
 	}
@@ -3342,7 +3858,10 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		R_InterpolateMobjState(thing, FRACUNIT, &interp);
 	}
 
+	HWD_LAP(HWP_SH_A);
 	groundz = R_GetShadowZ(thing, &groundslope);
+	}
+	HWD_LAP(HWP_SH_B);
 
 	heightsec = thing->subsector->sector->heightsec;
 	if (viewplayer->mo && viewplayer->mo->subsector)
@@ -3374,15 +3893,23 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		static lumpnum_t dshadow_lump = LUMPERROR; // the lump of the shadow picture is looked up by name once per set of loaded files (a lookup per shadow was 1000+ cycles)
 		static UINT16 dshadow_wads;
 
-		if (dshadow_lump == LUMPERROR || dshadow_wads != numwadfiles)
+		if (hwr_fx_dshadow && !(ps2hwd_fx2 & FX2_NOSHADOW))
 		{
-			dshadow_lump = W_CheckNumForPatchName("DSHADOW");
-			dshadow_wads = numwadfiles;
+			gpatch = hwr_fx_dshadow; // PS2-HW-242: the picture of the first shadow of the frame (a PU_SPRITE block stays where it is until the level ends)
 		}
-		if (dshadow_lump == LUMPERROR)
-			gpatch = (patch_t *)W_CachePatchName("DSHADOW", PU_SPRITE); // as before: the "missing" picture
 		else
-			gpatch = (patch_t *)W_CachePatchNum(dshadow_lump, PU_SPRITE);
+		{
+			if (dshadow_lump == LUMPERROR || dshadow_wads != numwadfiles)
+			{
+				dshadow_lump = W_CheckNumForPatchName("DSHADOW");
+				dshadow_wads = numwadfiles;
+			}
+			if (dshadow_lump == LUMPERROR)
+				gpatch = (patch_t *)W_CachePatchName("DSHADOW", PU_SPRITE); // as before: the "missing" picture
+			else
+				gpatch = (patch_t *)W_CachePatchNum(dshadow_lump, PU_SPRITE);
+			hwr_fx_dshadow = gpatch;
+		}
 	}
 	else
 		gpatch = spr->gpatch;
@@ -3390,7 +3917,12 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	gpatch = (cv_shadow.value == 2) ? spr->gpatch : (patch_t *)W_CachePatchName("DSHADOW", PU_SPRITE);
 #endif
 	if (!(gpatch && gpatch->hardware && ((GLPatch_t *)gpatch->hardware)->mipmap->format)) return;
+	HWD_LAP(HWP_SH_C);
+#ifdef PS2_PROFILE
+	if (ps2hwd_fx2 & FX2_NOSHADOW) // PS2-HW-242: the picture is made resident only for a shadow that is drawn (after the quad test below; 150 cycles for the 70 % that are not)
+#endif
 	HWR_GetPatch(gpatch);
+	HWD_LAP(HWP_SH_D);
 
 	scalemul = FixedMul(FRACUNIT - floordiff/640, scale);
 	scalemul = FixedMul(scalemul, (interp.radius*2) / gpatch->height);
@@ -3408,6 +3940,34 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		offset = ((gpatch->height)/2) * fscale;
 	else
 		offset = (float)((gpatch->height)/2);
+
+#ifdef PS2_PROFILE
+	// PS2-HW-124: the shadow lies 0.05 units above the floor, which is not enough for the GS: the depth of a floor polygon at a pixel is interpolated from vertices
+	// snapped to 1/16 pixel, a floor seen from a low camera changes by ~400000 / h depth steps per pixel (h = camera height above it), so the snap alone moves
+	// the floor's depth by hundreds of steps, while 0.05 units are 67e6 * 0.05 / d^2 steps (d = distance): the floor won the depth test and the shadow of the
+	// player and the enemies was gone on 1/3 of the maps. The lift grows with d^2 / h (four times the snap error), at most 6 units (a pixel or two on the screen).
+	// (PS2-HW-242: made before the corners, the sphere test below needs it)
+	{
+		const float sdx = fx - gl_viewx, sdy = fy - gl_viewy, sdz = gl_viewz - FIXED_TO_FLOAT(groundz);
+		float sh = fabsf(sdz), lift;
+
+		sh = sh < 16.0f ? 16.0f : sh;
+		lift = (sdx * sdx + sdy * sdy + sdz * sdz) * (1.0f / 640.0f) / sh;
+		shadowlift = lift < 0.05f ? 0.05f : lift > 6.0f ? 6.0f : lift;
+	}
+	if (!(ps2hwd_fx2 & (FX2_NOSHADOW | FX2_PRECHECK)) && !groundslope && cv_shadow.value != 2 && !HWR_PS2_NoCull())
+	{
+		// PS2-HW-242: a shadow that no pixel of the view can show is not made at all: the quad is a square of half side `offset` on a level floor; the sphere around its
+		// centre that holds its corners (and the lift) is wholly outside one side of the view
+		const ps2cull_t *cs = PS2HWD_CullSetup();
+
+		if (cs->valid && HWR_FX_SphereHidden(cs, fx, FIXED_TO_FLOAT(groundz) + flip * shadowlift, fy, offset * 1.4143f + shadowlift + 0.5f))
+		{
+			HWD_ADD(HWC_FX_SHQHID);
+			return;
+		}
+	}
+#endif
 
 	shadowVerts[2].x = shadowVerts[3].x = fx + offset;
 	shadowVerts[1].x = shadowVerts[0].x = fx - offset;
@@ -3466,6 +4026,17 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		}
 	}
 
+#ifdef PS2_PROFILE
+	if (!(ps2hwd_fx2 & FX2_NOSHADOW)) // PS2-HW-242: the angle is 0 (sin 0, cos 1): the rotation is the identity, written the way the products come out
+	{
+		for (i = 0; i < 4; i++)
+		{
+			shadowVerts[i].x = fx + (shadowVerts[i].x - fx);
+			shadowVerts[i].z = fy + (shadowVerts[i].z - fy);
+		}
+	}
+	else
+#endif
 	for (i = 0; i < 4; i++)
 	{
 		float oldx = shadowVerts[i].x;
@@ -3479,22 +4050,51 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		for (i = 0; i < 4; i++)
 		{
 			slopez = P_GetSlopeZAt(groundslope, FLOAT_TO_FIXED(shadowVerts[i].x), FLOAT_TO_FIXED(shadowVerts[i].z));
-			shadowVerts[i].y = FIXED_TO_FLOAT(slopez) + flip * 0.05f;
+			shadowVerts[i].y = FIXED_TO_FLOAT(slopez) + flip * shadowlift;
 		}
 	}
 	else
 	{
 		for (i = 0; i < 4; i++)
-			shadowVerts[i].y = FIXED_TO_FLOAT(groundz) + flip * 0.05f;
+			shadowVerts[i].y = FIXED_TO_FLOAT(groundz) + flip * shadowlift;
 	}
 
 #ifdef PS2_PROFILE
 	// PS2-HW-72: a shadow that cannot put a pixel on the screen is not made (its polygon would be set up, copied into a batch and drawn for nothing)
 	shadowVerts[0].s = shadowVerts[1].s = shadowVerts[2].s = shadowVerts[3].s = shadowVerts[0].t = shadowVerts[1].t = shadowVerts[2].t = shadowVerts[3].t = 0.0f;
-	if (!HWR_PS2_NoCull() && PS2HWD_QuadHidden(shadowVerts))
-		return;
+	HWD_LAP(HWP_SH_E);
+	if (!HWR_PS2_NoCull())
+	{
+		boolean sph = false;
+		const ps2cull_t *cs = (ps2hwd_fx2 & FX2_PRECHECK) ? PS2HWD_CullSetup() : NULL;
+
+		if (cs && !cs->valid)
+			cs = NULL;
+		if (cs && (ps2hwd_fx2 & FX2_PRECHECK) && !(ps2hwd_fx2 & FX2_NOSHADOW) && !groundslope && cv_shadow.value != 2)
+			sph = HWR_FX_SphereHidden(cs, fx, shadowVerts[0].y, fy, offset * 1.4143f + shadowlift + 0.5f); // check mode: the exact test below must agree
+		// PS2-HW-257: a shadow that goes to the sprite stream (the common case) is not tested exactly: the VU1 program throws out what no pixel centre lies in
+		if (!(hwr_fx_cheap && cv_shadow.value != 2 && currently_batching && hwr_sprite_batch && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX2_PRECHECK))) && HWR_FX_QuadHidden(shadowVerts))
+		{
+			HWD_ADD(HWC_FX_SHQHID);
+			if (hwr_fx_shchk == 1)
+				hwr_fx_shchk = 3; // check mode: no pixel centre in the quad, the VU1 program throws such a record out (the builder does not test for it)
+			return;
+		}
+		if (sph) // check mode: the sphere said hidden, the quad is not
+		{
+			static unsigned bad;
+
+			CONS_Printf("HWC shadow sphere MISMATCH %u\n", ++bad);
+		}
+	}
+	HWD_LAP(HWP_SH_F);
 #endif
 
+	HWD_ADD(HWC_FX_SHADOW);
+#ifdef PS2_PROFILE
+	if (!(ps2hwd_fx2 & FX2_NOSHADOW))
+		HWR_GetPatch(gpatch);
+#endif
 	shadowVerts[0].s = shadowVerts[3].s = 0;
 	shadowVerts[2].s = shadowVerts[1].s = ((GLPatch_t *)gpatch->hardware)->max_s;
 
@@ -3547,7 +4147,24 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		sSurf.PolyColor.s.green = 0x00;
 	}
 
+	HWD_LAP(HWP_SH_G);
+#ifdef PS2_PROFILE
+	if (hwr_fx_shchk)
+	{
+		if (hwr_fx_shchk == 2)
+		{
+			static unsigned bad;
+
+			CONS_Printf("HWC shadow stream MISMATCH %u: nothing to draw, the old function drew one\n", ++bad);
+		}
+		else if (hwr_fx_chk_ok)
+			HWR_FX_SpriteCheck(&sSurf, shadowVerts, blendmode, shader);
+		hwr_fx_shchk = 0;
+		hwr_fx_chk_ok = false;
+	}
+#endif
 	HWR_ProcessPolygon(&sSurf, shadowVerts, 4, blendmode, shader, false);
+	HWD_LAP(HWP_SH_H);
 }
 
 // This is expecting a pointer to an array containing 4 wallVerts for a sprite
@@ -3562,7 +4179,15 @@ static void HWR_RotateSpritePolyToAim(gl_vissprite_t *spr, FOutVector *wallVerts
 		float basey, lowy;
 
 		// do interpolation
-		if (R_UsingFrameInterpolation() && !paused)
+#ifdef PS2_PROFILE
+		if (!precip && spr->ps2_iok)
+		{
+			interp.z = spr->ps2_iz; // PS2-HW-245: the state of HWR_ProjectSprite (only z and the height are used below)
+			interp.height = spr->ps2_ih;
+		}
+		else
+#endif
+		if (HWR_USING_INTERP())
 		{
 			if (precip)
 			{
@@ -3973,12 +4598,205 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
 //                  : (monsters, bonuses, weapons, lights, ...)
 // Returns          :
 // -----------------+
+#ifdef PS2_PROFILE
+// --------------------------------------------------------------------------
+// PS2-HW-256 (OPT11 round 3, FX3): the plain sprite of the sprite batch straight to the sprite stream of the driver (ps2_hw_spr.inc).
+// HWR_DrawSprite builds four vertices, a surface and the flags for HWR_ProcessPolygon, which copies them into the batch, where the driver unpacks them again into the record it
+// draws from; for the common sprite the same numbers (the same operations in the same order: the record is what PS2HWD_SprFromVerts makes of the polygon) go into the record
+// at once. A sprite that is not the common one (a floor or paper sprite, a link draw, a sector with 3D floor lights or a colormap, a translated or not yet resident picture, a
+// blend that is not opaque) returns false and takes the old way, which is all HWR_DrawSprite did before. -hwfx 2 (check mode): the old way runs for every sprite, and what it hands
+// to HWR_ProcessPolygon is compared with the record made here (HWC stream MISMATCH). -hwfx 524288 (FX3_NOSPR2): this builder is off, the stream takes the polygon of HWR_DrawSprite.
+// --------------------------------------------------------------------------
+static boolean HWR_FX_SpriteBuild(gl_vissprite_t *spr, ps2spr_t *e)
+{
+	mobj_t *mo = spr->mobj;
+	sector_t *sector;
+	GLPatch_t *gp;
+	GLMipmap_t *m;
+	INT32 blendmode;
+	UINT8 lightlevel;
+	extracolormap_t *colormap;
+	float wx0, wx1, wy0, wy1, wy2, wz0, wz1, wz3;
+	float x3, x2c, z3, y3;
+	FBITFIELD blend;
+
+	if (spr->bbox || spr->precip || spr->rotated || !mo || !mo->subsector || !spr->gpatch)
+		return false;
+	if ((mo->flags2 & (MF2_LINKDRAW | MF2_SPLAT)) || (mo->frame & (FF_FLOORSPRITE | FF_PAPERSPRITE | FF_TRANSMASK)) || (mo->renderflags & (RF_FLOORSPRITE | RF_PAPERSPRITE | RF_SHADOWEFFECTS))
+		|| (mo->flags2 & MF2_SHADOW) || mo->alpha != FRACUNIT || (spr->colormap && spr->colormap != colormaps) || !cv_translucency.value || !HWR_UseShader())
+		return false;
+	sector = mo->subsector->sector;
+	if (sector->numlights)
+		return false;
+	colormap = (mo->renderflags & RF_NOCOLORMAPS) ? NULL : sector->extra_colormap;
+	if (cv_glspritebillboarding.value && !spr->ps2_iok)
+		return false; // (the aim rotation needs the state of the projection)
+	gp = (GLPatch_t *)spr->gpatch->hardware;
+	if (!gp)
+		return false;
+	m = gp->mipmap;
+	if (!m->downloaded)
+		return false; // not resident: the old way makes the data and the upload
+
+	// the blend: an opaque sprite (the batch takes these) of the thing's blend mode
+	if (mo->frame & FF_BLENDMASK)
+		blendmode = ((mo->frame & FF_BLENDMASK) >> FF_BLENDSHIFT) + 1;
+	else
+		blendmode = mo->blendmode;
+	blend = HWR_GetBlendModeFlag(blendmode);
+	if (blend != PF_Translucent && blend != PF_Masked)
+		return false;
+
+	// the corners (HWR_DrawSprite, HWR_RotateSpritePolyToAim)
+	wx0 = spr->x1;
+	x2c = spr->x2;
+	wy0 = spr->gz;
+	y3 = spr->gzt;
+	wz0 = spr->z1;
+	wz1 = spr->z2;
+	if (spr->dispoffset)
+	{
+		const float co = -gl_viewcos * (0.05f * spr->dispoffset);
+		const float si = -gl_viewsin * (0.05f * spr->dispoffset);
+
+		wz0 = wz0 + si;
+		wz1 = wz1 + si;
+		wx0 = wx0 + co;
+		x2c = x2c + co;
+	}
+	wx1 = x2c; // corner 1 (x2, gz, z2); corner 3 (x1, gzt, z1)
+	wy1 = wy0;
+	wy2 = y3;
+	x3 = wx0;
+	z3 = wz0;
+	wz3 = wz0;
+	(void)wy2;
+	if (cv_glspritebillboarding.value)
+	{
+		float basey, lowy;
+
+		basey = P_MobjFlip(mo) == -1 ? FIXED_TO_FLOAT(spr->ps2_iz + spr->ps2_ih) : FIXED_TO_FLOAT(spr->ps2_iz);
+		lowy = wy0;
+		y3 = (spr->gzt - basey) * gl_viewludsin + basey;
+		wy0 = (lowy - basey) * gl_viewludsin + basey;
+		wy1 = wy0;
+		x3 += ((spr->gzt - basey) * gl_viewludcos) * gl_viewcos;
+		wx0 += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		wx1 += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		z3 += ((spr->gzt - basey) * gl_viewludcos) * gl_viewsin;
+		wz0 += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+		wz1 += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+		wz3 = z3;
+	}
+	e->p0[0] = wx0;
+	e->p0[1] = wy0;
+	e->p0[2] = wz0;
+	e->r[0] = wx1 - wx0;
+	e->r[1] = wy1 - wy0;
+	e->r[2] = wz1 - wz0;
+	e->u[0] = x3 - wx0;
+	e->u[1] = y3 - wy0;
+	e->u[2] = wz3 - wz0;
+	if (spr->flip)
+	{
+		e->sl = gp->max_s;
+		e->sr = 0;
+	}
+	else
+	{
+		e->sl = 0;
+		e->sr = gp->max_s;
+	}
+	if (spr->vflip)
+	{
+		e->tt = gp->max_t;
+		e->tb = 0;
+	}
+	else
+	{
+		e->tt = 0;
+		e->tb = gp->max_t;
+	}
+
+	// the surface: the light of the sector (HWR_Lighting without a colormap)
+	if (R_ThingIsFullBright(mo))
+		lightlevel = 255;
+	else if (R_ThingIsFullDark(mo))
+		lightlevel = 0;
+	else
+		lightlevel = sector->lightlevel > 255 ? 255 : sector->lightlevel;
+	if (R_ThingIsSemiBright(mo))
+		lightlevel = 128 + (lightlevel >> 1);
+	e->surf = *HWR_FX_LightSurf(lightlevel, colormap);
+	e->surf.PolyColor.s.alpha = 0xFF;
+	e->flags = (unsigned int)(blend | PF_Occlude | PF_ColorMapped | PF_Modulated);
+	e->shader = hwr_fx_spr_shader;
+	e->tex = m;
+	return true;
+}
+
+// the sprite goes to the stream (true) or takes the old way (false)
+static boolean HWR_DrawSpriteStream(gl_vissprite_t *spr)
+{
+	ps2spr_t *e;
+	GLMipmap_t *m;
+
+	if (!(currently_batching && hwr_sprite_batch) || (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX3_NOSPR2)))
+		return false;
+	e = PS2HWD_SprSlot(0);
+	if (!e || !HWR_FX_SpriteBuild(spr, e))
+		return false;
+	m = (GLMipmap_t *)e->tex;
+	PS2HWD_TouchTexture(m); // (what HWR_GetMappedPatch does in a batch: the picture stays in the GS pool until the batch is drawn)
+	if (m->data)
+		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+	return PS2HWD_SprCommit(0) != 0;
+}
+
+// check mode: the polygon the old way made of the sprite against the record of the builder
+static void HWR_FX_SpriteCheck(const FSurfaceInfo *surf, const FOutVector *v, FBITFIELD flags, int shader_target)
+{
+	static unsigned chk, bad;
+	ps2spr_t cur;
+	boolean same;
+
+	memset(&cur, 0, sizeof cur);
+	chk++;
+	if (!PS2HWD_SprFromVerts(&cur, v))
+	{
+		same = false;
+	}
+	else
+	{
+		same = !memcmp(cur.p0, hwr_fx_chk.p0, sizeof cur.p0) && !memcmp(cur.r, hwr_fx_chk.r, sizeof cur.r) && !memcmp(cur.u, hwr_fx_chk.u, sizeof cur.u)
+			&& cur.sl == hwr_fx_chk.sl && cur.sr == hwr_fx_chk.sr && cur.tt == hwr_fx_chk.tt && cur.tb == hwr_fx_chk.tb && flags == hwr_fx_chk.flags && hwr_fx_chk.shader == HWR_GetShaderFromTarget(shader_target)
+			&& surf->PolyColor.rgba == hwr_fx_chk.surf.PolyColor.rgba && surf->TintColor.rgba == hwr_fx_chk.surf.TintColor.rgba && surf->FadeColor.rgba == hwr_fx_chk.surf.FadeColor.rgba
+			&& surf->LightTableId == hwr_fx_chk.surf.LightTableId && surf->LightInfo.light_level == hwr_fx_chk.surf.LightInfo.light_level && surf->LightInfo.fade_start == hwr_fx_chk.surf.LightInfo.fade_start
+			&& surf->LightInfo.fade_end == hwr_fx_chk.surf.LightInfo.fade_end;
+	}
+	if (!same)
+	{
+		bad++;
+		if (bad <= 20)
+			CONS_Printf("HWC stream MISMATCH %u of %u: p0 %.3f %.3f %.3f / %.3f %.3f %.3f r %.3f %.3f %.3f / %.3f %.3f %.3f u %.3f %.3f %.3f / %.3f %.3f %.3f fl %x/%x sh %d/%d light %d/%d\n", bad, chk,
+				cur.p0[0], cur.p0[1], cur.p0[2], hwr_fx_chk.p0[0], hwr_fx_chk.p0[1], hwr_fx_chk.p0[2], cur.r[0], cur.r[1], cur.r[2], hwr_fx_chk.r[0], hwr_fx_chk.r[1], hwr_fx_chk.r[2],
+				cur.u[0], cur.u[1], cur.u[2], hwr_fx_chk.u[0], hwr_fx_chk.u[1], hwr_fx_chk.u[2], (unsigned)flags, (unsigned)hwr_fx_chk.flags, HWR_GetShaderFromTarget(shader_target), hwr_fx_chk.shader,
+				(int)surf->LightInfo.light_level, (int)hwr_fx_chk.surf.LightInfo.light_level);
+	}
+	else if (!(chk & 1023))
+	{
+		CONS_Printf("HWC stream check: %u sprites, %u differ\n", chk, bad);
+	}
+}
+#endif
+
 static void HWR_DrawSprite(gl_vissprite_t *spr)
 {
 	FOutVector wallVerts[4];
 	patch_t *gpatch;
 	FSurfaceInfo Surf;
 	const boolean splat = R_ThingIsFloorSprite(spr->mobj);
+	HWD_LOCAL; // OPT11: the parts of this function (HWPROF35, --hwdetail)
 
 	if (!spr->mobj)
 		return;
@@ -3991,6 +4809,17 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 		HWR_SplitSprite(spr);
 		return;
 	}
+
+#ifdef PS2_PROFILE
+	hwr_fx_chk_ok = false;
+	if (!splat)
+	{
+		if (ps2hwd_fx2 & FX2_PRECHECK)
+			hwr_fx_chk_ok = (currently_batching && hwr_sprite_batch) && HWR_FX_SpriteBuild(spr, &hwr_fx_chk);
+		else if (HWR_DrawSpriteStream(spr))
+			return;
+	}
+#endif
 
 	// cache sprite graphics
 	//12/12/99: Hurdler:
@@ -4131,10 +4960,12 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 		wallVerts[1].z = wallVerts[2].z = spr->z2;
 	}
 
+	HWD_LAP(HWP_DS_A);
 	// cache the patch in the graphics card memory
 	//12/12/99: Hurdler: same comment as above (for md2)
 	//Hurdler: 25/04/2000: now support colormap in hardware mode
 	HWR_GetMappedPatch(gpatch, spr->colormap);
+	HWD_LAP(HWP_DS_B);
 
 	if (spr->flip)
 	{
@@ -4169,6 +5000,7 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 		// Let dispoffset work first since this adjust each vertex
 		HWR_RotateSpritePolyToAim(spr, wallVerts, false);
+		HWD_LAP(HWP_DS_C);
 #ifdef PS2_PROFILE
 		if (spr->ps2_hid) // PS2-HW-72 check mode: HWR_ProjectSprite would have culled this sprite: its quad here must hold no pixel centre either
 		{
@@ -4227,6 +5059,7 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 
 		HWR_Lighting(&Surf, lightlevel, colormap);
 	}
+	HWD_LAP(HWP_DS_D);
 
 	{
 		INT32 shader = SHADER_NONE;
@@ -4304,7 +5137,22 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 			blend |= PF_ColorMapped;
 		}
 
+		HWD_LAP(HWP_DS_E);
+#ifdef PS2_HWDETAIL
+		if (!splat && !use_linkdraw_hack && PS2HWD_QuadHidden(wallVerts))
+			HWD_ADD(HWC_FX_SPRHID); // (measurement only: the sprites drawn although their quad shows no pixel)
+		if (spr->mobj->shadowscale && cv_shadow.value)
+			HWD_ADD(HWC_FX_SPRSH);
+#endif
+#ifdef PS2_PROFILE
+		if (hwr_fx_chk_ok)
+		{
+			hwr_fx_chk_ok = false;
+			HWR_FX_SpriteCheck(&Surf, wallVerts, blend|PF_Modulated, shader);
+		}
+#endif
 		HWR_ProcessPolygon(&Surf, wallVerts, 4, blend|PF_Modulated, shader, false);
+		HWD_LAP(HWP_DS_F);
 
 		if (use_linkdraw_hack)
 			HWR_LinkDrawHackAdd(wallVerts, spr);
@@ -4546,12 +5394,25 @@ static void HWR_SortVisSprites(void)
 			union { float f; UINT32 u; } tz;
 			UINT32 s;
 
+			if (!(ps2hwd_fx2 & FX2_NOSORTKEY))
+			{
+				// PS2-HW-241: the two facts the key needs of the mobj were put in the vissprite when it was made (the mobj is a cache line away, with three loads)
+				if (spr->ps2_skey & 2)
+				{
+					plain = false;
+					break;
+				}
+				trn[i] = spr->ps2_skey & 1;
+			}
+			else
+			{
 			if (spr->bbox || (!spr->precip && (spr->mobj->flags2 & MF2_LINKDRAW) && spr->mobj->tracer))
 			{
 				plain = false;
 				break;
 			}
 			trn[i] = ((!spr->precip && (spr->mobj->flags2 & MF2_SHADOW)) || (spr->mobj->frame & FF_TRANSMASK)) != 0;
+			}
 			tz.f = spr->tz;
 			s = tz.u ^ ((tz.u & 0x80000000u) ? 0xFFFFFFFFu : 0x80000000u); // ascending with the float
 			dkey[i] = ~s; // far to near
@@ -4595,6 +5456,29 @@ static void HWR_SortVisSprites(void)
 						hist[ph < 1.0f ? 0 : ph < 2.0f ? 1 : ph < 4.0f ? 2 : ph < 8.0f ? 3 : ph < 16.0f ? 4 : 5]++;
 					}
 					CONS_Printf("HWSPR   height in pixels <1:%u <2:%u <4:%u <8:%u <16:%u more:%u\n", (unsigned)hist[0], (unsigned)hist[1], (unsigned)hist[2], (unsigned)hist[3], (unsigned)hist[4], (unsigned)hist[5]);
+				}
+				{
+					static UINT16 sav[1024];
+					UINT32 r2;
+
+					CONS_Printf("HWSPR full path: %u things; skin %u overlay %u linkdraw %u splat %u paper(f) %u floor(f) %u paper/floor(r) %u absoff %u shadoweff %u roll %u noplain %u\n", (unsigned)hwr_fx_fullwhy[11] / 105, (unsigned)hwr_fx_fullwhy[0] / 105,
+						(unsigned)hwr_fx_fullwhy[1] / 105, (unsigned)hwr_fx_fullwhy[2] / 105, (unsigned)hwr_fx_fullwhy[3] / 105, (unsigned)hwr_fx_fullwhy[4] / 105, (unsigned)hwr_fx_fullwhy[5] / 105, (unsigned)hwr_fx_fullwhy[6] / 105,
+						(unsigned)hwr_fx_fullwhy[7] / 105, (unsigned)hwr_fx_fullwhy[8] / 105, (unsigned)hwr_fx_fullwhy[9] / 105, (unsigned)hwr_fx_fullwhy[10] / 105);
+					memcpy(sav, hwr_fx_fullcnt, sizeof sav);
+					for (r2 = 0; r2 < 8; r2++)
+					{
+						UINT32 t2 = 0, k3;
+
+						for (k3 = 1; k3 < 1024; k3++)
+							if (sav[k3] > sav[t2])
+								t2 = k3;
+						if (!sav[t2])
+							break;
+						CONS_Printf("HWSPR   full %s x%u\n", t2 < NUMSPRITES ? sprnames[t2] : "?", (unsigned)sav[t2] / 105);
+						sav[t2] = 0;
+					}
+					memset(hwr_fx_fullcnt, 0, sizeof hwr_fx_fullcnt);
+					memset(hwr_fx_fullwhy, 0, sizeof hwr_fx_fullwhy);
 				}
 				for (rep = 0; rep < 12; rep++)
 				{
@@ -4952,10 +5836,19 @@ static void HWR_CreateDrawNodes(void)
 			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
 			gl_frontsector = NULL;
 
+#ifdef PS2_PROFILE
+			const UINT32 nt0 = ps2hwp_now();
+#endif
 			if (!(sortnode[sortindex[i]].plane->blend & PF_NoTexture))
 				HWR_GetLevelFlat(sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->chromakeyed);
 			HWR_RenderPlane(NULL, sortnode[sortindex[i]].plane->xsub, sortnode[sortindex[i]].plane->isceiling, sortnode[sortindex[i]].plane->fixedheight, sortnode[sortindex[i]].plane->blend, sortnode[sortindex[i]].plane->lightlevel,
 				sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->FOFSector, sortnode[sortindex[i]].plane->alpha, sortnode[sortindex[i]].plane->planecolormap);
+#ifdef PS2_PROFILE
+			gc.nd_pl++;
+			gc.nd_plc += ps2hwp_now() - nt0;
+			if (sortnode[sortindex[i]].plane->blend & PF_Ripple)
+				gc.nd_rip++;
+#endif
 		}
 		else if (sortnode[sortindex[i]].polyplane)
 		{
@@ -4971,10 +5864,17 @@ static void HWR_CreateDrawNodes(void)
 		}
 		else if (sortnode[sortindex[i]].wall)
 		{
+#ifdef PS2_PROFILE
+			const UINT32 nt1 = ps2hwp_now();
+#endif
 			if (!(sortnode[sortindex[i]].wall->blend & PF_NoTexture))
 				HWR_GetTexture(sortnode[sortindex[i]].wall->texnum, true);
 			HWR_RenderWall(sortnode[sortindex[i]].wall->wallVerts, &sortnode[sortindex[i]].wall->Surf, sortnode[sortindex[i]].wall->blend, sortnode[sortindex[i]].wall->fogwall,
 				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
+#ifdef PS2_PROFILE
+			gc.nd_wl++;
+			gc.nd_wlc += ps2hwp_now() - nt1;
+#endif
 		}
 	}
 
@@ -5018,6 +5918,9 @@ static void HWR_DrawSprites(void)
 #ifdef PS2_PROFILE
 		boolean sprwas = false;
 
+		if (ps2hwd_fx2 & FX3_NODRAW) // (measurement only)
+			continue;
+
 		if (sprbatch)
 		{
 			if (!spr->bbox && !spr->precip && spr->dispoffset)
@@ -5037,6 +5940,28 @@ static void HWR_DrawSprites(void)
 		}
 #endif
 		HWP_SPAN_BEGIN(tsd);
+#ifdef PS2_PROFILE
+		if ((spr->ps2_skey & 4) && sprwas && hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX3_NOSPR2 | FX3_NOSHORT | FX2_PRECHECK)))
+		{
+			// PS2-HW-258 (OPT11 round 3, FX3): the plain sprite of the sprite batch (made by HWR_ProjectPlain: no link draw, no skin, no model, no hitbox) goes from the sorted list to its drop shadow and
+			// its record at once: what HWR_DrawSprites and HWR_DrawSprite do for it before they get there (the kind of the sprite, the link draw pair, the model table) is nothing for such a thing
+			if (spr->mobj->shadowscale && cv_shadow.value && !skipshadow) // (the shadow of the tracer of a link draw pair was drawn before the pair)
+			{
+				hwr_sprite_shadow = true;
+				HWC_ADD(HWC_SPR_SHADOW);
+				{
+				HWP_SPAN_BEGIN(tsh);
+				HWR_DrawDropShadow(spr->mobj, spr, spr->mobj->shadowscale);
+				HWP_SPAN_END(tsh, HWP_SP_SHADOW);
+				}
+				hwr_sprite_shadow = false;
+			}
+			skipshadow = false;
+			if (!HWR_DrawSpriteStream(spr))
+				HWR_DrawSprite(spr);
+		}
+		else
+#endif
 		if (spr->bbox)
 			HWR_DrawBoundingBox(spr);
 		else if (spr->precip)
@@ -5146,6 +6071,105 @@ static void HWR_DrawSprites(void)
 // During BSP traversal, this adds sprites by sector.
 // --------------------------------------------------------------------------
 static UINT8 sectorlight;
+#ifdef PS2_PROFILE
+// --------------------------------------------------------------------------
+// PS2-HW-240 (OPT11 round 2, FX2): the sphere test of the things.
+// HWR_ProjectSprite of a thing outside the view did the frame and the rotation of the sprite, its offsets, the quad and the quad test of the driver (PS2HWD_QuadHidden):
+// 1000 cycles for each of the 440 things of a DEMO_004 frame that the test then threw away (and 110 of DEMO_001). Here a sphere around the thing's position that holds
+// every corner of the quad the sprite could have is tested against the four side planes of the view volume first (the driver's clip transform of the sphere's centre
+// and the gradients of the planes: ps2cull_t); a sphere wholly outside one side holds four corners that are outside it, which is what PS2HWD_QuadHidden calls hidden.
+// Only for sprites whose quad the old path tests at all (not the floor sprites, the sprites with a drop shadow, the models, the link draws) and whose size is
+// known from the picture alone (no rotation of the sprite, no scaling by the thing, no skin, no overlay).
+// -hwfx 1 switches it off, -hwfx 2 checks it (HWC pre MISMATCH when a rejected thing gets a vissprite from the old path).
+// --------------------------------------------------------------------------
+
+static void HWR_FX_ExtMake(UINT32 spr, hwr_fx_ext_t *e)
+{
+	const spritedef_t *def = &sprites[spr];
+	float hr = 0.0f, vr = 0.0f;
+	size_t f;
+	int r;
+
+	e->ok = -1;
+	if (!def->numframes || !def->spriteframes)
+		return;
+	for (f = 0; f < def->numframes; f++)
+	{
+		const spriteframe_t *sf = &def->spriteframes[f];
+
+		for (r = 0; r < 16; r++)
+		{
+			const size_t id = sf->lumpid[r];
+			float w, off, h, top, a, b;
+
+			if (id >= numspritelumps)
+				continue;
+			w = FIXED_TO_FLOAT(spritecachedinfo[id].width);
+			off = FIXED_TO_FLOAT(spritecachedinfo[id].offset);
+			h = FIXED_TO_FLOAT(spritecachedinfo[id].height);
+			top = FIXED_TO_FLOAT(spritecachedinfo[id].topoffset);
+			a = fabsf(off);
+			b = fabsf(w - off);
+			a = a > b ? a : b;
+			hr = a > hr ? a : hr;
+			a = fabsf(top) + h;
+			vr = a > vr ? a : vr;
+			e->ok = 1;
+		}
+	}
+	e->hr = hr;
+	e->vr = vr;
+}
+
+static inline boolean HWR_FX_ThingHidden(const mobj_t *thing, const ps2cull_t *cs)
+{
+	hwr_fx_ext_t *e;
+	float sc, hr, vr, X, Y, Z, R;
+
+	// the thing's position inside the side planes: no sphere around it is outside them (the most common answer, it takes three loads and a dozen operations)
+	X = FIXED_TO_FLOAT(thing->x);
+	Y = FIXED_TO_FLOAT(thing->z);
+	Z = FIXED_TO_FLOAT(thing->y);
+	{
+		const float cw = cs->r[3][0] * X + cs->r[3][1] * Y + cs->r[3][2] * Z + cs->r[3][3];
+		const float cx = cs->r[0][0] * X + cs->r[0][1] * Y + cs->r[0][2] * Z + cs->r[0][3];
+		const float cy = cs->r[1][0] * X + cs->r[1][1] * Y + cs->r[1][2] * Z + cs->r[1][3];
+
+		if (cx <= cw && cx >= -cw && cy <= cw && cy >= -cw)
+			return false;
+	}
+	if ((UINT32)thing->sprite >= NUMSPRITES || (UINT32)thing->sprite >= numsprites)
+		return false;
+	if (cv_glmodels.value || !r_renderthings || (cv_shadow.value && thing->shadowscale) || (ps2hwd_dbg_flags & 0x1000000))
+		return false; // (the conditions of the quad test in HWR_ProjectSprite)
+	if ((thing->flags2 & (MF2_LINKDRAW | MF2_SPLAT)) || (thing->frame & (FF_PAPERSPRITE | FF_FLOORSPRITE))
+		|| (thing->renderflags & (RF_PAPERSPRITE | RF_FLOORSPRITE | RF_ABSOLUTEOFFSETS | RF_SHADOWEFFECTS))
+		|| thing->type == MT_OVERLAY || thing->skin || thing->spriteroll || thing->old_spriteroll || thing->scale != thing->old_scale)
+		return false;
+	e = &hwr_fx_ext[thing->sprite];
+	if (e->ok <= 0)
+	{
+		if (e->ok < 0)
+			return false;
+		HWR_FX_ExtMake((UINT32)thing->sprite, e);
+		if (e->ok < 0)
+			return false;
+	}
+	sc = FIXED_TO_FLOAT(thing->scale);
+	{
+		const fixed_t xs = thing->spritexscale > thing->old_spritexscale ? thing->spritexscale : thing->old_spritexscale;
+		const fixed_t ys = thing->spriteyscale > thing->old_spriteyscale ? thing->spriteyscale : thing->old_spriteyscale;
+
+		hr = (e->hr + fabsf(FIXED_TO_FLOAT(thing->spritexoffset))) * sc * FIXED_TO_FLOAT(xs);
+		vr = (e->vr + fabsf(FIXED_TO_FLOAT(thing->spriteyoffset))) * sc * FIXED_TO_FLOAT(ys) + FIXED_TO_FLOAT(thing->height);
+	}
+	R = hr + vr + 0.05f * (float)abs(thing->dispoffset);
+	if (hwr_fx_lerp)
+		R += FIXED_TO_FLOAT(abs(thing->x - thing->old_x) + abs(thing->y - thing->old_y) + abs(thing->z - thing->old_z));
+	return HWR_FX_SphereHidden(cs, X, Y, Z, R * 1.002f + 1.0f);
+}
+#endif
+
 static void HWR_AddSprites(sector_t *sec)
 {
 	mobj_t *thing;
@@ -5169,6 +6193,87 @@ static void HWR_AddSprites(sector_t *sec)
 	// If a limit exists, handle things a tiny bit different.
 	limit_dist = (fixed_t)(cv_drawdist.value) << FRACBITS;
 	hoop_limit_dist = (fixed_t)(cv_drawdist_nights.value) << FRACBITS;
+#ifdef PS2_PROFILE
+	{
+		// PS2-HW-240: a thing whose sprite cannot put a pixel on the screen (a sphere around it is outside the view volume) is not projected at all
+		const ps2cull_t *cs = (ps2hwd_fx2 & FX2_NOPRE) ? NULL : PS2HWD_CullSetup();
+
+		const boolean boxes = cv_renderhitbox.value != 0; // (R_ThingBoundingBoxVisible answers "no" for every thing when the hitboxes are off)
+
+		if (cs && !cs->valid)
+			cs = NULL;
+		hwr_fx_cs = cs ? cs : PS2HWD_CullSetup();
+		if (!hwr_fx_cs->valid)
+			hwr_fx_cs = NULL;
+		for (thing = sec->thinglist; thing; thing = thing->snext)
+		{
+			HWD_ADD(HWC_FX_THINGS);
+			// (no draw distance set: the distance is not looked at; R_ThingWithinDist computes it for nothing)
+			if ((thing->sprite == SPR_HOOP ? !hoop_limit_dist : !limit_dist) || R_ThingWithinDist(thing, limit_dist, hoop_limit_dist))
+			{
+				const boolean vis0 = (ps2hwd_fx2 & FX2_NOVIS) ? R_ThingVisible(thing) : HWR_FX_ThingVisible(thing);
+
+				if ((ps2hwd_fx2 & FX2_PRECHECK) && vis0 != R_ThingVisible(thing))
+					CONS_Printf("HWC visible MISMATCH\n");
+				if (vis0)
+				{
+					HWD_ADD(HWC_FX_PROJ);
+					if (thing->spriteroll || thing->old_spriteroll)
+						HWD_ADD(HWC_FX_ROLL); // (measurement: the things the sphere test leaves out because their picture is rotated)
+					if (thing->skin || (thing->flags2 & MF2_LINKDRAW) || (thing->frame & (FF_PAPERSPRITE | FF_FLOORSPRITE)) || (thing->renderflags & (RF_PAPERSPRITE | RF_FLOORSPRITE | RF_ABSOLUTEOFFSETS | RF_SHADOWEFFECTS)) || thing->type == MT_OVERLAY || (cv_shadow.value && thing->shadowscale))
+						HWD_ADD(HWC_FX_NOEXT);
+					if (cs && HWR_FX_ThingHidden(thing, cs))
+					{
+						HWD_ADD(HWC_FX_PRE);
+						if (ps2hwd_fx2 & FX2_PRECHECK) // check mode: project it all the same; a sprite that comes out of it is a mistake of the test
+						{
+							const UINT32 n0 = gl_visspritecount;
+							static unsigned chk, bad;
+
+							HWR_ProjectSprite(thing);
+							chk++;
+							if (gl_visspritecount != n0)
+							{
+								bad++;
+								CONS_Printf("HWC pre MISMATCH %u of %u (sprite %s)\n", bad, chk, (UINT32)thing->sprite < NUMSPRITES ? sprnames[thing->sprite] : "?");
+							}
+							else if (!(chk & 1023))
+							{
+								CONS_Printf("HWC pre check: %u things, %u differ\n", chk, bad);
+							}
+						}
+					}
+					else if (hwr_fx_plain && (ps2hwd_fx2 & FX2_PRECHECK))
+						HWR_FX_ProjectChecked(thing);
+					else if (!(hwr_fx_plain && HWR_ProjectPlain(thing)))
+					{
+						if (ps2hwd_dbg_flags & 0x40000000) // census of the things that take the full path (HWSPR lines)
+						{
+							if ((UINT32)thing->sprite < 1024)
+								hwr_fx_fullcnt[thing->sprite]++;
+							hwr_fx_fullwhy[0] += thing->skin != NULL;
+							hwr_fx_fullwhy[1] += thing->type == MT_OVERLAY;
+							hwr_fx_fullwhy[2] += (thing->flags2 & MF2_LINKDRAW) != 0;
+							hwr_fx_fullwhy[3] += (thing->flags2 & MF2_SPLAT) != 0;
+							hwr_fx_fullwhy[4] += (thing->frame & FF_PAPERSPRITE) != 0;
+							hwr_fx_fullwhy[5] += (thing->frame & FF_FLOORSPRITE) != 0;
+							hwr_fx_fullwhy[6] += (thing->renderflags & (RF_PAPERSPRITE | RF_FLOORSPRITE)) != 0;
+							hwr_fx_fullwhy[7] += (thing->renderflags & RF_ABSOLUTEOFFSETS) != 0;
+							hwr_fx_fullwhy[8] += (thing->renderflags & RF_SHADOWEFFECTS) != 0;
+							hwr_fx_fullwhy[9] += (thing->spriteroll || thing->old_spriteroll);
+							hwr_fx_fullwhy[10] += !hwr_fx_plain;
+							hwr_fx_fullwhy[11]++;
+						}
+						HWR_ProjectSprite(thing);
+					}
+				}
+
+				if (boxes)
+					HWR_ProjectBoundingBox(thing);
+			}
+		}
+	}
+#else
 	for (thing = sec->thinglist; thing; thing = thing->snext)
 	{
 		if (R_ThingWithinDist(thing, limit_dist, hoop_limit_dist))
@@ -5181,6 +6286,7 @@ static void HWR_AddSprites(sector_t *sec)
 			HWR_ProjectBoundingBox(thing);
 		}
 	}
+#endif
 
 	// no, no infinite draw distance for precipitation. this option at zero is supposed to turn it off
 	if ((limit_dist = (fixed_t)cv_drawdist_precip.value << FRACBITS))
@@ -5206,7 +6312,7 @@ static boolean HWR_PS2_NoCull(void) // -hwnocull: every sprite is made (A/B of P
 
 // the quad HWR_DrawSprite would hand to HWR_ProcessPolygon for a sprite (x1..x2 / z1..z2 along the view, gz..gzt in height, the display offset, and for a view
 // that looks up or down the turn around the foot of HWR_RotateSpritePolyToAim: basey is the height of the foot, the same formulas)
-static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
+static boolean HWR_PS2_SpriteHiddenOld(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
 {
 	FOutVector wv[4];
 
@@ -5243,6 +6349,426 @@ static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, floa
 		wv[1].z += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
 	}
 	return PS2HWD_QuadHidden(wv) != 0;
+}
+
+// PS2-HW-251 (OPT11 round 3, FX3): the same quad as a parallelogram (the corners are P0, P0 + R, P0 + R + U, P0 + U: the display offset moves all of them, the turn around the foot
+// of HWR_RotateSpritePolyToAim adds (height - basey) * (cos, sin, ...) to the upper and lower pair), tested from the rows of the transform (PS2HWD_ParaHidden).
+// -hwfx 16384 = the four transforms of PS2HWD_QuadHidden; -hwfx 2 (check mode) asks both and reports a difference (HWC para MISMATCH).
+static boolean HWR_PS2_SpriteHidden(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
+{
+	const ps2cull_t *cs;
+
+	if (ps2hwd_fx2 & FX3_NOPARA)
+		return HWR_PS2_SpriteHiddenOld(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim);
+	cs = PS2HWD_CullSetup();
+	if (!cs->valid)
+		return HWR_PS2_SpriteHiddenOld(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim);
+	{
+		float p0[3], r[3], u[3], co = 0.0f, si = 0.0f;
+		boolean h;
+
+		if (dispoffset)
+		{
+			co = -gl_viewcos * (0.05f * dispoffset);
+			si = -gl_viewsin * (0.05f * dispoffset);
+		}
+		if (aim)
+		{
+			const float lo = gz - basey, hi = gzt - basey;
+
+			p0[0] = x1 + co + (lo * gl_viewludcos) * gl_viewcos;
+			p0[1] = lo * gl_viewludsin + basey;
+			p0[2] = z1 + si + (lo * gl_viewludcos) * gl_viewsin;
+			u[0] = ((hi * gl_viewludcos) * gl_viewcos) - ((lo * gl_viewludcos) * gl_viewcos);
+			u[1] = hi * gl_viewludsin - lo * gl_viewludsin;
+			u[2] = ((hi * gl_viewludcos) * gl_viewsin) - ((lo * gl_viewludcos) * gl_viewsin);
+		}
+		else
+		{
+			p0[0] = x1 + co;
+			p0[1] = gz;
+			p0[2] = z1 + si;
+			u[0] = 0.0f;
+			u[1] = gzt - gz;
+			u[2] = 0.0f;
+		}
+		r[0] = x2 - x1;
+		r[1] = 0.0f;
+		r[2] = z2 - z1;
+		h = PS2HWD_ParaHidden(cs, p0, r, u) != 0;
+		if (ps2hwd_fx2 & FX2_PRECHECK)
+		{
+			static unsigned chk, bad;
+			const boolean o = HWR_PS2_SpriteHiddenOld(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim);
+
+			chk++;
+			if (o != h)
+			{
+				bad++;
+				if (bad <= 20)
+					CONS_Printf("HWC para MISMATCH %u of %u: new %d old %d (x %.3f..%.3f z %.3f..%.3f gz %.3f gzt %.3f disp %d aim %d)\n", bad, chk, (int)h, (int)o, x1, x2, z1, z2, gz, gzt, (int)dispoffset, (int)aim);
+			}
+			else if (!(chk & 4095))
+			{
+				CONS_Printf("HWC para check: %u quads, %u differ\n", chk, bad);
+			}
+		}
+		return h;
+	}
+}
+#endif
+
+#ifdef PS2_PROFILE
+// --------------------------------------------------------------------------
+// PS2-HW-257 (OPT11 round 3, FX3): what the sprite stream makes cheaper in the projection of a thing (-hwfx 1048576 = FX3_NOLEAN2: as before)
+//  * the exact test of the quad (PS2HWD_ParaHidden: no pixel centre inside it, 600 cycles) is replaced by the sphere test of the view (60 cycles): a sprite the VU1 program throws out for
+//    nothing costs the EE a record (the sprite is not drawn either way: the stream draws what the GS rasterises, and the GS draws nothing for a quad without a pixel centre);
+//  * the patch of a sprite lump is looked up once in a view (W_CachePatchNum: the tag of the block is changed once, the pointer is kept for the other sprites of the lump);
+//  * the colour map of a thing that has none (no skin colour, no translation, not a player sprite, not flashing) is not asked for.
+// --------------------------------------------------------------------------
+static inline boolean HWR_FX_SpriteHiddenCheap(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey)
+{
+	float R, lo, hi;
+
+	if (!hwr_fx_cs)
+		return false;
+	// a sphere around the quad that holds every corner of it, whatever the aim rotation (about the foot at basey) and the display offset do to the corners
+	lo = fabsf(gz - basey);
+	hi = fabsf(gzt - basey);
+	R = 0.5f * (fabsf(x2 - x1) + fabsf(z2 - z1)) + 2.0f * (lo > hi ? lo : hi) + 0.05f * (float)abs(dispoffset);
+	return HWR_FX_SphereHidden(hwr_fx_cs, 0.5f * (x1 + x2), 0.5f * (gz + gzt), 0.5f * (z1 + z2), R * 1.002f + 1.0f);
+}
+
+// PS2-HW-257c: the sphere test lets through a sprite whose quad holds no pixel centre; the VU1 program throws it out, which costs the EE one record. It costs more when the
+// picture of the sprite is not in the GS pool yet: the old path then makes the data of the patch and uploads it for a sprite that is not drawn (D2 from the window 7: 52
+// such sprites a frame, the GS pool and the zone thrashed, the frames 1.55 times longer). Those take the exact test, as before: the set of pictures made resident is the old one.
+static inline boolean HWR_FX_SpriteResident(lumpnum_t ln)
+{
+	const patch_t *p = (const patch_t *)W_PeekPatchNum(ln);
+	const GLPatch_t *gp;
+
+	if (!p || !p->hardware)
+		return false;
+	gp = (const GLPatch_t *)p->hardware;
+	return gp->mipmap && gp->mipmap->downloaded;
+}
+
+static inline patch_t *HWR_FX_SpritePatch(lumpnum_t ln)
+{
+	const UINT32 h = (UINT32)(ln ^ (ln >> 8)) & 255u;
+
+	if (hwr_fx_pc[h].view == hwr_fx_view && hwr_fx_pc[h].ln == ln && hwr_fx_pc[h].p)
+		return hwr_fx_pc[h].p;
+	{
+		patch_t *p = (patch_t *)W_CachePatchNum(ln, PU_SPRITE);
+
+		hwr_fx_pc[h].view = hwr_fx_view;
+		hwr_fx_pc[h].ln = ln;
+		hwr_fx_pc[h].p = p;
+		return p;
+	}
+}
+
+static inline UINT8 *HWR_FX_ThingTranslation(mobj_t *thing)
+{
+	if (thing->color == SKINCOLOR_NONE && thing->translation == 0 && thing->sprite != SPR_PLAY && !R_ThingIsFlashing(thing))
+		return NULL; // (what R_GetTranslationForThing ends with for such a thing)
+	return R_GetTranslationForThing(thing, thing->color, thing->translation);
+}
+
+// --------------------------------------------------------------------------
+// PS2-HW-254 (OPT11 round 3, FX3): HWR_ProjectSprite for the plain sprite: no skin, no overlay, no link draw, no floor or paper sprite, no roll, no absolute offsets, no shadow
+// effects, no model. What the full function does for such a thing, in the same arithmetic and the same order of the checks, without what it is there for the others (the
+// skin and rotation sprite paths, the tracer of a link draw, the floor sprite, the caster of a shadow effect), with the per-view values made once (HWR_ClearSprites).
+// Returns false (nothing was done) for any other thing: HWR_ProjectSprite then makes it. -hwfx 131072 (FX3_NOPLAIN): always the full function.
+// --------------------------------------------------------------------------
+static boolean HWR_ProjectPlain(mobj_t *thing)
+{
+	gl_vissprite_t *vis;
+	interpmobjstate_t interp;
+	spritedef_t *sprdef;
+	spriteframe_t *sprframe;
+	size_t lumpoff;
+	unsigned rot;
+	UINT16 flip;
+	float tr_x, tr_y, tz, x1, x2, z1, z2, gz, gzt;
+	float this_scale, spritexscale, spriteyscale, this_xscale, this_yscale;
+	fixed_t spr_width, spr_height, spr_offset, spr_topoffset;
+	INT32 dispoffset, heightsec, phs;
+	boolean vflip, hflip;
+	const boolean lerp = hwr_fx_lerp && !(ps2hwd_fx2 & FX2_NOINTERP);
+	const INT32 frame = thing->frame;
+	HWD_LOCAL; // the laps of HWPROF33 as HWR_ProjectSprite has them (detail builds)
+
+	if (thing->skin || thing->type == MT_OVERLAY || (thing->flags2 & (MF2_LINKDRAW | MF2_SPLAT)) || (frame & (FF_PAPERSPRITE | FF_FLOORSPRITE))
+		|| (thing->renderflags & (RF_PAPERSPRITE | RF_FLOORSPRITE | RF_ABSOLUTEOFFSETS | RF_SHADOWEFFECTS)) || thing->spriteroll || thing->old_spriteroll)
+		return false;
+	if ((UINT32)thing->sprite >= (UINT32)numsprites)
+		return false;
+	sprdef = &sprites[thing->sprite];
+	rot = (unsigned)(frame & FF_FRAMEMASK);
+	if (rot >= sprdef->numframes)
+		return false; // (the error path of the full function)
+	sprframe = &sprdef->spriteframes[rot];
+
+	// the visibility by the blend mode
+	if (frame & FF_TRANSMASK)
+	{
+		const INT32 blendmode = (frame & FF_BLENDMASK) ? ((frame & FF_BLENDMASK) >> FF_BLENDSHIFT) + 1 : thing->blendmode;
+
+		if (!R_BlendLevelVisible(blendmode, (frame & FF_TRANSMASK) >> FF_TRANSSHIFT))
+			return true;
+	}
+	dispoffset = thing->dispoffset;
+
+	if (lerp)
+	{
+		R_InterpolateMobjStateLite(thing, rendertimefrac, &interp);
+	}
+	else if (hwr_fx_interp && rendertimefrac != FRACUNIT)
+	{
+		R_InterpolateMobjState(thing, rendertimefrac, &interp);
+	}
+	else
+	{
+		interp.x = thing->x;
+		interp.y = thing->y;
+		interp.z = thing->z;
+		interp.scale = thing->scale;
+		interp.radius = thing->radius;
+		interp.height = thing->height;
+		interp.subsector = thing->subsector;
+		interp.angle = thing->player ? thing->player->drawangle : thing->angle;
+		interp.spritexscale = thing->spritexscale;
+		interp.spriteyscale = thing->spriteyscale;
+		interp.spritexoffset = thing->spritexoffset;
+		interp.spriteyoffset = thing->spriteyoffset;
+	}
+	HWD_LAP(HWP_PS_A);
+	if (interp.spritexscale < 1 || interp.spriteyscale < 1)
+		return true;
+
+	this_scale = FIXED_TO_FLOAT(interp.scale);
+	spritexscale = FIXED_TO_FLOAT(interp.spritexscale);
+	spriteyscale = FIXED_TO_FLOAT(interp.spriteyscale);
+
+	tr_x = FIXED_TO_FLOAT(interp.x) - gl_viewx;
+	tr_y = FIXED_TO_FLOAT(interp.y) - gl_viewy;
+	tz = (tr_x * gl_viewcos) + (tr_y * gl_viewsin);
+	if (tz < ZCLIP_PLANE)
+	{
+		HWD_ADD(HWC_FX_BEHIND);
+		return true;
+	}
+	tr_x = FIXED_TO_FLOAT(interp.x);
+	tr_y = FIXED_TO_FLOAT(interp.y);
+
+	vflip = (!(thing->eflags & MFE_VERTICALFLIP) != !R_ThingVerticallyFlipped(thing));
+	hflip = (!R_ThingHorizontallyFlipped(thing) != !thing->mirrored);
+
+	if (sprframe->rotate == SRF_SINGLE)
+	{
+		rot = 0;
+		lumpoff = sprframe->lumpid[0];
+		flip = sprframe->flip;
+	}
+	else
+	{
+		angle_t ang = R_PointToAngle(interp.x, interp.y) - interp.angle;
+
+		if (thing->mirrored)
+			ang = InvAngle(ang);
+		if ((sprframe->rotate & SRF_RIGHT) && (ang < ANGLE_180))
+			rot = 6;
+		else if ((sprframe->rotate & SRF_LEFT) && (ang >= ANGLE_180))
+			rot = 2;
+		else if (sprframe->rotate & SRF_3DGE)
+		{
+			rot = (ang + ANGLE_180 + ANGLE_11hh) >> 28;
+			rot = ((rot & 1) << 3) | (rot >> 1);
+		}
+		else
+			rot = (ang + ANGLE_202h) >> 29;
+		lumpoff = sprframe->lumpid[rot];
+		flip = sprframe->flip & (1 << rot);
+	}
+
+	HWD_LAP(HWP_PS_B);
+	spr_width = spritecachedinfo[lumpoff].width;
+	spr_height = spritecachedinfo[lumpoff].height;
+	spr_offset = spritecachedinfo[lumpoff].offset;
+	spr_topoffset = spritecachedinfo[lumpoff].topoffset;
+	{
+		SINT8 flipoffset = 1;
+
+		if ((thing->renderflags & RF_FLIPOFFSETS) && flip)
+			flipoffset = -1;
+		spr_offset += interp.spritexoffset * flipoffset;
+		spr_topoffset += interp.spriteyoffset * flipoffset;
+	}
+	flip = !flip != !hflip;
+
+	this_xscale = spritexscale * this_scale;
+	this_yscale = spriteyscale * this_scale;
+	if (flip)
+	{
+		x1 = (FIXED_TO_FLOAT(spr_width - spr_offset) * this_xscale);
+		x2 = (FIXED_TO_FLOAT(spr_offset) * this_xscale);
+	}
+	else
+	{
+		x1 = (FIXED_TO_FLOAT(spr_offset) * this_xscale);
+		x2 = (FIXED_TO_FLOAT(spr_width - spr_offset) * this_xscale);
+	}
+	z1 = tr_y + x1 * hwr_fx_rsin;
+	z2 = tr_y - x2 * hwr_fx_rsin;
+	x1 = tr_x + x1 * hwr_fx_rcos;
+	x2 = tr_x - x2 * hwr_fx_rcos;
+	if (vflip)
+	{
+		gz = FIXED_TO_FLOAT(interp.z + interp.height) - (FIXED_TO_FLOAT(spr_topoffset) * this_yscale);
+		gzt = gz + (FIXED_TO_FLOAT(spr_height) * this_yscale);
+	}
+	else
+	{
+		gzt = FIXED_TO_FLOAT(interp.z) + (FIXED_TO_FLOAT(spr_topoffset) * this_yscale);
+		gz = gzt - (FIXED_TO_FLOAT(spr_height) * this_yscale);
+	}
+
+	HWD_LAP(HWP_PS_C);
+	if (thing->subsector->sector->cullheight)
+	{
+		if (HWR_DoCulling(thing->subsector->sector->cullheight, viewsector->cullheight, gl_viewz, gz, gzt))
+			return true;
+	}
+	heightsec = thing->subsector->sector->heightsec;
+	if (viewplayer->mo && viewplayer->mo->subsector)
+		phs = viewplayer->mo->subsector->sector->heightsec;
+	else
+		phs = -1;
+	if (heightsec != -1 && phs != -1) // only clip things which are in special sectors
+	{
+		const float top = gzt;
+		const float bottom = FIXED_TO_FLOAT(interp.z);
+
+		if (gl_viewz < FIXED_TO_FLOAT(sectors[phs].floorheight) ?
+		bottom >= FIXED_TO_FLOAT(sectors[heightsec].floorheight) :
+		top < FIXED_TO_FLOAT(sectors[heightsec].floorheight))
+			return true;
+		if (gl_viewz > FIXED_TO_FLOAT(sectors[phs].ceilingheight) ?
+		top < FIXED_TO_FLOAT(sectors[heightsec].ceilingheight) && gl_viewz >= FIXED_TO_FLOAT(sectors[heightsec].ceilingheight) :
+		bottom >= FIXED_TO_FLOAT(sectors[heightsec].ceilingheight))
+			return true;
+	}
+
+	HWD_LAP(HWP_PS_D);
+	{
+		UINT8 ps2_hidden = 0;
+
+		// PS2-HW-72: no pixel centre inside the quad (or the quad outside the view): nothing would be drawn, nothing is made of it
+		if (!(cv_shadow.value && thing->shadowscale) && !HWR_PS2_NoCull())
+		{
+			const boolean aim = cv_glspritebillboarding.value && fabsf(gl_viewludcos) > 1.0e-6f;
+			const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
+
+			if ((hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE))) ? (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) || (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+			{
+				HWD_ADD(HWC_FX_QHID);
+				if (!(ps2hwd_dbg_flags & 0x1000000))
+					return true;
+				ps2_hidden = 1;
+			}
+		}
+		HWD_LAP(HWP_PS_E);
+		HWD_ADD(HWC_FX_VIS);
+		vis = HWR_NewVisSprite();
+		vis->ps2_hid = ps2_hidden;
+	}
+	vis->ps2_skey = (UINT8)((((thing->flags2 & MF2_SHADOW) || (frame & FF_TRANSMASK)) ? 1 : 0) | 4); // (bit 2: made by HWR_ProjectPlain: no skin, no link draw, no model, no floor or paper sprite)
+	vis->ps2_iok = !(ps2hwd_fx2 & FX2_NOINTERP);
+	vis->ps2_ix = interp.x;
+	vis->ps2_iy = interp.y;
+	vis->ps2_iz = interp.z;
+	vis->ps2_ih = interp.height;
+	vis->ps2_ir = interp.radius;
+	vis->ps2_isub = interp.subsector;
+	vis->x1 = x1;
+	vis->x2 = x2;
+	vis->z1 = z1;
+	vis->z2 = z2;
+	vis->tz = tz;
+	vis->tracertz = 0.0f;
+	vis->renderflags = thing->renderflags;
+	vis->rotateflags = sprframe->rotate;
+	vis->shadowheight = 1.0f;
+	vis->shadowscale = 1.0f;
+	vis->dispoffset = dispoffset;
+	vis->flip = flip;
+	vis->scale = this_scale;
+	vis->spritexscale = spritexscale;
+	vis->spriteyscale = spriteyscale;
+	vis->spritexoffset = FIXED_TO_FLOAT(spr_offset);
+	vis->spriteyoffset = FIXED_TO_FLOAT(spr_topoffset);
+	vis->rotated = false;
+	vis->gpatch = (hwr_fx_cheap && !(ps2hwd_fx2 & FX3_NOPCACHE)) ? HWR_FX_SpritePatch(sprframe->lumppat[rot]) : (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
+	vis->mobj = thing;
+	vis->colormap = hwr_fx_cheap ? HWR_FX_ThingTranslation(thing) : R_GetTranslationForThing(thing, thing->color, thing->translation);
+	vis->gzt = gzt;
+	vis->gz = gz;
+	vis->vflip = vflip;
+	vis->precip = false;
+	vis->bbox = false;
+	vis->angle = interp.angle;
+	HWD_LAP(HWP_PS_F);
+	return true;
+}
+#endif
+
+#ifdef PS2_PROFILE
+// check mode (-hwfx 2): the plain projection and the full one make the same vissprite (or both none) for the same thing; the full one's is kept
+static void HWR_FX_ProjectChecked(mobj_t *thing)
+{
+	static unsigned chk, bad;
+	const UINT32 n0 = gl_visspritecount;
+	gl_vissprite_t a;
+	boolean made = false, handled;
+
+	handled = HWR_ProjectPlain(thing);
+	if (handled && gl_visspritecount > n0)
+	{
+		a = *HWR_GetVisSprite(n0);
+		made = true;
+	}
+	gl_visspritecount = n0;
+	HWR_ProjectSprite(thing);
+	if (!handled)
+		return;
+	chk++;
+	{
+		const boolean made2 = gl_visspritecount > n0;
+		boolean same = made == made2;
+
+		if (same && made)
+		{
+			const gl_vissprite_t *b = HWR_GetVisSprite(n0);
+
+#define FXC(f) (same = same && !memcmp(&a.f, &b->f, sizeof a.f))
+			FXC(x1); FXC(x2); FXC(z1); FXC(z2); FXC(tz); FXC(tracertz); FXC(renderflags); FXC(rotateflags); FXC(shadowheight); FXC(shadowscale); FXC(dispoffset); FXC(flip);
+			FXC(scale); FXC(spritexscale); FXC(spriteyscale); FXC(spritexoffset); FXC(spriteyoffset); FXC(rotated); FXC(gpatch); FXC(mobj); FXC(colormap); FXC(gzt); FXC(gz);
+			FXC(vflip); FXC(precip); FXC(bbox); FXC(angle); FXC(ps2_hid); same = same && ((a.ps2_skey & 3) == (b->ps2_skey & 3)); FXC(ps2_iok); FXC(ps2_ix); FXC(ps2_iy); FXC(ps2_iz); FXC(ps2_ih); FXC(ps2_ir); FXC(ps2_isub);
+#undef FXC
+		}
+		if (!same)
+		{
+			bad++;
+			if (bad <= 20)
+				CONS_Printf("HWC plain MISMATCH %u of %u (sprite %s, made %d / %d)\n", bad, chk, (UINT32)thing->sprite < NUMSPRITES ? sprnames[thing->sprite] : "?", (int)made, (int)made2);
+		}
+		else if (!(chk & 4095))
+		{
+			CONS_Printf("HWC plain check: %u things, %u differ\n", chk, bad);
+		}
+	}
 }
 #endif
 
@@ -5296,6 +6822,8 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	// uncapped/interpolation
 	interpmobjstate_t interp = {0};
 
+	HWD_LOCAL; // OPT11: the parts of this function (HWPROF33, only with --hwdetail)
+
 	if (!r_renderthings)
 		return;
 
@@ -5318,7 +6846,14 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	dispoffset = thing->dispoffset;
 
 
-	if (R_UsingFrameInterpolation() && !paused)
+#ifdef PS2_PROFILE
+	if (hwr_fx_lerp && !(ps2hwd_fx2 & FX2_NOINTERP)) // PS2-HW-245: between two tics, without the subsector and the angles the sprite does not use (what the full interpolation makes of them is 400 cycles)
+	{
+		R_InterpolateMobjStateLite(thing, rendertimefrac, &interp);
+	}
+	else
+#endif
+	if (HWR_USING_INTERP())
 	{
 		R_InterpolateMobjState(thing, rendertimefrac, &interp);
 	}
@@ -5327,6 +6862,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		R_InterpolateMobjState(thing, FRACUNIT, &interp);
 	}
 
+	HWD_LAP(HWP_PS_A);
 	if (interp.spritexscale < 1 || interp.spriteyscale < 1)
 		return;
 
@@ -5357,7 +6893,10 @@ static void HWR_ProjectSprite(mobj_t *thing)
 				return;
 		}
 		else
+		{
+			HWD_ADD(HWC_FX_BEHIND);
 			return;
+		}
 	}
 
 	// The above can stay as it works for cutting sprites that are too close
@@ -5474,6 +7013,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 			flip ^= (1<<rot);
 	}
 
+	HWD_LAP(HWP_PS_B);
 	if (thing->skin && ((skin_t *)thing->skin)->flags & SF_HIRES)
 		this_scale *= FIXED_TO_FLOAT(((skin_t *)thing->skin)->highresscale);
 
@@ -5553,7 +7093,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 			fixed_t groundz;
 			fixed_t floordiff;
 
-			if (R_UsingFrameInterpolation() && !paused)
+			if (HWR_USING_INTERP())
 			{
 				R_InterpolateMobjState(caster, rendertimefrac, &casterinterp);
 			}
@@ -5625,6 +7165,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		}
 	}
 
+	HWD_LAP(HWP_PS_C);
 	if (thing->subsector->sector->cullheight)
 	{
 		if (HWR_DoCulling(thing->subsector->sector->cullheight, viewsector->cullheight, gl_viewz, gz, gzt))
@@ -5662,7 +7203,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		if (! R_ThingVisible(thing->tracer))
 			return;
 
-		if (R_UsingFrameInterpolation() && !paused)
+		if (HWR_USING_INTERP())
 		{
 			R_InterpolateMobjState(thing->tracer, rendertimefrac, &tracer_interp);
 		}
@@ -5694,6 +7235,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 			dispoffset *= -1;
 	}
 
+	HWD_LAP(HWP_PS_D);
 #ifdef PS2_PROFILE
 	UINT8 ps2_hidden = 0;
 
@@ -5704,8 +7246,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		const boolean aim = cv_glspritebillboarding.value && !papersprite && fabsf(gl_viewludcos) > 1.0e-6f; // as HWR_RotateSpritePolyToAim: not for a view that looks level
 		const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-		if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+		if ((hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE))) ? (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) || (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
 		{
+			HWD_ADD(HWC_FX_QHID);
 			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds
 				return;
 			ps2_hidden = 1;
@@ -5713,10 +7256,20 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	}
 #endif
 
+	HWD_LAP(HWP_PS_E);
+	HWD_ADD(HWC_FX_VIS);
 	// store information in a vissprite
 	vis = HWR_NewVisSprite();
 #ifdef PS2_PROFILE
 	vis->ps2_hid = ps2_hidden;
+	vis->ps2_skey = (UINT8)((((thing->flags2 & MF2_SHADOW) || (thing->frame & FF_TRANSMASK)) ? 1 : 0) | (((thing->flags2 & MF2_LINKDRAW) && thing->tracer) ? 2 : 0));
+	vis->ps2_iok = !(ps2hwd_fx2 & FX2_NOINTERP) && !(thing->type == MT_OVERLAY); // PS2-HW-245: the state is kept for the shadow and the aim rotation (an overlay's position is moved by R_ThingOffsetOverlay below the state)
+	vis->ps2_ix = interp.x;
+	vis->ps2_iy = interp.y;
+	vis->ps2_iz = interp.z;
+	vis->ps2_ih = interp.height;
+	vis->ps2_ir = interp.radius;
+	vis->ps2_isub = interp.subsector;
 #endif
 	vis->x1 = x1;
 	vis->x2 = x2;
@@ -5783,6 +7336,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	vis->bbox = false;
 
 	vis->angle = interp.angle;
+	HWD_LAP(HWP_PS_F);
 }
 
 // Precipitation projector for hardware mode
@@ -5817,7 +7371,7 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	interpmobjstate_t interp = {0};
 
 	// do interpolation
-	if (R_UsingFrameInterpolation() && !paused)
+	if (HWR_USING_INTERP())
 	{
 		R_InterpolatePrecipMobjState(thing, rendertimefrac, &interp);
 	}
@@ -5917,6 +7471,8 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	vis = HWR_NewVisSprite();
 #ifdef PS2_PROFILE
 	vis->ps2_hid = ps2_hidden;
+	vis->ps2_iok = false; // (the precipitation: not kept)
+	vis->ps2_skey = (thing->frame & FF_TRANSMASK) ? 1 : 0;
 #endif
 	vis->x1 = x1;
 	vis->x2 = x2;
@@ -5964,7 +7520,7 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
 	boolean interpolate = cv_renderhitboxinterpolation.value;
 	interpmobjstate_t interp = {0};
 
-	if (R_UsingFrameInterpolation() && !paused && interpolate)
+	if (HWR_USING_INTERP() && interpolate)
 	{
 		R_InterpolateMobjState(thing, rendertimefrac, &interp);
 	}
@@ -5998,6 +7554,10 @@ static void HWR_ProjectBoundingBox(mobj_t *thing)
 
 	vis->precip = false;
 	vis->bbox = true;
+#ifdef PS2_PROFILE
+	vis->ps2_iok = false;
+	vis->ps2_skey = 2;
+#endif
 }
 
 // ==========================================================================
@@ -6418,7 +7978,7 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 
 #ifdef PS2_PROFILE
 	ps2hwp_skyview = 1;
-	pcache_on = HWR_PlaneCacheFrame();
+	HWR_GCacheFrame();
 #endif
 	HWR_SetupView(player, viewnumber, fpov, true);
 	HWP_SPAN_END(tk0, HWP_K_SET);
@@ -6568,7 +8128,7 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	{
 	HWP_SPAN_BEGIN(tms);
 #ifdef PS2_PROFILE
-	pcache_on = HWR_PlaneCacheFrame();
+	HWR_GCacheFrame();
 #endif
 	HWR_SetupView(player, viewnumber, fpov, false);
 	HWP_SPAN_END(tms, HWP_M_SETUP);
@@ -6931,6 +8491,9 @@ void HWR_AddCommands(void)
 	CV_RegisterVar(&cv_glpalettedepth);
 	CV_RegisterVar(&cv_gllightdither);
 	CV_RegisterVar(&cv_glwireframe);
+#ifdef PS2_PROFILE
+	CV_RegisterVar(&cv_glmodeldetail); // OPT11-MODEL (PS2-HW-266)
+#endif
 }
 
 // --------------------------------------------------------------------------
@@ -6997,6 +8560,13 @@ void HWR_Shutdown(void)
 	HWR_FreeMapTextures();
 	HWD.pfnFlushScreenTextures();
 #ifdef PS2
+	Z_Free(linkdrawlist); // PS2-171
+	linkdrawlist = NULL;
+	linkdrawcap = linkdrawcount = 0;
+	// PS2-HW-140 (OPT11-STAB): a frame abandoned by an out-of-memory jump (ps2_hwfb.c) leaves the lists of transparent walls and planes filled (they are emptied at the end of
+	// HWR_CreateDrawNodes): the next hardware frame then sorted old entries (freed levels' pointers) with duplicate drawcounts: "CompareDrawNodes: diff is zero"
+	numwalls = numplanes = numpolyplanes = 0;
+	drawcount = 0;
 	gl_maploaded = false;
 	// Keep model/shader CPU initialization; their owners remain valid across GS reacquisition.
 #endif
@@ -7025,12 +8595,40 @@ void transform(float *cx, float *cy, float *cz)
 	*cx *= gl_fovlud;
 }
 
+static size_t allocedwalls = 0; // (was a static of HWR_AddTransparentWall; the cache's HWR_GCReserve grows the list too)
+
+#ifdef PS2_PROFILE
+// OPT11 round 2: before the geometry cache replays a record (or starts one) the room it can need is made, because an allocation is where the zone may take the cache's memory back
+// (HWR_GCacheReclaim): nothing of the cache may be in use then. False: the memory went, the caller does it the long way.
+static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw)
+{
+	if (gc.test_res && ++gc.test_n2 == gc.test_res)
+		HWR_GCacheReclaim(0); // (test: the zone takes the cache back where the allocation of the reserve could)
+	HWR_GCBatchReserve((int)np, (int)nv);
+	if (nw)
+	{
+		if (!wallinfo)
+			allocedwalls = 0;
+		if (allocedwalls < numwalls + nw)
+		{
+			while (allocedwalls < numwalls + nw)
+				allocedwalls += MAX_TRANSPARENTWALL;
+			Z_Realloc(wallinfo, allocedwalls * sizeof (*wallinfo), PU_LEVEL, &wallinfo);
+		}
+	}
+	return gc.blk != NULL;
+}
+#endif
+
 void HWR_AddTransparentWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, INT32 texnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap)
 {
-	static size_t allocedwalls = 0;
-
 	if (!r_renderwalls)
 		return;
+
+#ifdef PS2_PROFILE
+	if (hwr_grec_on)
+		HWR_GCRecTWall(wallVerts, pSurf, texnum, blend, fogwall, lightlevel, wallcolormap); // OPT11 PS2-HW-80
+#endif
 
 	// Force realloc if buffer has been freed
 	if (!wallinfo)

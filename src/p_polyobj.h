@@ -410,6 +410,12 @@ boolean EV_DoPolyObjFade(polyfadedata_t *);
 extern polyobj_t *PolyObjects;
 extern INT32 numPolyObjects;
 extern polymaplink_t **polyblocklinks; // polyobject blockmap
+#ifdef PS2_OPT_CORE
+extern INT32 ps2_polycells[4]; // PS2-200: cell box of the linked polyobjects (x1 x2 y1 y2), x1 > x2 when there is none
+#define PS2_POLYCELLS_RESET() (ps2_polycells[0] = 1, ps2_polycells[1] = 0, ps2_polycells[2] = 1, ps2_polycells[3] = 0)
+#else
+#define PS2_POLYCELLS_RESET() ((void)0)
+#endif
 #ifdef PS2_PROFILE
 // PS2-88: the array (4 bytes per blockmap cell: 283 KB on MAP11) exists only in levels that have polyobjects: P_LoadBlockMap leaves it NULL,
 // Polyobj_linkToBlockmap makes it

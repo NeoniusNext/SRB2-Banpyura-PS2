@@ -28,6 +28,9 @@
 #include "../r_local.h"
 #include "../m_misc.h"
 #include "../m_menu.h"
+#ifdef PS2
+#include "../ps2/ps2_net.h" // PS2-330: PS2Net_Reported()
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <stddef.h>
@@ -446,7 +449,9 @@ void Command_connect(void)
 			// PS2-125: the IP stack comes up here (src/ps2/ps2_net.c): no adapter / no DHCP answer is a normal thing to meet on a console
 			if (!I_NetOpenSocket())
 			{
-				M_StartMessage(M_GetText("The network is not available.\n\nCheck the Ethernet cable and the\nDHCP server (or pass -ip, -netmask,\n-gateway).\n\n(Press a key)\n"), NULL, MM_NOTHING);
+				// PS2-330: the network screen (ps2_netui.c) explained the failure in a window of its own (or the player cancelled): no second message then
+				if (!PS2Net_Reported())
+					M_StartMessage(M_GetText("The network is not available.\n\nCheck the Ethernet cable and the\nDHCP server (or pass -ip, -netmask,\n-gateway).\n\n(Press a key)\n"), NULL, MM_NOTHING);
 				return;
 			}
 #else

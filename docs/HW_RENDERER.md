@@ -80,7 +80,7 @@ Facts from runs in the emulator (details and pictures: `docs/GATES/g1/opt9-HF.md
 * Sector light = the GLSL equation `mix(colour, fade, floor(R_DoomColormap)/32)` reproduced exactly: polygons are cut at the eye depths where the darkness class steps
   (GS fog with a constant F per piece; FOGCOL = fade colour); colormap tint = a CLUT per tint (`CK_TINT`). Polygons that stay inside one class are not cut (THZ1: 2 of
   ~1800 polygons per frame are cut).
-* Water (`PF_Ripple`, shader 4): the shader's `tex(s - sin(a)*0.025, t - cos(a)*0.025)` with `a = -pi*z/2*0.025 + leveltime*2` is made by cutting the polygon into
+* Water (`PF_Ripple`, shader 4): the shader's `tex(s - sin(a)*0.025, t - cos(a)*0.025)` with `a = -pi*z/2*0.025 + leveltime*2` (**leveltime there is in SECONDS: (leveltime - 1 + rendertimefrac) / 35; this section and OPT10 turned 2 rad per tic, 35 times too fast, corrected in OPT11-FX PS2-HW-125; the band method described here was replaced by PS2-HW-120**) is made by cutting the polygon into
   16-unit depth bands (to 640 units) with the texture coordinate shifted by the middle of the band (error <= 0.5 texel on a 64 texel flat).
 * A polygon whose texture coordinates span more than 4096 texels (huge floors/horizons) is cut at whole repeats (`UV_EXTENT`): the GS UV integer part is 14 bits.
 * Diagnostics of the driver go to the log only (`CONS_Printf`/`CONS_Alert` are redefined to `I_OutputMsg` inside `ps2_hwd.c`): they were drawn over the picture.
@@ -116,6 +116,46 @@ Facts from runs in the emulator (details, pictures and numbers: `docs/GATES/g1/o
   engine default of 512.
 * Measurement tools of OPT10-HF: `pcshot.py` (PC reference), `hf_run.py`, `hfpanel.py`, `hfbatch.py` (`--zreserve`, `--emu`), `hfscreens.py`, `hftt.py`, `hf_perfcmp.py` (HWPROF windows of two runs), `hf_zcaller.py` (`-zcaller` log by tag and
   caller), `hf_chaincmp.py` (every picture of a map change chain has a twin), `hf_hudaddon.py` (Lua HUD test add-on), console command `hf_split 1` (splitscreen in single player, PC and PS2).
+
+## OPT11-FX (2026-10-08): water, shadows, model light, effect matrix
+
+Facts from runs in the emulator against the PC OpenGL engine (details, numbers, commands: `docs/GATES/g1/opt11-FX.md`):
+
+* **Water (`PF_Ripple`) shader time** (PS2-HW-125): the PC driver hands the shader `(leveltime - 1 + rendertimefrac) / TICRATE` seconds and the shader turns 2 rad per second (2/35 rad per tic); the GS driver (OPT9 on) turned 2 rad **per tic**, 35 times too fast: the "glitching water". Now `a0 = 2 * (leveltime - 1 + frac) / 35` (`water_phase_rad`). Water blocks against the PC picture on a grid texture: 30-72 % at (0,0) -> 80-99 %.
+* **Water without seams** (PS2-HW-120): the shift of the texture coordinates is computed in the vertices by eye depth and interpolated by the GS (C0 at every depth plane and at polygon borders), one triangle strip per light class, reach by texture size (64: 320 units, 256: 1280, 512: 2560), fade between 1.5 and 0.8 pixel of amplitude; polygons over 4096 texels ripple too. Host test `ripple`: mean error 0.36 px against the GLSL (OPT10 bands: 1.4-3.7 px). A/B switch `-hwwater 1` (the OPT10 sweep); cost: DEMO_001 +5.0 % of the water branch (+0.4 % wall), DEMO_004 -39 % of the water branch (-1.0 % wall).
+* **Drop shadow lost the depth test on 1/3 of the maps** (PS2-HW-124): the GS interpolates the depth of a floor from vertices snapped to 1/16 pixel, a low camera sees hundreds of depth steps per pixel; the shadow 0.05 units over the floor lost. `HWR_DrawDropShadow` lifts the shadow by `d^2 / (640 h)` units (0.05 .. 6) under `PS2_PROFILE`.
+* **Models** (PS2-HW-126) were drawn at full brightness (`PF_ColorMapped` is not in the surface flags of `hw_md2.c`): sector light, colormaps and `RF_FULLDARK` now work. `gr_modellighting` (directional light, off by default) is not implemented.
+* **Stale light-table CLUTs** after a level restart (PS2-HW-123): `lt_clear` bumps `H.pal_gen`.
+* Known differences that stay (matrix in the report): the PC snaps every blended colour to the palette (a post process the GS cannot do: MAD 2-6 in scene pictures); UI colormap fade is a translucent black quad (menu MAD 17); `PF_Decal` bias is a constant 3 depth steps; `gr_lightdithering`, wireframe, corona, custom GLSL are not implemented.
+* Tools: `fx_pair.py` (one scene on both renderers), `fx_sweep.py`, `fx_shift.py` (block matching of the water), `fx_chain.py`, `fx_queue.sh`, `fx_water.sh`, `fx_watertab.py`, `fxscene.lua`/`fxflash.lua`, `make_fxmodel.py`, `-hwlt N`, `-hwwater N`.
+* Trap: the PC engine reads and **saves** `/opt/srb2-assets/reference.cfg`: a run that sets `gamma 4` or `gr_models On` leaves it for the next PC runs of everybody (`pcshot.py` now resets them at the start of every run).
+
+## OPT11 round 2, FX2 (2026-10-08): speed of the sprites, shadows, sky dome and sky box water on the EE
+
+Details, numbers and what was not reached: `docs/GATES/g1/opt11-FX.md` section 6 (PS2-HW-240..249).
+
+* **Sphere tests before the work** (`ps2_hw_fx2.inc` `PS2HWD_CullSetup`: the rows of the clip transform and the gradient lengths of the four side planes): a thing whose sprite cannot reach the view is not projected (`HWR_AddSprites`), a drop shadow and every quad of the sky dome are tested the same way. A sphere wholly outside one side of the view volume holds four corners outside it, which is what `PS2HWD_QuadHidden` calls hidden: the result is exact (check mode `-hwfx 2`: 0 differences on DEMO_001..004, 500 thousand things). Things with a drop shadow, models, link draws, floor and paper sprites, skins, overlays and rolled sprites are not tested by the sphere (their quad is still tested by `PS2HWD_QuadHidden` as before).
+* **A/B switches on one ELF** (`-hwfx N`, `ps2_hw_fx2.h`; a set bit switches one path off): 1 thing filter, 2 check mode, 4 sort keys in the vissprite, 8 shadows, 16 sky dome, 64 interpolated state kept in the vissprite, 256 sky box water, 1024 thing visibility; `-hwfx 1373` = every path off. `-fxfrac N` draws every frame N percent between two tics (the time demo draws whole tics only).
+* Result: DEMO_001 wall -2.1 %, DEMO_004 -4.0 % (same ELF, whole-tic frames, no profiler console); between two tics -3.7 % / -5.8 %. Pictures: 0 differing pixels in 40 snapshots (4 demos, whole tics and between tics, paths on / off). The goal of round 2 (0.8 M cycles for sprites + HUD + sky + water on DEMO_001, 2 M on DEMO_004) is not reached: 2.19 M and 3.64 M.
+* Trap for A/B between two different ELFs: the pictures of two builds differ by up to 0.5 % of the pixels (1-2 pixel lines along wall edges) when the allocation pattern differs (the size of `gl_vissprite_t` alone does it): the batch order of polygons with one texture depends on a hash of the texture's pointer (`HWR_ProcessPolygon`). Compare pictures of one ELF.
+
+## OPT11 round 3, FX3 (2026-10-08): sprite stream on VU1, cheap projection of things
+
+Details, numbers and what was not reached: `docs/GATES/g1/opt11-FX.md` section 7 (PS2-HW-250..259).
+
+* **Cheap projection (on by default)**: `HWR_ProjectPlain` (plain things without a full `HWR_ProjectSprite`), the sphere of the view instead of the exact quad test (`HWR_FX_SpriteHiddenCheap`; a sprite whose picture is not yet in the GS pool still gets the exact test, `HWR_FX_SpriteResident`: otherwise D2 made 50 pictures a frame resident for sprites that were never drawn and ran 1.55 times slower), the patch of a sprite lump once per view, no colour map lookup for a thing without a colour. `addspr` -15..-20 %, whole frame -0.7..-1.5 % against the exact test.
+* **Sprite stream (opt-in, `-hwspr`)**: `ps2_hw_spr.inc` + `vu1/ps2_hw_vu1_spr.vsm`. A sprite or drop shadow of the opaque sprite batch is a 112-byte record (parallelogram P0/R/U, texture, surface) in a list; the flush (start of `HWR_RenderBatches`) writes 6 quad words per sprite into a chunk of the sprite program, which expands the four vertices, tests the guard band volume, picks the colormap row, packs the GIF packet. Picture identical to the batch (0 differing pixels, k300/k600 of D1 and D4; check mode `-hwspr -hwfx 2`: 0 differences in 200 thousand records). **It is not faster than the VU2 block collection on the EE** (D1 +1.3 %, D2 -2.7 %, D3 -1.5 %, D4 +4.6 % of the sprite set) and its lists are 75 KB of the zone: off by default. Never allocate tens of KB with `memalign`/`malloc` in the driver (the C heap is the small part on 32 MB: a list there made D2 1.7 times slower).
+* **A/B bits added to `-hwfx`**: 16384 exact test of the quad as a parallelogram off, 32768 patch fill, 65536 (retired), 131072 plain projection off, 262144 stream and cheap test off, 524288 builder from the vissprite off, 1048576 cheap projection off, 2097152 patch cache off, 4194304 sphere test off, 8388608 plain sprite shortcut off, 16777216 shadow builder off, 33554432 stream alone off (the default); 8192 draws no sprites (measurement). `-hwsprent N -hwsprshd N` size the stream lists. `-hwdbg 1073741824` prints a census of the sprites of a frame (HWSPR) and of the things that take the full projection.
+* Memory trap: DEMO_003 ends in `Out of memory allocating 663552 bytes` on the tip of the main branch and on this tree alike (zone arena 22.2 MB of 32 MB); the result of a run changes with the form of the command line. Compare runs of one command shape.
+
+## OPT11 round 2, GEOM2 (2026-10-08): the engine side of the walk - geometry cache of walls, determinism tools
+
+Details, numbers, commands: `docs/GATES/g1/opt11-GEOM.md` (round 2, R2.1..R2.9; registry PS2-HW-200..215).
+
+* **Geometry cache of the walls** (`hw_gcache.inc`, on by default): the polygons a seg makes (`HWR_ProcessSeg`) are recorded as the calls the function makes to the three sinks of the walk and made again when the key - plain words, the inputs of the function (sector versions, line and side words, texture numbers, ...) - is the same; exact, no hashing. Planes are cached with `-hwgc 1` (no gain after the block collection of PS2-HW-233: a hit costs about what the calculation does). 3D floors with an animated texture hit (the record is patched to the texture of the moment: PS2-HW-213). The arena (640 KB) doubles while it is full and the zone has room; the zone can take it back (`Z_AddReclaimHook`).
+* **Determinism tools**: `-hwpolyhash` (HWPH line: `h=` all polygons, `w=` the polygons of the world only, `s=` heights/lights/flats of all sectors, `v=` the view), `tools/ps2/gm_polycmp.py A B [--world]`; `-singletics` on a map makes one tic for every frame drawn (PS2-HW-208: two runs of a map show the same frames); `-hwgc 2` calculates every hit again and compares; `build/mapcamp3.sh` (15 maps against the reference stream) in the worktree.
+* **A/B switches** (`-hwgo` bits): 1 AddLine angle reuse, 4 QuadHidden two-corner exit, 8 HWR_Lighting fast path, 16 wall light memo, 32 shader table per batch, 1024 inline R_FakeFlat, 2048 light table once per view, 4096 vertex angle once per view, 8388608 no growth of the cache arena, 16384 BSP walk without walls and planes (a measurement), 32768 flat of a plane chosen at once; `-hwgc N`, `-hwgcmem KB`.
+* Traps: (1) memory: the cache takes 0.8 MB (a big level: 1 MB); the level of DEMO_002 (26203 segs) is at the edge of the zone and cliffs (textures purged and read again from the PAK: 6..20 M cycles a frame in a few windows) for some sizes of any long-lived block, with the cache off as well as on - a zone/STAB matter. (2) A run of a map is only comparable with `-singletics` (frame = tic) and without screen shake (MAP12).
 
 ## Complete callback matrix
 
@@ -157,7 +197,7 @@ Every row remains **U for full engine/PC comparison**, including rows marked P.
 | CompileShader | warning, returns false | Missing |
 | SetShader | stores requested slot; custom slots warn | Explicit experimental built-in passes; capability refusal keeps engine fallback routing |
 | UnSetShader | fixed-function state already active | No shader allocation to release |
-| SetShaderInfo | stores LEVELTIME | Water/ripple/time-driven texture effects remain missing |
+| SetShaderInfo | stores LEVELTIME | The water ripple is made from it (OPT11-FX, PS2-HW-120, `ps2_hw_water.inc`) |
 | SetPaletteLookup | no-op (PS2-HW-71): the textures are indexed, no RGB-to-index lookup is needed | OPT10: palette rendering is done with CLUTs, see the OPT10-HF section |
 | CreateLightTable | keeps the 32 x 256 colours as palette indices (8 KB), returns an id (PS2-HW-71) | rows of the table are CLUT images (`CK_LIGHT`) |
 | UpdateLightTable | rebuilds the indices, new CLUT generation | as CreateLightTable |
@@ -184,8 +224,8 @@ implemented primitive path correctly.
 | Translucent/additive/reverse-subtract blending | Native GS equations | Tested independently, GS rounding differs from PC; textured/partial-alpha coverage needs expansion |
 | Subtractive/multiplicative/environment blending | Native source-minus-destination after polygon alpha scaling; palette channel multiply; two-pass environment | P flat/opaque palette within 2 RGB levels. Partial-alpha subtract, direct-colour multiply, keyed multiply/depth and lit combinations remain gaps |
 | Alpha/keyed holes | Keyed index 255, CT32 AP88, masked source-alpha scaling | GS alpha quantization/general partial-alpha threshold parity remain gaps; polygon alpha 128 correctly passes >0.5 |
-| Water shader/refraction/ripple | No water fragment shader; PF_Ripple carries no implemented shader | Built-in water effect and engine water scenarios |
-| Underwater/heat screen distortion | CPU grid redraw exists | Grid input/orientation/reference frames; not equivalent to missing fragment shaders |
+| Water shader/ripple | PF_Ripple: texture shift in the vertices by eye depth (C0, no seams, reach by texture size), one triangle strip per light class (OPT11-FX) | P/H: host test `ripple` mean error 0.37 px against the GLSL, PS2/PC scene pairs (`docs/GATES/g1/opt11-FX.md`); the shader has no refraction of what lies below |
+| Underwater/heat screen distortion | CPU grid redraw (`PostImgRedraw`) | Compared with the PC in water pits of GFZ1/GFZ2 (OPT11-FX): same wobble and colours (the wobble moves a column by at most 0.9 px); the underlay of the grid is black here, the PC code draws it with `white` and whatever texture state is current: edges only, not measured |
 | Built-in/custom shaders | Unsupported, Init/Compile false | Fixed-function or multipass equivalents for built-ins; custom programmable code has no interpreter |
 | Palette rendering/light LUT/colormap postprocessing | Unsupported shader callbacks warn | Complete colour lookup and light-table effects |
 | Near/far/frustum/scissor clipping | CPU homogeneous clip, GS guard band/scissor | H/P independent reference; full map occlusion and splitscreen not verified |

@@ -102,6 +102,19 @@ void PS2HWD_Configure(const ps2hwd_config_t *cfg);
 void PS2HWD_GetConfig(ps2hwd_config_t *cfg);
 
 void PS2HWD_GetInfo(ps2hwd_info_t *out);
+
+// OPT11-MEM (PS2-HW-300): the GS memory (4 MiB = 16384 blocks of 256 bytes) in use, from counters the driver keeps anyway (O(1), no walk of the pool): showmem
+typedef struct
+{
+	int up; // the driver is running (otherwise all zero)
+	unsigned int total_blocks; // 16384
+	unsigned int fb_blocks; // the two frame buffers
+	unsigned int z_blocks; // the Z buffer
+	unsigned int clut_blocks; // the CLUT area (palette images of the colormap rows)
+	unsigned int pool_blocks, pool_used_blocks; // the texture pool and what is allocated in it (textures kept for later use included, screen captures too)
+	unsigned int ws_blocks; // GS blocks of the textures the last frame drew (its working set)
+} ps2hwd_vram_t;
+void PS2HWD_VramStats(ps2hwd_vram_t *out);
 void PS2HWD_GetStats(ps2hwd_stats_t *out, int reset);
 // diagnostics: prints the biggest textures drawn in the current frame
 void PS2HWD_DumpWorkingSet(void);
@@ -134,5 +147,10 @@ void PS2HWD_TextureTest(void);
 // Negative controls: bit 0 = ignore Z test, bit 1 = ignore alpha test, bit 2 = ignore blending, bit 3 = never write Z.
 extern int ps2hwd_hash_on; // -hwhash: HWHASH lines (a hash of the GIF stream of every frame)
 extern int ps2hwd_dbg_flags;
+extern int ps2hwd_water_ab; // -hwwater N (OPT11 FX, A/B of the water): bit 0 the OPT10 sweep (a constant shift per band), bit 1 every plane of the ripple table, bit 2 put_vertex for the strips (not -hwdbg: its low bits belong to hw_main.c)
+extern int ps2hwd_model_ab; // -hwmodel N (OPT11 MODEL, A/B): bit 0 = the corner by corner path of OPT10 for every mesh, bit 1 = no model lighting
+extern int ps2hwd_model_px, ps2hwd_model_tris; // -hwmodelpx / -hwmodeltris (OPT11 MODEL): the level of detail of models
+extern int ps2hwd_fx2; // -hwfx N (OPT11 round 2, FX2): a set bit switches one of the FX2 paths off (ps2_hw_fx2.h)
+extern int ps2hwd_force_lt; // -hwlt N (OPT11 FX, diagnostics): the water ripple phase of level time N whatever the frame (pictures comparable with the PC engine at tic N)
 
 #endif

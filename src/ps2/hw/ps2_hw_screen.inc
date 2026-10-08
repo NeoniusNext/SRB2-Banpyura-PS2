@@ -368,7 +368,8 @@ boolean PS2HWD_ReadScreenRGB(INT32 tex, UINT8 *dst_data)
 	u32 blk, tbw;
 	int bpp = H.fb32 ? 4 : 2, rows = H.vh, stride, dy, dx, owned = 1, banded = 0, bb0 = 0, bn = 0;
 	float ry, rx;
-	static u8 band[8 * 1024 * 4] __attribute__((aligned(64))); // OPT5: when the whole picture does not fit into RAM it is read 8 source rows at a time
+	static u8 *band; // OPT5: when the whole picture does not fit into RAM it is read 8 source rows at a time (PS2-171: taken at the first need, was a 32 KB .bss array)
+#define BAND_BYTES (8 * 1024 * 4)
 
 	if (!H.up || !dst_data)
 	{
@@ -408,7 +409,9 @@ boolean PS2HWD_ReadScreenRGB(INT32 tex, UINT8 *dst_data)
 	}
 	else
 		pixels = memalign(64, (size_t)stride * (size_t)rows * (size_t)bpp);
-	if (!pixels && stride * bpp * 8 <= (int)sizeof band)
+	if (!pixels && !band && stride * bpp * 8 <= BAND_BYTES)
+		band = memalign(64, BAND_BYTES);
+	if (!pixels && band && stride * bpp * 8 <= BAND_BYTES)
 	{
 		banded = 1; // no room for the whole picture: PS2-HW-21
 		pixels = band;

@@ -98,7 +98,32 @@ void R_ClearSegTables(void)
 	curtexturecolumntable = texturecolumntable;
 }
 
+static size_t maxdrawsegs = 0; // (was local to R_StoreWallRange; PS2-172 needs it for R_ReleaseDrawSegScales)
+
 #ifdef PS2_PROFILE
+// PS2-172 (OPT11-STAB): the scale arrays of the drawsegs that own FOF planes grow to the busiest view of the session (874 KB after the FOF-heavy
+// maps of a campaign) and stayed for ever: a new level starts without them (called by P_LoadLevel after the caches were flushed; no frame is drawing).
+void R_ReleaseDrawSegScales(void)
+{
+	size_t i;
+
+	if (!drawsegs)
+		return;
+	for (i = 0; i < maxdrawsegs; i++)
+		if (drawsegs[i].frontscale)
+		{
+			Z_Free(drawsegs[i].frontscale);
+			drawsegs[i].frontscale = NULL;
+			drawsegs[i].frontscalewidth = 0;
+		}
+	// PS2-179: and the array of the drawsegs itself (128 entries grown by half to the busiest view: 0.6 MB after MAPF2, a block of the long-lived side that no level
+	// ever released); the first wall of the next level makes it again, as at the start of the game
+	Z_Free(drawsegs);
+	drawsegs = ds_p = curdrawsegs = NULL;
+	firstseg = NULL;
+	maxdrawsegs = 0;
+}
+
 void R_AllocDrawSegFrontScale(drawseg_t *ds)
 {
 	// Retain each slot's old values and high-water view width between frames.
@@ -2735,7 +2760,6 @@ void R_StoreWallRange(INT32 start, INT32 stop)
 	INT32 range;
 	vertex_t segleft, segright;
 	fixed_t ceilingfrontslide, floorfrontslide, ceilingbackslide, floorbackslide;
-	static size_t maxdrawsegs = 0;
 
 	maskedtexturecol = NULL;
 	maskedtextureheight = NULL;

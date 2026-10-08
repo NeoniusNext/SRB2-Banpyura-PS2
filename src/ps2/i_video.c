@@ -37,6 +37,10 @@
 #include "ps2_gs.h"
 #include "ps2_vmodes.h"
 #include "ps2_boot.h"
+#include "ps2_hwfb.h" // PS2-170
+#include "ps2_memhud.h" // OPT11-MEM (PS2-HW-300): showmem
+#include "ps2_netui.h" // PS2-331: -vidshot nN
+#include "ps2_menuhints.h" // PS2-338: cvar menuhints
 
 #ifdef HWRENDER
 #include "../hardware/hw_main.h"
@@ -48,6 +52,8 @@
 #include "hw/ps2_hw_prof.h"
 #endif
 #include "ps2_prof.h"
+
+INT32 ps2_fxfrac; // -fxfrac N (OPT11 round 2, FX2): every frame is drawn N percent between two tics (d_main.c)
 
 rendermode_t rendermode = render_none;
 rendermode_t chosenrendermode = render_none;
@@ -142,6 +148,7 @@ static void Vid_InitCvars(void)
 	CV_RegisterVar(&cv_vidoutput);
 	CV_RegisterVar(&cv_vidfit);
 	CV_RegisterVar(&cv_vidfilter);
+	PS2MenuHints_RegisterCvars(); // PS2-338: menuhints (before the config file is read)
 }
 
 #ifdef HWRENDER
@@ -199,6 +206,8 @@ static INT32 totalframes;
 
 static void Impl_HWFailure(const char *message)
 {
+	if (Z_GuardThrow(message)) // PS2-170: the frame (or the level's hardware part) is abandoned and the game goes on in software; no return from here
+		return;
 	I_Error("PS2 HW resource failure: %s", message);
 }
 
@@ -236,6 +245,20 @@ static boolean Impl_HWAcquire(void)
 				trace = atoi(M_GetNextParm());
 			if (M_CheckParm("-hwdbg") && M_IsNextParm())
 				dbg = atoi(M_GetNextParm());
+			if (M_CheckParm("-hwlt") && M_IsNextParm())
+				ps2hwd_force_lt = atoi(M_GetNextParm()); // OPT11 FX: the water ripple phase of level time N (a PS2 frame is not at the PC's tic)
+			if (M_CheckParm("-hwwater") && M_IsNextParm())
+				ps2hwd_water_ab = atoi(M_GetNextParm()); // OPT11 FX: A/B switches of the water (ps2_hwd_dbg.h)
+			if (M_CheckParm("-hwmodel") && M_IsNextParm())
+				ps2hwd_model_ab = atoi(M_GetNextParm()); // OPT11 MODEL: A/B switches of the models (ps2_hwd_dbg.h)
+			if (M_CheckParm("-hwmodelpx") && M_IsNextParm())
+				ps2hwd_model_px = atoi(M_GetNextParm()); // OPT11 MODEL: below this radius (pixels) an object is a sprite
+			if (M_CheckParm("-hwmodeltris") && M_IsNextParm())
+				ps2hwd_model_tris = atoi(M_GetNextParm()); // OPT11 MODEL: triangles of the models of a frame (0 = no limit)
+			if (M_CheckParm("-fxfrac") && M_IsNextParm())
+				ps2_fxfrac = atoi(M_GetNextParm()); // OPT11 round 2 (FX2): every frame is drawn N percent between two tics (d_main.c; the time demo draws whole tics only)
+			if (M_CheckParm("-hwfx") && M_IsNextParm())
+				ps2hwd_fx2 = atoi(M_GetNextParm()); // OPT11 round 2 (FX2): A/B switches of the sprite paths (ps2_hw_fx2.h)
 			if (M_CheckParm("-hwhash"))
 				ps2hwd_hash_on = 1; // OPT10 HG: HWHASH lines (see ps2_hw_priv.inc)
 			if (M_CheckParm("-hwvu1"))
@@ -246,9 +269,16 @@ static boolean Impl_HWAcquire(void)
 	ps2gs_shutdown();
 	if (!HWD.pfnInit())
 	{
+#ifdef PS2
+		// PS2-170 (OPT11-STAB): the driver could not start (no memory for its work arrays, a GS mode it cannot set up): the caller goes on in software
+		PS2HWD_SetFatalHandler(NULL);
+		CONS_Alert(CONS_ERROR, "PS2 GS hardware renderer failed to start: using the Software renderer\n");
+		return false;
+#else
 		vid.glstate = VID_GL_LIBRARY_ERROR;
 		I_Error("PS2 GS hardware renderer failed to start; Hardware request was not rendered");
 		return false;
+#endif
 	}
 	hwd_on = true;
 	PS2HWD_SetScreenSize(vid.width > 0 ? vid.width : BASEVIDWIDTH, vid.height > 0 ? vid.height : BASEVIDHEIGHT);
@@ -277,6 +307,12 @@ static boolean Impl_HWAcquire(void)
 	}
 #endif
 	return true;
+}
+
+// PS2-170: the driver is up but the engine does not own it yet (a jump out of its start): the ordinary release does nothing then
+boolean PS2Video_HWOwned(void)
+{
+	return hwd_on;
 }
 
 static void Impl_HWRelease(void)
@@ -584,7 +620,13 @@ void VID_StartupOpenGL(void)
 	vid.glstate = Impl_HWAcquire() ? VID_GL_LIBRARY_LOADED : VID_GL_LIBRARY_ERROR;
 	if (vid.glstate == VID_GL_LIBRARY_ERROR)
 	{
+#ifdef PS2
+		// PS2-170: no Hardware renderer in this session: the game starts (or goes on) in software
+		rendermode = render_soft;
+		Impl_SoftwareAcquire(gsmode);
+#else
 		I_Error("GS hardware bootstrap failed");
+#endif
 	}
 #endif
 }
@@ -749,11 +791,19 @@ boolean VID_CheckRenderer(void)
 				rendererchanged = false;
 			else if (!hwd_on && !Impl_HWAcquire()) // back from software: the GS goes to the driver again
 			{
+#ifdef PS2
+				// PS2-170: the driver does not start now (memory, GS): software, and the failure counts towards giving the hardware renderer up
+				PS2HWFB_NoteStartFailure();
+				rendermode = render_soft;
+				Impl_SoftwareAcquire(gsmode);
+				rendererchanged = false;
+#else
 				vid.glstate = VID_GL_LIBRARY_ERROR;
 				VID_CheckGLLoaded(oldrenderer);
 				rendermode = render_soft;
 				CV_StealthSetValue(&cv_renderer, render_soft);
 				rendererchanged = false;
+#endif
 			}
 		}
 		else
@@ -917,7 +967,7 @@ static void Impl_HWProf(void)
 		PS2HWD_DumpWorkingSet();
 	PS2HWD_GetStats(&st, 1);
 	PS2HWD_GetInfo(&info);
-	CONS_Printf("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u vbl=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u cap=%u pred=%u capchg=%u restamp=%u decim=%u\n",
+	I_OutputMsg("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u vbl=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u cap=%u pred=%u capchg=%u restamp=%u decim=%u\n",
 		(int)windows, (int)frames, (unsigned)(wall / frames),
 		(unsigned)(ps2hwp_cyc[HWP_CLEAR] / frames), (unsigned)(ps2hwp_cyc[HWP_BSP] / frames), (unsigned)(ps2hwp_cyc[HWP_BATCH] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_SPRITES] / frames), (unsigned)(ps2hwp_cyc[HWP_NODES] / frames), (unsigned)(ps2hwp_cyc[HWP_POST] / frames),
@@ -928,12 +978,13 @@ static void Impl_HWProf(void)
 		st.cap_blocks, st.pred_ws, st.cap_changes, st.tex_restamped, st.tex_decimated);
 	hwprof_vbl0 = st.vblanks;
 	// PS2-HW-40 (OPT9, HG): finer spans of hardware/hw_main.c (inclusive, some nested in the phases above)
-	CONS_Printf("HWPROF2 win=%d setup=%u sky=%u seg=%u plane=%u addspr=%u subsec=%u light=%u sprsort=%u sprdraw=%u nodesort=%u nodedraw=%u\n", (int)windows,
+	I_OutputMsg("HWPROF2 win=%d setup=%u sky=%u seg=%u plane=%u addspr=%u subsec=%u light=%u sprsort=%u sprdraw=%u nodesort=%u nodedraw=%u\n", (int)windows,
 		(unsigned)(ps2hwp_cyc[HWP_SETUP] / frames), (unsigned)(ps2hwp_cyc[HWP_SKY] / frames), (unsigned)(ps2hwp_cyc[HWP_SEG] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_PLANE] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames), (unsigned)(ps2hwp_cyc[HWP_SUBSEC] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
 	PS2HWD_ProfExtra((unsigned int)frames); // OPT10 HG
+	PS2MemHud_ProfLine((unsigned int)frames); // OPT11-MEM (PS2-HW-300)
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);
 	wall = 0;
 	frames = 0;
@@ -960,6 +1011,8 @@ static void Impl_HWStats(void)
 static void Impl_VidKeys(void);
 static void Impl_VidShot(void);
 
+extern void HWR_PolyHashFrame(INT32 frame); // hardware/hw_batching.c: -hwpolyhash
+
 static void Impl_FinishUpdateHW(void)
 {
 	if (!hwd_on || ps2gs_is_up())
@@ -969,6 +1022,7 @@ static void Impl_FinishUpdateHW(void)
 	HWD.pfnFinishUpdate(cv_vidwait.value);
 	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
 	hwframes++;
+	HWR_PolyHashFrame(hwframes); // OPT11 GEOM: -hwpolyhash
 	if (hwprof)
 		Impl_HWProf();
 	if (gamestate == GS_TITLESCREEN && !WipeInAction)
@@ -1081,6 +1135,7 @@ static void Impl_VidKeys(void)
 		else if (!strcmp(kn, "console")) key = '`'; // PS2-HW-60: the console key
 		else if (!strcmp(kn, "f1")) key = KEY_F1;
 		else if (!strcmp(kn, "f2")) key = KEY_F2;
+		else if (!strcmp(kn, "f7")) key = KEY_F7; // PS2-336: F7 = the Options menu (a picture of the controls list)
 		else if (kn[0] >= 'a' && kn[0] <= 'z' && !kn[1]) key = kn[0];
 		else
 			I_Error("-vidkeys: unknown key '%s'", kn);
@@ -1128,7 +1183,7 @@ static void Impl_VidShot(void)
 			strlcpy(spec, M_GetNextParm(), sizeof spec);
 			for (p = spec; *p;) // one shot per item 't35' / 'l70' / 'f200' (an optional '=command' follows the number)
 			{
-				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w' || *p == 'i');
+				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w' || *p == 'i' || *p == 'n' || *p == 'm');
 				while (*p && *p != ',')
 					p++;
 				if (*p == ',')
@@ -1139,6 +1194,7 @@ static void Impl_VidShot(void)
 	if (!left)
 		return;
 	anyn++;
+	PS2MenuHints_SeqTick(); // PS2-339: -menuseq, the menus of a picture series (m<N> shots)
 	if (anyn == 3 && M_CheckParm("-vidcmd") && M_IsNextParm()) // OPT10-HF: -vidcmd 'con_hudlines~0;gr_filtermode~1': console commands ('~' = space, ';' = next command) on the third frame
 	{
 		char cmdline[160];
@@ -1184,6 +1240,8 @@ static void Impl_VidShot(void)
 		if (*p == ',')
 			p++;
 		hit = (kind == 'w' && WipeInAction && n == wipen)
+			|| (kind == 'm' && n > 0 && PS2MenuHints_SeqFrame() == n) // PS2-339: m40 = the 40th frame of the -menuseq series
+			|| (kind == 'n' && n > 0 && PS2NetUI_Frame() == n) // PS2-331: n40 = the 40th frame of the network screen (ps2_netui.c; a picture of each step with -netslow)
 			|| (!WipeInAction && ((kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn) || (kind == 'i' && n == intern)))
 			|| (!WipeInAction && (kind == 'k' || kind == 'K') && kord++ == knext && gamestate == GS_LEVEL && (INT32)leveltime >= n && (klow || kind == 'k')); // PS2-HW-60: k300 = first frame with leveltime >= 300, K300 = the same but only in a level that started after the previous shot; k/K items fire in order (the same tic as the PC reference at any frame rate)
 		if (hit && (kind == 'k' || kind == 'K'))
@@ -1237,8 +1295,8 @@ static void Impl_VidShot(void)
 				I_Error("vidshot: write failed %s", path);
 			free(row);
 			free(hwrgb);
-			CONS_Printf("VIDSHOT %s %dx%d output=%s fit=%s gamestate=%d saved %s\n", tag, (int)vid.width, (int)vid.height,
-				ps2gs_is_up() ? ps2vm_output(ps2gs_mode())->name : "-", cv_vidfit.string ? cv_vidfit.string : "?", (int)gamestate, path);
+			CONS_Printf("VIDSHOT %s %dx%d output=%s fit=%s gamestate=%d saved %s lt=%d\n", tag, (int)vid.width, (int)vid.height,
+				ps2gs_is_up() ? ps2vm_output(ps2gs_mode())->name : "-", cv_vidfit.string ? cv_vidfit.string : "?", (int)gamestate, path, (int)leveltime);
 			if (cmd[0])
 				COM_BufAddText(cmd);
 			if (++done >= left)
@@ -1284,6 +1342,9 @@ void I_FinishUpdate(void)
 
 	if (cv_ticrate.value)
 		SCR_DisplayTicRate();
+
+	if (cv_showmem.value) // OPT11-MEM (PS2-HW-300): Off costs this compare
+		PS2MemHud_Draw();
 
 	if (cv_showping.value && (
 		(netgame && consoleplayer != serverplayer)

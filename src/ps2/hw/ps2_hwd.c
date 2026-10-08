@@ -33,10 +33,16 @@
 #include "../../console.h"
 #include "../../hardware/hw_drv.h"
 #include "../../hardware/hw_main.h"
+#ifdef PS2_HWDETAIL
+extern boolean hwr_sprite_batch; // hw_batching.c
+#endif
 #include "../../m_argv.h" // -hwnosplit
+#include "../../r_main.h" // rendertimefrac (the shader time of the water, PS2-HW-125)
+#include "../../z_zone.h" // PS2-171: hwbig_alloc
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
+#include "../ps2_models.h" // PS2Models_TryAlloc (the model work areas)
 
 // PS2-HW-67: the driver's diagnostics (limitation warnings, texture cap changes, HWT/HWFX/HWPROF traces) go to the log only: through CONS_Printf/CONS_Alert
 // they were drawn over the game picture as console lines ("HWD texture cap 512 -> 1024 blocks", "WARNING: PS2 GS experimental limitation ...")
@@ -54,12 +60,18 @@
 #include "ps2_hw_vu0.inc"
 #include "ps2_hw_light.inc"
 #include "ps2_hw_pal.inc" // PS2-HW-71: palette rendering (light tables as CLUT rows)
+#include "ps2_hw_fx2.h" // OPT11 round 3 (FX3): -hwfx bits (FX3_NOFILL in the texture upload)
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
+#include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
+static void settex_now(GLMipmap_t *TexInfo); // (below)
+#include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
+#include "ps2_hw_wire.inc" // OPT11-MODEL (PS2-HW-270): PF_WireFrame and gr_wireframe as GS lines
 #include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
+#include "ps2_hw_bench.inc" // OPT11 round 2: -hwbench, what the instructions cost
 
 static FOutVector *sky_vertices;
 static float *sky_colors;
@@ -246,13 +258,88 @@ static void rec_init(void)
 		H.scr_rec[i] = NOREC;
 }
 
+// PS2-171 (OPT11-STAB): the driver's big work arrays (ovq, cutbuf, plan_info, blk_owner: 230 KB) are zone blocks that exist while the driver runs.
+// They were .bss: a game that runs the software renderer (MAP11 / CEZ2 has 0.2 MB of the arena left) carried them for nothing.
+static unsigned hwbig_nomem_n;
+
+static void hwbig_free(void)
+{
+	Z_Free(ovq_p);
+	Z_Free(cutbuf_p);
+	Z_Free(plan_info_p);
+	Z_Free(blk_owner_p);
+	ovq_p = NULL;
+	cutbuf_p = NULL;
+	plan_info_p = NULL;
+	blk_owner_p = NULL;
+}
+
+static boolean hwbig_alloc(void)
+{
+	if (M_CheckParm("-hwnomem") && !(hwbig_nomem_n++ & 1)) // test: every other start of the driver finds no memory (-hwnomem: the fallback to software and the return)
+	{
+		CONS_Alert(CONS_ERROR, "PS2 GS hardware renderer: no memory for its work arrays (-hwnomem)\n");
+		return false;
+	}
+	ovq_p = Z_TryMallocAlign(sizeof *ovq_p, PU_STATIC, NULL, 6);
+	cutbuf_p = Z_TryMallocAlign(sizeof *cutbuf_p, PU_STATIC, NULL, 6);
+	plan_info_p = Z_TryMallocAlign(sizeof *plan_info_p, PU_STATIC, NULL, 6);
+	blk_owner_p = Z_TryMallocAlign(sizeof *blk_owner_p, PU_STATIC, NULL, 6);
+	if (ovq_p && cutbuf_p && plan_info_p && blk_owner_p)
+	{
+		memset(ovq_p, 0, sizeof *ovq_p);
+		memset(cutbuf_p, 0, sizeof *cutbuf_p);
+		memset(plan_info_p, 0, sizeof *plan_info_p);
+		memset(blk_owner_p, 0, sizeof *blk_owner_p);
+		return true;
+	}
+	hwbig_free();
+	CONS_Alert(CONS_ERROR, "PS2 GS hardware renderer: no memory for its work arrays\n");
+	return false;
+}
+
 boolean PS2HWD_Init(void)
 {
 	int rc;
 
 	if (H.up)
 		return true;
+	if (!hwbig_alloc())
+		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
+	// PS2-HW-255 (OPT11 round 3, FX3): the sprite stream is opt-in (-hwspr). Measured on the tree with the VU2 collection of polygons in blocks (docs/GATES/g1/opt11-FX.md 7.7): the stream costs the EE
+	// what the batch costs for the same sprites (D1 +1.3 % of the sprite set, D2 -2.7 %, D3 -1.5 %, D4 +4.6 %, against the cheap projection alone), and its lists are 75 KB of the zone, which is
+	// at its edge on 32 MB (DEMO_003 ends in "Out of memory" on the tip of the main branch already). Without -hwspr the lists are not made and every sprite goes through the batch.
+	if (!M_CheckParm("-hwspr"))
+		ps2hwd_fx2 |= FX3_NOSTREAM;
+	// PS2-HW-251: the parallelogram test (PS2HWD_ParaHidden) for shadows and the exact test of sprites is opt-in (-hwpara) on the tree merged with MODEL / AUDIO: the check mode (-hwfx 2) of the merged
+	// ELF reported 38574 of 116736 shadow quads that the test hides and PS2HWD_QuadHidden does not (1..3 before the merge); not explained, not run again (delivered without tests).
+	if (!M_CheckParm("-hwpara"))
+		ps2hwd_fx2 |= FX3_NOPARA;
+	if (!(ps2hwd_fx2 & (FX3_NOSTREAM | FX3_NOSPR)))
+		spr_alloc(); // the lists of the sprite stream (zone blocks while the driver runs; no stream when there is no room)
+	wd_last_flips = ~0u;
+	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
+	if (M_CheckParm("-hwqh") && M_IsNextParm())
+		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
+	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	if (M_CheckParm("-hwbench"))
+		PS2HWD_Bench();
+	if (M_CheckParm("-hwplan") && M_IsNextParm())
+		plan_mode = atoi(M_GetNextParm()); // PS2-HW-229: 0 = VU0 transform and lean arithmetic of the planner, 1 = scalar as before, 2 = both, compared
+	vu_nocut = M_CheckParm("-hwnocut") != 0; // PS2-HW-236 off (-hwnocut 0 = on, for an A/B run with the same form of the command line): the polygons that need cutting at whole repeats (and the fans of more than 12 vertices) are drawn by the EE as before
+	if (vu_nocut && M_CheckParm("-hwnocut") && M_IsNextParm())
+		vu_nocut = atoi(M_GetNextParm()) != 0;
+	pk_oldtail = M_CheckParm("-hwoldtail") != 0;
+	if (M_CheckParm("-hwvudump") && M_IsNextParm())
+		vu_dump_frame = (u32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwvustop") && M_IsNextParm())
+		vu_stop_frame = (u32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwvumax") && M_IsNextParm())
+		vu_max_poly = (u32)atoi(M_GetNextParm());
+	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
+	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
+		vu_bretmask = atoi(M_GetNextParm());
 	tex_nosplit = M_CheckParm("-hwnosplit") != 0; // PS2-HW-70 off: images over 1024 rows are decimated
 	tex_split_rows = 1024;
 	if (M_CheckParm("-hwsplitrows") && M_IsNextParm())
@@ -339,6 +426,7 @@ void PS2HWD_Shutdown(void)
 		V.dmac_set = 0;
 	}
 	val_shutdown();
+	spr_free(); // PS2-HW-255
 	vu1_shutdown();
 	V.on = 0;
 	if (H.sema_vbl >= 0)
@@ -370,6 +458,48 @@ void PS2HWD_Shutdown(void)
 	if (H.gs)
 		gsKit_deinit_global(H.gs);
 	memset(&H, 0, sizeof H);
+	hwbig_free();
+}
+
+// PS2-170 (OPT11-STAB): the engine jumped out of a frame (out of memory, a resource failure: z_zone.h Z_GUARD_TRY) and is going to shut the driver down.
+// The packet the drawing was building (possibly cut off half way) is dropped, the queued buffers are never started, the GIF forgets a packet it was
+// in the middle of, and the frame state is closed, so that the shutdown (and the texture owners' deletes before it) find an ordinary idle driver.
+void PS2HWD_Abort(void)
+{
+	u32 irq;
+
+	if (!H.up || !H.ring[0])
+		return;
+	irq = DIntr();
+	*D2_CHCR = 0; // stop channel 2 (the queued buffers are read by nobody now)
+	if (V.on)
+		*D1_CHCR = 0;
+	__asm__ volatile("sync.l");
+	*(volatile u32 *)0x10003000 = 1; // GIF_CTRL.RST: a GIF packet that was cut off (an IMAGE upload) must not swallow the next packets
+	if (V.on)
+		*VIF1_FBRST = 1;
+	H.dma_busy = 0;
+	H.q_n = 0;
+	H.q_head = 0;
+	H.pending = 0;
+	H.wr = 1;
+	H.run = 0;
+	H.done_seq = H.q_seq;
+	H.gsr.valid = 0;
+	H.clut_loaded = 0;
+	H.finish_pending = 0;
+	H.frame_open = 0;
+	H.imm_tex = NULL;
+	V.chunk_open = 0;
+	OV.n = 0;
+	PS2HWD_SprReset(); // PS2-HW-255
+	if (H.pend)
+		H.pend_done = 1; // show what there is
+	*GS_CSR = 2;
+	val_reset();
+	if (irq)
+		EIntr();
+	rel_release_all();
 }
 
 // The engine's size (vid.width x vid.height): the coordinate space of GClipRect. A size that needs a different internal frame
@@ -630,6 +760,21 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 #endif
 }
 
+void PS2HWD_VramStats(ps2hwd_vram_t *out) // OPT11-MEM (PS2-HW-300)
+{
+	memset(out, 0, sizeof *out);
+	if (!H.up)
+		return;
+	out->up = 1;
+	out->total_blocks = VRAM_BLOCKS;
+	out->fb_blocks = H.z_addr / 256;
+	out->z_blocks = H.clut_base - H.z_addr / 256;
+	out->clut_blocks = H.pool_base - H.clut_base;
+	out->pool_blocks = H.pool_blocks;
+	out->pool_used_blocks = H.used_blocks;
+	out->ws_blocks = H.ws_last;
+}
+
 void PS2HWD_GetStats(ps2hwd_stats_t *out, int reset)
 {
 	H.st.vblanks = H.vbl;
@@ -658,8 +803,13 @@ static void hw_FinishUpdate(INT32 waitvbl)
 
 	if (!H.up)
 		return;
+	drv_in();
 	frame_end();
+	drv_out();
 	H.st.frames++;
+	if (H.st.ws_blocks >= H.ws_prev) // OPT11-MEM (PS2-HW-300): the working set of the frame just ended (else the profiler cleared H.st in this frame: the last value stays)
+		H.ws_last = H.st.ws_blocks - H.ws_prev;
+	H.ws_prev = H.st.ws_blocks;
 	if (waitvbl)
 		vblank_wait(1);
 	d = cyc() - t0;
@@ -808,10 +958,75 @@ static void split_draw(const FSurfaceInfo *surf, u32 flags, const FOutVector *v,
 	split_polygon(v, n, (H.rec[c.cur].wrapy || (flags & PF_ForceWrapY)) && !(flags & PF_RemoveYWrap), lo_t, hi_t, tk, split_buf[0], split_buf[1], split_emit, &c);
 }
 
+// A single polygon (hw_DrawPolygon: HUD, shadows, sprites that are not batched) through the VU1 program: with the plan of the previous single draw (same key) it joins
+// the open chunk (no begin_draw, no constants); with the plan of the previous single draw and another texture of the same kind (a run of HUD glyphs, sprites) the plan
+// is retargeted (PS2-HW-107: the texture registers and the texture scale, nothing else); else the plan is made and the constants go to the VU1 memory. What the VU1
+// path does not take (a plan with cuts, a polygon of too many texels) is drawn by the general path.
+static void single_draw(FSurfaceInfo *surf, u32 flags, FOutVector *v, int n)
+{
+	vukey_t k;
+	int how = 0;
+
+	vu_key_make(&k, flags, surf);
+	if (vu_plan_valid && VU.consts_ok && P.serial == H.serial)
+		how = vu_key_cmp(&k, &VK);
+	if (how)
+	{
+		if (how == 1)
+		{
+			vu_retarget(surf);
+			VK = k;
+		}
+		if (vu_poly(v, n, P.rs.lp.light))
+		{
+			G.s_vu++;
+			if (how == 2)
+				G.s_same++;
+			else
+				G.s_retarget++;
+			return;
+		}
+		VU.reuse = 0;
+		vu_plan_valid = 0;
+		vu_sync();
+		P.vu = 0;
+		if (how == 1 && P.lmode == LM_BANDS)
+			lit_fast_plan(); // the light level of this polygon (the program took it from the header)
+		emit_fan(v, NULL, n, NULL);
+		return;
+	}
+	if (!begin_draw(flags, surf))
+		return;
+	if (P.vuok)
+	{
+		VU.consts_ok = 0;
+		if (vu_poly(v, n, P.rs.lp.light))
+		{
+			VK = k;
+			vu_plan_valid = 1;
+			G.s_vu++;
+			return;
+		}
+		vu_sync();
+	}
+	P.vu = 0;
+	emit_fan(v, NULL, n, NULL);
+}
+
 static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags)
 {
 	if (!H.up)
 		return;
+	if ((PolyFlags & PF_WireFrame) || wire_mode)
+	{
+		drv_in(); // OPT11-MODEL (PS2-HW-270)
+		if (PolyFlags & PF_WireFrame)
+			wire_pairs(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts);
+		else
+			wire_poly(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts);
+		drv_out();
+		return;
+	}
 	if (TRACING())
 	{
 		const texrec_t *tr = H.cur_tex != NOREC ? &H.rec[H.cur_tex] : NULL;
@@ -822,26 +1037,275 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 	{
 		const u32 gt0 = cyc();
 		const int gk = ((PolyFlags & PF_NoTexture) ? 1 : 0) | ((PolyFlags & PF_NoDepthTest) ? 2 : 0) | ((PolyFlags & PF_Occlude) ? 4 : 0);
+		u32 gt1, gt2;
 
+		drv_in();
 		G.single++;
 		G.sk_single += ps2hwp_skyview;
 		G.sing_by[gk]++;
 		if (H.imm_tex && !(PolyFlags & PF_NoTexture))
 			imm_prepare(pOutVerts, (unsigned int)iNumPts); // PS2-HW-37: the texture is made resident at the level this polygon needs
+		gt1 = cyc();
+		G.s_imm += gt1 - gt0;
 		if (split_active((u32)PolyFlags))
+		{
 			split_draw(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts); // PS2-HW-70: a texture of two images
+		}
+		else if (V.on && V.ready && !H.imm_tex && iNumPts >= 3 && iNumPts <= VU_MAXVERT)
+		{
+			single_draw(pSurf, (u32)PolyFlags, pOutVerts, (int)iNumPts); // PS2-HW-103: the VU1 program, the open chunk when the plan is the last one's
+			G.s_emit += cyc() - gt1;
+		}
 		else if (begin_draw((u32)PolyFlags, pSurf))
+		{
+			gt2 = cyc();
+			G.s_begin += gt2 - gt1;
 			emit_fan(pOutVerts, NULL, (int)iNumPts, NULL);
+			G.s_emit += cyc() - gt2;
+		}
+		else
+		{
+			G.s_begin += cyc() - gt1;
+		}
 		G.sing_cyc[gk] += cyc() - gt0;
+		drv_out();
 	}
+}
+
+// PS2-HW-106: does the polygon take the palette rows of the VU1 program, which light every polygon with its own light level (the header of the polygon carries it)?
+// hw_batching.c asks when it makes the key of a batch: such polygons need not be kept apart by the light level of their sector (248 batches of a DEMO_001 frame
+// are 93 without it), and must be: a plan that is not the palette rows (fog classes of the GLSL equations, water, a texture of 32 bit colours) keeps the level in its key.
+// What it asks is what begin_draw_inner decides at draw time (the shader state is the base shader slot of the polygon), as far as it can be known before the
+// texture is uploaded: map textures and flats (P_8) and the patches whose record is a palette image already.
+// PS2-HW-227 (OPT11 round 2, VU2): asked for every polygon of the frame (2000 times in DEMO_001, 80 cycles a call: fourteen tests, each a compare with a branch and a
+// delay slot that stays empty). What does not depend on the polygon (the driver and VU1 program are up, the shaders are on, the debug switches, the palette mode) is one
+// word made once a frame; the flags of the polygon are tested with two masks.
+static int pallit_frame_gate(void)
+{
+	static u32 key = ~0u;
+	static int on;
+	const u32 k = H.frame_no * 2u + (H.shaders_on ? 1u : 0u);
+
+	if (key != k)
+	{
+		key = k;
+		on = H.up && V.on && V.ready && H.shaders_on && !(ps2hwd_dbg_flags & (2048 | 8192 | HWDBG_NOVU1 | HWDBG_NOLIGHTMERGE)) && palette_mode_fr();
+	}
+	return on;
+}
+
+int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int shader)
+{
+	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
+	const GLMipmap_t *m = (const GLMipmap_t *)vtex;
+	u32 lt, blend, ok;
+
+	if (!surf || !m)
+		return 0;
+	// the conditions are made as bits and tested once: every compare with its own branch costs two cycles on the machine of the profile (the branch and its delay slot) on top of the compare
+	lt = surf->LightTableId;
+	blend = flags & PF_Blending;
+	ok = (u32)(H.up != 0) & (u32)((unsigned int)shader <= 5u) & (u32)((flags & (PF_ColorMapped | PF_NoTexture | PF_Invisible | PF_Ripple | PF_Corona | PF_WireFrame)) == PF_ColorMapped)
+		& (u32)(blend != PF_Fog) & (u32)(blend != (PF_Multiplicative & PF_Blending)) & (u32)(lt - 1u < (u32)(PR_TBL - 1)) & (u32)(lt_idx[lt & (PR_TBL - 1)] != NULL); // (PR_TBL <= LT_MAX)
+	if (!ok || !pallit_frame_gate())
+		return 0;
+	if (m->format == GL_TEXFMT_P_8)
+		return 1;
+	if (m->downloaded && (int)m->downloaded <= H.rec_n)
+	{
+		const texrec_t *r = &H.rec[m->downloaded - 1];
+
+		return r->used && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2) && !r->screen;
+	}
+	return 0;
 }
 
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc)
 {
 	unsigned int i;
+	vukey_t k;
+	int how = 0;
 
 	if (!H.up)
 		return;
+	drv_in();
+	G.c_fans += nfans;
+	if (TRACING())
+	{
+		const texrec_t *tr = H.cur_tex != NOREC ? &H.rec[H.cur_tex] : NULL;
+
+		CONS_Printf("HWT fans n=%u fl=0x%x tex=%s rec=%d blk=%u %ux%u psm=%d clut=%d\n", nfans, flags, tr && tr->owner ? HWR_PS2_TexName(tr->owner) : "-", H.cur_tex,
+			tr ? (unsigned)tr->blk : 0u, tr ? (unsigned)tr->w : 0u, tr ? (unsigned)tr->h : 0u, tr ? (int)tr->psm : -1, tr ? (int)tr->clut : -1);
+	}
+	if (wire_mode)
+	{
+		wire_fans((const FSurfaceInfo *)surf, flags, (const FOutVector *)base, nfans, desc); // OPT11-MODEL (PS2-HW-270)
+		drv_out();
+		return;
+	}
+	G.batches++;
+	G.fans += nfans;
+	G.sk_batches += ps2hwp_skyview;
+	G.sk_fans += ps2hwp_skyview ? nfans : 0;
+	if (split_active(flags))
+	{
+		for (i = 0; i < nfans; i++) // PS2-HW-70: a texture of two images: every polygon is cut along its pieces
+			split_draw((const FSurfaceInfo *)surf, flags, (const FOutVector *)base + desc[3 * i], (int)desc[3 * i + 1]);
+		drv_out();
+		return;
+	}
+	if (V.on && V.ready)
+	{
+		// PS2-HW-107: a batch of the plan of the last VU1 draw (single or batch) with another texture of the same kind only retargets the plan
+		vu_key_make(&k, (u32)flags, (const FSurfaceInfo *)surf);
+		if (vu_plan_valid && VU.consts_ok && P.serial == H.serial)
+			how = vu_key_cmp(&k, &VK);
+		if (how == 1 && vu_nobretarget)
+			how = 0;
+		if ((how == 1 && !(vu_bretmask & (P.pal ? 1 : 2))) || (how == 2 && !(vu_bretmask & 4)))
+			how = 0;
+	}
+#ifdef PS2_HWDETAIL
+	if (hwr_sprite_batch) // (the flush of a sprite batch: how its draws are made, HWPROF41)
+	{
+		HWC_ADD(HWC_SF_CALLS);
+		HWC_ADD(how == 0 ? HWC_SF_BEGIN : how == 1 ? HWC_SF_RET : HWC_SF_SAME);
+		ps2hwp_cnt[HWC_SF_POLYS] += nfans;
+	}
+#endif
+	if (how)
+	{
+		if (how == 1)
+		{
+			vu_retarget((const FSurfaceInfo *)surf);
+			G.b_retarget++;
+		}
+		P.vu = 1; // (vu_plan_valid is set only for plans the program takes: P.vuok)
+	}
+	else
+	{
+#ifdef PS2_HWDETAIL
+		const unsigned int sf_b0 = ps2hwp_now();
+		const int sf_ok = begin_draw((u32)flags, (const FSurfaceInfo *)surf);
+
+		if (hwr_sprite_batch)
+			ps2hwp_cyc[HWP_SF_BEGIN] += (unsigned int)(ps2hwp_now() - sf_b0);
+		if (!sf_ok)
+#else
+		if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+#endif
+		{
+			drv_out();
+			return;
+		}
+		if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
+		{
+			P.vu = 1;
+			VU.consts_ok = 0;
+		}
+	}
+	for (i = 0; i < nfans; i++)
+	{
+		const FOutVector *fv;
+		int fn;
+		float fl; // the light level of the sector of the polygon (the batch's key leaves it out when the VU1 program lights by rows)
+
+		if (P.vu) // PS2-HW-100: the VU1 program takes the polygons (PS2-HW-108: all it can in one loop); the one it leaves goes the general way below, in order
+		{
+			const unsigned int i0 = i;
+
+#ifdef PS2_HWDETAIL
+			{
+				const unsigned int sf_v0 = ps2hwp_now();
+
+				i = vu_fans((const FOutVector *)base, desc, i, nfans);
+				if (hwr_sprite_batch)
+					ps2hwp_cyc[HWP_SF_VUFANS] += (unsigned int)(ps2hwp_now() - sf_v0);
+			}
+#else
+			i = vu_fans((const FOutVector *)base, desc, i, nfans);
+#endif
+			G.p_vu += i - i0;
+			if (i >= nfans)
+				break;
+			vu_sync();
+		}
+		fv = (const FOutVector *)base + desc[3 * i];
+		fn = (int)desc[3 * i + 1];
+		fl = (float)(int)desc[3 * i + 2];
+		if (fl != P.rs.lp.light)
+		{
+			P.rs.lp.light = fl; // the plan took the level of the first polygon of the batch: the general path lights this one with its own
+			lit_fast_plan();
+		}
+		if (P.vu)
+		{
+			P.vu = 0; // (emit_poly would try the VU1 path again)
+			emit_fan(fv, NULL, fn, NULL);
+			P.vu = P.vuok;
+			P.serial = H.serial - 1; // the general path may have loaded another CLUT row: the plan's GS state and the program's row again
+			continue;
+		}
+		emit_fan(fv, NULL, fn, NULL);
+	}
+	if (P.vu)
+	{
+		// the chunk stays open (PS2-HW-103): the next draw of this plan joins it, anything else that writes to the ring closes it
+		if (VU.consts_ok && P.serial == H.serial)
+		{
+			VK = k;
+			vu_plan_valid = 1;
+		}
+		P.vu = 0;
+	}
+	drv_out();
+}
+
+// PS2-HW-233: the polygon of a block of the batch pool as the engine's vertices (the general path, the splitter and the reference planner take those). One conversion is alive at a time.
+static FOutVector *blk_tmp;
+static unsigned int blk_tmp_cap;
+
+static const FOutVector *blk_fov(const qw_t *b)
+{
+	const unsigned int n = b[0].w[0];
+	unsigned int i;
+
+	if (n > blk_tmp_cap)
+	{
+		FOutVector *nv = realloc(blk_tmp, (size_t)(n + 16) * sizeof *nv);
+
+		if (!nv)
+		{
+			hw_failure("polygon staging allocation failed; polygon rejected");
+			return NULL;
+		}
+		blk_tmp = nv;
+		blk_tmp_cap = n + 16;
+	}
+	for (i = 0; i < n; i++)
+	{
+		blk_tmp[i].x = b[2 + 2 * i].f[0];
+		blk_tmp[i].y = b[2 + 2 * i].f[1];
+		blk_tmp[i].z = b[2 + 2 * i].f[2];
+		blk_tmp[i].s = b[3 + 2 * i].f[0];
+		blk_tmp[i].t = b[3 + 2 * i].f[1];
+	}
+	return blk_tmp;
+}
+
+// PS2HWD_DrawFans for the blocks of the pool (hardware/hw_pbatch.inc): the polygon is a block (vertex count and light level in its header), the same plan for all of them, the VU1 program takes
+// the blocks it can in one loop (vu_blocks), the others go the general way in order.
+void PS2HWD_DrawBlocks(void *surf, const void *pool, unsigned int nfans, unsigned int flags, const unsigned int *blks)
+{
+	const qw_t *pl = (const qw_t *)pool;
+	unsigned int i;
+	vukey_t k;
+	int how = 0;
+
+	if (!H.up)
+		return;
+	drv_in();
+	G.c_fans += nfans;
 	if (TRACING())
 	{
 		const texrec_t *tr = H.cur_tex != NOREC ? &H.rec[H.cur_tex] : NULL;
@@ -856,29 +1320,117 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 	if (split_active(flags))
 	{
 		for (i = 0; i < nfans; i++) // PS2-HW-70: a texture of two images: every polygon is cut along its pieces
-			split_draw((const FSurfaceInfo *)surf, flags, (const FOutVector *)base + desc[2 * i], (int)desc[2 * i + 1]);
+		{
+			const qw_t *b = pl + blks[i];
+			const FOutVector *fv = blk_fov(b);
+
+			if (fv)
+				split_draw((const FSurfaceInfo *)surf, flags, fv, (int)b[0].w[0]);
+		}
+		drv_out();
 		return;
 	}
-	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
-		return;
-	if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
+	if (V.on && V.ready)
 	{
+		vu_key_make(&k, (u32)flags, (const FSurfaceInfo *)surf);
+		if (vu_plan_valid && VU.consts_ok && P.serial == H.serial)
+			how = vu_key_cmp(&k, &VK);
+		if (how == 1 && vu_nobretarget)
+			how = 0;
+		if ((how == 1 && !(vu_bretmask & (P.pal ? 1 : 2))) || (how == 2 && !(vu_bretmask & 4)))
+			how = 0;
+	}
+	if (how)
+	{
+		if (how == 1)
+		{
+			vu_retarget((const FSurfaceInfo *)surf);
+			G.b_retarget++;
+		}
 		P.vu = 1;
-		VU.consts_ok = 0;
+	}
+	else
+	{
+		const u32 bt0 = cyc();
+		int bok;
+
+		if (V.on && V.ready) // (HWPROF51: why the plan of the last draw could not be used)
+		{
+			const u32 *a = k.w, *c = VK.w;
+
+			G.bb_diff[a[0] != c[0] ? 0 : a[1] != c[1] ? 1 : a[2] != c[2] ? 2 : a[3] != c[3] ? 3 : a[4] != c[4] ? 4 : a[5] != c[5] ? 5 : 6]++;
+			if (!vu_plan_valid || !VU.consts_ok || P.serial != H.serial)
+				G.bb_diff[7]++;
+		}
+		bok = begin_draw((u32)flags, (const FSurfaceInfo *)surf);
+		G.bb_n++;
+		G.bb_cyc += cyc() - bt0;
+		if (!bok)
+		{
+			drv_out();
+			return;
+		}
+		if (P.vuok && nfans >= VU_MIN_FANS)
+		{
+			P.vu = 1;
+			VU.consts_ok = 0;
+		}
 	}
 	for (i = 0; i < nfans; i++)
-		emit_fan((const FOutVector *)base + desc[2 * i], NULL, (int)desc[2 * i + 1], NULL);
+	{
+		const qw_t *b;
+		const FOutVector *fv;
+		int fn;
+		float fl; // the light level of the sector of the polygon (the batch's state leaves it out when the VU1 program lights by rows)
+
+		if (P.vu)
+		{
+			const unsigned int i0 = i;
+
+			i = vu_blocks(pl, blks, i, nfans);
+			G.p_vu += i - i0;
+			if (i >= nfans)
+				break;
+			vu_sync();
+		}
+		b = pl + blks[i];
+		fn = (int)b[0].w[0];
+		fl = b[0].f[1];
+		fv = blk_fov(b);
+		if (!fv)
+			continue;
+		if (fl != P.rs.lp.light)
+		{
+			P.rs.lp.light = fl;
+			lit_fast_plan();
+		}
+		if (P.vu)
+		{
+			P.vu = 0;
+			emit_fan(fv, NULL, fn, NULL);
+			P.vu = P.vuok;
+			P.serial = H.serial - 1;
+			continue;
+		}
+		emit_fan(fv, NULL, fn, NULL);
+	}
 	if (P.vu)
 	{
-		vu_sync();
+		if (VU.consts_ok && P.serial == H.serial)
+		{
+			VK = k;
+			vu_plan_valid = 1;
+		}
 		P.vu = 0;
 	}
+	drv_out();
 }
 
 static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, UINT32 *IndexArray)
 {
 	if (!H.up)
 		return;
+	drv_in();
 	if (split_active((u32)PolyFlags))
 	{
 		u32 i;
@@ -892,10 +1444,18 @@ static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, 
 			tri[2] = pOutVerts[IndexArray[i + 2]];
 			split_draw(pSurf, (u32)PolyFlags, tri, 3);
 		}
+		drv_out();
+		return;
+	}
+	if (wire_mode)
+	{
+		wire_tris(pSurf, (u32)PolyFlags, pOutVerts, IndexArray, (u32)iNumPts); // OPT11-MODEL (PS2-HW-270)
+		drv_out();
 		return;
 	}
 	if (begin_draw((u32)PolyFlags, pSurf))
 		emit_tris(pOutVerts, IndexArray, (u32)iNumPts, NULL);
+	drv_out();
 }
 
 // The dome is built from vertices with colours (gl_skyvertex_t has the layout of FOutVector plus r, g, b, a).
@@ -1065,10 +1625,13 @@ static void settex_now(GLMipmap_t *TexInfo)
 	if (ps2hwd_dbg_flags & HWDBG_NOUP) // OPT10 HG measurement: one dummy image for every texture
 	{
 		static GLMipmap_t noup_mip;
-		static u8 noup_data[256 * 256] __attribute__((aligned(64)));
+		static u8 *noup_data; // PS2-171: measurement mode only: taken from the C heap when used (was 64 KB of .bss)
+
 		texrec_t *d = rec_of(&noup_mip);
 
-		if (!d)
+		if (!d && !noup_data)
+			noup_data = memalign(64, 256 * 256);
+		if (!d && noup_data)
 		{
 			int x, y;
 
@@ -1211,7 +1774,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 		// runs out; here a frame whose textures do not fit the pool, or a texture whose data the zone purged, loses polygons.
 		H.st.tex_missing++;
 		if (H.st.tex_missing <= 4)
-			CONS_Printf("HWD texture not resident: %s %s fmt=%d %ux%u flags=0x%x data=%p pool used %u/%u blocks, free ranges %d (draws skipped)\n", tex_fail_why, HWR_PS2_TexName(TexInfo),
+			CONS_Printf("HWD texture not resident [frame %u phase %d spr_flush %d tex %p dl %u]: %s %s fmt=%d %ux%u flags=0x%x data=%p pool used %u/%u blocks, free ranges %d (draws skipped)\n", (unsigned)H.frame_no, batch_phase, SPR.in_flush, (void *)TexInfo, (unsigned)TexInfo->downloaded, tex_fail_why, HWR_PS2_TexName(TexInfo),
 				(int)TexInfo->format, (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)TexInfo->flags, (void *)TexInfo->data,
 				(unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n);
 		hw_limit(HW_MISSING, "a texture could not be made resident in the GS pool (or its data was purged); its draws are skipped");
@@ -1228,32 +1791,49 @@ static void settex_now(GLMipmap_t *TexInfo)
 // hwdriver SetTexture: a big map texture selected outside the batches waits for its polygon (imm_prepare, PS2-HW-37), the rest is made resident now
 static void hw_SetTexture(GLMipmap_t *TexInfo)
 {
+	u32 t0;
+
 	if (!H.up)
 		return;
+	t0 = cyc();
+	drv_in();
 	H.imm_tex = NULL;
 	if (TexInfo && batch_phase == 0 && plan_wants(TexInfo) && !(ps2hwd_dbg_flags & HWDBG_NOPLAN))
 	{
 		H.imm_tex = TexInfo;
 		H.cur_tex = NOREC;
 		H.cur_missing = 0;
-		return;
 	}
-	settex_now(TexInfo);
+	else
+	{
+		settex_now(TexInfo);
+	}
+	G.s_set_n++;
+	G.s_set_cyc += cyc() - t0;
+	drv_out();
 }
 
 // The batched polygon of this texture is drawn later in the frame: the texture (or the image of its other variant) must stay in VRAM until then.
 // Only the frame stamp is set: the order of the LRU list is the order of DRAWING (PS2-HW-31).
 void PS2HWD_TouchTexture(GLMipmap_t *TexInfo)
 {
+	static GLMipmap_t *last; // PS2-HW-227: a texture is stamped once a frame (a run of polygons of one texture, 60 cycles each, was stamped again and again)
+	static u32 last_frame = ~0u;
 	texrec_t *r;
 
 	if (!H.up || !TexInfo)
+		return;
+	if (TexInfo == last && last_frame == H.frame_no)
 		return;
 	r = rec_of(TexInfo);
 	if (!r)
 		r = twin_rec(TexInfo);
 	if (r)
+	{
 		H.rec[img_of((int)(r - H.rec))].stamp = H.frame_no;
+		last = TexInfo;
+		last_frame = H.frame_no;
+	}
 }
 
 static void hw_UpdateTexture(GLMipmap_t *TexInfo)
@@ -1329,9 +1909,7 @@ static void hw_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 	}
 	else if (IdState == HWD_SET_MODEL_LIGHTING)
 	{
-		H.model_light = Value;
-		if (Value)
-			hw_limit(HW_MODEL_LIGHT, "model normal lighting is not implemented; sector modulation used");
+		H.model_light = Value; // OPT11-MODEL (PS2-HW-264): the vertex light factor of the OpenGL model shader is implemented (ps2_hw_model.inc)
 	}
 	else if (IdState == HWD_SET_SHADERS)
 	{
@@ -1339,8 +1917,10 @@ static void hw_SetSpecialState(hwdspecialstate_t IdState, INT32 Value)
 	}
 	else if (Value > 1 && IdState == HWD_SET_TEXTUREANISOTROPICMODE)
 		hw_limit(HW_ANISO, "anisotropic filtering unavailable");
-	else if (Value && IdState == HWD_SET_WIREFRAME)
-		hw_limit(HW_WIREFRAME, "wireframe state unavailable");
+	else if (IdState == HWD_SET_WIREFRAME)
+	{
+		wire_mode = Value ? 1 : 0; // OPT11-MODEL (PS2-HW-270): the walls and planes of the frame are drawn as the edges of their triangles (ps2_hw_wire.inc)
+	}
 }
 
 static void hw_DrawModel(model_t *model, INT32 frameIndex, float duration, float tics, INT32 nextFrameIndex, FTransform *pos,
@@ -1411,7 +1991,10 @@ static void hw_UnSetShader(void)
 static void hw_SetShaderInfo(hwdshaderinfo_t info, INT32 value)
 {
 	if (info == HWD_SHADERINFO_LEVELTIME)
-		H.leveltime = value;
+	{
+		H.leveltime = ps2hwd_force_lt >= 0 ? ps2hwd_force_lt : value;
+		H.lt_frac = ps2hwd_force_lt >= 0 ? 1.0f : FIXED_TO_FLOAT(rendertimefrac); // as r_opengl.c SetShaderInfo: (value - 1 + rendertimefrac) / TICRATE (PS2-HW-125)
+	}
 }
 
 // PS2-HW-71: palette rendering (gr_paletterendering): the colour of a texel is lighttable[index][row]. The GS does it with CLUTs (ps2_hw_pal.inc): the

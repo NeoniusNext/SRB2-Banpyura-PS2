@@ -12,5 +12,6 @@ src/hardware/hw_md2.c
 src/hardware/hw_md2load.c
 src/hardware/hw_md3load.c
 src/hardware/hw_model.c
+src/ps2/ps2_models.c
 # GS driver (ps2_hwd.c) when present, otherwise the logging stub
 src/ps2/hw/ps2_hwd.c || src/ps2/hw/ps2_hwd_null.c

@@ -21,6 +21,7 @@ typedef int16_t s16;
 #include "ps2_hw_priv.inc"
 #include "ps2_hw_hg.inc"
 int ps2hwp_skyview;
+int ps2hwd_fx2; /* OPT11 round 2 (FX2): -hwfx bits (ps2_hw_fx2.h) */
 #include "ps2_hw_vif.inc"
 #include "ps2_hw_regs.inc"
 
@@ -99,6 +100,8 @@ int PS2HWD_ReadVram(void *dst, unsigned int blk, unsigned int tbw, int psm, int 
 static void imm_prepare(const FOutVector *verts, unsigned int n) { (void)verts; (void)n; } /* ps2_hw_plan.inc (HT planner): not part of the host test */
 #include "ps2_hw_xform.inc"
 #include "ps2_hw_light.inc"
+int HWR_ShouldUsePaletteRendering(void) { return 0; } /* OPT11: the host test draws the GLSL (non palette) lighting */
+#include "ps2_hw_pal.inc"
 #include "ps2_hw_tex.inc"
 static int neg;
 #define PLAN_KEY_PCOL(c) (neg == 2 ? 0u : (u32)(c)) /* negative control 2: the plan cache ignores the polygon colour */
@@ -107,7 +110,7 @@ static int neg;
 /* ---- test framework ---- */
 static int group_fail, total_fail, groups;
 static const char *group_name;
-#define NEGCOUNT 6
+#define NEGCOUNT 7
 
 static void group_begin(const char *name)
 {
@@ -143,6 +146,12 @@ static void host_init(void)
 	for (i = 0; i < NSCR; i++)
 		free(H.scr_data[i]);
 	memset(&H, 0, sizeof H);
+	if (!blk_owner_p) /* PS2-171: the driver's big work arrays are zone memory in the engine (hwbig_alloc), here calloc */
+	{
+		blk_owner_p = calloc(1, sizeof *blk_owner_p);
+		ovq_p = calloc(1, sizeof *ovq_p);
+		cutbuf_p = calloc(1, sizeof *cutbuf_p);
+	}
 	memset(blk_owner, 0, sizeof blk_owner);
 	batch_phase = 0;
 	OV.n = 0;
@@ -210,7 +219,7 @@ typedef struct
 {
 	int n;
 	u64 prim;
-	gv_t v[40];
+	gv_t v[300]; /* PS2-HW-120: a water strip has up to 2 vertices per depth plane */
 } gfan_t;
 
 #define MAXFAN 4096
@@ -261,6 +270,11 @@ static void decode_fans(int which)
 
 			f->prim = o[k++];
 			f->n = (int)((nreg - 1) / pervert);
+			if (f->n > 300)
+			{
+				printf("HG FAIL fan_too_long\n");
+				exit(2);
+			}
 			for (i = 0; i < (u32)f->n; i++)
 			{
 				gv_t *v = &f->v[i];
@@ -301,6 +315,11 @@ static void decode_fans(int which)
 
 			f->prim = (d0 >> 47) & 0x7FF;
 			f->n = (int)nloop;
+			if (f->n > 300)
+			{
+				printf("HG FAIL fan_too_long\n");
+				exit(2);
+			}
 			for (i = 0; i < nloop; i++)
 			{
 				const qw_t *q = &cap[at + 1 + i * nreg];
@@ -320,7 +339,8 @@ static void decode_fans(int which)
 			}
 			at += 1 + nloop * nreg;
 		}
-		qsort(f->v, (size_t)f->n, sizeof f->v[0], gv_cmp); /* a piece is a convex fan: compare the vertex sets, not their order */
+		if ((f->prim & 7) != PRIM_TRISTRIP) /* a strip keeps its order (its triangles are made of consecutive vertices) */
+			qsort(f->v, (size_t)f->n, sizeof f->v[0], gv_cmp); /* a piece is a convex fan: compare the vertex sets, not their order */
 	}
 }
 
@@ -397,7 +417,7 @@ static void test_water(void)
 		int lvl = (int)(rnd() % 256);
 
 		water_setup((float)rndf(0, 360));
-		H.leveltime = (int)(rnd() % 100000);
+		H.leveltime = (int)(rnd() % 100000); H.lt_frac = 1.0f;
 		water_poly(vv, n, dist, cz, rx, rz);
 		memset(&surf, 0, sizeof surf);
 		surf.PolyColor.rgba = 0x80FFFFFFu;
@@ -408,9 +428,9 @@ static void test_water(void)
 		H.shader = 4;
 		for (pass = 0; pass < 2; pass++)
 		{
-			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDWATER | HWDBG_WATERPOL : HWDBG_WATERPOL;
+			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDWATER | HWDBG_WATERPOL : HWDBG_WATERPOL; ps2hwd_water_ab = pass == 0 ? 0 : HWDBG_WATERBANDS; /* PS2-HW-120: the OPT10 sweep is the A/B switch now */
 			if (pass == 1 && neg == 1)
-				H.leveltime += 7; /* negative control 1: the sweep ripples with another time */
+				H.leveltime += 60; /* negative control 1: the sweep ripples with another time */
 			cap_reset();
 			H.gsr.valid = 0;
 			if (!begin_draw(flags, &surf))
@@ -423,7 +443,7 @@ static void test_water(void)
 			decode_fans(pass);
 			total_pieces[pass] += nfans[pass];
 		}
-		ps2hwd_dbg_flags = 0;
+		ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 0;
 		polys++;
 		if (nfans[0] == 0 && nfans[1] == 0)
 			continue;
@@ -477,6 +497,411 @@ static void test_water(void)
 }
 
 
+
+/* ---- group: ripple (PS2-HW-120): the water polygon against the exact shader, GS interpolation included ---- */
+/* The GLSL water shader: texel = tex(s - sin(a) * 0.025, t - cos(a) * 0.025), a = -pi * (z / 2 * 0.025) + (leveltime - 1 + rendertimefrac) / 35 * 2 (PS2-HW-125: seconds, not tics), z = eye depth of the fragment
+ * (zfrag). The test draws random convex polygons with the driver (emit_fan with the water plan), reads the GIF fans back, and for random points
+ * inside the polygon interpolates S, T, Q of the piece that contains the point the way the GS does (screen space, then S/Q) and compares the texture
+ * coordinate with the shader's: the error in texels, and in pixels (texels * F / z, the size of a texel on the screen at the depth of the point). */
+static int rp_cmp_ang(const void *a, const void *b)
+{
+	const double *x = a, *y = b;
+
+	return x[2] < y[2] ? -1 : x[2] > y[2];
+}
+
+typedef struct
+{
+	double maxtx, maxpx, sumpx;
+	long n, miss, over, over2;
+	long hist[8]; /* samples with a pixel error in [0, 0.1), [0.1, 0.2), ..., >= 0.7 */
+} rp_stat_t;
+
+/* the displacement on the screen (pixels) of a floor point (wx, wz) that moves by (dx, dz) world units */
+static double rp_screen_err(double wx, double wz, double dx, double dz)
+{
+	FOutVector a, b, c;
+	cv_t ca, cb, cc;
+	double ax, ay, bx, by, cx, cy, j00, j01, j10, j11, ex, ey;
+
+	memset(&a, 0, sizeof a);
+	a.x = (float)wx;
+	a.z = (float)wz;
+	b = a;
+	b.x += 1.0f;
+	c = a;
+	c.z += 1.0f;
+	xform_vertex(&a, NULL, &ca);
+	xform_vertex(&b, NULL, &cb);
+	xform_vertex(&c, NULL, &cc);
+	ax = ca.x / ca.w * P.kx;
+	ay = ca.y / ca.w * P.ky;
+	bx = cb.x / cb.w * P.kx;
+	by = cb.y / cb.w * P.ky;
+	cx = cc.x / cc.w * P.kx;
+	cy = cc.y / cc.w * P.ky;
+	j00 = bx - ax; /* d sx / d x */
+	j10 = by - ay;
+	j01 = cx - ax; /* d sx / d z */
+	j11 = cy - ay;
+	ex = (j00 * dx + j01 * dz) / 16.0;
+	ey = (j10 * dx + j11 * dz) / 16.0;
+	return sqrt(ex * ex + ey * ey);
+}
+
+static int rp_packdbg, rp_dbg, rp_zero, rp_f, rp_pn, rp_nan, rp_packchk;
+static long rp_planes[2], rp_polys[2];
+static double rp_l0, rp_l1, rp_l2;
+static u64 rp_rng;
+static double rp_design;
+static void test_ripple(void)
+{
+	const u32 flags = PF_Translucent | PF_Ripple | PF_Modulated | PF_ColorMapped | PF_Occlude;
+	const int sizes[3] = {64, 256, 128};
+	rp_stat_t st[2][3];
+	int trial, mode, si, polys = 0;
+	long pieces[2] = {0, 0};
+
+	memset(st, 0, sizeof st);
+	group_begin("ripple");
+	for (trial = 0; trial < 300; trial++)
+	{
+		FOutVector vv[8];
+		FSurfaceInfo surf;
+		int n = 3 + (int)(rnd() % 4), lt;
+		double dist = rndf(40, 1500), cz = rndf(-dist, dist) * 0.6, rx = rndf(30, 300), rz = rndf(30, 300);
+		float yaw = (float)rndf(0, 360);
+		int lvl = (int)(rnd() % 256);
+
+		si = trial % 3;
+		wt_w = wt_h = sizes[si];
+		lt = (int)(rnd() % 100000);
+		for (mode = 0; mode < 2; mode++)
+		{
+			double F, ox, oy;
+			int s, nf;
+
+			water_setup(yaw);
+			H.leveltime = lt; H.lt_frac = 1.0f;
+			if (mode == 0 && neg == 7)
+				H.leveltime += 20; /* negative control 7: the ripple of another tic */
+			{
+				/* the polygon of water_poly, with the texture coordinates of this texture size */
+				int i;
+
+				if (mode == 0)
+					rp_rng = rng_s;
+				else
+					rng_s = rp_rng; /* the same polygon for both paths */
+				water_poly(vv, n, dist, cz, rx, rz);
+				for (i = 0; i < n; i++)
+				{
+					vv[i].s = vv[i].x / (float)wt_w;
+					vv[i].t = -vv[i].z / (float)wt_h;
+				}
+			}
+			memset(&surf, 0, sizeof surf);
+			surf.PolyColor.rgba = 0x80FFFFFFu;
+			surf.LightInfo.light_level = lvl;
+			surf.LightInfo.fade_start = 0;
+			surf.LightInfo.fade_end = 31;
+			H.shaders_on = 1;
+			H.shader = 4;
+			ps2hwd_dbg_flags = 0; ps2hwd_water_ab = mode == 0 ? (neg == 9 ? HWDBG_WATERNOGAP : 0) : HWDBG_WATERBANDS; /* mode 0: PS2-HW-120, mode 1: the OPT10 sweep */
+			cap_reset();
+			H.gsr.valid = 0;
+			H.clut_loaded = 0;
+			if (!begin_draw(neg == 8 ? (flags & ~(u32)PF_Ripple) : flags, &surf))
+			{
+				EXPECT(0, "begin_draw refused");
+				continue;
+			}
+			EXPECT(neg == 8 || P.water, "plan is not a water plan");
+			emit_fan(vv, NULL, n, NULL);
+			decode_fans(0);
+			nf = nfans[0];
+			if (mode == 0 && neg != 8)
+			{
+				/* the strip packer (ws_pack) against put_vertex (-hwdbg 262144): the same packets, bit for bit */
+				static qw_t chk[1 << 16];
+				u32 n0 = cap_n;
+
+				if (n0 <= (1u << 16))
+				{
+					memcpy(chk, cap, (size_t)n0 * sizeof(qw_t));
+					ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 4;
+					cap_reset();
+					H.gsr.valid = 0;
+					H.clut_loaded = 0; /* the first run loaded the CLUT: the second would not (TEX0.CLD) */
+					if (begin_draw(flags, &surf))
+						emit_fan(vv, NULL, n, NULL);
+					if (cap_n == n0 && memcmp(chk, cap, (size_t)n0 * sizeof(qw_t)) && rp_packdbg++ < 3)
+					{
+						u32 k;
+
+						for (k = 0; k < n0; k++)
+							if (memcmp(&chk[k], &cap[k], sizeof(qw_t)))
+							{
+								{
+									u32 j;
+
+									for (j = (k > 6 ? k - 6 : 0); j < k + 4 && j < n0; j++)
+										printf("HG dbg   qw %u: %08x %08x %08x %08x | %08x %08x %08x %08x\n", (unsigned)j, chk[j].w[0], chk[j].w[1], chk[j].w[2], chk[j].w[3], cap[j].w[0], cap[j].w[1], cap[j].w[2], cap[j].w[3]);
+								}
+								printf("HG dbg qw %u: ws_pack %08x %08x %08x %08x | put_vertex %08x %08x %08x %08x\n", (unsigned)k, chk[k].w[0], chk[k].w[1], chk[k].w[2], chk[k].w[3], cap[k].w[0], cap[k].w[1], cap[k].w[2], cap[k].w[3]);
+								break;
+							}
+					}
+					EXPECT(cap_n == n0 && !memcmp(chk, cap, (size_t)n0 * sizeof(qw_t)), "trial %d: ws_pack and put_vertex make different packets (%u / %u quadwords)", trial, (unsigned)n0, (unsigned)cap_n);
+					rp_packchk++;
+					memcpy(cap, chk, (size_t)n0 * sizeof(qw_t));
+					cap_n = n0;
+					ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 0;
+				}
+			}
+			if (neg == 8 && trial == 1 && mode == 0)
+			{
+				int i, f;
+				for (i = 0; i < n; i++)
+				{
+					FOutVector pt = vv[i];
+					cv_t cv;
+					xform_vertex(&pt, NULL, &cv);
+					printf("HG dbg in %d: world %.1f %.1f s,t %.4f %.4f  clip w %.1f -> sx %.1f sy %.1f\n", i, vv[i].x, vv[i].z, vv[i].s, vv[i].t, cv.w, P.ox + cv.x / cv.w * P.kx, P.oy + cv.y / cv.w * P.ky);
+				}
+				for (f = 0; f < nf; f++)
+					for (i = 0; i < fans[0][f].n; i++)
+						printf("HG dbg out fan %d v %d: x %d y %d q %.5f s/q %.4f t/q %.4f\n", f, i, fans[0][f].v[i].x, fans[0][f].v[i].y, fans[0][f].v[i].q, fans[0][f].v[i].s / fans[0][f].v[i].q, fans[0][f].v[i].t / fans[0][f].v[i].q);
+			}
+			ps2hwd_dbg_flags = 0; ps2hwd_water_ab = 0;
+			if (!nf)
+				continue;
+			if (mode == 0)
+				polys++;
+			pieces[mode] += nf;
+			rp_planes[mode] += (long)G.wf_bands;
+			rp_polys[mode] += (long)G.wf_polys;
+			G.wf_bands = G.wf_polys = 0;
+			F = 0.5 * H.vpw * H.proj[0];
+			ox = P.ox;
+			oy = P.oy;
+			for (s = 0; s < 40; s++)
+			{
+				/* a random point of the polygon: a triangle of the fan v0, vi, vi+1 and barycentric weights */
+				const int k = 1 + (int)(rnd() % (unsigned)(n - 2));
+				double w0 = rndf(0, 1), w1 = rndf(0, 1), w2;
+				double wx, wz, zeye, ex, ey, expu, expt, dsu, dst_, sxp, syp, bu = 0, bt = 0, bestq = 0;
+				FOutVector pt;
+				cv_t cv;
+				int f, found = 0, i, j;
+
+				if (w0 + w1 > 1.0)
+				{
+					w0 = 1.0 - w0;
+					w1 = 1.0 - w1;
+				}
+				w2 = 1.0 - w0 - w1;
+				wx = w0 * vv[0].x + w1 * vv[k].x + w2 * vv[k + 1].x;
+				wz = w0 * vv[0].z + w1 * vv[k].z + w2 * vv[k + 1].z;
+				memset(&pt, 0, sizeof pt);
+				pt.x = (float)wx;
+				pt.y = 0.0f;
+				pt.z = (float)wz;
+				xform_vertex(&pt, NULL, &cv);
+				if (cv.w <= H.near_plane + 25.0f || fabsf(cv.x) > 0.95f * cv.w * (float)H.guard_x / 1024.0f || fabsf(cv.y) > 0.95f * cv.w * (float)H.guard_y / 1024.0f)
+					continue; /* behind the near plane or outside the guard band (clipped away) */
+				sxp = ox + cv.x / cv.w * P.kx;
+				syp = oy + cv.y / cv.w * P.ky;
+
+				zeye = (cv.w - H.near_plane) * (FAR_CLIPPING_PLANE / (FAR_CLIPPING_PLANE - H.near_plane));
+				/* the shader's value (the amplitude fades out beyond the depth of RP_PX_FULL pixels: the same law as the driver's, so compare only to that depth) */
+				{
+					const rtab_t *rt = ripple_table(wt_w);
+					double a = -3.14159265358979 * (zeye / 2.0 * 0.025) + ((double)(lt - 1) + 1.0) * (2.0 / 35.0), g = zeye <= rt->zfull ? 1.0 : zeye >= rt->zend ? 0.0 : (rt->zend - zeye) / (rt->zend - rt->zfull);
+
+					const double amp = neg == 8 ? 0.0 : 0.025; /* negative control 8 (a debugging aid): the plan without ripple against the picture without it */
+
+					expu = wx / wt_w - sin(a) * amp; /* the shader */
+					expt = -wz / wt_h - cos(a) * amp;
+					dsu = wx / wt_w - g * sin(a) * amp; /* the design: the amplitude fades out beyond zfull */
+					dst_ = -wz / wt_h - g * cos(a) * amp;
+				}
+				/* the piece that contains the point: a convex fan (the vertices ordered by angle round the centroid) or a strip (consecutive vertices) */
+				for (f = 0; f < nf && !found; f++)
+				{
+					const gfan_t *g = &fans[0][f];
+					double pv[300][4], cx = 0, cy = 0;
+					int tri[600][3], nt = 0;
+
+					if (g->n < 3)
+						continue;
+					if ((g->prim & 7) == PRIM_TRISTRIP)
+					{
+						for (i = 0; i + 2 < g->n; i++)
+						{
+							tri[nt][0] = i;
+							tri[nt][1] = i + 1;
+							tri[nt][2] = i + 2;
+							nt++;
+						}
+					}
+					else
+					{
+						for (i = 0; i < g->n; i++)
+						{
+							pv[i][0] = g->v[i].x & 0xFFFF; /* decode_fans reads the 16 bit XY as signed: the unsigned value is the 12.4 screen position with the offset */
+							pv[i][1] = g->v[i].y & 0xFFFF;
+							cx += pv[i][0];
+							cy += pv[i][1];
+						}
+						cx /= g->n;
+						cy /= g->n;
+						for (i = 0; i < g->n; i++)
+						{
+							pv[i][2] = atan2(pv[i][1] - cy, pv[i][0] - cx);
+							pv[i][3] = (double)i; /* the index of the vertex travels with its angle */
+						}
+						qsort(pv, (size_t)g->n, sizeof pv[0], rp_cmp_ang);
+						for (i = 1; i + 1 < g->n; i++)
+						{
+							tri[nt][0] = (int)pv[0][3];
+							tri[nt][1] = (int)pv[i][3];
+							tri[nt][2] = (int)pv[i + 1][3];
+							nt++;
+						}
+					}
+					for (i = 0; i < nt && !found; i++)
+					{
+						const gv_t *a = &g->v[tri[i][0]], *b = &g->v[tri[i][1]], *c = &g->v[tri[i][2]];
+						const double ax = a->x & 0xFFFF, ay = a->y & 0xFFFF, bx = b->x & 0xFFFF, by = b->y & 0xFFFF, ccx = c->x & 0xFFFF, ccy = c->y & 0xFFFF;
+						const double d = (bx - ax) * (ccy - ay) - (ccx - ax) * (by - ay);
+						double l1, l2, l0;
+
+						if (fabs(d) < 1e-9)
+							continue;
+						l1 = ((sxp - ax) * (ccy - ay) - (ccx - ax) * (syp - ay)) / d;
+						l2 = ((bx - ax) * (syp - ay) - (sxp - ax) * (by - ay)) / d;
+						l0 = 1.0 - l1 - l2;
+						if (l0 < -0.02 || l1 < -0.02 || l2 < -0.02)
+							continue;
+						{
+							const double S = l0 * a->s + l1 * b->s + l2 * c->s, T = l0 * a->t + l1 * b->t + l2 * c->t, Q = l0 * a->q + l1 * b->q + l2 * c->q;
+
+							bu = S / Q;
+							bt = T / Q;
+							bestq = Q;
+							found = 1;
+							rp_f = f;
+							rp_l0 = l0;
+							rp_l1 = l1;
+							rp_l2 = l2;
+							rp_pn = g->n;
+						}
+					}
+				}
+				(void)j;
+				(void)bestq;
+				if (!found)
+				{
+					st[mode][si].miss++;
+					continue;
+				}
+				if (zeye > ripple_table(wt_w)->zfull)
+					continue; /* the fade-out zone: the amplitude is below 1.5 pixels and goes to 0.8 by design */
+				ex = bu - expu;
+				ey = bt - expt;
+				ex -= floor(ex + 0.5); /* the whole repeats the driver removed */
+				ey -= floor(ey + 0.5);
+				{
+					/* the visible error: the world displacement of the texel (ex, ey repeats = ex * w, -ey * h units on the floor) through the projection of the point */
+					double px, tex = fmax(fabs(ex) * wt_w, fabs(ey) * wt_h);
+
+					px = rp_screen_err(wx, wz, ex * wt_w, -ey * wt_h);
+					rp_stat_t *r = &st[mode][si];
+
+					if (px > 4.0 && mode == 0 && rp_dbg++ < 12)
+						printf("HG dbg trial %d size %d n=%d: world %.1f,%.1f z %.1f exp u,t %.4f,%.4f got %.4f,%.4f err %.3f,%.3f tex px %.2f piece %d of %d (%d verts) bary %.3f %.3f %.3f\n", trial, wt_w, n, wx, wz, zeye, expu, expt, bu, bt, ex * wt_w, ey * wt_h, px, rp_f, nf, rp_pn, rp_l0, rp_l1, rp_l2);
+					r->n++;
+					r->maxtx = fmax(r->maxtx, tex);
+					r->maxpx = fmax(r->maxpx, px);
+					r->sumpx += px;
+					if (!(px >= 0.0 && px < 1e9))
+					{
+						rp_nan++;
+						px = 1e9;
+					}
+					r->hist[px >= 0.7 ? 7 : (int)(px * 10.0)]++;
+					if (px > 0.6)
+						r->over++;
+					if (px > 2.0)
+						r->over2++;
+					if (mode == 0)
+					{
+						double dx = bu - dsu, dy = bt - dst_;
+
+						dx -= floor(dx + 0.5);
+						dy -= floor(dy + 0.5);
+						rp_design = fmax(rp_design, rp_screen_err(wx, wz, dx * wt_w, -dy * wt_h));
+					}
+				}
+			}
+		}
+	}
+	{
+		char d[400];
+		long over_new = 0, n_new = 0, miss = 0;
+		double worst = 0;
+
+		for (si = 0; si < 3; si++)
+		{
+			over_new += st[0][si].over;
+			n_new += st[0][si].n;
+			miss += st[0][si].miss;
+			worst = fmax(worst, st[0][si].maxpx);
+			printf("HG info ripple %3d texel flat: new max error %.2f texel (%.2f px, mean %.3f px, %ld samples)   OPT10 bands: max %.2f texel (%.2f px, mean %.3f px)\n", sizes[si], st[0][si].maxtx,
+				st[0][si].maxpx, st[0][si].sumpx / fmax(1.0, (double)st[0][si].n), st[0][si].n, st[1][si].maxtx, st[1][si].maxpx, st[1][si].sumpx / fmax(1.0, (double)st[1][si].n));
+		}
+		for (mode = 0; mode < 2; mode++)
+		{
+			long h[8] = {0};
+			long tot = 0;
+			int k;
+
+			for (si = 0; si < 3; si++)
+				for (k = 0; k < 8; k++)
+				{
+					h[k] += st[mode][si].hist[k];
+					tot += st[mode][si].hist[k];
+				}
+			printf("HG info ripple %s: share of the samples by error in pixels: <0.1 %.1f%%  <0.2 %.1f%%  <0.3 %.1f%%  <0.4 %.1f%%  <0.5 %.1f%%  <0.6 %.1f%%  <0.7 %.1f%%  >=0.7 %.1f%%\n", mode ? "OPT10 bands" : "continuous  ",
+				100.0 * h[0] / tot, 100.0 * h[1] / tot, 100.0 * h[2] / tot, 100.0 * h[3] / tot, 100.0 * h[4] / tot, 100.0 * h[5] / tot, 100.0 * h[6] / tot, 100.0 * h[7] / tot);
+		}
+		printf("HG info ripple: ripple planes per polygon: continuous %.1f (%ld polygons), OPT10 bands %.1f (%ld polygons)\n", (double)rp_planes[0] / fmax(1.0, (double)rp_polys[0]), rp_polys[0], (double)rp_planes[1] / fmax(1.0, (double)rp_polys[1]), rp_polys[1]);
+		printf("HG info ripple: sample points in no piece: continuous %ld, OPT10 bands %ld\n", st[0][0].miss + st[0][1].miss + st[0][2].miss, st[1][0].miss + st[1][1].miss + st[1][2].miss);
+		printf("HG info ripple: %d polygons drawn with ws_pack and with put_vertex: identical packets\n", rp_packchk);
+		EXPECT(rp_nan == 0, "%d samples with a NaN / infinite error", rp_nan);
+		EXPECT(n_new > 2000, "only %ld samples", n_new);
+		{
+			long o2 = 0;
+			double mean = 0;
+
+			for (si = 0; si < 3; si++)
+			{
+				o2 += st[0][si].over2;
+				mean += st[0][si].sumpx;
+			}
+			mean /= fmax(1.0, (double)n_new);
+			printf("HG info ripple: continuous: mean error %.3f px, %ld of %ld samples (%.2f %%) above 2 px, worst %.2f px\n", mean, o2, n_new, 100.0 * (double)o2 / fmax(1.0, (double)n_new), worst);
+			EXPECT(mean < 0.6, "the mean error of the continuous ripple against the shader is %.2f px", mean);
+			EXPECT(o2 * 100 < n_new, "%ld of %ld samples are more than 2 px off", o2, n_new);
+		}
+		EXPECT(miss * 10 < n_new + miss, "%ld of %ld sample points were in no piece", miss, n_new + miss);
+		snprintf(d, sizeof d, "%d polygons, %ld/%ld pieces (new/OPT10), %ld sample points, worst error %.2f px against the shader (OPT10 bands: %.2f px)", polys, pieces[0], pieces[1], n_new,
+			worst, fmax(st[1][0].maxpx, fmax(st[1][1].maxpx, st[1][2].maxpx)));
+		group_end(d);
+	}
+}
+
 /* ---- group: bands (the light staircase cut of ordinary walls and floors) ---- */
 static void test_bands(void)
 {
@@ -494,7 +919,7 @@ static void test_bands(void)
 		int lvl = (int)(rnd() % 256), wall = rnd() % 2;
 
 		water_setup((float)rndf(-30, 30));
-		H.leveltime = 0;
+		H.leveltime = 0; H.lt_frac = 1.0f;
 		memset(&surf, 0, sizeof surf);
 		surf.PolyColor.rgba = 0xFFFFFFFFu;
 		surf.LightInfo.light_level = lvl;
@@ -603,7 +1028,7 @@ static void test_litclip(void)
 		wt_w = trial % 3 == 0 ? 48 : 64; /* 48: not a power of two: the polygon is cut at the repeats (stage 0) */
 		wt_h = trial % 4 == 0 ? 40 : 64;
 		water_setup((float)rndf(-180, 180));
-		H.leveltime = 0;
+		H.leveltime = 0; H.lt_frac = 1.0f;
 		memset(&surf, 0, sizeof surf);
 		surf.PolyColor.rgba = 0xFFFFFFFFu;
 		surf.LightInfo.light_level = lvl;
@@ -1132,8 +1557,9 @@ int main(int argc, char **argv)
 			neg = atoi(argv[i] + 4);
 	cap = malloc(sizeof(qw_t) * CAP_MAX);
 	if (neg)
-		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : neg == 4 ? "clip" : neg == 5 ? "litclip" : neg == 6 ? "sort" : "bands");
+		printf("HG negctl %d expects %s\n", neg, neg == 1 ? "water" : neg == 2 ? "plancache" : neg == 4 ? "clip" : neg == 5 ? "litclip" : neg == 6 ? "sort" : neg == 7 || neg == 8 ? "ripple" : "bands");
 	test_water();
+	test_ripple();
 	test_bands();
 	test_litclip();
 	test_sort();

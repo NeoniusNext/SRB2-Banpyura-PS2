@@ -4,6 +4,7 @@ usage: python3 tools/ps2/make_dist.py [--elf build/out/SRB2.ELF] [--pak build/pa
 Result (everything the engine opens at run time, nothing else):
   SRB2.ELF            the engine (full configuration: Lua, UDMF, add-ons, limits, network, master server, software + GS hardware renderer)
   SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK   cooked game data (tools/ps2/cook.py from the user's own SRB2 2.2.15 files; not part of the repository)
+  MODELS.PAK          optional, cooked 3D models (tools/ps2/cook_models.py from the user's own models/ folder and models.dat): taken from --pak when it is there
   FINEACON.DAT        arccos table of Lua's acos/asin (tools/ps2/gen_fineacon.py; without it acos is computed, slower)
   modules/*.irx       IOP drivers loaded on first use from <data>/modules (src/ps2/ps2_addons.c): memory card (mcman, mcserv) and USB mass storage (bdm,
                       bdmfs_fatfs, usbmass_bd); the other drivers (sio2man, padman, usbd, keyboard/mouse, audsrv, network) are embedded in the ELF
@@ -31,6 +32,7 @@ README = r"""SRB2 for PlayStation 2 (Sonic Robo Blast 2 2.2.15, "Banpyura" port)
 ---------------------
 SRB2.ELF                    движок / the engine
 SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK   данные игры (упакованные файлы SRB2 2.2.15) / the game data (cooked from SRB2 2.2.15)
+MODELS.PAK                  необязательно: 3D-модели (MD3) для gr_models On / optional: the 3D models for gr_models On (the game runs without it, with sprites)
 FINEACON.DAT                таблица арккосинуса для Lua / arccos table for Lua
 modules/*.irx               драйверы IOP: карта памяти и USB-накопитель, грузятся при первом обращении / IOP drivers for the memory card and USB storage, loaded on first use
 autoload/                   сюда класть аддоны (.pk3 .wad .soc .lua): грузятся при каждом старте / add-ons put here load at every start
@@ -63,9 +65,9 @@ on a PS2 server type "punch <client address> <client port>" in the console (clie
 
 Аргументы запуска / Start-up arguments (ps2args, по одному на строку / one per line)
 ------------------------------------------------------------------------------------
--renderer Hardware       аппаратный рендерер GS (рекомендуется -zreserve 1536: резерв C-кучи под данные драйвера; 3072 забирает у зоны слишком много и часть карт не грузится)
-                         / GS hardware renderer (use -zreserve 1536: the C heap reserve of the driver; 3072 takes too much from the zone and some maps fail to load)
--zreserve 1536
+-renderer Hardware       аппаратный рендерер GS (-zreserve не нужен). Не хватило памяти (большая карта, много текстур): игра сама переходит на software до конца карты
+                         и пробует Hardware снова на следующей / GS hardware renderer (no -zreserve needed). When memory runs out (a very big map, many textures) the game
+                         switches to the software renderer for the rest of that map and tries Hardware again on the next one
 -ntsc | -pal | -480p     формат вывода / video output
 -connect <адрес>         сразу подключиться к серверу / join a server at start-up
 -server                  запустить сервер / start a server
@@ -106,7 +108,6 @@ AUTOLOAD_README = """Put add-ons here (.pk3 .wad .soc .lua): every file of this 
 
 PS2ARGS = """# Start-up arguments, one per line ('#' starts a comment). Rename this file to ps2args.
 # -renderer Hardware
-# -zreserve 1536
 # +name "PS2 player test"     (player name; "+command" lines go to the console; or type: name "PS2 player test")
 # -connect 192.168.1.10
 # -ntsc

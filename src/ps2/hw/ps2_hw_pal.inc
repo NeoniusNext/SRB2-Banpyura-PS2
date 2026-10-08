@@ -29,6 +29,21 @@ static inline int palette_mode(void)
 	return HWR_ShouldUsePaletteRendering() != 0;
 }
 
+// PS2-HW-221 (OPT11 round 2): the switch (three cvars and a shader test behind a call) read once a frame for the batcher's per polygon questions (PS2HWD_PalLit) and the keys of
+// the draws; begin_draw_inner still reads the switch itself for every plan and flushes the palette CLUTs when it was changed
+static inline int palette_mode_fr(void)
+{
+	static u32 frame = ~0u;
+	static int mode;
+
+	if (frame != H.frame_no)
+	{
+		frame = H.frame_no;
+		mode = palette_mode();
+	}
+	return mode;
+}
+
 // the colours palette textures show: the screen palette in palette rendering mode, else the texture palette
 static inline const u32 *out_pal(void)
 {
@@ -102,6 +117,9 @@ static void lt_clear(void)
 		lt_idx[i] = NULL;
 		lt_gen[i] = 0;
 	}
+	// PS2-HW-123: the next level makes its tables in another order (id 1 may hold another colormap), but the CLUT of (id, generation, row) of this level has the same key:
+	// without this the world of the level after a death/restart/next map showed the colormap of the level before (a gray green world on DSZ1, found with fx_pair.py)
+	H.pal_gen++;
 }
 
 // the CLUT entries of row `row` of table `tbl` (alpha 0x80; the keyed variant has the hole at index 255)

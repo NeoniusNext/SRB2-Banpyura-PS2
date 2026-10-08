@@ -69,6 +69,9 @@ void P_ScanThings(INT16 mapnum, INT16 wadnum, INT16 lumpnum);
 #endif
 void P_RespawnThings(void);
 boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate);
+#ifdef PS2
+void P_AbandonLevelLoad(void); // PS2-173: after a level load that ran out of memory: nothing points into the freed level any more
+#endif
 #ifdef HWRENDER
 void HWR_LoadLevel(void);
 #endif

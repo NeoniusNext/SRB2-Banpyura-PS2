@@ -83,6 +83,7 @@ UINT8 *R_GenerateTexture(size_t texnum);
 UINT8 *R_GetFlatForTexture(size_t texnum);
 #ifdef PS2
 UINT8 *R_TryGetFlatForTexture(size_t texnum); // PS2-140: as R_GetFlatForTexture, NULL when a texture used as a flat does not fit
+void R_LoadBigFlats(void); // PS2-180: the flats of 1 MiB and more that the level uses, built first (R_PrecacheLevel)
 #endif
 INT32 R_GetTextureNum(INT32 texnum);
 void R_CheckTextureCache(INT32 tex);

@@ -1317,10 +1317,29 @@ static void NetSyncLog(void)
 }
 #endif
 
+#ifdef PS2_PROFILE
+// OPT11 GEOM2 (PS2-HW-208): -singletics in a profile build on a map (no demo, no network game): the tics are made by TryRunTics, exactly one for every frame, and not by the clock.
+// Before, the clock made them (NetUpdate is also called by the renderer), so a frame could run no tic or two, and two runs of a map were not the same frames (-hwpolyhash).
+boolean ps2_lockstep = false;
+static boolean ps2_lockstep_tic = false;
+#endif
+
 boolean TryRunTics(tic_t realtics)
 {
+#ifdef PS2_OPT_CORE
+	// PS2-202 (OPT11-CORE): local play (no network game: single player, split screen, demos) runs off a lag that passes. A frame of more than five tics (143 ms; on the
+	// PS2 a texture build burst or a file read) used to run ONE tic and drop the rest: slow motion after every such frame. Here the first such frame runs all of its tics
+	// (at most half a second: 0.7..5.6 M cycles per tic, d_main.c clamps longer ones to one tic: a level load, a pause), and so does every following one as long as
+	// the lag gets shorter; a lag that does not shrink (the tics cost more than the clock gives, a sustained overload) is clamped as before, so there is no spiral.
+	static tic_t ps2_prevlag; // the lag (in tics) of the previous call when it was more than TICRATE/7, else 0
+	const boolean ps2_catchup = !netgame && realtics > TICRATE/7 && realtics <= TICRATE/2 && (!ps2_prevlag || realtics < ps2_prevlag);
+
+	ps2_prevlag = realtics > TICRATE/7 ? realtics : 0;
+	if (!ps2_catchup && realtics > TICRATE/7)
+#else
 	// the machine has lagged but it is not so bad
 	if (realtics > TICRATE/7)
+#endif
 	{
 		if (server)
 			realtics = 1;
@@ -1338,6 +1357,9 @@ boolean TryRunTics(tic_t realtics)
 			D_MapChange(-1, 0, ultimatemode, false, 2, false, fromlevelselect); // finish the map change
 	}
 
+#ifdef PS2_PROFILE
+	ps2_lockstep_tic = (realtics >= 1);
+#endif
 	NetUpdate();
 
 	if (demoplayback)
@@ -1693,6 +1715,16 @@ void NetUpdate(void)
 	nowtime = I_GetTime();
 	realtics = nowtime - gametime;
 
+#ifdef PS2_PROFILE
+	if (ps2_lockstep && !demoplayback && !netgame)
+	{
+		if (!ps2_lockstep_tic) // a call of the renderer: no tic
+			return;
+		ps2_lockstep_tic = false;
+		realtics = 1;
+	}
+	else
+#endif
 	if (realtics <= 0) // nothing new to update
 		return;
 

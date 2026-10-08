@@ -257,6 +257,9 @@ void *W_CacheLumpNumForce(lumpnum_t lumpnum, INT32 tag);
 
 boolean W_IsLumpCached(lumpnum_t lump, void *ptr);
 boolean W_IsPatchCached(lumpnum_t lump, void *ptr);
+#ifdef PS2_PROFILE
+void *W_PeekPatchNum(lumpnum_t lumpnum); // OPT11-FX3: the cached patch of a lump or NULL (no load, no touch)
+#endif
 boolean W_IsPatchCachedPwad(UINT16 wad, UINT16 lump, void *ptr);
 
 void *W_CacheLumpName(const char *name, INT32 tag);

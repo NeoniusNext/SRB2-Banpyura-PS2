@@ -12,8 +12,15 @@
 // The pixels are the same as the old path's (same triangles, same vertex values up to the VU0 rounding the old path would have had
 // on its VU0 route); sky_fast_ok() refuses meshes the shortcut cannot reproduce (texture coordinates beyond 4 repeats: the old path
 // subtracts whole repeats per triangle) and the old path stays available (-hwdbg 4096).
+//
+// PS2-HW-110 (OPT11 VU): a texture whose width or height is not a power of two (the 512 x 768 sky of DEMO_002) has its repeats made by cutting at whole texture widths
+// (P.cutx / P.cuty, the texture is clamped to its own region): the dome took the old path, 1.45 M cycles a frame. The bands of the dome (and its caps) are bounded by
+// whole texture heights / widths of the coordinates (rings at t = k / 4), so no band crosses a repeat: every band is drawn in its own repeat with the whole repeats
+// removed from its coordinates (what the old path's cuts and sb / tb make of such a triangle). A mesh with a band that does cross a repeat takes the old path.
 
 #ifdef HW_VU0
+
+#define SKY_MAXLOOPS 32
 
 static struct
 {
@@ -23,10 +30,16 @@ static struct
 	u32 *rgba; // GS colour words (R | G << 8 | B << 16 | A << 24)
 	cv_t *c; // per frame: clip coordinates and s, t
 	pv_t *p; // per frame: GS integers
-	u8 *oc; // per frame: outcodes
+	u8 *oc; // per frame: outcodes (0xFF = the vertex has not been transformed this frame, PS2-HW-244)
+	float (*qs)[4]; // PS2-HW-244: a sphere (x, y, z, radius, in the mesh's own coordinates) around every quad of a strip (slot first / 2 + k / 2) and every cap (slot first / 2)
 	int cap;
+	int sph; // the spheres of qs are made
 	int ok; // the converted mesh can take the shortcut
+	int cellx, celly; // every textured loop lies inside one repeat of the texture in s / t: the shortcut also takes a texture that is cut at its repeats on that axis (PS2-HW-110)
+	float lsb[SKY_MAXLOOPS], ltb[SKY_MAXLOOPS]; // whole repeats of s, t of a loop
 } SKY;
+
+static float sky_sb, sky_tb; // the repeats removed from s, t of the loop being drawn (0 unless the plan cuts at the repeats)
 
 static void sky_fast_free(void)
 {
@@ -35,6 +48,7 @@ static void sky_fast_free(void)
 	free(SKY.c);
 	free(SKY.p);
 	free(SKY.oc);
+	free(SKY.qs);
 	memset(&SKY, 0, sizeof SKY);
 }
 
@@ -54,7 +68,8 @@ static int sky_fast_prepare(const gl_sky_t *sky)
 		SKY.c = memalign(16, (size_t)n * sizeof *SKY.c);
 		SKY.p = memalign(16, (size_t)n * sizeof *SKY.p);
 		SKY.oc = malloc((size_t)n);
-		if (!SKY.v || !SKY.rgba || !SKY.c || !SKY.p || !SKY.oc)
+		SKY.qs = malloc(((size_t)n / 2 + 2) * sizeof *SKY.qs);
+		if (!SKY.v || !SKY.rgba || !SKY.c || !SKY.p || !SKY.oc || !SKY.qs)
 		{
 			sky_fast_free();
 			return 0;
@@ -100,6 +115,66 @@ static int sky_fast_prepare(const gl_sky_t *sky)
 	}
 	if (lim > 4.0f)
 		SKY.ok = 0; // the old path drops whole repeats from the coordinates of every triangle: not reproduced here
+	SKY.cellx = SKY.celly = sky->loopcount <= SKY_MAXLOOPS;
+	for (l = 0; l < sky->loopcount && SKY.ok && (SKY.cellx || SKY.celly); l++)
+	{
+		const gl_skyloopdef_t *loop = &sky->loops[l];
+		float smn = 1e30f, smx = -1e30f, tmn = 1e30f, tmx = -1e30f;
+
+		for (i = 0; i < loop->vertexcount; i++)
+		{
+			const FOutVector *v = &SKY.v[loop->vertexindex + i];
+
+			smn = v->s < smn ? v->s : smn;
+			smx = v->s > smx ? v->s : smx;
+			tmn = v->t < tmn ? v->t : tmn;
+			tmx = v->t > tmx ? v->t : tmx;
+		}
+		SKY.lsb[l] = floorf(smn + 1.0e-4f);
+		SKY.ltb[l] = floorf(tmn + 1.0e-4f);
+		if (smx - SKY.lsb[l] > 1.0f + 1.0e-4f)
+			SKY.cellx = 0; // a band that crosses a repeat: the cuts of the old path
+		if (tmx - SKY.ltb[l] > 1.0f + 1.0e-4f)
+			SKY.celly = 0;
+	}
+	// PS2-HW-244: a sphere around every quad of a strip and around every cap, in the coordinates of the mesh (the view transform of the frame is applied to the centre by the
+	// test, its gradient bounds the radius: ps2_hw_fx2.inc). The slot of a quad is (first + k) / 2; a loop that does not start at an even vertex has none (-> no sphere test).
+	SKY.sph = SKY.ok;
+	for (l = 0; l < sky->loopcount && SKY.sph; l++)
+		if (sky->loops[l].vertexindex & 1)
+			SKY.sph = 0;
+	for (l = 0; l < sky->loopcount && SKY.sph; l++)
+	{
+		const gl_skyloopdef_t *loop = &sky->loops[l];
+		const int first = loop->vertexindex, cnt = loop->vertexcount;
+		int k, step = loop->mode == HWD_SKYLOOP_FAN ? cnt : 2, len;
+
+		for (k = 0; (loop->mode == HWD_SKYLOOP_FAN ? k == 0 : k + 3 < cnt); k += step)
+		{
+			float cx = 0.0f, cy = 0.0f, cz = 0.0f, r2 = 0.0f;
+
+			len = loop->mode == HWD_SKYLOOP_FAN ? cnt : 4;
+			for (i = 0; i < len; i++)
+			{
+				cx += SKY.v[first + k + i].x;
+				cy += SKY.v[first + k + i].y;
+				cz += SKY.v[first + k + i].z;
+			}
+			cx /= (float)len;
+			cy /= (float)len;
+			cz /= (float)len;
+			for (i = 0; i < len; i++)
+			{
+				const float dx = SKY.v[first + k + i].x - cx, dy = SKY.v[first + k + i].y - cy, dz = SKY.v[first + k + i].z - cz, d2 = dx * dx + dy * dy + dz * dz;
+
+				r2 = d2 > r2 ? d2 : r2;
+			}
+			SKY.qs[(first + k) >> 1][0] = cx;
+			SKY.qs[(first + k) >> 1][1] = cy;
+			SKY.qs[(first + k) >> 1][2] = cz;
+			SKY.qs[(first + k) >> 1][3] = sqrtf(r2) * 1.002f + 1.0f;
+		}
+	}
 	CONS_Printf("HWD sky: %d vertices, %d loops, texture %dx%d, max |s,t| %.2f -> %s\n", n, sky->loopcount, sky->width, sky->height, lim, SKY.ok ? "strips" : "old path");
 	SKY.src = sky->data;
 	SKY.n = n;
@@ -114,8 +189,8 @@ static inline qw_t *sky_put(qw_t *o, const cv_t *c, const pv_t *p, u32 rgba)
 {
 	const float q = p->q;
 
-	o->f[0] = c->a[0] * P.tsx * q;
-	o->f[1] = c->a[1] * P.tsy * q;
+	o->f[0] = (c->a[0] - sky_sb) * P.tsx * q;
+	o->f[1] = (c->a[1] - sky_tb) * P.tsy * q;
 	o->f[2] = q;
 	o->w[3] = 0;
 	o++;
@@ -151,6 +226,8 @@ static void sky_tri_clipped(int ia, int ib, int ic, int or_)
 	pk.fmt = 4;
 	pk.nreg = 3;
 	pk.fog = 255;
+	pk.sb = sky_sb;
+	pk.tb = sky_tb;
 	o = pk_alloc((u32)(1 + (cnt - 2) * 9));
 	o[0].d[0] = HWGIF_TAG((cnt - 2) * 3, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, 3);
 	o[0].d[1] = GIF_REGS_STQ_RGBA_XYZ;
@@ -183,12 +260,37 @@ static void sky_strip(int a, int b)
 	H.st.verts_out += (u32)nv;
 }
 
+// the outcode of vertex i, transformed when it has not been this frame (PS2-HW-244; with every vertex made up front the test is a load)
+static inline int sky_oc_at(int i)
+{
+	if (SKY.oc[i] == 0xFF)
+	{
+		SKY.oc[i] = (u8)vu0_xform(&SKY.v[i], &SKY.c[i], &SKY.p[i]);
+		H.st.verts_in++;
+	}
+	return SKY.oc[i];
+}
+
+// PS2-HW-244: the sphere q = (x, y, z, radius) in the mesh's coordinates lies wholly outside one of the planes of the view volume (the four sides, the near plane): a polygon
+// inside it has all its vertices outside that plane, and the clipper (or the AND of the outcodes) leaves nothing of it. The radius has its margin already (the prepare).
+static inline int sky_sphere_hidden(const ps2cull_t *cs, const float *q)
+{
+	const float X = q[0], Y = q[1], Z = q[2], R = q[3];
+	const float cw = cs->r[3][0] * X + cs->r[3][1] * Y + cs->r[3][2] * Z + cs->r[3][3];
+	const float cx = cs->r[0][0] * X + cs->r[0][1] * Y + cs->r[0][2] * Z + cs->r[0][3];
+	const float cy = cs->r[1][0] * X + cs->r[1][1] * Y + cs->r[1][2] * Z + cs->r[1][3];
+	const float cz = cs->r[2][0] * X + cs->r[2][1] * Y + cs->r[2][2] * Z + cs->r[2][3];
+
+	return (cx - cw) - cs->nxm * R > 0.0f || (cx + cw) + cs->nxp * R < 0.0f || (cy - cw) - cs->nym * R > 0.0f || (cy + cw) + cs->nyp * R < 0.0f || (cz + cw) + cs->nzp * R < 0.0f;
+}
+
 // returns 1 when the dome was drawn
 static int sky_dome_fast(gl_sky_t *sky)
 {
 	float saved_mv[16];
 	int i, j, ok = 1;
 	u32 dome_t1 = 0;
+	const ps2cull_t *cs = NULL;
 
 	if ((ps2hwd_dbg_flags & 4096) || !sky_fast_prepare(sky))
 		return 0;
@@ -205,14 +307,14 @@ static int sky_dome_fast(gl_sky_t *sky)
 		if (!okb)
 			goto done;
 	}
-	if (!(P.vu0 && P.npass == 1 && P.lmode == LM_NONE && !P.cutx && !P.cuty && !P.water && P.pass[0].tex == (u8)P.textured))
+	if (!(P.vu0 && P.npass == 1 && P.lmode == LM_NONE && (!P.cutx || SKY.cellx) && (!P.cuty || SKY.celly) && !P.water && P.pass[0].tex == (u8)P.textured))
 	{
 		ok = 0; // a plan the shortcut does not cover: the old path draws it
 		{
 			static int said;
 
 			if (!said++)
-				CONS_Printf("HWD sky: plan not covered (vu0 %d npass %d lmode %d cutx %d cuty %d water %d tex %d/%d)\n", P.vu0, P.npass, P.lmode, P.cutx, P.cuty, P.water, (int)P.pass[0].tex, P.textured);
+				CONS_Printf("HWD sky: plan not covered (vu0 %d npass %d lmode %d cutx %d cuty %d cells %d/%d water %d tex %d/%d)\n", P.vu0, P.npass, P.lmode, P.cutx, P.cuty, SKY.cellx, SKY.celly, P.water, (int)P.pass[0].tex, P.textured);
 		}
 		goto done;
 	}
@@ -222,9 +324,19 @@ static int sky_dome_fast(gl_sky_t *sky)
 		const int n = sky->vertex_count;
 		u32 t0 = cyc();
 
-		for (i = 0; i < n; i++)
-			SKY.oc[i] = (u8)vu0_xform(&SKY.v[i], &SKY.c[i], &SKY.p[i]);
-		H.st.verts_in += (u32)n;
+		cs = (ps2hwd_fx2 & FX2_NOSKY) || !SKY.sph ? NULL : PS2HWD_CullSetup();
+		if (cs && !cs->valid)
+			cs = NULL;
+		if (cs)
+		{
+			memset(SKY.oc, 0xFF, (size_t)n); // PS2-HW-244: a vertex is transformed when a quad that is not outside the view needs it
+		}
+		else
+		{
+			for (i = 0; i < n; i++)
+				SKY.oc[i] = (u8)vu0_xform(&SKY.v[i], &SKY.c[i], &SKY.p[i]);
+			H.st.verts_in += (u32)n;
+		}
 		H.st.cyc_draw += cyc() - t0;
 		G.dome_xf += cyc() - t0;
 	}
@@ -244,22 +356,26 @@ static int sky_dome_fast(gl_sky_t *sky)
 			{
 				const gl_skyloopdef_t *loop = &sky->loops[i];
 				const int first = loop->vertexindex, cnt = loop->vertexcount;
-				const u8 *oc = &SKY.oc[first];
 				int k;
 
 				if (j == 0 ? loop->use_texture : !loop->use_texture)
 					continue;
+				sky_sb = (P.cutx && loop->use_texture) ? SKY.lsb[i] : 0.0f; // (the caps have s = t = 0)
+				sky_tb = (P.cuty && loop->use_texture) ? SKY.ltb[i] : 0.0f;
 				if (loop->mode == HWD_SKYLOOP_FAN)
 				{
 					int all = 0x3F;
 
+					if (cs && sky_sphere_hidden(cs, SKY.qs[first >> 1]))
+						continue; // PS2-HW-244: the sphere around the cap is outside the view
 					for (k = 0; k < cnt; k++)
-						all &= oc[k];
+						all &= sky_oc_at(first + k);
 					if (all)
 						continue; // the whole cap is outside one plane
 					for (k = 1; k + 1 < cnt; k++)
 					{
-						const int and_ = oc[0] & oc[k] & oc[k + 1], or_ = oc[0] | oc[k] | oc[k + 1];
+						const int c0 = sky_oc_at(first), c1 = sky_oc_at(first + k), c2 = sky_oc_at(first + k + 1);
+						const int and_ = c0 & c1 & c2, or_ = c0 | c1 | c2;
 
 						H.st.polys++;
 						if (and_)
@@ -297,10 +413,27 @@ static int sky_dome_fast(gl_sky_t *sky)
 
 					for (k = 0; k + 3 < cnt; k += 2)
 					{
-						const int o0 = oc[k], o1 = oc[k + 1], o2 = oc[k + 2], o3 = oc[k + 3];
-						const int and_ = o0 & o1 & o2 & o3, or_ = o0 | o1 | o2 | o3;
+						int o0, o1, o2, o3, and_, or_;
 						int g0 = 0, g1 = 0, g2 = 0, g3 = 0;
 
+						if (cs && sky_sphere_hidden(cs, SKY.qs[(first + k) >> 1]))
+						{
+							// PS2-HW-244: the sphere around the quad is outside the view: its four vertices are outside one plane (what the AND of their outcodes finds), nothing is made of it
+							H.st.polys += 2;
+							if (run >= 0)
+							{
+								sky_strip(first + run, first + k + 1);
+								run = -1;
+							}
+							H.st.rejected += 2;
+							continue;
+						}
+						o0 = sky_oc_at(first + k);
+						o1 = sky_oc_at(first + k + 1);
+						o2 = sky_oc_at(first + k + 2);
+						o3 = sky_oc_at(first + k + 3);
+						and_ = o0 & o1 & o2 & o3;
+						or_ = o0 | o1 | o2 | o3;
 						H.st.polys += 2;
 						if (and_)
 						{
