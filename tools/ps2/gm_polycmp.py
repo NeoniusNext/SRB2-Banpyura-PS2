@@ -50,12 +50,12 @@ def main():
     common = sorted(set(a) & set(b))
     common = [f for f in common if f > 1]
     if world:
-        bad = [f for f in common if a[f][3:] != b[f][3:]]
+        bad = [f for f in common if a[f][3:5] != b[f][3:5]]
     else:
         bad = [f for f in common if a[f][:2] != b[f][:2] or (order and a[f][2] != b[f][2])]
     print(f'{names[0]}: {len(a)} frames, {names[1]}: {len(b)} frames, compared {len(common)}, differ {len(bad)}')
     for f in bad[:show]:
-        if a[f][5] or b[f][5]:
+        if a[f][5] and b[f][5]:
             print(f'  frame {f}: sectors {a[f][5]} / {b[f][5]}  view {a[f][6]} / {b[f][6]}')
         print(f'  frame {f}: polygons {a[f][0]} / {b[f][0]}  hash {a[f][1]} / {b[f][1]}  order {a[f][2]} / {b[f][2]}  world {a[f][3]}:{a[f][4]} / {b[f][3]}:{b[f][4]}')
     return 1 if bad or not common else 0

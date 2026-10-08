@@ -35,9 +35,8 @@
 
 extern unsigned int PS2HWD_ScanDirection(void); // ps2_hw_tex.inc: 0 / 1 alternating with the frames
 
-enum { GCOP_TEX = 1, GCOP_POLY = 2, GCOP_TWALL = 3 };
+enum { GCOP_POLY = 2, GCOP_TWALL = 3 }; // (the texture ops of the first versions are gone: the entry of a polygon holds its texture, the header of the record the texture the function ended with)
 
-typedef struct { UINT8 op, pad[3]; GLMipmap_t *m; } gctex_t;
 typedef struct { UINT8 op, fog; UINT16 size; INT32 texnum; FBITFIELD blend; INT32 lightlevel; extracolormap_t *cmap; FOutVector v[4]; FSurfaceInfo surf; } gctw_t;
 
 typedef struct { UINT32 a, b; } gcfp_t;
@@ -49,7 +48,7 @@ typedef struct
 } gcent_t;
 
 // a record in the arena: this header, keyw words of key (the inputs the result was made from; compared word by word with the live ones), then the ops
-typedef struct { UINT16 keyw, opsoff, npoly, nvert, nwall, pad; } gcrh_t; // (npoly, nvert, nwall: what the replay adds to the batch arrays and the list of transparent walls)
+typedef struct { UINT16 keyw, opsoff, npoly, nvert, nwall, flags; GLMipmap_t *last; } gcrh_t; // (npoly, nvert, nwall: what the replay adds to the batch arrays and the list of transparent walls; flags bit 0: the function set the texture, `last` is the one it ended with = current_texture after the replay)
 #define GC_KEYMAX 80u
 
 static struct
@@ -74,7 +73,8 @@ static struct
 	UINT16 gen;
 	UINT32 epoch;
 	UINT32 rec_start, rec_pos, rec_limit, rec_np, rec_nv, rec_nw;
-	boolean rec_fail, rec_full;
+	boolean rec_fail, rec_full, rec_lastset;
+	GLMipmap_t *rec_last;
 	// statistics of the window (HWPROF32)
 	UINT32 s_seg_hit, s_seg_miss, s_seg_skip, s_pl_hit, s_pl_miss, s_pl_skip, s_flush, s_full, s_chk, s_bad, s_rep_ops, s_rec_ops;
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
@@ -771,8 +771,9 @@ static size_t HWR_GCacheReclaim(size_t want);
 
 void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon, UINT32 hash)
 {
-	const UINT32 size = (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo) + n * sizeof(FOutVector));
+	const UINT32 size = (UINT32)(sizeof(gcphdr_t) + sizeof(PolygonArrayEntry) + n * sizeof(FOutVector));
 	gcphdr_t *h;
+	PolygonArrayEntry *pe;
 	UINT32 *d;
 	const UINT32 *sp;
 	UINT32 k;
@@ -788,21 +789,28 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 		return;
 	h->op = GCOP_POLY;
 	h->n = (UINT8)n;
-	h->horizon = horizon ? 1 : 0;
+	h->pad = 0;
 	h->size = (UINT16)size;
-	h->flags = flags;
-	h->shader = shader;
-	h->tex = current_texture; // (what HWR_ProcessPolygon takes: the sort key depends on it)
-	h->texid = HWR_GCTexId(current_texture);
+	h->target = (INT16)shader;
 	h->hashed = (!(flags & PF_NoTexture) && !horizon) ? 1 : 0;
-	h->h16 = (UINT16)(h->hashed ? hash & 0xFFFFu : 0);
-	// (word copies: memcpy of newlib takes a byte loop for what is not 8 byte aligned)
-	d = (UINT32 *)(h + 1);
+	if (h->hashed)
+		HWR_GCHashes(current_texture, hash & 0xFFFFu, h->hash); // (the order of the texture depends on the scan direction of the frame: both are kept)
+	else
+		h->hash[0] = h->hash[1] = 0;
+	// the entry of the batch as HWR_ProcessPolygon makes it (word copies: memcpy of newlib takes a byte loop for what is not 8 byte aligned)
+	pe = (PolygonArrayEntry *)(h + 1);
+	d = (UINT32 *)pe;
+	for (k = 0; k < sizeof(PolygonArrayEntry) / 4u; k++)
+		d[k] = 0;
 	sp = (const UINT32 *)surf;
 	for (k = 0; k < sizeof(FSurfaceInfo) / 4u; k++)
 		d[k] = sp[k];
-	((FSurfaceInfo *)(h + 1))->PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
-	d = (UINT32 *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo));
+	pe->surf.PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
+	pe->numVerts = n;
+	pe->polyFlags = flags;
+	pe->texture = current_texture;
+	pe->horizonSpecial = horizon;
+	d = (UINT32 *)((UINT8 *)(h + 1) + sizeof(PolygonArrayEntry));
 	sp = (const UINT32 *)verts;
 	for (k = 0; k < n * 5u; k++)
 		d[k] = sp[k];
@@ -813,14 +821,10 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 
 void HWR_GCRecTex(GLMipmap_t *texture)
 {
-	gctex_t *t = gc_rec_alloc(sizeof(gctex_t));
-
-	if (!t)
+	if (gc.rec_fail)
 		return;
-	t->op = GCOP_TEX;
-	t->pad[0] = t->pad[1] = t->pad[2] = 0;
-	t->m = texture;
-	gc.s_rec_ops++;
+	gc.rec_last = texture; // (no op: the polygons that follow hold their texture, the record the one the function ends with)
+	gc.rec_lastset = true;
 }
 
 static void HWR_GCRecTWall(const FOutVector *wallVerts, const FSurfaceInfo *pSurf, INT32 texnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap)
@@ -853,12 +857,15 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	gc.rec_limit = scratch ? gc.ar_size + GC_SCRATCH : gc.hbase + gc.hsize;
 	gc.rec_fail = gc.rec_full = false;
 	gc.rec_np = gc.rec_nv = gc.rec_nw = 0;
+	gc.rec_lastset = false;
+	gc.rec_last = NULL;
 	hwr_grec_on = true;
 	if ((rh = gc_rec_alloc((UINT32)(sizeof(gcrh_t) + 4u * (UINT32)keyw))) != NULL)
 	{
 		rh->keyw = (UINT16)keyw;
 		rh->opsoff = (UINT16)(sizeof(gcrh_t) + 4u * (UINT32)keyw);
-		rh->npoly = rh->nvert = rh->nwall = rh->pad = 0;
+		rh->npoly = rh->nvert = rh->nwall = rh->flags = 0;
+		rh->last = NULL;
 		{
 			UINT32 *kd = (UINT32 *)(rh + 1);
 			int j;
@@ -869,12 +876,12 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	}
 }
 
-// the records of what the function did: made again
-static void gc_replay(const UINT8 *p, UINT32 len)
+// the records of what the function did: made again (the polygons go to the batch as HWR_ProcessPolygon would have put them, the transparent walls to their list)
+static void gc_replay(const gcrh_t *rh, UINT32 len)
 {
-	const UINT8 *const end = p + len;
+	const UINT8 *p = (const UINT8 *)rh + rh->opsoff;
+	const UINT8 *const end = (const UINT8 *)rh + len;
 	const UINT32 view = gc.view;
-	UINT32 nops = 0;
 
 	while (p < end)
 	{
@@ -884,31 +891,8 @@ static void gc_replay(const UINT8 *p, UINT32 len)
 		{
 			const gcphdr_t *h = (const gcphdr_t *)p;
 
-			if (current_texture == h->tex)
-			{
-				HWD_LOCAL;
-				HWR_GCReplayPoly(h);
-				gc.n_rpoly++;
-				HWD_ADDC(gc.c_rpoly);
-			}
-			else
-				HWR_ProcessPolygon((FSurfaceInfo *)(h + 1), (FOutVector *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo)), h->n, h->flags, h->shader, h->horizon != 0); // (the texture of the caller is not the one of the record: the long way)
+			HWR_GCReplayPoly(h, view);
 			p += h->size;
-		}
-		else if (op == GCOP_TEX)
-		{
-			GLMipmap_t *m = ((const gctex_t *)p)->m;
-
-			gc.n_rtex++;
-			if (m && m->ps2_gcv != view)
-			{
-				m->ps2_gcv = view; // once a view is enough: the driver only stamps the texture with the frame, the zone the block
-				HWR_SetCurrentTexture(m); // as HWR_GetTexture / HWR_GetLevelFlat do (and then:)
-				Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
-			}
-			else
-				current_texture = m;
-			p += sizeof(gctex_t);
 		}
 		else if (op == GCOP_TWALL)
 		{
@@ -919,9 +903,11 @@ static void gc_replay(const UINT8 *p, UINT32 len)
 		}
 		else
 			break; // (cannot happen: the records are written by the functions above)
-		nops++;
 	}
-	gc.s_rep_ops += nops;
+	if (rh->flags & 1)
+		current_texture = rh->last;
+	gc.n_rpoly += rh->npoly;
+	gc.s_rep_ops += (UINT32)rh->npoly + rh->nwall;
 }
 
 static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 alen, const UINT8 *b, UINT32 blen)
@@ -947,19 +933,19 @@ static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 
 
 		while (o < n && o + sizeof(gcphdr_t) <= n)
 		{
-			const UINT32 sz = a[o] == GCOP_TEX ? (UINT32)sizeof(gctex_t) : a[o] == GCOP_TWALL ? (UINT32)sizeof(gctw_t) : ((const gcphdr_t *)(a + o))->size;
+			const UINT32 sz = a[o] == GCOP_TWALL ? (UINT32)sizeof(gctw_t) : ((const gcphdr_t *)(a + o))->size;
 
 			if (i >= o && i < o + sz)
 			{
 				const UINT32 rel = i - o;
 
-				if (a[o] == GCOP_POLY && rel >= sizeof(gcphdr_t) + sizeof(FSurfaceInfo))
+				if (a[o] == GCOP_POLY && rel >= sizeof(gcphdr_t) + sizeof(PolygonArrayEntry))
 				{
-					const UINT32 vo = rel - (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo));
-					const FOutVector *va = (const FOutVector *)(a + o + sizeof(gcphdr_t) + sizeof(FSurfaceInfo)), *vb = (const FOutVector *)(b + o + sizeof(gcphdr_t) + sizeof(FSurfaceInfo));
+					const UINT32 vo = rel - (UINT32)(sizeof(gcphdr_t) + sizeof(PolygonArrayEntry));
+					const FOutVector *va = (const FOutVector *)(a + o + sizeof(gcphdr_t) + sizeof(PolygonArrayEntry)), *vb = (const FOutVector *)(b + o + sizeof(gcphdr_t) + sizeof(PolygonArrayEntry));
 					const UINT32 nv = ((const gcphdr_t *)(a + o))->n;
 
-					I_OutputMsg("  in op at %u (poly, %u vertices, flags %x): vertex %u field %u (x y z s t)\n", (unsigned)o, (unsigned)nv, (unsigned)((const gcphdr_t *)(a + o))->flags, (unsigned)(vo / 20), (unsigned)((vo % 20) / 4));
+					I_OutputMsg("  in op at %u (poly, %u vertices, flags %x): vertex %u field %u (x y z s t)\n", (unsigned)o, (unsigned)nv, (unsigned)((const PolygonArrayEntry *)(a + o + sizeof(gcphdr_t)))->polyFlags, (unsigned)(vo / 20), (unsigned)((vo % 20) / 4));
 					for (k = 0; k < nv; k++)
 						I_OutputMsg("    v%u cached %.4f %.4f %.4f %.6f %.6f | now %.4f %.4f %.4f %.6f %.6f\n", (unsigned)k, va[k].x, va[k].y, va[k].z, va[k].s, va[k].t, vb[k].x, vb[k].y, vb[k].z, vb[k].s, vb[k].t);
 				}
@@ -1005,6 +991,8 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const c
 		rh->npoly = (UINT16)gc.rec_np;
 		rh->nvert = (UINT16)gc.rec_nv;
 		rh->nwall = (UINT16)gc.rec_nw;
+		rh->flags = gc.rec_lastset ? 1 : 0;
+		rh->last = gc.rec_lastset ? gc.rec_last : NULL;
 	}
 	if (check)
 	{

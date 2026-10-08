@@ -656,7 +656,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 					if (HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
 					{
 						rh = gc_promote(gce, rh);
-						gc_replay((const UINT8 *)rh + rh->opsoff, (UINT32)gce->len - rh->opsoff);
+						gc_replay(rh, (UINT32)gce->len);
 						gc.s_pl_hit++;
 						gc.w_q++;
 						gc.w_hit++;
@@ -2294,7 +2294,7 @@ static void HWR_ProcessSegC(void)
 				rh = gc_promote(e, rh);
 				gl_sidedef = sg->sidedef;
 				gl_linedef = sg->linedef;
-				gc_replay((const UINT8 *)rh + rh->opsoff, (UINT32)e->len - rh->opsoff);
+				gc_replay(rh, (UINT32)e->len);
 				gc.s_seg_hit++;
 				gc.w_q++;
 				gc.w_hit++;

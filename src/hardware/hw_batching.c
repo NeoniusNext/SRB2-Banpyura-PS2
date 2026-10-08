@@ -389,7 +389,13 @@ void HWR_StartBatching(void)
 	PS2HWD_BatchBegin();
 #ifdef PS2_PROFILE
 	hwr_scan_dir = PS2HWD_ScanDirection();
-	hwr_shader_have = 0;
+	{
+		int t;
+
+		for (t = 0; t < NUMSHADERTARGETS; t++) // the shader of every target, once for the pass (HWR_GCReplayPoly reads the table; HWR_ShaderOfTarget asked for the first polygon of each target)
+			hwr_shader_of[t] = HWR_GetShaderFromTarget(t);
+		hwr_shader_have = (UINT16)((1u << NUMSHADERTARGETS) - 1u);
+	}
 #endif
 #endif
 }
@@ -596,46 +602,63 @@ void HWR_GCBatchReserve(int npoly, int nvert)
 	}
 }
 
-// HWR_ProcessPolygon of a polygon the geometry cache made before (batching, not sprites): what the digest and the sort key need is in the record
-void HWR_GCReplayPoly(const gcphdr_t *h)
+// The sort keys of a polygon with this texture and this state hash (the 16 bit part of the key) for the scan directions 0 and 1: the cache keeps both, the direction changes every frame
+void HWR_GCHashes(const GLMipmap_t *tex, UINT32 h16, UINT32 out[2])
 {
-	const FSurfaceInfo *sf = (const FSurfaceInfo *)(h + 1);
-	const UINT32 *vs = (const UINT32 *)(sf + 1);
+	const UINT32 id = HWR_PS2_TextureId(tex);
+
+	out[0] = (HWR_PS2_OrderOf(id, 0) << 16) | h16;
+	out[1] = (HWR_PS2_OrderOf(id, 1) << 16) | h16;
+}
+
+// HWR_ProcessPolygon of a polygon the geometry cache made before (batching, not sprites): the record holds the entry as HWR_ProcessPolygon made it (surface, flags, texture, number of
+// vertices), the sort key for each scan direction and the vertices; the replay copies them and makes the three things that change: the index of the vertices, the shader (the table of the
+// pass) and the sort key (the direction of the frame). The texture is touched once per view (the driver only stamps it with the frame, the zone the block).
+void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view)
+{
+	const UINT32 *e = (const UINT32 *)(h + 1);
+	const UINT32 *vs = e + sizeof(PolygonArrayEntry) / 4u;
 	const FUINT n = h->n;
+	GLMipmap_t *m = ((const PolygonArrayEntry *)e)->texture;
 	PolygonArrayEntry *pe;
-	UINT32 *vd;
+	UINT32 *d;
 	int idx, vi;
 	FUINT k;
 
 	ps2hwp_cnt[HWC_PROC]++;
 	ps2hwp_cnt[HWC_PROC_BATCH]++;
+	if (m && m->ps2_gcv != view)
+	{
+		m->ps2_gcv = view; // once a view is enough: the driver only stamps the texture with the frame, the zone the block
+		PS2HWD_TouchTexture(m);
+		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+	}
 	if (hwr_ph_on > 0)
-		HWR_PolyHashAdd(sf, (const FOutVector *)vs, n, h->flags, h->shader, h->horizon);
+	{
+		current_texture = m; // (the hash reads the texture of the polygon)
+		HWR_PolyHashAdd(&((const PolygonArrayEntry *)e)->surf, (const FOutVector *)vs, n, ((const PolygonArrayEntry *)e)->polyFlags, h->target, ((const PolygonArrayEntry *)e)->horizonSpecial);
+	}
 	if (__builtin_expect(polygonArraySize == polygonArrayAllocSize || unsortedVertexArraySize + (int)n > unsortedVertexArrayAllocSize, 0))
 		HWR_GCReplayGrow(n);
 	idx = polygonArraySize;
 	vi = unsortedVertexArraySize;
 	pe = &polygonArray[idx];
-	pe->surf = *sf;
-	pe->vertsIndex = (unsigned int)vi;
-	pe->numVerts = n;
-	pe->polyFlags = h->flags;
-	pe->texture = current_texture;
-	pe->shader = HWR_ShaderOfTarget(h->shader);
-	pe->horizonSpecial = h->horizon;
-	if (h->hashed)
-		pe->hash = (INT32)((HWR_PS2_OrderOf(h->texid, hwr_scan_dir) << 16) | h->h16);
-	else
-		pe->hash = -idx; // (to stay in order on horizon lines)
+	d = (UINT32 *)pe;
+	d[0] = e[0]; d[1] = e[1]; d[2] = e[2]; d[3] = e[3]; d[4] = e[4]; d[5] = e[5]; d[6] = e[6]; d[7] = e[7]; // the surface
+	d[8] = vi; // vertsIndex
+	d[9] = e[9]; d[10] = e[10]; d[11] = e[11]; // numVerts, polyFlags, texture
+	d[12] = h->target == SHADER_NONE ? (UINT32)SHADER_NONE : (UINT32)hwr_shader_of[h->target]; // shader (the table of the pass, made by HWR_StartBatching)
+	d[13] = e[13]; // horizonSpecial and its padding
+	d[14] = h->hashed ? h->hash[hwr_scan_dir] : (UINT32)(-idx); // to stay in order on horizon lines
 	polygonArraySize = idx + 1;
-	vd = (UINT32 *)&unsortedVertexArray[vi];
+	d = (UINT32 *)&unsortedVertexArray[vi];
 	for (k = 0; k < n * 5u; k += 5)
 	{
-		vd[k] = vs[k];
-		vd[k + 1] = vs[k + 1];
-		vd[k + 2] = vs[k + 2];
-		vd[k + 3] = vs[k + 3];
-		vd[k + 4] = vs[k + 4];
+		d[k] = vs[k];
+		d[k + 1] = vs[k + 1];
+		d[k + 2] = vs[k + 2];
+		d[k + 3] = vs[k + 3];
+		d[k + 4] = vs[k + 4];
 	}
 	unsortedVertexArraySize = vi + (int)n;
 }
