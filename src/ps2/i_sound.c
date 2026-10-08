@@ -793,6 +793,22 @@ static void DiagFrame(void)
 		I_OutputMsg("ASTAT restartaudio requested at levelframe %u\n", diag_levelframes);
 		COM_BufAddText("restartaudio\n");
 	}
+	// -acmd <levelframe> <console command> (repeatable, up to 8): scripted console commands (stopmusic, tunes, pause, digmusicvolume ...)
+	{
+		static boolean acmd_done[8];
+		int i, n = 0;
+		for (i = 1; i + 2 < myargc && n < 8; i++)
+			if (!strcmp(myargv[i], "-acmd"))
+			{
+				if (!acmd_done[n] && diag_levelframes >= (UINT32)atoi(myargv[i + 1]))
+				{
+					acmd_done[n] = true;
+					I_OutputMsg("ASTAT acmd at levelframe %u: %s\n", diag_levelframes, myargv[i + 2]);
+					COM_BufAddText(va("%s\n", myargv[i + 2]));
+				}
+				n++; i += 2;
+			}
+	}
 	if (!diag_reloaded && diag_levelframes >= diag_reload_at)
 	{
 		diag_reloaded = true;
