@@ -92,6 +92,7 @@
 #include "netcode/net_command.h"
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler, level hash
 #endif
 #ifdef PS2
 #include "ps2/ps2_hwfb.h" // PS2-170
@@ -4476,6 +4477,10 @@ static void P_LoadReject(UINT8 *data, size_t count)
 }
 #endif
 
+#ifdef PS2_PROFILE
+static size_t ps2lp_rejectbytes; // PS2-LOAD-1: size of the REJECT lump, for P_LevelHash
+#endif
+
 static void P_LoadMapLUT(const virtres_t *virt)
 {
 	virtlump_t* virtblockmap = vres_Find(virt, "BLOCKMAP");
@@ -4483,6 +4488,7 @@ static void P_LoadMapLUT(const virtres_t *virt)
 
 	// Lookup tables
 #ifdef PS2_PROFILE
+	ps2lp_rejectbytes = virtreject ? virtreject->size : 0;
 	if (virtreject && virtreject->size)
 	{
 		// PS2-52: the lump data is the matrix: no second copy next to it (vres_Free skips what was taken)
@@ -7656,13 +7662,190 @@ static void P_CompactBlockmap(void)
 }
 #endif
 
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-1 (-loadprof -loadhash): a hash of everything the level loader built (no pointers, only indices), printed as "LHASH map <hash>".
+// The tool for "the same bytes before and after a load-time change": two runs of the same map on two ELFs must print the same line.
+#define LH(v) PS2LP_H32(&hs, (UINT32)(v))
+static void P_LevelHashTags(ps2lp_hash_t *hsp, const taglist_t *t)
+{
+	ps2lp_hash_t hs = *hsp;
+	UINT32 k;
+
+	LH(t->count);
+	for (k = 0; k < t->count; k++)
+		LH(t->tags[k]);
+	*hsp = hs;
+}
+
+static void P_LevelHash(const char *label)
+{
+	ps2lp_hash_t hs = { { 2166136261u, 0x811C9DC5u ^ 0xA5A5A5A5u } };
+	size_t i, j;
+	char lab[24];
+
+	LH(numvertexes); LH(numsectors); LH(numlines); LH(numsides); LH(nummapthings); LH(numsegs); LH(numsubsectors); LH(numnodes); LH(numlevelflats);
+	for (i = 0; i < numvertexes; i++)
+	{
+		const vertex_t *v = &vertexes[i];
+
+		LH(v->x); LH(v->y); LH(v->floorz); LH(v->ceilingz); LH(v->floorzset); LH(v->ceilingzset);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".vtx"), &hs);
+	for (i = 0; i < numsectors; i++)
+	{
+		const sector_t *sc = &sectors[i];
+
+		LH(sc->floorheight); LH(sc->ceilingheight); LH(sc->floorpic); LH(sc->ceilingpic); LH(sc->lightlevel); LH(sc->special);
+		P_LevelHashTags(&hs, &sc->tags);
+		LH(sc->soundorg.x); LH(sc->soundorg.y); LH(sc->soundorg.z);
+		LH(sc->floorxoffset); LH(sc->flooryoffset); LH(sc->ceilingxoffset); LH(sc->ceilingyoffset);
+		LH(sc->floorxscale); LH(sc->flooryscale); LH(sc->ceilingxscale); LH(sc->ceilingyscale);
+		LH(sc->floorangle); LH(sc->ceilingangle); LH(sc->heightsec); LH(sc->camsec);
+		LH(sc->floorlightlevel); LH(sc->ceilinglightlevel); LH(sc->floorlightabsolute); LH(sc->ceilinglightabsolute);
+		LH(sc->floorlightsec); LH(sc->ceilinglightsec); LH(sc->crumblestate);
+		LH(sc->linecount);
+		for (j = 0; j < sc->linecount; j++)
+			LH(sc->lines[j] - lines);
+		LH(sc->gravity); LH(sc->flags); LH(sc->specialflags); LH(sc->damagetype); LH(sc->triggertag); LH(sc->triggerer); LH(sc->friction);
+		LH(sc->cullheight ? (INT32)(sc->cullheight - lines) : -1);
+		LH(sc->spawn_lightlevel); LH(sc->portal_floor); LH(sc->portal_ceiling);
+		LH(sc->extra_colormap ? 1 : 0);
+	}
+	for (i = 0; i < numlevelflats; i++)
+	{
+		const UINT8 *n = (const UINT8 *)levelflats[i].name;
+
+		for (j = 0; j < 8; j++)
+			LH(n[j]);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".sec"), &hs);
+	for (i = 0; i < numlines; i++)
+	{
+		const line_t *l = &lines[i];
+
+		LH(l->v1 - vertexes); LH(l->v2 - vertexes); LH(l->dx); LH(l->dy); LH(l->angle); LH(l->flags); LH(l->special);
+		P_LevelHashTags(&hs, &l->tags);
+		for (j = 0; j < NUMLINEARGS; j++)
+			LH(l->args[j]);
+		for (j = 0; j < NUMLINESTRINGARGS; j++)
+		{
+			const char *a = l->stringargs[j];
+
+			LH(a ? 1 : 0);
+			while (a && *a)
+				LH(*a++);
+		}
+		LH(l->sidenum[0]); LH(l->sidenum[1]); LH(l->alpha); LH(l->blendmode); LH(l->executordelay);
+		LH(l->bbox[0]); LH(l->bbox[1]); LH(l->bbox[2]); LH(l->bbox[3]);
+		LH(l->slopetype);
+		LH(l->frontsector ? (INT32)(l->frontsector - sectors) : -1);
+		LH(l->backsector ? (INT32)(l->backsector - sectors) : -1);
+		LH(l->callcount); LH(l->secportal);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".lin"), &hs);
+	for (i = 0; i < numsides; i++)
+	{
+		const side_t *sd = &sides[i];
+
+		LH(sd->textureoffset); LH(sd->rowoffset);
+		LH(SIDE_OFFSETX_TOP(sd)); LH(SIDE_OFFSETX_MID(sd)); LH(SIDE_OFFSETX_BOTTOM(sd));
+		LH(SIDE_OFFSETY_TOP(sd)); LH(SIDE_OFFSETY_MID(sd)); LH(SIDE_OFFSETY_BOTTOM(sd));
+		LH(SIDE_SCALEX_TOP(sd)); LH(SIDE_SCALEX_MID(sd)); LH(SIDE_SCALEX_BOTTOM(sd));
+		LH(SIDE_SCALEY_TOP(sd)); LH(SIDE_SCALEY_MID(sd)); LH(SIDE_SCALEY_BOTTOM(sd));
+		LH(SIDE_LIGHT(sd)); LH(SIDE_LIGHT_TOP(sd)); LH(SIDE_LIGHT_MID(sd)); LH(SIDE_LIGHT_BOTTOM(sd));
+		LH(SIDE_LIGHTABSOLUTE(sd)); LH(SIDE_LIGHTABSOLUTE_TOP(sd)); LH(SIDE_LIGHTABSOLUTE_MID(sd)); LH(SIDE_LIGHTABSOLUTE_BOTTOM(sd));
+		LH(sd->toptexture); LH(sd->bottomtexture); LH(sd->midtexture);
+		LH(sd->line ? (INT32)(sd->line - lines) : -1);
+		LH(sd->sector ? (INT32)(sd->sector - sectors) : -1);
+		LH(sd->special); LH(sd->repeatcnt);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".sid"), &hs);
+	for (i = 0; i < numsegs; i++)
+	{
+		const seg_t *sg = &segs[i];
+
+		LH(sg->v1 - vertexes); LH(sg->v2 - vertexes); LH(sg->side); LH(sg->offset); LH(sg->angle);
+		LH(sg->sidedef ? (INT32)(sg->sidedef - sides) : -1);
+		LH(sg->linedef ? (INT32)(sg->linedef - lines) : -1);
+		LH(sg->frontsector ? (INT32)(sg->frontsector - sectors) : -1);
+		LH(sg->backsector ? (INT32)(sg->backsector - sectors) : -1);
+		LH(sg->length); LH(sg->dontrenderme); LH(sg->glseg);
+	}
+	for (i = 0; i < numsubsectors; i++)
+	{
+		const subsector_t *ss = &subsectors[i];
+
+		LH(ss->sector ? (INT32)(ss->sector - sectors) : -1); LH(ss->numlines); LH(ss->firstline);
+	}
+	for (i = 0; i < numnodes; i++)
+	{
+		const node_t *n = &nodes[i];
+
+		LH(n->x); LH(n->y); LH(n->dx); LH(n->dy);
+		for (j = 0; j < 8; j++)
+			LH(n->bbox[j >> 2][j & 3]);
+		LH(n->children[0]); LH(n->children[1]);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".bsp"), &hs);
+	LH(bmapwidth); LH(bmapheight); LH(bmaporgx); LH(bmaporgy);
+	{
+		const size_t cells = (size_t)bmapwidth * bmapheight;
+
+		// the representation is part of the level (P_CompactBlockmap): cells are offsets, lists are 32 or 16 bit
+		for (i = 0; i < cells; i++)
+			LH(blockmap[i]);
+		if (ps2_blockmaplists)
+		{
+			size_t prefix = cells + 4;
+
+			for (i = prefix; i < ps2_blockmapwords; i++)
+				LH(ps2_blockmaplists[i - prefix]);
+		}
+		else
+			for (i = cells + 4; i < ps2_blockmapwords; i++)
+				LH(blockmaplump[i]);
+		LH(ps2_blockmapwords);
+	}
+	LH(rejectmatrix ? 1 : 0);
+	for (i = 0; rejectmatrix && i < ps2lp_rejectbytes; i++)
+		LH(rejectmatrix[i]);
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".lut"), &hs);
+	for (i = 0; i < nummapthings; i++)
+	{
+		const mapthing_t *t = &mapthings[i];
+
+		LH(t->x); LH(t->y); LH(t->angle); LH(t->pitch); LH(t->roll); LH(t->type); LH(t->options); LH(t->z); LH(t->extrainfo);
+		P_LevelHashTags(&hs, &t->tags);
+		LH(t->scale); LH(t->spritexscale); LH(t->spriteyscale);
+		for (j = 0; j < NUMMAPTHINGARGS; j++)
+			LH(t->args[j]);
+		for (j = 0; j < NUMMAPTHINGSTRINGARGS; j++)
+		{
+			const char *a = t->stringargs[j];
+
+			LH(a ? 1 : 0);
+			while (a && *a)
+				LH(*a++);
+		}
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".thg"), &hs);
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".all"), &hs);
+}
+#undef LH
+#endif
+
 static boolean P_LoadMapFromFile(void)
 {
-	virtres_t *virt = vres_GetMap(lastloadedmaplumpnum);
-	virtlump_t *textmap = vres_Find(virt, "TEXTMAP");
+	LP_BEGIN(lpm);
+	virtres_t *virt;
+	virtlump_t *textmap;
 #ifndef PS2_PROFILE
 	size_t i;
 #endif
+	virt = vres_GetMap(lastloadedmaplumpnum);
+	textmap = vres_Find(virt, "TEXTMAP");
+	LP_END(LV_VRES, lpm);
 #ifndef HAS_UDMF
 	if (textmap != NULL) // TEXTMAP data stays in the pack, but this build (SRB2_PS2_NO=udmf) cannot load it
 	{
@@ -7683,19 +7866,28 @@ static boolean P_LoadMapFromFile(void)
 	}
 #endif
 	ZCK("map-begin");
+	LP_RESTART(lpm);
 	if (!P_LoadMapData(virt))
 		return false;
+	LP_END(LV_MAPDATA, lpm);
 	ZCK("map-data");
+	LP_RESTART(lpm);
 	P_LoadMapBSP(virt);
+	LP_END(LV_BSP, lpm);
 	ZCK("map-bsp");
+	LP_RESTART(lpm);
 	P_LoadMapLUT(virt);
 #ifdef PS2_PROFILE
 	P_CompactBlockmap();
 #endif
+	LP_END(LV_LUT, lpm);
 	ZCK("map-blockmap");
 
+	LP_RESTART(lpm);
 	P_LinkMapData();
+	LP_END(LV_LINK, lpm);
 
+	LP_RESTART(lpm);
 	if (!udmf)
 		P_AddBinaryMapTags();
 
@@ -7706,6 +7898,7 @@ static boolean P_LoadMapFromFile(void)
 #ifdef PS2_PROFILE
 	P_CompactLineArgs(); // PS2-143: the loaders and the conversion are done with the line arguments
 #endif
+	LP_END(LV_TAGS, lpm);
 
 	// Copy relevant map data for NetArchive purposes.
 #ifdef PS2_PROFILE
@@ -7732,9 +7925,11 @@ static boolean P_LoadMapFromFile(void)
 #endif
 
 	ZCK("map-spawnstate");
+	LP_RESTART(lpm);
 	P_MakeMapMD5(virt, &mapmd5);
 
 	vres_Free(virt);
+	LP_END(LV_SPAWNSTATE, lpm);
 	ZCK("map-loaded");
 	return true;
 }
@@ -8422,13 +8617,39 @@ void P_AbandonLevelLoad(void)
 }
 #endif
 
+static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate);
+
+#ifdef PS2_PROFILE
+static void P_LevelHash(const char *label); // PS2-LOAD-1 (-loadhash)
+#endif
+
 boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+{
+	boolean ok;
+	LP_BEGIN(lpt);
+
+	LP_SAMPLE(2);
+	ok = P_LoadLevel_(fromnetsave, reloadinggamestate);
+	LP_END(LV_TOTAL, lpt);
+	LP_SAMPLE(3);
+	if (ps2lp_on)
+	{
+		char label[16];
+
+		snprintf(label, sizeof label, "map%d", (int)gamemap);
+		PS2LP_Report(label);
+	}
+	return ok;
+}
+
+static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 {
 	// use gamemap to get map number.
 	// 99% of the things already did, so.
 	// Map header should always be in place at this point
 	INT32 i, ranspecialwipe = 0;
 	sector_t *ss;
+	LP_BEGIN(lpl);
 	levelloading = true;
 #ifdef PS2_PROFILE
 	Z_LevelPhase(false); // PS2-63: the bulk of the level is carved from the bottom of the arena
@@ -8574,6 +8795,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	// Close text prompt before freeing the old level
 	F_EndTextPrompt(false, true);
 
+	LP_END(LV_PRE, lpl);
+	LP_RESTART(lpl);
 	LUA_InvalidateLevel();
 
 	for (ss = sectors; sectors+numsectors != ss; ss++)
@@ -8610,6 +8833,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	R_ResetSectorEdgeCache(); // PS2-164: the per-sector edge records lived in PU_LEVEL
 #endif
 	ZCK("level-free-after");
+	LP_END(LV_FREE, lpl);
+	LP_RESTART(lpl);
 
 	R_InitializeLevelInterpolators();
 
@@ -8624,11 +8849,19 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	if (lastloadedmaplumpnum == LUMPERROR)
 		I_Error("Map %s not found.\n", maplumpname);
 
-	R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette);
-	CON_SetupBackColormap();
+	{
+		LP_BEGIN(lpx);
 
-	// SRB2 determines the sky texture to be used depending on the map header.
-	P_SetupLevelSky(mapheaderinfo[gamemap-1]->skynum, true);
+		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette);
+		LP_END(OTHER1, lpx);
+		LP_RESTART(lpx);
+		CON_SetupBackColormap();
+		LP_END(OTHER2, lpx);
+		LP_RESTART(lpx);
+		// SRB2 determines the sky texture to be used depending on the map header.
+		P_SetupLevelSky(mapheaderinfo[gamemap-1]->skynum, true);
+		LP_END(OTHER3, lpx);
+	}
 
 	P_ResetSpawnpoints();
 
@@ -8637,12 +8870,18 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	P_MapStart(); // tmthing can be used starting from this point
 
 	P_InitSlopes();
+	LP_END(LV_SETUP, lpl);
+	LP_RESTART(lpl);
 
 	if (!P_LoadMapFromFile())
 		return false;
+	LP_END(LV_MAPFILE, lpl);
 #ifdef PS2_PROFILE
 	PS2FTest_Level(); // PS2-110: -ftest-level (the level as the map data made it, before anything spawned)
+	if (ps2lp_on && M_CheckParm("-loadhash"))
+		P_LevelHash("map");
 #endif
+	LP_RESTART(lpl);
 
 	if (!demoplayback)
 	{
@@ -8663,13 +8902,19 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	}
 
 	// init anything that P_SpawnSlopes/P_LoadThings needs to know
+	LP_END(LV_AFTERMAP, lpl);
+	LP_RESTART(lpl);
 	P_InitSpecials();
 
 	P_SpawnSlopes(fromnetsave);
 
 	ZCK("slopes");
+	LP_END(LV_SLOPES, lpl);
+	LP_RESTART(lpl);
 	P_SpawnMapThings(!fromnetsave);
 	ZCK("things");
+	LP_END(LV_THINGS, lpl);
+	LP_RESTART(lpl);
 	skyboxmo[0] = skyboxviewpnts[0];
 	skyboxmo[1] = skyboxcenterpnts[0];
 
@@ -8683,6 +8928,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	if (!fromnetsave) //  ugly hack for P_NetUnArchiveMisc (and P_LoadNetGame)
 		P_SpawnPrecipitation();
+	LP_END(LV_SPECIALS, lpl);
+	LP_RESTART(lpl);
 
 #ifdef HWRENDER // not win32 only 19990829 by Kin
 	gl_maploaded = false;
@@ -8699,6 +8946,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 #endif
 #endif
 
+	LP_END(LV_HWBUILD, lpl);
 	// oh god I hope this helps
 	// (addendum: apparently it does!
 	//  none of this needs to be done because it's not the beginning of the map when
@@ -8725,9 +8973,12 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 #ifdef PS2_PROFILE
 	Z_LevelPhase(true); // PS2-63/72: the level is built; the caches (and so the precache) grow from the bottom next to it, not between the long-lived blocks
 #endif
+	LP_RESTART(lpl);
 	if (precache || dedicated)
 		R_PrecacheLevel();
 	ZCK("precache");
+	LP_END(LV_PRECACHE, lpl);
+	LP_RESTART(lpl);
 
 	nextmapoverride = 0;
 	skipstats = 0;
@@ -8773,7 +9024,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	// No render mode or reloading gamestate, stop here.
 	if (rendermode == render_none || reloadinggamestate)
+	{
+		LP_END(LV_POST, lpl);
 		return true;
+	}
 
 	R_ResetViewInterpolation(0);
 	R_ResetViewInterpolation(0);
@@ -8782,6 +9036,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	PS2HWFB_LevelLoaded(); // PS2-170: the hardware renderer, given up for an earlier level, is tried again
 #endif
 
+	LP_END(LV_POST, lpl);
 	// Title card!
 	G_StartTitleCard();
 

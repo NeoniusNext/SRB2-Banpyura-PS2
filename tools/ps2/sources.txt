@@ -133,6 +133,7 @@ src/ps2/ps2_spill.c
 src/ps2/ps2_hwfb.c
 src/ps2/ps2_memops.c
 src/ps2/ps2_ftest.c
+src/ps2/ps2_loadprof.c  # PS2-LOAD-1
 src/ps2/ps2_addons.c  # feature:addons
 src/ps2/ps2_limits.c  # feature:limits
 # OPT6-F: the Lua VM (blua) and the Lua libraries, compiled only with the lua feature (SRB2_PS2_NO=lua leaves them out and uses lua_stub.c)

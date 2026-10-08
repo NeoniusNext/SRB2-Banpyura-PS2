@@ -11,6 +11,7 @@
 #include "../i_system.h"
 
 #include "ps2_boot.h"
+#include "ps2_loadprof.h"
 
 // -logfile NAME: also write the console log to NAME in the data directory (the EE stdout goes to the
 // emulator log anyway).
@@ -34,21 +35,31 @@ static void InitLogging(void)
 */
 int main(int argc, char **argv)
 {
+	UINT32 lp_t0 = PS2LP_Now(); // PS2-LOAD-1: cycles since the EE reset at this point = BIOS + loader
+
 	PS2Boot_Init(&argc, &argv); // IOP modules, argv from the loader plus <data>/ps2args
 
 	myargc = argc;
 	myargv = argv;
+	PS2LP_Init(lp_t0);
+	LP_LAP(B_BOOTINIT);
 	PS2Ref_Init();
 
 	// disable text input right off the bat, since we don't need it at the start.
 	I_SetTextInputMode(false);
 
 	InitLogging();
+	if (ps2lp_on)
+		I_OutputMsg("LP boot ee_count_at_main %u\n", (unsigned)lp_t0);
+	LP_SAMPLE(0);
 	I_StartupSystem();
+	LP_LAP(B_SYSINIT);
 
 	// startup SRB2
 	CONS_Printf("Setting up SRB2...\n");
 	D_SRB2Main();
+	LP_SAMPLE(1);
+	LP_REPORT("boot");
 	CONS_Printf("Entering main game loop...\n");
 	// never return
 	D_SRB2Loop();

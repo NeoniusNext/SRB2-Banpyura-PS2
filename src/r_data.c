@@ -30,6 +30,7 @@
 #include "f_finale.h" // wipes
 #include "byteptr.h"
 #include "dehacked.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h" // HWR_ClearLightTables
@@ -1200,21 +1201,32 @@ const char *R_NameForColormap(extracolormap_t *extra_colormap)
 //
 void R_InitData(void)
 {
+	LP_BEGIN(lp0);
+
 	CONS_Printf("R_LoadParsedTranslations()...\n");
 	R_LoadParsedTranslations();
+	LP_END(R_OTHER, lp0);
 
 	CONS_Printf("R_LoadTextures()...\n");
+	LP_RESTART(lp0);
 	R_LoadTextures();
+	LP_END(R_TEXTURES, lp0);
 
 	CONS_Printf("P_InitPicAnims()...\n");
+	LP_RESTART(lp0);
 	P_InitPicAnims();
+	LP_END(R_FLATS, lp0);
 
 	CONS_Printf("R_InitSprites()...\n");
+	LP_RESTART(lp0);
 	R_InitSpriteLumps();
 	R_InitSprites();
+	LP_END(R_SPRITES, lp0);
 
 	CONS_Printf("R_InitColormaps()...\n");
+	LP_RESTART(lp0);
 	R_InitColormaps();
+	LP_END(R_COLORMAPS, lp0);
 }
 
 //

@@ -11,6 +11,7 @@
 #include "w_wad.h"
 #include "z_zone.h"
 #include "w_pack.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1
 
 #include <lz4.h>
 #include <limits.h>
@@ -80,9 +81,12 @@ static boolean ReadBytes(FILE *handle, void *dest, size_t size)
 		size_t request = (skip + want + WPACK_SECTOR - 1) & ~(size_t)(WPACK_SECTOR - 1);
 		size_t got;
 
+		LP_BEGIN(lpr);
+
 		if (fseek(handle, pos - (long)skip, SEEK_SET) != 0)
 			return false;
 		got = fread(iobuf, 1, request, handle);
+		LP_END(PK_FREAD, lpr);
 		if (got < skip + want) // never copy bytes not actually read (signature probes may see short files)
 			return false;
 		memcpy(out + done, iobuf + skip, want);
@@ -340,14 +344,24 @@ static boolean ReadBlock(FILE *handle, boolean raw, UINT32 csize, UINT32 bsize, 
 
 	if (!ReadBytes(handle, cbuf, csize))
 		return false;
-	if (lo == 0 && want == bsize) // whole block straight into the destination
-		return LZ4_decompress_safe((const char *)cbuf, (char *)dst, (int)csize, (int)bsize) == (int)bsize;
-	if (lo == 0) // head of the block (patch headers etc): stop as soon as enough is decoded
-		return LZ4_decompress_safe_partial((const char *)cbuf, (char *)dst, (int)csize, (int)want, (int)want) == (int)want;
-	if (LZ4_decompress_safe((const char *)cbuf, (char *)sbuf, (int)csize, (int)bsize) != (int)bsize)
-		return false;
-	memcpy(dst, sbuf + lo, want);
-	return true;
+	{
+		boolean ok;
+		LP_BEGIN(lpz);
+
+		if (lo == 0 && want == bsize) // whole block straight into the destination
+			ok = LZ4_decompress_safe((const char *)cbuf, (char *)dst, (int)csize, (int)bsize) == (int)bsize;
+		else if (lo == 0) // head of the block (patch headers etc): stop as soon as enough is decoded
+			ok = LZ4_decompress_safe_partial((const char *)cbuf, (char *)dst, (int)csize, (int)want, (int)want) == (int)want;
+		else if (LZ4_decompress_safe((const char *)cbuf, (char *)sbuf, (int)csize, (int)bsize) != (int)bsize)
+			ok = false;
+		else
+		{
+			memcpy(dst, sbuf + lo, want);
+			ok = true;
+		}
+		LP_END(PK_LZ4, lpz);
+		return ok;
+	}
 }
 
 size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size, size_t offset)

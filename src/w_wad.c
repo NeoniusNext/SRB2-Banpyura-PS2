@@ -81,6 +81,7 @@
 
 #ifdef PS2_PROFILE
 #include "w_pack.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1
 #endif
 
 #ifdef HWRENDER
@@ -897,6 +898,8 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 #ifdef PS2_PROFILE
 	void *pool = NULL, *iobuf = NULL; // cooked pack: name pool, stdio buffer
 #endif
+	LP_BEGIN(lpf);
+	LP_BEGIN(lp1);
 
 	if (!(refreshdirmenu & REFRESHDIR_ADDFILE))
 		refreshdirmenu = REFRESHDIR_NORMAL|REFRESHDIR_ADDFILE; // clean out cons_alerts that happened earlier
@@ -965,7 +968,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 		const char *ext = strrchr(filename, '.');
 
 		if (!ext || strcasecmp(ext, ".pak"))
+		{
+			LP_RESTART(lp1);
 			W_MakeFileMD5(filename, md5sum);
+			LP_END(W_MD5, lp1);
+		}
 	}
 #else
 	W_MakeFileMD5(filename, md5sum);
@@ -994,6 +1001,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	memset(md5sum, 0, sizeof md5sum); // not computed on this profile
 #endif
 
+	LP_RESTART(lp1);
 #ifdef PS2_PROFILE
 	if (WPack_Detect(handle)) // cooked pack (signature): to the rest of the engine it is a pk3
 	{
@@ -1021,6 +1029,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	default:
 		CONS_Alert(CONS_ERROR, "Unsupported file format\n");
 	}
+	LP_END(W_PACKTABLE, lp1);
 
 	if (lumpinfo == NULL)
 	{
@@ -1083,6 +1092,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	W_LoadTrnslateLumps(numwadfiles - 1);
 
 	// TODO: HACK ALERT - Load Lua & SOC stuff right here. I feel like this should be out of this place, but... Let's stick with this for now.
+	LP_RESTART(lp1);
 	switch (wadfile->type)
 	{
 	case RET_WAD:
@@ -1101,6 +1111,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	default:
 		break;
 	}
+	LP_END(W_SOCLOAD, lp1);
 
 	lua_lumploading++;
 	LUA_HookVoid(HOOK(AddonLoaded));
@@ -1108,6 +1119,7 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	lua_locallyloading = 0;
 
 	W_InvalidateLumpnumCache();
+	LP_END(W_INITFILE, lpf);
 	return wadfile->numlumps;
 }
 
@@ -2266,7 +2278,19 @@ void zerr(int ret)
   * \return Number of bytes read (should equal size).
   * \sa W_ReadLump, W_RawReadLumpHeader
   */
+static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset);
+
 size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
+{
+	size_t r;
+	LP_BEGIN(lp0);
+
+	r = W_ReadLumpHeaderPwad_(wad, lump, dest, size, offset);
+	LP_END(W_READLUMP, lp0);
+	return r;
+}
+
+static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
 {
 #if defined(PS2_PROFILE) && !defined(PS2_FULLLOADER)
 	lumpinfo_t *l;
