@@ -80,7 +80,7 @@ Facts from runs in the emulator (details and pictures: `docs/GATES/g1/opt9-HF.md
 * Sector light = the GLSL equation `mix(colour, fade, floor(R_DoomColormap)/32)` reproduced exactly: polygons are cut at the eye depths where the darkness class steps
   (GS fog with a constant F per piece; FOGCOL = fade colour); colormap tint = a CLUT per tint (`CK_TINT`). Polygons that stay inside one class are not cut (THZ1: 2 of
   ~1800 polygons per frame are cut).
-* Water (`PF_Ripple`, shader 4): the shader's `tex(s - sin(a)*0.025, t - cos(a)*0.025)` with `a = -pi*z/2*0.025 + leveltime*2` is made by cutting the polygon into
+* Water (`PF_Ripple`, shader 4): the shader's `tex(s - sin(a)*0.025, t - cos(a)*0.025)` with `a = -pi*z/2*0.025 + leveltime*2` (**leveltime there is in SECONDS: (leveltime - 1 + rendertimefrac) / 35; this section and OPT10 turned 2 rad per tic, 35 times too fast, corrected in OPT11-FX PS2-HW-125; the band method described here was replaced by PS2-HW-120**) is made by cutting the polygon into
   16-unit depth bands (to 640 units) with the texture coordinate shifted by the middle of the band (error <= 0.5 texel on a 64 texel flat).
 * A polygon whose texture coordinates span more than 4096 texels (huge floors/horizons) is cut at whole repeats (`UV_EXTENT`): the GS UV integer part is 14 bits.
 * Diagnostics of the driver go to the log only (`CONS_Printf`/`CONS_Alert` are redefined to `I_OutputMsg` inside `ps2_hwd.c`): they were drawn over the picture.
