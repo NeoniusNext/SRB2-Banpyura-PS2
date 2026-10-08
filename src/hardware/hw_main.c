@@ -5697,6 +5697,40 @@ static void HWR_SortVisSprites(void)
 					tk[i] = dkey[p1[i]]; // the depth keys in that order
 				res = HWR_RadixSort32(tk, p1, k2, sc, n) ? p1 : sc;
 			}
+			else if (!(hwr_fr_off & 2048u))
+			{
+				// OPT12 PS2-HW-408: the opaque sprites are not sorted: they are drawn as a batch in the order of the texture and of the first appearance of the state anyway (PS2-HW-52), and the z buffer decides
+				// what is in front, so the picture does not depend on their order (only exact ties of depth do, and the batch does not keep the order of the traversal for different textures either). The
+				// translucent sprites, which blend in the order they are drawn, are sorted far to near as before and stay behind the opaque ones.
+				static gl_vissprite_t *tr[MAXVISSPRITES];
+				static UINT32 trk[MAXVISSPRITES];
+				UINT32 o = 0, nt = 0, a;
+
+				for (i = 0; i < n; i++)
+				{
+					if (!trn[i])
+						gl_vsprorder[o++] = gl_vsprorder[i];
+					else
+					{
+						// insertion into the translucent list, far to near (keys ascending), equal keys in the traversal order
+						const UINT32 key = dkey[i];
+						UINT32 j = nt;
+
+						while (j > 0 && trk[j - 1] > key)
+						{
+							trk[j] = trk[j - 1];
+							tr[j] = tr[j - 1];
+							j--;
+						}
+						trk[j] = key;
+						tr[j] = gl_vsprorder[i];
+						nt++;
+					}
+				}
+				for (a = 0; a < nt; a++)
+					gl_vsprorder[o++] = tr[a];
+				return;
+			}
 			else if (!(hwr_fr_off & 512u) && n <= MAXVISSPRITES)
 			{
 				// OPT12 PS2-HW-406: the sprites come in the traversal order, which is the depth order near to far in the main (the BSP walk is front to back): an insertion sort of the reversed order, by (depth key, index) -
