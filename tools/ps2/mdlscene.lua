@@ -40,7 +40,11 @@ addHook("MapLoad", function()
 			local y = p.mo.y + FixedMul(dist, sin(ang)) + FixedMul(side, sin(ang - ANGLE_90))
 			local mo = P_SpawnMobj(x, y, p.mo.z + (8 + row * 42) * FRACUNIT, mt) -- higher rows hang higher: every row shows over the one in front
 			if mo and mo.valid then
-				mo.flags = MF_NOTHINK | MF_NOGRAVITY | MF_NOBLOCKMAP | MF_NOCLIP | MF_NOCLIPHEIGHT | MF_SCENERY
+				if rawget(_G, "MDL_ANIM") then
+					mo.flags = MF_NOGRAVITY | MF_NOBLOCKMAP | MF_NOCLIP | MF_NOCLIPHEIGHT | MF_SCENERY -- thinks: the frames advance by their tics (the interpolation of the model frames)
+				else
+					mo.flags = MF_NOTHINK | MF_NOGRAVITY | MF_NOBLOCKMAP | MF_NOCLIP | MF_NOCLIPHEIGHT | MF_SCENERY
+				end
 				mo.angle = ang + ANGLE_180 + (n % 3) * ANGLE_45
 				if fallback then
 					mo.sprite = _G["SPR_" .. name]

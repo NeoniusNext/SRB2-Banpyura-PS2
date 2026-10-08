@@ -9,9 +9,10 @@
 //   the indexed path  every vertex interpolated once, emit_tris (cuts, clip, general plans) with an index list: multi pass blends, texture repeats, no VU0, -hwmodel 4;
 //   the corner path   the OPT10 code (every corner interpolated and transformed): meshes of more than MDL_MAXV vertices (the boss BRAK has 6061), -hwmodel 1.
 
-#define MDL_MAXV 2048 // vertices of a mesh drawn through the work area
+#define MDL_MAXV 2048 // vertices of a mesh the indexed path takes
 #define MDL_MAXI 3072 // indices per emit_tris call
-#define MDL_MAXT 3072 // triangles of a mesh the fast path takes
+#define MDL_FAST_MAXV 6144 // vertices of a mesh the fast path takes (the boss BRAK has 6061)
+#define MDL_FAST_MAXT 8704 // triangles of a mesh the fast path takes (BRAK 8294)
 #define MDL_CORNERS 192 // corners per call of the corner by corner path
 
 typedef struct
@@ -25,26 +26,21 @@ typedef struct
 	qw_t col4; // gr_modellighting: the RGBAQ quadword of the vertex (the colour of the pass scaled by the light factor of the vertex)
 } __attribute__((aligned(64))) mdl_v_t; // 64 bytes: a cache line
 
+// the work areas are zone blocks made when a model needs them (a game without models does not pay for them) and given back under memory pressure (PS2Models reclaim hook)
 typedef struct
 {
-	union
-	{
-		struct
-		{
-			FOutVector v[MDL_MAXV];
-			float l[MDL_MAXV]; // the light factor of each vertex (only with gr_modellighting)
-			u32 idx[MDL_MAXI];
-		} g;
-		struct
-		{
-			mdl_v_t mv[MDL_MAXV + 1]; // one spare entry: the second lane of the last pair of an odd number of vertices
-			u16 ord[MDL_MAXT];
-			u8 row[MDL_MAXT];
-		} f;
-	} u;
-} __attribute__((aligned(16))) mdlwork_t;
+	FOutVector v[MDL_MAXV];
+	float l[MDL_MAXV]; // the light factor of each vertex (only with gr_modellighting)
+	u32 idx[MDL_MAXI];
+} __attribute__((aligned(16))) mdlgen_t;
 
-static mdlwork_t *mdlw; // made when the first model is drawn (zone block: a game without models does not pay for it)
+static mdlgen_t *mdlg; // the indexed path and the corner path
+static void *mdlf_blk; // the fast path: mdl_v_t mv[cap_v + 1] (one spare entry: the second lane of the last pair of an odd number of vertices), u16 ord[cap_t], u8 row[cap_t]
+static mdl_v_t *mdlf_mv;
+static u16 *mdlf_ord;
+static u8 *mdlf_row;
+static u32 mdlf_cv, mdlf_ct;
+static u32 mdl_work_frame = 0xFFFFFFFFu;
 static float mdl_lf[256]; // the light factor by the byte of the normal: index = c + 128
 static int mdl_lf_ready;
 
@@ -63,19 +59,93 @@ static void mdl_init_tables(void)
 	mdl_lf_ready = 1;
 }
 
-static int mdl_work_get(void)
+static void mdl_work_note(void)
 {
-	if (mdlw)
-		return 1;
-	mdlw = (mdlwork_t *)Z_TryMallocAlign(sizeof *mdlw, PU_STATIC, NULL, 6);
-	if (!mdlw)
-	{
-		hw_limit(HW_INVALID, "no memory for the model work area; models are not drawn");
-		return 0;
-	}
+	mdl_work_frame = Z_FrameCount();
 	if (!mdl_lf_ready)
 		mdl_init_tables();
+}
+
+// the area of the indexed path and the corner path
+static int mdl_gen_get(void)
+{
+	if (mdlg)
+		return 1;
+	mdlg = (mdlgen_t *)Z_TryMallocAlign(sizeof *mdlg, PU_STATIC, NULL, 6);
+	if (!mdlg)
+	{
+		hw_limit(HW_INVALID, "no memory for the model work area; the mesh is not drawn");
+		return 0;
+	}
 	return 1;
+}
+
+static size_t mdlf_size(u32 cv, u32 ct)
+{
+	return ((size_t)(cv + 1) * sizeof(mdl_v_t) + (size_t)ct * 3 + 63) & ~(size_t)63;
+}
+
+// the area of the fast path for a mesh of nv vertices and nt triangles (grown, never shrunk until the zone asks for it back); 0 = no room (the mesh takes another path)
+static int mdl_fast_get(u32 nv, u32 nt)
+{
+	u32 cv, ct;
+	void *blk;
+
+	if (mdlf_blk && nv <= mdlf_cv && nt <= mdlf_ct)
+		return 1;
+	cv = nv <= 1024 ? 1024 : nv <= 2048 ? 2048 : nv <= 4096 ? 4096 : MDL_FAST_MAXV;
+	ct = nt <= 2048 ? 2048 : nt <= 4096 ? 4096 : MDL_FAST_MAXT;
+	if (mdlf_blk)
+	{
+		const u32 ocv = mdlf_cv, oct = mdlf_ct;
+
+		Z_Free(mdlf_blk); // the old one first: both would not fit at the sizes that matter
+		mdlf_blk = NULL;
+		mdlf_cv = mdlf_ct = 0;
+		blk = Z_TryMallocAlign(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
+		if (!blk)
+		{
+			cv = ocv; // the area there was
+			ct = oct;
+			blk = Z_TryMallocAlign(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
+		}
+	}
+	else
+	{
+		blk = Z_TryMallocAlign(mdlf_size(cv, ct), PU_STATIC, NULL, 6);
+	}
+	if (!blk)
+		return 0;
+	mdlf_blk = blk;
+	mdlf_cv = cv;
+	mdlf_ct = ct;
+	mdlf_mv = (mdl_v_t *)blk;
+	mdlf_ord = (u16 *)((u8 *)blk + (size_t)(cv + 1) * sizeof(mdl_v_t));
+	mdlf_row = (u8 *)(mdlf_ord + ct);
+	return nv <= cv && nt <= ct;
+}
+
+// the zone wants room (Z_AddReclaimHook of ps2_models.c): the work areas not used in this frame go back; returns the bytes freed
+size_t PS2HWD_ModelWorkReclaim(void)
+{
+	size_t got = 0;
+
+	if (mdl_work_frame == Z_FrameCount())
+		return 0;
+	if (mdlg)
+	{
+		got += sizeof *mdlg;
+		Z_Free(mdlg);
+		mdlg = NULL;
+	}
+	if (mdlf_blk)
+	{
+		got += mdlf_size(mdlf_cv, mdlf_ct);
+		Z_Free(mdlf_blk);
+		mdlf_blk = NULL;
+		mdlf_cv = mdlf_ct = 0;
+	}
+	return got;
 }
 
 // the position of vertex vi at the interpolated frame: (short)(a + pol * (b - a)) as the OpenGL driver does it
@@ -110,7 +180,7 @@ static void mdl_interp(const mesh_t *mesh, int fi, int ni, float lerp, int light
 	const short *a = mesh->tinyframes[fi].vertices, *b = mesh->tinyframes[ni].vertices;
 	const signed char *na = (const signed char *)mesh->tinyframes[fi].normals, *nb = (const signed char *)mesh->tinyframes[ni].normals;
 	const float *uv = mesh->uvs;
-	FOutVector *o = mdlw->u.g.v;
+	FOutVector *o = mdlg->v;
 	int k;
 
 	for (k = 0; k < nv; k++, a += 3, b += 3)
@@ -126,7 +196,7 @@ static void mdl_interp(const mesh_t *mesh, int fi, int ni, float lerp, int light
 	}
 	if (light)
 		for (k = 0; k < nv; k++)
-			mdlw->u.g.l[k] = mdl_lf[mdl_lidx(na, nb, k, lerp)];
+			mdlg->l[k] = mdl_lf[mdl_lidx(na, nb, k, lerp)];
 }
 
 // the corner by corner path (OPT10): used for meshes the work area cannot hold and for models in the float format
@@ -136,7 +206,7 @@ static void mdl_mesh_corners(const mesh_t *mesh, int fi, int ni, float lerp, int
 	u32 k;
 
 	for (k = 0; k < MDL_CORNERS; k++)
-		mdlw->u.g.idx[k] = k;
+		mdlg->idx[k] = k;
 	for (start = 0; start < mesh->numTriangles * 3; start += MDL_CORNERS)
 	{
 		int n = mesh->numTriangles * 3 - start, valid = 1, c;
@@ -165,20 +235,20 @@ static void mdl_mesh_corners(const mesh_t *mesh, int fi, int ni, float lerp, int
 				for (j = 0; j < 3; j++)
 					xyz[j] = a[vi * 3 + j] + lerp * (b[vi * 3 + j] - a[vi * 3 + j]);
 			}
-			mdlw->u.g.v[c].x = xyz[0];
-			mdlw->u.g.v[c].y = xyz[1];
-			mdlw->u.g.v[c].z = xyz[2];
-			mdlw->u.g.v[c].s = mesh->uvs[vi * 2];
-			mdlw->u.g.v[c].t = mesh->uvs[vi * 2 + 1];
+			mdlg->v[c].x = xyz[0];
+			mdlg->v[c].y = xyz[1];
+			mdlg->v[c].z = xyz[2];
+			mdlg->v[c].s = mesh->uvs[vi * 2];
+			mdlg->v[c].t = mesh->uvs[vi * 2 + 1];
 			if (light)
-				mdlw->u.g.l[c] = tiny ? mdl_lf[mdl_lidx((const signed char *)mesh->tinyframes[fi].normals, (const signed char *)mesh->tinyframes[ni].normals, vi, lerp)] : 1.0f;
+				mdlg->l[c] = tiny ? mdl_lf[mdl_lidx((const signed char *)mesh->tinyframes[fi].normals, (const signed char *)mesh->tinyframes[ni].normals, vi, lerp)] : 1.0f;
 		}
 		if (!valid)
 		{
 			hw_limit(HW_INVALID, "model index out of range; batch rejected");
 			continue;
 		}
-		emit_tris(mdlw->u.g.v, mdlw->u.g.idx, (u32)n, light ? mdlw->u.g.l : NULL);
+		emit_tris(mdlg->v, mdlg->idx, (u32)n, light ? mdlg->l : NULL);
 		G.md_slow++;
 	}
 }
@@ -331,9 +401,9 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	const float *uv = mesh->uvs;
 	const float tsx = P.tsx, tsy = P.tsy;
 	const int pal = P.pal, bands = P.lmode == LM_BANDS;
-	mdl_v_t *mv = mdlw->u.f.mv;
-	u16 *ord = mdlw->u.f.ord;
-	u8 *rowof = mdlw->u.f.row;
+	mdl_v_t *mv = mdlf_mv;
+	u16 *ord = mdlf_ord;
+	u8 *rowof = mdlf_row;
 	u32 count[34], start[34];
 	int k, t, minrow = 255, maxrow = -1, nord = 0;
 	static float clip0[4] __attribute__((aligned(16))), clip1[4] __attribute__((aligned(16)));
@@ -652,8 +722,7 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 
 	if (!H.up || !model || !pos || !surf || frameIndex < 0 || nextFrameIndex < -1)
 		return;
-	if (!mdl_work_get())
-		return;
+	mdl_work_note();
 	G.md_draws++;
 	if (duration > 0.0f && tics >= 0.0f)
 		lerp = clampf((duration - tics) / duration, 0.0f, 1.0f);
@@ -721,36 +790,39 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 		}
 		G.md_meshes++;
 		G.md_tris += (u32)mesh->numTriangles;
-		if (tiny && mesh->numVertices <= MDL_MAXV && !(ps2hwd_model_ab & 1))
 		{
+			int done = 0;
+
 #ifdef HW_VU0
-			if (mesh->numTriangles <= MDL_MAXT && !(ps2hwd_model_ab & 4) && P.vu0 && P.npass == 1 && !P.cutx && !P.cuty && !P.water && !P.pass[0].ramp && P.textured && P.pass[0].tex
-				&& !P.wrapx && !P.wrapy && (P.lmode == LM_NONE || P.lmode == LM_BANDS) && mdl_mesh_fast(mesh, fi, ni, ml, light))
-			{
-				// drawn by the fast path
-			}
-			else
+			if (tiny && mesh->numVertices <= MDL_FAST_MAXV && mesh->numTriangles <= MDL_FAST_MAXT && !(ps2hwd_model_ab & 5) && P.vu0 && P.npass == 1 && !P.cutx && !P.cuty && !P.water
+				&& !P.pass[0].ramp && P.textured && P.pass[0].tex && !P.wrapx && !P.wrapy && (P.lmode == LM_NONE || P.lmode == LM_BANDS)
+				&& mdl_fast_get((u32)mesh->numVertices, (u32)mesh->numTriangles))
+				done = mdl_mesh_fast(mesh, fi, ni, ml, light);
 #endif
+			if (!done && mdl_gen_get())
 			{
-				int start, total = mesh->numTriangles * 3;
-
-				G.md_verts += (u32)mesh->numVertices;
-				mdl_interp(mesh, fi, ni, ml, light);
-				for (start = 0; start < total; start += MDL_MAXI)
+				if (tiny && mesh->numVertices <= MDL_MAXV && !(ps2hwd_model_ab & 1))
 				{
-					const int n = total - start < MDL_MAXI ? total - start : MDL_MAXI;
-					const unsigned short *ix = mesh->indices + start;
-					int k;
+					int start, total = mesh->numTriangles * 3;
 
-					for (k = 0; k < n; k++)
-						mdlw->u.g.idx[k] = ix[k];
-					emit_tris(mdlw->u.g.v, mdlw->u.g.idx, (u32)n, light ? mdlw->u.g.l : NULL);
+					G.md_verts += (u32)mesh->numVertices;
+					mdl_interp(mesh, fi, ni, ml, light);
+					for (start = 0; start < total; start += MDL_MAXI)
+					{
+						const int n = total - start < MDL_MAXI ? total - start : MDL_MAXI;
+						const unsigned short *ix = mesh->indices + start;
+						int k;
+
+						for (k = 0; k < n; k++)
+							mdlg->idx[k] = ix[k];
+						emit_tris(mdlg->v, mdlg->idx, (u32)n, light ? mdlg->l : NULL);
+					}
+				}
+				else
+				{
+					mdl_mesh_corners(mesh, fi, ni, ml, tiny, light);
 				}
 			}
-		}
-		else
-		{
-			mdl_mesh_corners(mesh, fi, ni, ml, tiny, light);
 		}
 		P.vcol = 0;
 		P.vlight = 0;

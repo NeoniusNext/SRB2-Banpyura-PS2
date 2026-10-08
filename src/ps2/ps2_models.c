@@ -24,6 +24,7 @@
 #include "../command.h"
 #include "../hardware/hw_glob.h"
 #include "ps2_models.h"
+#include "hw/ps2_hwd.h" // PS2HWD_ModelWorkReclaim
 #include "ps2_mem.h"
 
 #ifdef PS2_PROFILE
@@ -243,7 +244,7 @@ static live_t *Live_Victim(UINT32 minage)
 
 static size_t Reclaim(size_t want)
 {
-	size_t got = 0;
+	size_t got = PS2HWD_ModelWorkReclaim(); // the work areas of the drawing (cheap to make again) go first
 	live_t *v;
 
 	while (got < want && (v = Live_Victim(0)) != NULL)
