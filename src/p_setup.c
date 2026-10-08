@@ -8392,6 +8392,31 @@ static void P_InitGametype(void)
   * \param fromnetsave If true, skip some stuff because we're loading a netgame snapshot.
   * \todo Clean up, refactor, split up; get rid of the bloat.
   */
+#ifdef PS2
+// PS2-173 (OPT11-STAB): a level load that ran out of memory (ps2_hwfb.c, PS2HWFB_LoadLevel) is left half built, after the blocks of the level before it were freed.
+// Nothing may point at what is gone: the next P_LoadLevel starts by walking these arrays (LUA_InvalidateLevel, the attached lists of the sectors, the thinkers, the slopes).
+void P_AbandonLevelLoad(void)
+{
+	P_InitThinkers();
+	slopelist = NULL;
+	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
+	vertexes = NULL;
+	segs = NULL;
+	sectors = NULL;
+	subsectors = NULL;
+	nodes = NULL;
+	lines = NULL;
+	sides = NULL;
+	mapthings = NULL;
+	levelflats = NULL;
+	PolyObjects = NULL;
+	numvertexes = numsegs = numsectors = numsubsectors = numnodes = numlines = numsides = nummapthings = 0;
+	numlevelflats = 0;
+	numPolyObjects = 0;
+	mobjcache = NULL;
+}
+#endif
+
 boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 {
 	// use gamemap to get map number.

@@ -267,6 +267,7 @@ boolean PS2HWFB_LoadLevel(void)
 	hwfb_levelfails++;
 	levelloading = false;
 	P_MapEnd();
+	P_AbandonLevelLoad(); // the half built level and the freed one before it: no array may be walked again (LUA_InvalidateLevel of the next load)
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 		ForceSoftware("the level did not fit", true); // the title screen and the next map get the memory of the hardware renderer
