@@ -540,3 +540,113 @@ long vorbis_book_decodevv_add(codebook *book,float **a,long offset,int ch,
   }
   return(0);
 }
+
+/* PS2-313 ---------------------------------------------------------------------------------------------------------------------------------- */
+ps2_fastbook *ps2_fastbook_build(const codebook *book){
+  int tlen=book->dec_firsttablen,k;
+  unsigned n;
+  ps2_fastbook *fb;
+  if(book->used_entries<=0 || !book->dec_firsttable || !book->dec_codelengths || tlen<1 || tlen>8)return(NULL);
+  if(book->valuelist && (unsigned long)book->used_entries*(unsigned long)book->dim*sizeof(float)>=(1UL<<26))return(NULL);
+  if(!book->valuelist && (!book->dec_index || book->entries>=(1L<<26)))return(NULL);
+  n=1u<<tlen;
+  fb=_ogg_malloc(sizeof(*fb)+sizeof(ogg_uint32_t)*n);
+  if(!fb)return(NULL);
+  fb->mask=n-1;
+  fb->dim=book->dim;
+  for(k=0;k<(int)n;k++){
+    ogg_uint32_t e=book->dec_firsttable[k];
+    if(e==0 || (e&0x80000000UL)){
+      fb->ft[k]=0;
+    }else{
+      long idx=(long)e-1;
+      int len=book->dec_codelengths[idx];
+      if(book->valuelist){
+        const float *t=book->valuelist+idx*book->dim;
+        long q;
+        int z=1;
+        for(q=0;q<book->dim;q++)if(t[q]!=0.f)z=0;
+        fb->ft[k]=((ogg_uint32_t)(idx*book->dim*(long)sizeof(float))<<5)|(z?16u:0u)|(ogg_uint32_t)len;
+      }else{
+        fb->ft[k]=((ogg_uint32_t)book->dec_index[idx]<<5)|(ogg_uint32_t)len;
+      }
+    }
+  }
+  return(fb);
+}
+
+/* The interleaved two-channel decode of vorbis_book_decodevv_add_lim (ch == 2, even dim) with the bit reader in registers and no per-element
+   tests when the whole vector lies inside the transformed bins.  Bits are consumed exactly as by decode_packed_entry_number (a code longer than the
+   first table, and the last 8 bytes of the packet, take that function).  Vectors that are all zero are not added (adding +-0 changes at most the
+   sign of a zero). */
+long ps2_book_decodevv2_add(const ps2_fastbook *fb,codebook *book,float **a,long offset,
+                            oggpack_buffer *b,int n,long lim){
+  long i=offset>>1,m=(offset+n)>>1;
+  const long dim=fb->dim,half=dim>>1;
+  float *a0=a[0],*a1=a[1];
+  const char *vl=(const char *)book->valuelist;
+  const unsigned char *base=b->buffer;
+  const unsigned mask=fb->mask;
+  const ogg_uint32_t *ft=fb->ft;
+  unsigned long bp=(unsigned long)b->endbyte*8+(unsigned long)b->endbit;
+  const unsigned long bplim=b->storage>=8?(unsigned long)(b->storage-7)*8:0;
+  if(book->used_entries<=0)return(0);
+  while(i<m){
+    ogg_uint32_t e=0;
+    long off;
+    int zero=0;
+    if(bp<bplim){
+      ogg_uint64_t w;
+      __builtin_memcpy(&w,base+(bp>>3),8);
+      e=ft[(unsigned)(w>>(bp&7))&mask];
+    }
+    if(e){
+      bp+=e&15;
+      zero=(e>>4)&1;
+      off=(long)(e>>5);
+    }else{
+      long entry;
+      b->endbyte=(long)(bp>>3); b->endbit=(int)(bp&7); b->ptr=b->buffer+b->endbyte;
+      entry=decode_packed_entry_number(book,b);
+      bp=(unsigned long)b->endbyte*8+(unsigned long)b->endbit;
+      if(entry==-1){
+        return(-1);
+      }
+      off=entry*dim*(long)sizeof(float);
+    }
+    if(i+half<=m && i+half<=lim){
+      if(!zero){
+        const float *t=(const float *)(vl+off);
+        long k;
+        if(half==1){
+          a0[i]+=t[0];
+          a1[i]+=t[1];
+        }else if(half==2){
+          a0[i]+=t[0]; a1[i]+=t[1];
+          a0[i+1]+=t[2]; a1[i+1]+=t[3];
+        }else if(half==4){
+          a0[i]+=t[0]; a1[i]+=t[1];
+          a0[i+1]+=t[2]; a1[i+1]+=t[3];
+          a0[i+2]+=t[4]; a1[i+2]+=t[5];
+          a0[i+3]+=t[6]; a1[i+3]+=t[7];
+        }else{
+          for(k=0;k<half;k++){
+            a0[i+k]+=t[2*k];
+            a1[i+k]+=t[2*k+1];
+          }
+        }
+      }
+      i+=half;
+    }else{
+      const float *t=(const float *)(vl+off);
+      long j;
+      for(j=0;j<dim && i<m;j+=2,i++)
+        if(i<lim){
+          a0[i]+=t[j];
+          a1[i]+=t[j+1];
+        }
+    }
+  }
+  b->endbyte=(long)(bp>>3); b->endbit=(int)(bp&7); b->ptr=b->buffer+b->endbyte;
+  return(0);
+}

@@ -839,7 +839,27 @@ int res2_inverse(vorbis_block *vb,vorbis_look_residue *vl,
             codebook *stagebook=look->partbooks[partword[l][k]][s];
 
             if(stagebook){
-              if(vorbis_book_decodevv_add_lim(stagebook,in,
+              /* PS2-313: two interleaved channels with an even dimension: the fast table */
+              ps2_fastbook *fb=NULL;
+              if(ch==2 && !(stagebook->dim&1)){
+                private_state *ps=vb->vd->backend_state;
+                codec_setup_info *pci=vb->vd->vi->codec_setup;
+                long bi=stagebook-pci->fullbooks;
+                if(ps->ps2fast && bi>=0 && bi<ps->ps2books){
+                  fb=ps->ps2fast[bi];
+                  if(!fb){
+                    fb=stagebook->valuelist?ps2_fastbook_build(stagebook):NULL;
+                    ps->ps2fast[bi]=fb?(void *)fb:(void *)1;   /* 1: no fast table for this book */
+                  }
+                  if(fb==(ps2_fastbook *)1)fb=NULL;
+                }
+              }
+              if(fb){
+                if(ps2_book_decodevv2_add(fb,stagebook,in,
+                                          i*samples_per_partition+info->begin,
+                                          &vb->opb,samples_per_partition,lim)==-1)
+                  goto eopbreak;
+              }else if(vorbis_book_decodevv_add_lim(stagebook,in,
                                           i*samples_per_partition+info->begin,ch,
                                           &vb->opb,samples_per_partition,lim)==-1)
                 goto eopbreak;

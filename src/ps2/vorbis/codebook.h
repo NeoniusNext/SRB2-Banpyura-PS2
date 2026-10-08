@@ -116,6 +116,19 @@ extern long vorbis_book_decodevv_add_lim(codebook *book, float **a,
                                          long offset,int ch,
                                          oggpack_buffer *b,int n,long lim);
 
+/* PS2-313: first-stage Huffman table with everything the residue loop needs in one word:
+   ft[code bits] = (offset << 5) | (zero vector << 4) | code length, 0 = longer code (general path).
+   offset = byte offset of the entry's vector in valuelist, or, for a book without values, the entry number (dec_index). */
+typedef struct ps2_fastbook{
+  unsigned mask;
+  long dim;
+  ogg_uint32_t ft[1];
+} ps2_fastbook;
+extern ps2_fastbook *ps2_fastbook_build(const codebook *book);
+/* the two-channel interleaved residue decode (res2_inverse) with the fast table; same result as vorbis_book_decodevv_add_lim */
+extern long ps2_book_decodevv2_add(const ps2_fastbook *fb,codebook *book,float **a,long offset,
+                                   oggpack_buffer *b,int n,long lim);
+
 
 
 #endif

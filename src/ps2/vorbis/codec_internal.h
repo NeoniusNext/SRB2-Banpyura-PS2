@@ -81,6 +81,10 @@ typedef struct private_state {
   bitrate_manager_state bms;
 
   ogg_int64_t sample_count;
+
+  /* PS2-313: per codebook (index in ci->fullbooks) the first-stage Huffman table of the fast residue decode, built at the first use (decode side only) */
+  void                  **ps2fast;
+  int                     ps2books;
 } private_state;
 
 /* codec_setup_info contains all the setup information specific to the

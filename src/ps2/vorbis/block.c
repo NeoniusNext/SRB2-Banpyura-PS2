@@ -277,6 +277,9 @@ static int _vds_shared_init(vorbis_dsp_state *v,vorbis_info *vi,int encp){
 
     v->analysisp=1;
   }else{
+    /* PS2-313: slots for the fast residue tables (built lazily) */
+    b->ps2fast=_ogg_calloc(ci->books>0?ci->books:1,sizeof(*b->ps2fast));
+    b->ps2books=ci->books;
     /* finish the codebooks */
     if(!ci->fullbooks){
       ci->fullbooks=_ogg_calloc(ci->books,sizeof(*ci->fullbooks));
@@ -426,6 +429,11 @@ void vorbis_dsp_clear(vorbis_dsp_state *v){
     }
 
     if(b){
+      if(b->ps2fast){
+        for(i=0;i<b->ps2books;i++)
+          if(b->ps2fast[i] && b->ps2fast[i]!=(void *)1)_ogg_free(b->ps2fast[i]);
+        _ogg_free(b->ps2fast);
+      }
       /* free header, header1, header2 */
       if(b->header)_ogg_free(b->header);
       if(b->header1)_ogg_free(b->header1);
