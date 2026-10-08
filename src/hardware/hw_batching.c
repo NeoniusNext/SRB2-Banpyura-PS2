@@ -469,6 +469,7 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 
 #ifdef PS2_PROFILE
 // OPT11 (PS2-HW-80): the state hash of a polygon of the batch: the same digest as HWR_ProcessPolygon makes, for the geometry cache (it keeps the result with the polygon)
+// KEEP IN STEP with the DIGEST list of HWR_ProcessPolygon (a change there, e.g. the PalLit condition of the light level, must be made here as well; -hwgc 2 finds a difference)
 UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIELD PolyFlags, int shader_target)
 {
 	UINT32 hash = 0x811c9dc5u;
