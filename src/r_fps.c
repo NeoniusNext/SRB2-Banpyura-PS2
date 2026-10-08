@@ -359,6 +359,53 @@ void R_InterpolateMobjState(mobj_t *mobj, fixed_t frac, interpmobjstate_t *out)
 	out->spriteroll = mobj->resetinterp ? mobj->spriteroll : R_LerpAngle(mobj->old_spriteroll, mobj->spriteroll, frac);
 }
 
+// PS2-HW-245 (OPT11 round 2, FX2): the state of a thing at frame fraction frac without the subsector (a descent of the BSP tree, 250+ cycles) and without the pitch and the roll
+// (two angle interpolations): what HWR_ProjectSprite uses of it. The subsector is left NULL (HWR_DrawDropShadow, the one that needs it, makes it); the values are those of
+// R_InterpolateMobjState.
+void R_InterpolateMobjStateLite(mobj_t *mobj, fixed_t frac, interpmobjstate_t *out)
+{
+	if (frac == FRACUNIT)
+	{
+		R_InterpolateMobjState(mobj, frac, out);
+		return;
+	}
+
+	out->x = R_LerpFixed(mobj->old_x, mobj->x, frac);
+	out->y = R_LerpFixed(mobj->old_y, mobj->y, frac);
+	out->z = R_LerpFixed(mobj->old_z, mobj->z, frac);
+	out->spritexscale = mobj->resetinterp ? mobj->spritexscale : R_LerpFixed(mobj->old_spritexscale, mobj->spritexscale, frac);
+	out->spriteyscale = mobj->resetinterp ? mobj->spriteyscale : R_LerpFixed(mobj->old_spriteyscale, mobj->spriteyscale, frac);
+
+	if (mobj->scale == mobj->old_scale)
+	{
+		out->scale = mobj->scale;
+		out->radius = mobj->radius;
+		out->height = mobj->height;
+	}
+	else
+	{
+		out->scale = R_LerpFixed(mobj->old_scale, mobj->scale, frac);
+		out->radius = FixedMul(mobj->radius, FixedDiv(out->scale, mobj->scale));
+		out->height = FixedMul(mobj->height, FixedDiv(out->scale, mobj->scale));
+	}
+
+	out->spritexoffset = mobj->spritexoffset;
+	out->spriteyoffset = mobj->spriteyoffset;
+	out->subsector = NULL;
+
+	if (mobj->player)
+	{
+		out->angle = mobj->resetinterp ? mobj->player->drawangle : R_LerpAngle(mobj->player->old_drawangle, mobj->player->drawangle, frac);
+	}
+	else
+	{
+		out->angle = mobj->resetinterp ? mobj->angle : R_LerpAngle(mobj->old_angle, mobj->angle, frac);
+	}
+
+	out->pitch = out->roll = 0;
+	out->spriteroll = mobj->resetinterp ? mobj->spriteroll : R_LerpAngle(mobj->old_spriteroll, mobj->spriteroll, frac);
+}
+
 void R_InterpolatePrecipMobjState(precipmobj_t *mobj, fixed_t frac, interpmobjstate_t *out)
 {
 	if (frac == FRACUNIT)

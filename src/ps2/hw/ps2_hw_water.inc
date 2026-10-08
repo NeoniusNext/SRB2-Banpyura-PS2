@@ -285,6 +285,9 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 // and every point (a vertex of the polygon or the crossing of a chain with a plane) becomes a strip vertex as it is made: no copies, one GIF packet.
 // ======================================================================================================================================
 
+#ifndef FX2_NOWATER
+#define FX2_NOWATER 0x100 // -hwfx 256 (ps2_hw_fx2.h; the host test has no such header)
+#endif
 #define HWDBG_WATERBANDS 1 // -hwwater 1: the OPT10 sweep (a constant shift per band, ripple to z = 320): A/B of PS2-HW-120 (the bit of ps2hwd_water_ab, not of -hwdbg: 0x10000 of -hwdbg is the plane cache of hw_main.c)
 #define RT_NCLASS 5 // texture widths 32, 64, 128, 256, 512 (a power of two class; wider textures use the last)
 #define RT_MAXN 120 // planes of a table
@@ -310,7 +313,7 @@ typedef struct
 	float focal, near; // F and the near plane the table was made for
 } rtab_t;
 
-static rtab_t rtab[RT_NCLASS];
+static rtab_t rtab[2][RT_NCLASS]; // [view of the sky box][class]: PS2-HW-246: the sky box view is the background and plans its ripple with twice the chord error
 static float rp_u0; // phase of z = 0 in 1/256 turns (+ 64 turns so that the index stays positive)
 static int rp_time = -1;
 static u32 rp_ver = 1; // changes with the level time: the shifts of the planes of a table are valid for one
@@ -327,7 +330,7 @@ static void ripple_init_table(void)
 	ripple_ready = 1;
 }
 
-static void ripple_build(rtab_t *t, float S, float F)
+static void ripple_build(rtab_t *t, float S, float F, float eps)
 {
 	const float apx = RIPPLE_AMP * S * F; // amplitude in pixels = apx / z
 	const float wk = (FAR_CLIPPING_PLANE - H.near_plane) / FAR_CLIPPING_PLANE;
@@ -345,7 +348,7 @@ static void ripple_build(rtab_t *t, float S, float F)
 		t->zfull = t->zend * 0.5f;
 	for (;;)
 	{
-		float dz = sqrtf(8.0f * RP_EPS * (z + 6.0f) / apx) * (1.0f / RP_K);
+		float dz = sqrtf(8.0f * eps * (z + 6.0f) / apx) * (1.0f / RP_K);
 
 		dz = dz < RP_DZ_MIN ? RP_DZ_MIN : dz > RP_DZ_MAX ? RP_DZ_MAX : dz;
 		z += dz;
@@ -361,7 +364,7 @@ static void ripple_build(rtab_t *t, float S, float F)
 		t->z[t->n++] = z;
 	}
 	t->taper = RIPPLE_AMP / (t->zend - t->zfull);
-	t->dk = RP_EPS / (2.0f * apx); // (K dz)^2 / 16 with (K dz)^2 = 8 eps (z + 6) / apx
+	t->dk = eps / (2.0f * apx); // (K dz)^2 / 16 with (K dz)^2 = 8 eps (z + 6) / apx
 	t->dmax = RP_K * RP_DZ_MAX * RP_K * RP_DZ_MAX * (1.0f / 16.0f);
 	for (i = 0; i < t->n; i++)
 	{
@@ -374,16 +377,17 @@ static void ripple_build(rtab_t *t, float S, float F)
 static const rtab_t *ripple_table(int sw)
 {
 	const float F = 0.5f * H.vpw * H.proj[0];
+	const int sky = ps2hwp_skyview && !(ps2hwd_fx2 & FX2_NOWATER);
 	int c = 0;
 	rtab_t *t;
 
 	while (c < RT_NCLASS - 1 && (32 << c) < sw)
 		c++;
-	t = &rtab[c];
+	t = &rtab[sky][c];
 	if (t->n == 0 || fabsf(t->focal - F) > 0.25f || t->near != H.near_plane)
 	{
 		ripple_init_table();
-		ripple_build(t, (float)(32 << c), F < 8.0f ? 8.0f : F);
+		ripple_build(t, (float)(32 << c), F < 8.0f ? 8.0f : F, sky ? 2.0f * RP_EPS : RP_EPS);
 	}
 	return t;
 }
@@ -587,7 +591,7 @@ static int water_sweep(const cv_t *v, const void *pv, int cnt, piece_t pc, int n
 		const float sx = (v[imax].x / v[imax].w - v[imin].x / v[imin].w) * P.kx, sy = (v[imax].y / v[imax].w - v[imin].y / v[imin].w) * P.ky;
 		const float L = sqrtf(sx * sx + sy * sy) * (1.0f / 16.0f), zz = z0 < 8.0f ? 8.0f : z0;
 
-		gapk = RP_GAP * (z1 - zz) / (L * zz * z1 + 1e-3f);
+		gapk = RP_GAP * (ps2hwp_skyview && !(ps2hwd_fx2 & FX2_NOWATER) ? 2.0f : 1.0f) * (z1 - zz) / (L * zz * z1 + 1e-3f);
 		if (ps2hwd_water_ab & HWDBG_WATERNOGAP)
 			gapk = 0.0f;
 	}
@@ -1024,8 +1028,8 @@ static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na, int big,
 			int ci;
 
 			for (ci = 0; ci < RT_NCLASS; ci++)
-				if (rtab[ci].n)
-					CONS_Printf("HWFX3 table S=%d: planes=%d zfull=%.0f zend=%.0f focal=%.1f near=%.2f dk=%.4f\n", 32 << ci, rtab[ci].n, rtab[ci].zfull, rtab[ci].zend, rtab[ci].focal, rtab[ci].near, rtab[ci].dk);
+				if (rtab[0][ci].n)
+					CONS_Printf("HWFX3 table S=%d: planes=%d zfull=%.0f zend=%.0f focal=%.1f near=%.2f dk=%.4f\n", 32 << ci, rtab[0][ci].n, rtab[0][ci].zfull, rtab[0][ci].zend, rtab[0][ci].focal, rtab[0][ci].near, rtab[0][ci].dk);
 		}
 		memset(fx_c, 0, sizeof fx_c);
 		memset(fx_n, 0, sizeof fx_n);
