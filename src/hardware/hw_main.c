@@ -2317,6 +2317,13 @@ static void HWR_ProcessSegC(void)
 			gc_rec_begin(check, gckey, kn);
 			HWR_ProcessSeg();
 			gc_rec_end(e, id, 0, check, "seg", (UINT32)(sg - segs));
+			{
+				const UINT32 cyc = ps2hwp_now() - t1;
+				const UINT32 bk = cyc >> 9 < 9 ? cyc >> 9 : 9;
+
+				gc.ch[bk]++;
+				gc.cl[bk] += gc.blk ? gc.rec_pos - gc.rec_start : 0;
+			}
 			if (gc.s_bad != bad0 && gc.reports <= 24)
 				I_OutputMsg("HWGC seg %u: line %d special %d front sector %d (ff %d lights %d fslope %d/%d hs %d) back %d (ff %d lights %d slopes %d/%d hs %d) tex %d/%d/%d sd off %d/%d polyseg %d\n", (unsigned)(sg - segs), (int)(sg->linedef - lines), (int)sg->linedef->special,
 					(int)(sg->frontsector - sectors), sg->frontsector->ffloors ? 1 : 0, (int)sg->frontsector->numlights, sg->frontsector->f_slope ? 1 : 0, sg->frontsector->c_slope ? 1 : 0, (int)sg->frontsector->heightsec,

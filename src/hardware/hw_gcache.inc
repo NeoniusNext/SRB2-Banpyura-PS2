@@ -75,6 +75,7 @@ static struct
 	// statistics of the window (HWPROF32)
 	UINT32 s_seg_hit, s_seg_miss, s_seg_skip, s_pl_hit, s_pl_miss, s_pl_skip, s_flush, s_full, s_chk, s_bad, s_rep_ops, s_rec_ops;
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
+	UINT32 ch[10], cl[10]; // misses of segs by the cycles the calculation took (buckets of 512) and the bytes of their records
 	UINT32 sdbg, nsets, nsets_user, s_reclaim, s_promo, test_rec, test_res, test_n1, test_n2; // -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th HWR_GCReserve (tests of the reclaim)
 	UINT32 mmpos, mm[34], mmp[34]; // the position of the first word of a key that differed (1 = the first), histograms of the segs and of the planes
 	UINT32 s_new, s_stale, c_rpoly, c_rtex, n_rpoly, n_rtex; // misses of a seg or plane never seen / seen with another key; cycles and number of the polygon and texture ops of the replays
@@ -1009,6 +1010,12 @@ void HWR_GCacheProf(unsigned int frames)
 		I_OutputMsg(")\n");
 		memset(gc.mm, 0, sizeof gc.mm);
 		memset(gc.mmp, 0, sizeof gc.mmp);
+		I_OutputMsg("HWPROF41 seg misses by calculation cycles (n bytes per 512-cycle bucket):");
+		for (i = 0; i < 10; i++)
+			I_OutputMsg(" %u:%u/%u", i * 512, gc.ch[i] / frames, gc.cl[i] / frames);
+		I_OutputMsg("\n");
+		memset(gc.ch, 0, sizeof gc.ch);
+		memset(gc.cl, 0, sizeof gc.cl);
 	}
 	gc.s_new = gc.s_stale = gc.c_rpoly = gc.c_rtex = gc.n_rpoly = gc.n_rtex = 0;
 	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | reclaim=%u promote=%u | arena=%u/%u\n",
