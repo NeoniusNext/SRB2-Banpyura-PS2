@@ -5,8 +5,12 @@
 
 #include "../doomtype.h"
 
-// Brings the stack up once (modules, link, DHCP or the static address of -ip/-netmask/-gateway). false: no adapter or no address.
+// Brings the stack up once (modules, link, DHCP or the static address of -ip/-netmask/-gateway). false: no adapter or no address, or the player cancelled.
+// PS2-330: while it waits it shows the network screen (ps2_netui.c, both renderers; Circle/Escape cancels); a failure is explained there in a message window
+// ("Try again" asks for another go inside the same call), and a refused call is not repeated for a few seconds (callers that retry by themselves).
 boolean PS2Net_Up(void);
+// true when the last PS2Net_Up() already told the player what went wrong (the failure window) or the player cancelled: the caller need not add a message of its own
+boolean PS2Net_Reported(void);
 // Dotted local address ("" before PS2Net_Up succeeded)
 const char *PS2Net_Address(void);
 // Dotted gateway address (the discard-port datagram of the PCSX2 inbound-UDP workaround goes there)

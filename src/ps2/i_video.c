@@ -39,6 +39,8 @@
 #include "ps2_boot.h"
 #include "ps2_hwfb.h" // PS2-170
 #include "ps2_memhud.h" // OPT11-MEM (PS2-HW-300): showmem
+#include "ps2_netui.h" // PS2-331: -vidshot nN
+#include "ps2_menuhints.h" // PS2-338: cvar menuhints
 
 #ifdef HWRENDER
 #include "../hardware/hw_main.h"
@@ -146,6 +148,7 @@ static void Vid_InitCvars(void)
 	CV_RegisterVar(&cv_vidoutput);
 	CV_RegisterVar(&cv_vidfit);
 	CV_RegisterVar(&cv_vidfilter);
+	PS2MenuHints_RegisterCvars(); // PS2-338: menuhints (before the config file is read)
 }
 
 #ifdef HWRENDER
@@ -1132,6 +1135,7 @@ static void Impl_VidKeys(void)
 		else if (!strcmp(kn, "console")) key = '`'; // PS2-HW-60: the console key
 		else if (!strcmp(kn, "f1")) key = KEY_F1;
 		else if (!strcmp(kn, "f2")) key = KEY_F2;
+		else if (!strcmp(kn, "f7")) key = KEY_F7; // PS2-336: F7 = the Options menu (a picture of the controls list)
 		else if (kn[0] >= 'a' && kn[0] <= 'z' && !kn[1]) key = kn[0];
 		else
 			I_Error("-vidkeys: unknown key '%s'", kn);
@@ -1179,7 +1183,7 @@ static void Impl_VidShot(void)
 			strlcpy(spec, M_GetNextParm(), sizeof spec);
 			for (p = spec; *p;) // one shot per item 't35' / 'l70' / 'f200' (an optional '=command' follows the number)
 			{
-				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w' || *p == 'i');
+				left += (*p == 't' || *p == 'l' || *p == 'f' || *p == 'k' || *p == 'K' || *p == 'w' || *p == 'i' || *p == 'n' || *p == 'm');
 				while (*p && *p != ',')
 					p++;
 				if (*p == ',')
@@ -1190,6 +1194,7 @@ static void Impl_VidShot(void)
 	if (!left)
 		return;
 	anyn++;
+	PS2MenuHints_SeqTick(); // PS2-339: -menuseq, the menus of a picture series (m<N> shots)
 	if (anyn == 3 && M_CheckParm("-vidcmd") && M_IsNextParm()) // OPT10-HF: -vidcmd 'con_hudlines~0;gr_filtermode~1': console commands ('~' = space, ';' = next command) on the third frame
 	{
 		char cmdline[160];
@@ -1235,6 +1240,8 @@ static void Impl_VidShot(void)
 		if (*p == ',')
 			p++;
 		hit = (kind == 'w' && WipeInAction && n == wipen)
+			|| (kind == 'm' && n > 0 && PS2MenuHints_SeqFrame() == n) // PS2-339: m40 = the 40th frame of the -menuseq series
+			|| (kind == 'n' && n > 0 && PS2NetUI_Frame() == n) // PS2-331: n40 = the 40th frame of the network screen (ps2_netui.c; a picture of each step with -netslow)
 			|| (!WipeInAction && ((kind == 't' && n == titlen) || (kind == 'l' && n == leveln) || (kind == 'f' && n == anyn) || (kind == 'i' && n == intern)))
 			|| (!WipeInAction && (kind == 'k' || kind == 'K') && kord++ == knext && gamestate == GS_LEVEL && (INT32)leveltime >= n && (klow || kind == 'k')); // PS2-HW-60: k300 = first frame with leveltime >= 300, K300 = the same but only in a level that started after the previous shot; k/K items fire in order (the same tic as the PC reference at any frame rate)
 		if (hit && (kind == 'k' || kind == 'K'))

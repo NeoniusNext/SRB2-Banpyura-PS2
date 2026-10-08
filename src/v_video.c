@@ -29,6 +29,10 @@
 #include "m_misc.h"
 #include "m_random.h"
 #include "doomstat.h"
+#ifdef PS2
+#include "ps2/ps2_uiicons.h" // PS2-334: pad button icons inside strings (control characters 0x01..0x15)
+#include "ps2/ps2_menuhints.h" // PS2-339: where the menu draws (the button hints keep clear of it)
+#endif
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h"
@@ -544,6 +548,11 @@ void V_DrawStretchyFixedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vsca
 	if (rendermode == render_none)
 		return;
 
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NotePatch(x, y, pscale, vscale, scrn, patch)) // PS2-339
+		return;
+#endif
+
 #ifdef HWRENDER
 	//if (rendermode != render_soft && !con_startup)		// Why?
 	if (rendermode == render_opengl)
@@ -892,6 +901,11 @@ void V_DrawCroppedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vscale, IN
 	if (rendermode == render_none)
 		return;
 
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteCropped(x, y, pscale, vscale, scrn, patch, w, h)) // PS2-339
+		return;
+#endif
+
 #ifdef HWRENDER
 	//if (rendermode != render_soft && !con_startup)		// Not this again
 	if (rendermode == render_opengl)
@@ -1228,6 +1242,11 @@ void V_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c)
 
 	if (rendermode == render_none)
 		return;
+
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, c)) // PS2-339
+		return;
+#endif
 
 	v_translevel = NULL;
 	if (alphalevel || blendmode)
@@ -1655,6 +1674,11 @@ void V_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c, UINT16 color, U
 	if (rendermode == render_none)
 		return;
 
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, c | V_ALPHAMASK)) // PS2-339 (a fade is not opaque: it does not hide what is under it)
+		return;
+#endif
+
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
@@ -1814,6 +1838,11 @@ void V_DrawFlatFill(INT32 x, INT32 y, INT32 w, INT32 h, lumpnum_t flatnum)
 	const UINT8 *src, *deststop;
 	UINT8 *flat, *dest;
 	size_t lflatsize, flatshift;
+
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, 0)) // PS2-339
+		return;
+#endif
 
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
@@ -2066,6 +2095,45 @@ void V_DrawFontCharacter(INT32 x, INT32 y, INT32 c, boolean lowercaseallowed, fi
 
 // Precompile a wordwrapped string to any given width, using a specified font.
 //
+#ifdef PS2
+// PS2-334, PS2-340: the rows that the capital letters of a font really cover (the letters of the menu font are 8 px patches whose first row is empty: ink in rows 1..7), so that an
+// icon is centred on the letters and not on the patch (an icon in the rows of the patch would touch the letters of the line above)
+static void PS2_CapInk(const fontdef_t *font, INT32 *top, INT32 *rows)
+{
+	const patch_t *ref = font->chars['H' - FONTSTART];
+	INT32 x, k, t = 1000, b = -1;
+
+	if (ref)
+		for (x = 0; x < ref->width; x++)
+			for (k = 0; k < (INT32)ref->columns[x].num_posts; k++)
+			{
+				const post_t *p = &ref->columns[x].posts[k];
+
+				if ((INT32)p->topdelta < t)
+					t = (INT32)p->topdelta;
+				if ((INT32)(p->topdelta + p->length) - 1 > b)
+					b = (INT32)(p->topdelta + p->length) - 1;
+			}
+	if (b < t)
+	{
+		*top = 0;
+		*rows = ref ? ref->height : 8;
+		return;
+	}
+	*top = t;
+	*rows = b - t + 1;
+}
+
+// which size of icon a font takes (ps2_uiicons.h): the small ones unless the capitals of the font are 13 px tall or more, or the caller asked for the large ones
+static boolean PS2_IconSmall(const fontdef_t *font)
+{
+	INT32 top, rows;
+
+	PS2_CapInk(font, &top, &rows);
+	return !ps2ui_bigicons && PS2UI_SmallFor(rows);
+}
+#endif
+
 char *V_FontWordWrap(INT32 x, INT32 w, INT32 option, fixed_t scale, const char *string, fontdef_t font)
 {
 	int c;
@@ -2106,6 +2174,14 @@ char *V_FontWordWrap(INT32 x, INT32 w, INT32 option, fixed_t scale, const char *
 			lastusablespace = 0;
 			continue;
 		}
+
+#ifdef PS2
+		if ((UINT8)c < 0x16 && PS2UI_TokenIcon((UINT8)c) >= 0)
+		{
+			x += FixedMul(PS2UI_TokenWidthSized((UINT8)c, PS2_IconSmall(&font)), scale); // PS2-334: a pad button icon is a word, not a space
+			continue;
+		}
+#endif
 
 		c = (option & V_ALLOWLOWERCASE ? c : toupper(c)) - FONTSTART;
 		if (c < 0 || c >= FONTSIZE || !font.chars[c])
@@ -2202,6 +2278,29 @@ void V_DrawFontStringAtFixed(fixed_t x, fixed_t y, INT32 option, fixed_t pscale,
 			cy += FixedMul(((option & V_RETURN8) ? 8 : font.linespacing)<<FRACBITS, dupy);
 			continue;
 		}
+#ifdef PS2
+		if ((UINT8)*ch < 0x16 && PS2UI_TokenIcon((UINT8)*ch) >= 0)
+		{
+			// PS2-334: a pad button icon (ps2_uiicons.h): drawn like a letter, centred on the line of the font, the size that fits the font (PS2_IconSmall)
+			const boolean small = PS2_IconSmall(&font);
+			patch_t *ip = PS2UI_PatchSized(PS2UI_TokenIcon((UINT8)*ch), small);
+
+			if (ip)
+			{
+				INT32 captop, caprows;
+
+				PS2_CapInk(&font, &captop, &caprows);
+				if (!ps2ui_hideicons)
+				{
+					PS2MenuHints_IconDraw(true); // (the icon is noted as an icon: ps2_menuhints.c, the check of the icons)
+					V_DrawStretchyFixedPatch(cx, cy + (fixed_t)(captop + (caprows - ip->height) / 2) * vscale, pscale, vscale, option, ip, NULL);
+					PS2MenuHints_IconDraw(false);
+				}
+			}
+			cx += FixedMul(PS2UI_TokenWidthSized((UINT8)*ch, small)<<FRACBITS, dupx);
+			continue;
+		}
+#endif
 
 		c = (lowercase ? *ch : toupper(*ch)) - FONTSTART;
 		if (c < 0 || c >= FONTSIZE || !font.chars[c])
@@ -2226,6 +2325,9 @@ void V_DrawFontStringAtFixed(fixed_t x, fixed_t y, INT32 option, fixed_t pscale,
 			continue;
 		}
 
+#ifdef PS2
+		if (!ps2ui_hidetext) // (the check of the icons: the letters take their room but are not drawn, to find the pixels that they cover)
+#endif
 		V_DrawStretchyFixedPatch(cx + center, cy, pscale, vscale, option, font.chars[c], V_GetStringColormap(charflags));
 
 		cx += w + (font.kerning<<FRACBITS);
@@ -2549,6 +2651,13 @@ INT32 V_FontStringWidth(const char *string, INT32 option, fontdef_t font)
 		}
 		if (string[i] & 0x80)
 			continue;
+#ifdef PS2
+		if ((UINT8)string[i] < 0x16 && PS2UI_TokenIcon((UINT8)string[i]) >= 0)
+		{
+			w += PS2UI_TokenWidthSized((UINT8)string[i], PS2_IconSmall(&font)); // PS2-334: a pad button icon
+			continue;
+		}
+#endif
 
 		c = (option & V_ALLOWLOWERCASE ? string[i] : toupper(string[i])) - FONTSTART;
 		if (c < 0 || c >= FONTSIZE || !font.chars[c])
