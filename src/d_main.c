@@ -952,8 +952,12 @@ static void D_RunFrame(void)
 			{
 				extern INT32 ps2_fxfrac; // -fxfrac N (OPT11 round 2, FX2, measurements): every frame is drawn N percent of the way between two tics (a time demo draws whole tics only)
 
+				extern boolean ps2_lockstep; // d_clisrv.c (-singletics on a map)
+
 				if (ps2_fxfrac > 0 && ps2_fxfrac < 100 && !(paused || P_AutoPause()))
 					rendertimefrac = (fixed_t)(((INT64)FRACUNIT * ps2_fxfrac) / 100);
+				else if (ps2_lockstep && !demoplayback && !netgame)
+					rendertimefrac = FRACUNIT; // OPT11 GEOM2 (PS2-HW-208): a frame locked run draws whole tics (the clock must not decide where between two tics a moving view is drawn)
 			}
 #endif
 		}
@@ -1718,6 +1722,14 @@ void D_SRB2Main(void)
 	// this must be done after loading gamedata,
 	// to avoid setting off the corrupted gamedata code in G_LoadGameData if a SOC with custom gamedata is added
 	// -- Monster Iestyn 20/02/20
+#ifdef PS2_PROFILE
+	if (M_CheckParm("-singletics"))
+	{
+		extern boolean ps2_lockstep; // d_clisrv.c
+		singletics = true; // OPT11 GEOM2: one game tic for every frame drawn, as in a timedemo, so that two runs of a map show the same frames whatever each frame costs (-hwpolyhash comparisons)
+		ps2_lockstep = true; // and on a map the tic is made by TryRunTics, not by the clock (PS2-HW-208)
+	}
+#endif
 	if (M_CheckParm("-warp") && M_IsNextParm())
 	{
 		const char *word = M_GetNextParm();

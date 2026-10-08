@@ -41,16 +41,19 @@ void HWR_RenderBatches(void);
 // OPT11 (GEOM, PS2-HW-80): the geometry cache (hw_gcache.inc, included by hw_main.c). While a seg or a plane is calculated for the cache, the three
 // sinks of the BSP walk (HWR_ProcessPolygon, HWR_SetCurrentTexture, HWR_AddTransparentWall) append what they are given to the record.
 extern boolean hwr_grec_on;
+extern int polygonArraySize, polygonArrayAllocSize, unsortedVertexArraySize, unsortedVertexArrayAllocSize; // the batch arrays (the cache looks at the room before a replay)
 extern UINT32 hwr_geo_off; // -hwgo: OPT11 optimisations switched off (hw_gcache.inc)
 void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon);
 void HWR_GCRecTex(GLMipmap_t *texture);
-UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIELD PolyFlags, int shader_target); // the 16 bit state hash of the sort key
-UINT32 HWR_GCTexId(const GLMipmap_t *tex); // the frame independent part of the texture order
-void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial, UINT32 texid, UINT32 h16, UINT32 scan_dir);
+typedef struct { UINT8 op, n, horizon, pad; UINT16 size; INT16 target; FBITFIELD flags; GLMipmap_t *tex; INT32 src, tnum; } gcphdr_t; // 24 bytes (src: 0, or the number + 1 of the side whose animated texture tnum the polygon takes: 3D floors), followed by an FSurfaceInfo and n FOutVector: what the cache keeps of one HWR_ProcessPolygon
+void HWR_GCBatchReserve(int npoly, int nvert); // room in the batch arrays of the old collection for that many more polygons and vertices (it may allocate: the cache asks before it replays)
+void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view); // HWR_ProcessPolygon of such a record (the texture is made current and touched once per view)
 extern GLMipmap_t *current_texture; // the texture of the next polygon (HWR_SetCurrentTexture)
+void HWR_GCacheAbandon(void); // a frame was abandoned half way (ps2_hwfb.c): no record is in progress any more
 void HWR_GCacheFlush(void); // everything cached is dropped (a new level, the texture records or the light tables go away, a setting changed)
 void HWR_PolyHashFrame(INT32 frame); // -hwpolyhash: the HWPH line of the frame just ended
 UINT32 HWR_PS2_TexTransparent(INT32 tex); // hw_cache.c: TF_TRANSPARENT of the mipmap of a (translated) map texture
+UINT32 HWR_PS2_SideTexWord(INT32 raw); // hw_cache.c: the word of a side texture in the key of the cache (translated number | transparent bit << 31)
 #endif
 
 #ifdef PS2_PROFILE

@@ -1317,6 +1317,13 @@ static void NetSyncLog(void)
 }
 #endif
 
+#ifdef PS2_PROFILE
+// OPT11 GEOM2 (PS2-HW-208): -singletics in a profile build on a map (no demo, no network game): the tics are made by TryRunTics, exactly one for every frame, and not by the clock.
+// Before, the clock made them (NetUpdate is also called by the renderer), so a frame could run no tic or two, and two runs of a map were not the same frames (-hwpolyhash).
+boolean ps2_lockstep = false;
+static boolean ps2_lockstep_tic = false;
+#endif
+
 boolean TryRunTics(tic_t realtics)
 {
 #ifdef PS2_OPT_CORE
@@ -1350,6 +1357,9 @@ boolean TryRunTics(tic_t realtics)
 			D_MapChange(-1, 0, ultimatemode, false, 2, false, fromlevelselect); // finish the map change
 	}
 
+#ifdef PS2_PROFILE
+	ps2_lockstep_tic = (realtics >= 1);
+#endif
 	NetUpdate();
 
 	if (demoplayback)
@@ -1705,6 +1715,16 @@ void NetUpdate(void)
 	nowtime = I_GetTime();
 	realtics = nowtime - gametime;
 
+#ifdef PS2_PROFILE
+	if (ps2_lockstep && !demoplayback && !netgame)
+	{
+		if (!ps2_lockstep_tic) // a call of the renderer: no tic
+			return;
+		ps2_lockstep_tic = false;
+		realtics = 1;
+	}
+	else
+#endif
 	if (realtics <= 0) // nothing new to update
 		return;
 

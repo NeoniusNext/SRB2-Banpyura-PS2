@@ -88,7 +88,7 @@ extern unsigned long long ps2hwp_cyc[HWP_NUM];
 enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_SPR_ON, HWC_SPR_FLUSH, HWC_SPR_SOLO, HWC_SPR_SHADOW, HWC_PLANE_HIT, HWC_PLANE_MISS, HWC_PLANE_KEYMISS, HWC_PLANE_BYPASS, HWC_PLANE_BAD, HWC_SEG_SIMPLE1, HWC_SEG_SIMPLE2, HWC_SEG_COMPLEX, HWC_PKM_H, HWC_PKM_L, HWC_PKM_F, HWC_PKM_T, HWC_PKM_O, HWC_PKM_E, HWC_PKM_P,
 	// OPT11 (GEOM): why a seg is not simple (first reason that applies), HWPROF30
 	HWC_SR_POLY, HWC_SR_FFLOORS, HWC_SR_SLOPE, HWC_SR_HEIGHTSEC, HWC_SR_LIGHTS, HWC_SR_MID, HWC_SR_BACK,
-	HWC_AL_CALLS, HWC_AL_BACK, HWC_AL_CLIP, HWC_AL_EMPTY, HWC_AL_BOX, HWC_AL_BOXREJ,
+	HWC_AL_CALLS, HWC_AL_BACK, HWC_AL_CLIP, HWC_AL_EMPTY, HWC_AL_BOX, HWC_AL_BOXREJ, HWC_AL_VHIT,
 	// OPT11 round 2 (FX2): the sprites of a frame (HWPROF40, --hwdetail): things of the sectors, ProjectSprite calls, behind the view, quad hidden, vissprites, shadows, shadows hidden
 	HWC_FX_THINGS, HWC_FX_PROJ, HWC_FX_BEHIND, HWC_FX_QHID, HWC_FX_VIS, HWC_FX_SHADOW, HWC_FX_SHQHID, HWC_FX_PRE, HWC_FX_SPRHID, HWC_FX_SPRSH, HWC_FX_ROLL, HWC_FX_NOEXT, HWC_SF_CALLS, HWC_SF_BEGIN, HWC_SF_RET, HWC_SF_SAME, HWC_SF_POLYS, HWC_NUM };
 extern unsigned int ps2hwp_cnt[HWC_NUM];
@@ -115,15 +115,18 @@ static inline unsigned int ps2hwp_now(void)
 #define HWD_LOCAL HWP_LOCAL
 #define HWD_LAP(idx) HWP_LAP(idx)
 #define HWD_ADD(i) HWC_ADD(i)
+#define HWD_ADDC(acc) do { hwp_t1 = ps2hwp_now(); (acc) += (unsigned int)(hwp_t1 - hwp_t0); hwp_t0 = hwp_t1; } while (0) // OPT11 round 2: a lap into a plain counter
 #else
 #define HWD_LOCAL ((void)0)
 #define HWD_LAP(idx) ((void)0)
 #define HWD_ADD(i) ((void)0)
+#define HWD_ADDC(acc) ((void)0)
 #endif
 #else
 #define HWD_LOCAL ((void)0)
 #define HWD_LAP(idx) ((void)0)
 #define HWD_ADD(i) ((void)0)
+#define HWD_ADDC(acc) ((void)0)
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
 #define HWP_SPAN_BEGIN(name) ((void)0)

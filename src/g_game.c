@@ -5123,8 +5123,12 @@ void G_InitNew(UINT8 pultmode, const char *mapname, boolean resetplayer, boolean
 
 	if (!demoplayback && !netgame) // Netgame sets random seed elsewhere, demo playback sets seed just before us!
 	{
-#ifdef PS2REF
-		if (M_CheckParm("-ps2ref-maptics")) P_SetRandSeed(0x1B2D3F5u); // OPT11-CORE: a fixed seed, so the map sweep is comparable between builds
+#if defined(PS2REF) || defined(PS2_PROFILE)
+		if (M_CheckParm("-ps2ref-maptics") // OPT11-CORE: a fixed seed, so the map sweep is comparable between builds
+#ifdef PS2_PROFILE
+			|| M_CheckParm("-singletics") // OPT11 GEOM2: so is a frame locked run (-hwpolyhash of a map: the random lights and particles are the same in two runs)
+#endif
+			) P_SetRandSeed(0x1B2D3F5u);
 		else
 #endif
 		P_SetRandSeed(M_RandomizedSeed()); // Use a more "Random" random seed

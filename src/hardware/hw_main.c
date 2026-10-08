@@ -60,6 +60,7 @@ extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 extern boolean Cubeapply; // v_video.c (the colour cube): HWR_Lighting
 extern float Cubepal[2][2][2][3];
 static boolean HWR_PS2_NoCull(void);
+static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 #else
 #define HWP_LOCAL ((void)0)
@@ -160,6 +161,14 @@ static boolean HWR_IsWireframeMode(void)
 	return (cv_glwireframe.value && cv_debug);
 }
 
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-205): the light table of the default colormap and whether palette rendering is on do not change inside a view; they are asked once per view (validcount is
+// the view's) and again after the light tables were cleared (HWR_GCacheFlush bumps hwr_lt_epoch). -hwgo 2048: asked for every surface, as before.
+static UINT32 hwr_lt_epoch;
+static INT32 hl_view = -1;
+static UINT32 hl_epoch, hl_id;
+#endif
+
 void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap)
 {
 	RGBA_t poly_color, tint_color, fade_color;
@@ -177,7 +186,18 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 		Surface->LightInfo.light_level = light_level;
 		Surface->LightInfo.fade_start = 0;
 		Surface->LightInfo.fade_end = 31;
-		Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+		if (hwr_geo_off & 2048)
+			Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+		else
+		{
+			if (hl_view != (INT32)validcount || hl_epoch != hwr_lt_epoch)
+			{
+				hl_id = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+				hl_view = (INT32)validcount;
+				hl_epoch = hwr_lt_epoch;
+			}
+			Surface->LightTableId = hl_id;
+		}
 		HWP_SPAN_END(hwp_tlight, HWP_LIGHT);
 		return;
 	}
@@ -502,6 +522,7 @@ static UINT8 HWR_CeilingLightLevel(sector_t *sector, INT16 base_lightlevel)
 
 #ifdef PS2_PROFILE
 // OPT11 (GEOM, PS2-HW-80): the geometry cache of the BSP walk replaces the plane cache of PS2-HW-55 (hw_gcache.inc)
+static INT32 hwr_gc_src, hwr_gc_tnum; // the side (number + 1) whose midtexture the polygons being made take (3D floors), and the translated texture number: set by HWR_ProcessSeg, read by the records of the cache
 #include "hw_gcache.inc"
 
 static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
@@ -543,6 +564,27 @@ static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
 }
 #endif
 
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-211): the flat of a plane is chosen (HWR_GetLevelFlat) before HWR_RenderPlane, which made the texture current for a plane that the cache then served from its record, and
+// the record holds the texture itself. The choice is kept here and made by HWR_RenderPlane when the plane is not served from the cache (-hwgo 32768: made at once, as before).
+static levelflat_t *hwr_lf_flat;
+static boolean hwr_lf_pending, hwr_lf_chroma;
+
+static void HWR_PlaneFlat(levelflat_t *levelflat, boolean chromakeyed)
+{
+	if (gc.on && currently_batching && !(gc.mode & 4) && !(hwr_geo_off & 32768))
+	{
+		hwr_lf_flat = levelflat;
+		hwr_lf_chroma = chromakeyed;
+		hwr_lf_pending = true;
+		return;
+	}
+	HWR_GetLevelFlat(levelflat, chromakeyed);
+}
+#else
+#define HWR_PlaneFlat HWR_GetLevelFlat
+#endif
+
 // -----------------+
 // HWR_RenderPlane  : Render a floor or ceiling convex polygon
 // -----------------+
@@ -558,7 +600,10 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	INT32 i;
 #ifdef PS2_PROFILE
 	gcent_t *gce = NULL; // OPT11 PS2-HW-80: the geometry cache entry this plane is recorded into
-	gcfp_t gck = {0, 0};
+	boolean lfpend = hwr_lf_pending; // the flat the caller chose is not set yet (HWR_PlaneFlat): the cache does not need it for a hit
+	const boolean lfchroma = hwr_lf_chroma;
+	UINT32 gckey[GC_KEYMAX];
+	int gckn = 0;
 	boolean gccheck = false;
 	UINT32 gcid = 0, gcid2 = 0;
 #endif
@@ -577,6 +622,11 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 	HWD_LOCAL; // OPT11: the parts of this function (HWPROF37, --hwdetail)
 
+#ifdef PS2_PROFILE
+	hwr_lf_pending = false;
+	if (hwr_geo_off & 16384) // (measurement only)
+		return;
+#endif
 	if (!r_renderfloors)
 		return;
 
@@ -608,46 +658,70 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 #ifdef PS2_PROFILE
 	// OPT11 PS2-HW-80: the polygon of this plane is served from the geometry cache when everything it is made of is as it was (hw_gcache.inc)
-	if (gc.on && currently_batching && nrPlaneVerts < 250 && !(gc.mode & 4) && (!subsector || !HWR_PlaneHasHorizon(subsector)))
+	if (gc.on && lfpend && currently_batching && nrPlaneVerts < 250 && !(gc.mode & 4) && (!subsector || !HWR_PlaneHasHorizon(subsector)))
 	{
 		const UINT32 t0 = ps2hwp_now();
 		const sector_t *src = FOFsector ? FOFsector : gl_frontsector;
-		gcfp_t t;
 		boolean hit;
 
 		gcid = ((UINT32)(xsub - extrasubsectors) * 2u + (isceiling ? 1u : 0u)) * 2u + 1u;
 		gcid2 = (UINT32)(uintptr_t)FOFsector;
-		gc_init_fp(&gck);
-		gc_get_fp(src, false, &t);
-		gcw_fp(&gck, &t);
-		gcw(&gck, (UINT32)fixedheight);
-		gcw(&gck, (UINT32)PolyFlags);
-		gcw(&gck, (UINT32)lightlevel);
-		gcw(&gck, (UINT32)alpha);
-		gcw(&gck, levelflat ? (UINT32)R_GetTextureNumForFlat(levelflat) : 0xFFFFFFFFu);
-		gcw(&gck, (UINT32)(uintptr_t)current_texture); // (the texture record the caller chose: the sort key of the polygon is made with it)
-		gc_cmap(&gck, planecolormap);
-		gce = gc_find(gcid, gcid2, &hit);
-		gc.c_key += ps2hwp_now() - t0;
-		if (hit && gce->k0 == gck.a && gce->k1 == gck.b)
+		gce = gc_plane_slot((UINT32)(xsub - extrasubsectors), isceiling, gcid, gcid2, &hit);
+		if (!gce)
+			goto gc_plane_nocache; // (a subsector the table does not know: made without the cache)
+		if (hit)
 		{
-			if (!(gccheck = gc_check_this()))
-			{
-				const UINT32 t1 = ps2hwp_now();
+			const gcrh_t *rh = (const gcrh_t *)(gc.ar + gce->off);
 
-				gc_replay(gc.ar + gce->off, gce->len);
-				gc.s_pl_hit++;
-				gc.c_hit += ps2hwp_now() - t1;
-				return;
+			gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, (UINT32 *)(rh + 1), false);
+			gc.c_key += ps2hwp_now() - t0;
+			if (gckn == (int)rh->keyw)
+			{
+				if (!(gccheck = gc_check_this()))
+				{
+					const UINT32 t1 = ps2hwp_now();
+
+					if ((rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize)
+						|| HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+					{
+						rh = gc_promote(gce, rh);
+						gc_replay(rh, (UINT32)gce->len);
+						gc.s_pl_hit++;
+						gc.w_q++;
+						gc.w_hit++;
+						gc.c_hit += ps2hwp_now() - t1;
+						return;
+					}
+					gce = NULL; // (the allocation took the cache's memory: this plane is made the long way, nothing is recorded)
+					goto gc_plane_nocache;
+				}
+			}
+			if (!gccheck) // (a valid entry that is being checked is not a miss)
+			{
+				gc.s_stale++;
+				gc.mmp[gckn < 0 ? (gc.mmpos < 33 ? gc.mmpos : 33) : 0]++;
 			}
 		}
-		gc_rec_begin(gccheck);
+		else
+			gc.s_new++;
+		gc.w_q++;
+		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, gckey, true);
+		if (gckn >= 0 && HWR_GCReserve(1, (UINT32)nrPlaneVerts + 8u, 0))
+			gc_rec_begin(gccheck, gckey, gckn);
+		else
+		{
+			gce = NULL;
+			gc.s_pl_skip++;
+		}
 	}
 	else
 	{
 		gce = NULL;
 		gc.s_pl_skip++;
 	}
+gc_plane_nocache:
+	if (lfpend) // (not served from the cache: the flat is set now, inside the record when there is one)
+		HWR_GetLevelFlat(levelflat, lfchroma);
 #endif
 
 	HWD_LAP(HWP_PL_A);
@@ -825,7 +899,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	{
 		const UINT32 t1 = ps2hwp_now();
 
-		gc_rec_end(gce, gcid, gcid2, &gck, gccheck, "plane", gcid >> 1);
+		gc_rec_end(gce, gcid, gcid2, gccheck, "plane", gcid >> 1);
 		gce = NULL;
 		if (gccheck)
 			gc.s_pl_hit++;
@@ -1934,6 +2008,10 @@ static void HWR_ProcessSeg(void)
 				}
 
 				texnum = R_GetTextureNum(side->midtexture);
+#ifdef PS2_PROFILE
+				hwr_gc_src = (INT32)(side - sides) + 1; // OPT11 (PS2-HW-213): everything this floor puts out until the next one is made with the animated texture of this side (the cache patches it)
+				hwr_gc_tnum = texnum;
+#endif
 
 				h  = P_GetFFloorTopZAt   (rover, v1x, v1y);
 				hS = P_GetFFloorTopZAt   (rover, v2x, v2y);
@@ -2090,6 +2168,10 @@ static void HWR_ProcessSeg(void)
 				}
 
 				texnum = R_GetTextureNum(side->midtexture);
+#ifdef PS2_PROFILE
+				hwr_gc_src = (INT32)(side - sides) + 1; // OPT11 (PS2-HW-213): everything this floor puts out until the next one is made with the animated texture of this side (the cache patches it)
+				hwr_gc_tnum = texnum;
+#endif
 
 				h  = P_GetFFloorTopZAt   (rover, v1x, v1y);
 				hS = P_GetFFloorTopZAt   (rover, v2x, v2y);
@@ -2214,6 +2296,8 @@ static void HWR_ProcessSegC(void)
 	seg_t *sg = gl_curline;
 
 	HWC_ADD(HWC_SEGS);
+	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
+		return;
 	if (!gc.on || sg->polyseg || !currently_batching || (gc.mode & 8))
 	{
 		gc.s_seg_skip++;
@@ -2221,37 +2305,78 @@ static void HWR_ProcessSegC(void)
 	}
 	else
 	{
-		gcfp_t key;
-		gcent_t *e;
+		UINT32 gckey[GC_KEYMAX];
+		const UINT32 id = (UINT32)(sg - segs);
 		boolean hit, check = false;
-		const UINT32 id = (UINT32)(sg - segs) * 2u;
+		gcent_t *e = gc_seg_slot(id, &hit);
+		int kn;
 		const UINT32 t0 = ps2hwp_now();
 
-		gc_seg_key(sg, gl_frontsector, gl_backsector, &key);
-		e = gc_find(id, 0, &hit);
-		gc.c_key += ps2hwp_now() - t0;
-		if (hit && e->k0 == key.a && e->k1 == key.b)
+		if (hit)
 		{
-			if (!(check = gc_check_this()))
+			const gcrh_t *rh = (const gcrh_t *)(gc.ar + e->off);
+
+			kn = gc_seg_words(sg, gl_frontsector, gl_backsector, (UINT32 *)(rh + 1), false);
+			gc.c_key += ps2hwp_now() - t0;
+			if (kn == (int)rh->keyw && !(check = gc_check_this()) && (!(rh->flags & 2) || gc_src_ok(rh, e->len)))
 			{
 				const UINT32 t1 = ps2hwp_now();
 
+				if (!(rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize) // (room, no allocation: the usual case)
+					&& !HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+				{
+					HWR_ProcessSeg(); // (the allocation took the cache's memory: this seg is made the long way)
+					HWP_SPAN_END(t, HWP_SEG);
+					return;
+				}
+				rh = gc_promote(e, rh);
+				if (rh->flags & 2)
+					gc_src_patch((gcrh_t *)rh, (UINT32)e->len);
 				gl_sidedef = sg->sidedef;
 				gl_linedef = sg->linedef;
-				gc_replay(gc.ar + e->off, e->len);
+				gc_replay(rh, (UINT32)e->len);
 				gc.s_seg_hit++;
+				gc.w_q++;
+				gc.w_hit++;
 				gc.c_hit += ps2hwp_now() - t1;
 				HWP_SPAN_END(t, HWP_SEG);
 				return;
 			}
+			// (an entry that does not match is made again; one that does and is being checked falls through with check set)
+			if (!check)
+			{
+				gc.s_stale++;
+				gc.mm[kn < 0 ? (gc.mmpos < 33 ? gc.mmpos : 33) : 0]++;
+			}
 		}
+		else
+			gc.s_new++;
+		gc.w_q++;
+		kn = gc_seg_words(sg, gl_frontsector, gl_backsector, gckey, true);
+		if (kn < 0)
+		{
+			gc.s_seg_skip++;
+			HWR_ProcessSeg();
+		}
+		else if (!HWR_GCReserve(48, 512, 16))
+		{
+			HWR_ProcessSeg(); // (the cache went)
+		}
+		else
 		{
 			const UINT32 t1 = ps2hwp_now();
 			const UINT32 bad0 = gc.s_bad;
 
-			gc_rec_begin(check);
+			gc_rec_begin(check, gckey, kn);
 			HWR_ProcessSeg();
-			gc_rec_end(e, id, 0, &key, check, "seg", (UINT32)(sg - segs));
+			gc_rec_end(e, id * 2u, 0, check, "seg", id);
+			{
+				const UINT32 cyc = ps2hwp_now() - t1;
+				const UINT32 bk = cyc >> 9 < 9 ? cyc >> 9 : 9;
+
+				gc.ch[bk]++;
+				gc.cl[bk] += gc.blk ? gc.rec_pos - gc.rec_start : 0;
+			}
 			if (gc.s_bad != bad0 && gc.reports <= 24)
 				I_OutputMsg("HWGC seg %u: line %d special %d front sector %d (ff %d lights %d fslope %d/%d hs %d) back %d (ff %d lights %d slopes %d/%d hs %d) tex %d/%d/%d sd off %d/%d polyseg %d\n", (unsigned)(sg - segs), (int)(sg->linedef - lines), (int)sg->linedef->special,
 					(int)(sg->frontsector - sectors), sg->frontsector->ffloors ? 1 : 0, (int)sg->frontsector->numlights, sg->frontsector->f_slope ? 1 : 0, sg->frontsector->c_slope ? 1 : 0, (int)sg->frontsector->heightsec,
@@ -2268,6 +2393,27 @@ static void HWR_ProcessSegC(void)
 	HWP_SPAN_END(t, HWP_SEG);
 }
 #define HWR_ProcessSeg HWR_ProcessSegC
+#endif
+
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-200): R_FakeFlat makes a copy of the sector only when it has a height sector (water) and no colormap; for all the others it returns the sector itself after
+// working out the two light levels. That is what runs for nearly every call of the BSP walk (a subsector and a two sided seg each), so it is done here without the call.
+// -hwgo 1024: R_FakeFlat for all.
+static inline sector_t *HWR_FakeFlat(sector_t *sec, sector_t *tempsec, INT32 *floorlightlevel, INT32 *ceilinglightlevel, boolean back)
+{
+	if ((sec->extra_colormap || sec->heightsec == -1) && !(hwr_geo_off & 1024))
+	{
+		if (floorlightlevel)
+			*floorlightlevel = sec->floorlightsec == -1 ?
+				(sec->floorlightabsolute ? sec->floorlightlevel : max(0, min(255, sec->lightlevel + sec->floorlightlevel))) : sectors[sec->floorlightsec].lightlevel;
+		if (ceilinglightlevel)
+			*ceilinglightlevel = sec->ceilinglightsec == -1 ?
+				(sec->ceilinglightabsolute ? sec->ceilinglightlevel : max(0, min(255, sec->lightlevel + sec->ceilinglightlevel))) : sectors[sec->ceilinglightsec].lightlevel;
+		return sec;
+	}
+	return R_FakeFlat(sec, tempsec, floorlightlevel, ceilinglightlevel, back);
+}
+#define R_FakeFlat HWR_FakeFlat
 #endif
 
 // From PrBoom:
@@ -2373,12 +2519,47 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 // Notes            : gl_cursectorlight is set to the current subsector -> sector -> light value
 //                  : (it may be mixed with the wall's own flat colour in the future ...)
 // -----------------+
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-206): R_PointToAngle64 of a vertex of the map once per view (it is a function of the point and of the eye only). The segs of a subsector follow each other,
+// but the vertex is also an end of the segs of the next subsectors and of the other side of the line. -hwgo 4096: calculated every time.
+static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
+{
+	if (v && gc.on && !(hwr_geo_off & 4096))
+	{
+		const size_t i = (size_t)(v - vertexes);
+
+		if (i < gc.nvert)
+		{
+			const size_t k = i & gc.vmask; // (a place with a tag: another vertex with the same low bits takes it)
+
+			if (gc.vtag[k] == (UINT32)i + 1u && gc.vst[k] == (UINT32)validcount)
+			{
+				HWD_ADD(HWC_AL_VHIT);
+				return gc.vang[k];
+			}
+			gc.vtag[k] = (UINT32)i + 1u;
+			gc.vst[k] = (UINT32)validcount;
+			return gc.vang[k] = R_PointToAngle64(x, y);
+		}
+	}
+	return R_PointToAngle64(x, y);
+}
+#endif
+
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-214): half of the calls of HWR_AddLine are segs that face away: they are rejected after the two angles, and the function saved and restored ten registers for
+// the part that follows. The rest is a function of its own; the front keeps what the rejected seg needs.
+static void HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2);
+#endif
+
 static void HWR_AddLine(seg_t * line)
 {
 	angle_t angle1, angle2;
 
+#ifndef PS2_PROFILE
 	// SoM: Backsector needs to be run through R_FakeFlat
 	static sector_t tempsec;
+#endif
 
 	fixed_t v1x, v1y, v2x, v2y; // the seg's vertexes as fixed_t
 	if (line->polyseg && !(line->polyseg->flags & POF_RENDERSIDES))
@@ -2419,8 +2600,8 @@ static void HWR_AddLine(seg_t * line)
 		if (al_valid && !(hwr_geo_off & 1) && v1x == al_x && v1y == al_y && viewx == al_vx && viewy == al_vy)
 			angle1 = al_angle;
 		else
-			angle1 = R_PointToAngle64(v1x, v1y);
-		angle2 = R_PointToAngle64(v2x, v2y);
+			angle1 = HWR_VertAngle(gl_curline->pv1 ? NULL : gl_curline->v1, v1x, v1y);
+		angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
 		al_x = v2x;
 		al_y = v2y;
 		al_vx = viewx;
@@ -2440,6 +2621,16 @@ static void HWR_AddLine(seg_t * line)
 		HWD_ADD(HWC_AL_BACK);
 		return;
 	}
+
+#ifdef PS2_PROFILE
+	HWR_AddLineSeen(line, angle1, angle2);
+}
+
+static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2)
+{
+	// SoM: Backsector needs to be run through R_FakeFlat
+	static sector_t tempsec;
+#endif
 
 	// PrBoom: use REAL clipping math YAYYYYYYY!!!
 
@@ -2877,6 +3068,9 @@ static void HWR_Subsector(size_t num)
 	locFloorHeight    = P_GetSectorFloorZAt  (gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 	locCeilingHeight  = P_GetSectorCeilingZAt(gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 
+#ifdef PS2_PROFILE
+	if (gl_frontsector->ffloors || (hwr_geo_off & 1024)) // OPT11 (PS2-HW-200): the function does nothing for a sector without 3D floors
+#endif
 	R_CheckSectorLightLists(sub->sector, gl_frontsector, &floorlightlevel, &ceilinglightlevel, &floorcolormap, &ceilingcolormap);
 
 	sub->sector->extra_colormap = gl_frontsector->extra_colormap;
@@ -2889,7 +3083,7 @@ static void HWR_Subsector(size_t num)
 		{
 			if (sub->validcount != validcount)
 			{
-				HWR_GetLevelFlat(&levelflats[gl_frontsector->floorpic], false);
+				HWR_PlaneFlat(&levelflats[gl_frontsector->floorpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], false,
 					// Hack to make things continue to work around slopes.
 					locFloorHeight == cullFloorHeight ? locFloorHeight : gl_frontsector->floorheight,
@@ -2905,7 +3099,7 @@ static void HWR_Subsector(size_t num)
 		{
 			if (sub->validcount != validcount)
 			{
-				HWR_GetLevelFlat(&levelflats[gl_frontsector->ceilingpic], false);
+				HWR_PlaneFlat(&levelflats[gl_frontsector->ceilingpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], true,
 					// Hack to make things continue to work around slopes.
 					locCeilingHeight == cullCeilingHeight ? locCeilingHeight : gl_frontsector->ceilingheight,
@@ -2980,7 +3174,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_GetLevelFlat(&levelflats[*rover->bottompic], rover->fofflags & FOF_SPLAT);
+					HWR_PlaneFlat(&levelflats[*rover->bottompic], rover->fofflags & FOF_SPLAT);
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, viewz < bottomCullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], false, *rover->bottomheight, HWR_RippleBlend(gl_frontsector, rover, false)|PF_Occlude,
 					                HWR_FloorLightLevel(rover->master->frontsector, *gl_frontsector->lightlist[light].lightlevel),
@@ -3026,7 +3220,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_GetLevelFlat(&levelflats[*rover->toppic], rover->fofflags & FOF_SPLAT);
+					HWR_PlaneFlat(&levelflats[*rover->toppic], rover->fofflags & FOF_SPLAT);
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, viewz < topCullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], true, *rover->topheight, HWR_RippleBlend(gl_frontsector, rover, false)|PF_Occlude,
 					                  HWR_CeilingLightLevel(rover->master->frontsector, *gl_frontsector->lightlist[light].lightlevel),
@@ -5642,10 +5836,19 @@ static void HWR_CreateDrawNodes(void)
 			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
 			gl_frontsector = NULL;
 
+#ifdef PS2_PROFILE
+			const UINT32 nt0 = ps2hwp_now();
+#endif
 			if (!(sortnode[sortindex[i]].plane->blend & PF_NoTexture))
 				HWR_GetLevelFlat(sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->chromakeyed);
 			HWR_RenderPlane(NULL, sortnode[sortindex[i]].plane->xsub, sortnode[sortindex[i]].plane->isceiling, sortnode[sortindex[i]].plane->fixedheight, sortnode[sortindex[i]].plane->blend, sortnode[sortindex[i]].plane->lightlevel,
 				sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->FOFSector, sortnode[sortindex[i]].plane->alpha, sortnode[sortindex[i]].plane->planecolormap);
+#ifdef PS2_PROFILE
+			gc.nd_pl++;
+			gc.nd_plc += ps2hwp_now() - nt0;
+			if (sortnode[sortindex[i]].plane->blend & PF_Ripple)
+				gc.nd_rip++;
+#endif
 		}
 		else if (sortnode[sortindex[i]].polyplane)
 		{
@@ -5661,10 +5864,17 @@ static void HWR_CreateDrawNodes(void)
 		}
 		else if (sortnode[sortindex[i]].wall)
 		{
+#ifdef PS2_PROFILE
+			const UINT32 nt1 = ps2hwp_now();
+#endif
 			if (!(sortnode[sortindex[i]].wall->blend & PF_NoTexture))
 				HWR_GetTexture(sortnode[sortindex[i]].wall->texnum, true);
 			HWR_RenderWall(sortnode[sortindex[i]].wall->wallVerts, &sortnode[sortindex[i]].wall->Surf, sortnode[sortindex[i]].wall->blend, sortnode[sortindex[i]].wall->fogwall,
 				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
+#ifdef PS2_PROFILE
+			gc.nd_wl++;
+			gc.nd_wlc += ps2hwp_now() - nt1;
+#endif
 		}
 	}
 
@@ -8385,10 +8595,33 @@ void transform(float *cx, float *cy, float *cz)
 	*cx *= gl_fovlud;
 }
 
+static size_t allocedwalls = 0; // (was a static of HWR_AddTransparentWall; the cache's HWR_GCReserve grows the list too)
+
+#ifdef PS2_PROFILE
+// OPT11 round 2: before the geometry cache replays a record (or starts one) the room it can need is made, because an allocation is where the zone may take the cache's memory back
+// (HWR_GCacheReclaim): nothing of the cache may be in use then. False: the memory went, the caller does it the long way.
+static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw)
+{
+	if (gc.test_res && ++gc.test_n2 == gc.test_res)
+		HWR_GCacheReclaim(0); // (test: the zone takes the cache back where the allocation of the reserve could)
+	HWR_GCBatchReserve((int)np, (int)nv);
+	if (nw)
+	{
+		if (!wallinfo)
+			allocedwalls = 0;
+		if (allocedwalls < numwalls + nw)
+		{
+			while (allocedwalls < numwalls + nw)
+				allocedwalls += MAX_TRANSPARENTWALL;
+			Z_Realloc(wallinfo, allocedwalls * sizeof (*wallinfo), PU_LEVEL, &wallinfo);
+		}
+	}
+	return gc.blk != NULL;
+}
+#endif
+
 void HWR_AddTransparentWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, INT32 texnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap)
 {
-	static size_t allocedwalls = 0;
-
 	if (!r_renderwalls)
 		return;
 

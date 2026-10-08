@@ -124,8 +124,8 @@ void PS2HWD_ProfExtra(unsigned int frames)
 	PS2HWD_SprProf(frames); // HWPROF42 (ps2_hw_spr.inc)
 	I_OutputMsg("HWPROF40 sprites (FX2): things=%u projected=%u behind=%u quadhidden=%u vissprites=%u shadows=%u shadowhidden=%u prefiltered=%u drawn_hidden=%u drawn_with_shadow=%u rolled=%u noext=%u\n", ps2hwp_cnt[HWC_FX_THINGS] / frames, ps2hwp_cnt[HWC_FX_PROJ] / frames, ps2hwp_cnt[HWC_FX_BEHIND] / frames,
 		ps2hwp_cnt[HWC_FX_QHID] / frames, ps2hwp_cnt[HWC_FX_VIS] / frames, ps2hwp_cnt[HWC_FX_SHADOW] / frames, ps2hwp_cnt[HWC_FX_SHQHID] / frames, ps2hwp_cnt[HWC_FX_PRE] / frames, ps2hwp_cnt[HWC_FX_SPRHID] / frames, ps2hwp_cnt[HWC_FX_SPRSH] / frames, ps2hwp_cnt[HWC_FX_ROLL] / frames, ps2hwp_cnt[HWC_FX_NOEXT] / frames);
-	I_OutputMsg("HWPROF31 AddLine: calls=%u backface=%u clipped=%u empty=%u | boxes=%u rejected=%u\n", ps2hwp_cnt[HWC_AL_CALLS] / frames, ps2hwp_cnt[HWC_AL_BACK] / frames, ps2hwp_cnt[HWC_AL_CLIP] / frames,
-		ps2hwp_cnt[HWC_AL_EMPTY] / frames, ps2hwp_cnt[HWC_AL_BOX] / frames, ps2hwp_cnt[HWC_AL_BOXREJ] / frames);
+	I_OutputMsg("HWPROF31 AddLine: calls=%u backface=%u clipped=%u empty=%u | boxes=%u rejected=%u | vertex angle hits=%u\n", ps2hwp_cnt[HWC_AL_CALLS] / frames, ps2hwp_cnt[HWC_AL_BACK] / frames, ps2hwp_cnt[HWC_AL_CLIP] / frames,
+		ps2hwp_cnt[HWC_AL_EMPTY] / frames, ps2hwp_cnt[HWC_AL_BOX] / frames, ps2hwp_cnt[HWC_AL_BOXREJ] / frames, ps2hwp_cnt[HWC_AL_VHIT] / frames);
 	I_OutputMsg("HWPROF30 complex segs by first reason: polyseg=%u ffloors=%u slope=%u heightsec=%u lights=%u midtex=%u back=%u\n", ps2hwp_cnt[HWC_SR_POLY] / frames, ps2hwp_cnt[HWC_SR_FFLOORS] / frames, ps2hwp_cnt[HWC_SR_SLOPE] / frames,
 		ps2hwp_cnt[HWC_SR_HEIGHTSEC] / frames, ps2hwp_cnt[HWC_SR_LIGHTS] / frames, ps2hwp_cnt[HWC_SR_MID] / frames, ps2hwp_cnt[HWC_SR_BACK] / frames);
 	I_OutputMsg("HWPROF16 segs: one-sided simple=%u two-sided simple=%u complex=%u\n", ps2hwp_cnt[HWC_SEG_SIMPLE1] / frames, ps2hwp_cnt[HWC_SEG_SIMPLE2] / frames, ps2hwp_cnt[HWC_SEG_COMPLEX] / frames);

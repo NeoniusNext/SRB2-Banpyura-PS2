@@ -900,6 +900,20 @@ UINT32 HWR_PS2_TexTransparent(INT32 tex)
 		return 0;
 	return (gl_textures[tex].mipmap.flags & TF_TRANSPARENT) ? 1u : 0u;
 }
+
+// The word of a side texture in the key of the cache: the translated number (texture animation) and the TF_TRANSPARENT bit of its mipmap; 0 for no texture. One call for
+// what were two (R_GetTextureNum, HWR_PS2_TexTransparent) with their bounds tests. raw: the number in the sidedef.
+UINT32 HWR_PS2_SideTexWord(INT32 raw)
+{
+	INT32 t;
+
+	if (raw < 0 || raw >= numtextures)
+		return 0;
+	t = texturetranslation[raw];
+	if (!t)
+		return 0;
+	return (UINT32)t | ((gl_textures && t > 0 && t < (signed)gl_numtextures && (gl_textures[t].mipmap.flags & TF_TRANSPARENT)) ? 0x80000000u : 0u);
+}
 #endif
 
 void HWR_FreeTextureData(patch_t *patch)
