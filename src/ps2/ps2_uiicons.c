@@ -16,7 +16,7 @@ _Static_assert(sizeof uiicons / sizeof uiicons[0] == PS2UI_NUMICONS, "ps2_uiicon
 static patch_t *iconpatch[PS2UI_NUMICONS], *iconpatch_small[PS2UI_NUMICONS];
 static boolean icontried[PS2UI_NUMICONS], icontried_small[PS2UI_NUMICONS];
 
-boolean ps2ui_bigicons, ps2ui_hideicons;
+boolean ps2ui_bigicons, ps2ui_hideicons, ps2ui_hidetext;
 
 // control character -> icon (the order of PS2I_* in ps2_uiicons.h)
 static const SINT8 uitokenicon[0x16] =

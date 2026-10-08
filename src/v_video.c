@@ -2325,6 +2325,9 @@ void V_DrawFontStringAtFixed(fixed_t x, fixed_t y, INT32 option, fixed_t pscale,
 			continue;
 		}
 
+#ifdef PS2
+		if (!ps2ui_hidetext) // (the check of the icons: the letters take their room but are not drawn, to find the pixels that they cover)
+#endif
 		V_DrawStretchyFixedPatch(cx + center, cy, pscale, vscale, option, font.chars[c], V_GetStringColormap(charflags));
 
 		cx += w + (font.kerning<<FRACBITS);

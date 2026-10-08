@@ -78,12 +78,13 @@ def parse(text, menus):
         if m and cur is not None:
             rest = m.group(8)
             pm = re.search(r'(\d+)x(\d+) menu_pixels=(\d+) under=(\d+) within2=(\d+) (ok|OVERLAP)', rest)
-            im = re.search(r'icons=(\d+) on_text=(\d+) icon_icon=(\d+) text_on_icon=(\d+)(?: ink=(\d+) touch=(\d+))? (iconok|ICONOVERLAP)', rest)
+            im = re.search(r'icons=(\d+) on_text=(\d+) icon_icon=(\d+) text_on_icon=(\d+)(?: ink=(\d+) touch=(\d+))? (iconok|ICONOVERLAP)(?: x=(\d+)\.\.(\d+))?', rest)
             plates = re.findall(r'\[(-?\d+),(-?\d+),(\d+)x(\d+)\]', rest)
             cur['checks'].append({'item': int(m.group(2)), 'kind': int(m.group(4)), 'how': m.group(5) + m.group(6), 'plates': [tuple(map(int, p)) for p in plates],
                                   'size': (int(pm.group(1)), int(pm.group(2))) if pm else None, 'pixels': int(pm.group(3)) if pm else None,
                                   'under': int(pm.group(4)) if pm else None, 'near': int(pm.group(5)) if pm else None, 'overlap': bool(pm and pm.group(6) == 'OVERLAP'),
-                                  'icons': int(im.group(1)) if im else 0, 'icon_bad': bool(im and im.group(7) == 'ICONOVERLAP'), 'hints': 0, 'dups': 0})
+                                  'icons': int(im.group(1)) if im else 0, 'icon_bad': bool(im and im.group(7) == 'ICONOVERLAP'), 'hints': 0, 'dups': 0,
+                                  'xl': int(im.group(8)) if im and im.group(8) else None, 'xr': int(im.group(9)) if im and im.group(9) else None})
             continue
         m = re.match(r'HINTCHK menu=(\d+) item=(\d+)/(\d+) hints=(\d+) dup=(\d+)', line)
         if m and cur is not None and cur['checks']:
@@ -152,12 +153,15 @@ def main():
         totals['dups'] = totals.get('dups', 0) + hd
         for k in cnt:
             totals[k] += cnt[k]
-        rows.append((idx, m['name'], n, cnt, ov, ic, icbad, hn, hd))
-    lines = ['| # | menu | items | one line | raised | stacked | icons | moved | hidden | overlaps | icons in text | icon overlaps | hints | duplicates |', '|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|']
-    for idx, name, n, cnt, ov, ic, icbad, hn, hd in rows:
+        xs = [c['xl'] for c in m['checks'] if c.get('xl') is not None and c['icons']]
+        xe = [c['xr'] for c in m['checks'] if c.get('xr') is not None and c['icons']]
+        xrange_ = '%d..%d' % (min(xs), max(xe)) if xs and xe else '-'
+        rows.append((idx, m['name'], n, cnt, ov, ic, icbad, hn, hd, xrange_))
+    lines = ['| # | menu | items | one line | raised | stacked | icons | moved | hidden | overlaps | icons in text | icon overlaps | hints | duplicates | x range (states with icons) |', '|--:|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|--:|']
+    for idx, name, n, cnt, ov, ic, icbad, hn, hd, xrange_ in rows:
         verdict = ('%d/%d' % (ov, n)) if n else 'not drawn'
-        lines.append('| %d | %s | %d | %d | %d | %d | %d | %d | %d | %s | %d | %s | %d | %s |' % (idx, name, n, cnt['L'], cnt['R'], cnt['S'], cnt['I'], cnt['M'], cnt['-'], verdict, ic, ('%d/%d' % (icbad, n)) if n else '-', hn, ('%d/%d' % (hd, n)) if n else '-'))
-    lines.append('| | **all** | %d | %d | %d | %d | %d | %d | %d | **%d/%d** | %d | **%d/%d** | %d | **%d/%d** |' % (totals['items'], totals['L'], totals['R'], totals['S'], totals['I'], totals['M'], totals['-'], totals['overlap'], totals['items'], totals.get('icons', 0), totals.get('icon_bad', 0), totals['items'], totals.get('hints', 0), totals.get('dups', 0), totals['items']))
+        lines.append('| %d | %s | %d | %d | %d | %d | %d | %d | %d | %s | %d | %s | %d | %s | %s |' % (idx, name, n, cnt['L'], cnt['R'], cnt['S'], cnt['I'], cnt['M'], cnt['-'], verdict, ic, ('%d/%d' % (icbad, n)) if n else '-', hn, ('%d/%d' % (hd, n)) if n else '-', xrange_))
+    lines.append('| | **all** | %d | %d | %d | %d | %d | %d | %d | **%d/%d** | %d | **%d/%d** | %d | **%d/%d** | |' % (totals['items'], totals['L'], totals['R'], totals['S'], totals['I'], totals['M'], totals['-'], totals['overlap'], totals['items'], totals.get('icons', 0), totals.get('icon_bad', 0), totals['items'], totals.get('hints', 0), totals.get('dups', 0), totals['items']))
     if skipped:
         lines.append('')
         lines.append('not drawn by the crawler (hang / crash): ' + ', '.join('%d %s' % s for s in skipped))

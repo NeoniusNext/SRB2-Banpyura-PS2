@@ -51,6 +51,7 @@ INT32 PS2UI_TokenIcon(UINT8 c);
 // and the SMALL ones (7 px: the cap height of the menu fonts, whose lines are 8 px apart; tools/ps2/ui_icons_pixel.py build_small). A string takes the small ones unless
 // ps2ui_bigicons is set or the font's capital letters are 13 px or more (PS2UI_SmallFor), so that an icon is never taller than the line it stands in.
 extern boolean ps2ui_bigicons;   // set while a string with room for large icons is drawn (the corner hints, the network screen)
+extern boolean ps2ui_hidetext;   // the same for the letters of the font strings (the check finds the pixels of the text by drawing the menu without it)
 extern boolean ps2ui_hideicons;  // set by the check of ps2_menuhints.c: an icon takes its room in the string but is not drawn
 boolean PS2UI_SmallFor(INT32 capheight);
 // the icon as a patch (created on first use, kept), NULL when there is no room for it; the small one when `small` and there is one

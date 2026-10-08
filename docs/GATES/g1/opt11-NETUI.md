@@ -193,3 +193,93 @@
 5. **Картинки по меню (Software и Hardware, угол ×3):** `hints-corners-sw.png`, `hints-corners-hw.png` (нижние 44 строки девяти меню, увеличены ×3), `hints-menus-sw.png`, `hints-menus-hw.png` (целиком), `hints-menus-sw-640x480.png`, `hints-menus-sw-320x256.png`, `hints-menus-sw-640x512.png` (другие форматы).
    Hardware рисует те же подсказки той же раскладкой (в логе MHCHECK Hardware: те же плашки, что в Software, для всех 70 меню; единственное различие в таблицах — у `OP_ScreenshotOptionsDef` 10 выбираемых пунктов вместо 11: часть пунктов этого меню включается и выключается по состоянию cvar'ов (Storage Location, Capture Mode), `Screenshot_option_Onchange` и соседние `*_Onchange` пересчитывают их).
 
+
+## 6. Правки в чужих (общих) файлах — точечные
+
+Рендерер Hardware (`hw_main.c`, `ps2_hwd*`, `ps2_hwfb.c`) и звук **не менялись**. Остальное общее:
+
+| Файл | Что (все правки под `#ifdef PS2`, ПК-сборка не затронута: собрана `ninja -C build/pc-netui SRB2SDL2`, 0 ошибок) |
+|---|---|
+| `src/d_main.c` | `#include "ps2/ps2_menuhints.h"`; в `D_Display`, ветка `GS_LEVEL`, перед `ST_Drawer()`: `PS2MenuHints_Begin()` (с началом HUD запоминаются 2D-вызовы кадра с открытым меню) — 4 строки |
+| `src/ps2/i_video.c` | `PS2MenuHints_RegisterCvars()` в конце `Vid_InitCvars`; `-vidshot` виды `n` (кадр экрана сети) и `m` (кадр серии `-menuseq`), клавиша `f7` у `-vidkeys`, вызов `PS2MenuHints_SeqTick()` — всё отладочное, без `-vidshot` ничего не делает |
+| `src/v_video.c` | управляющие символы 0x01..0x15 как иконки в `V_DrawFontStringAtFixed`, `V_FontStringWidth`, `V_FontWordWrap`; пять хуков `if (ps2mh_recording && PS2MenuHints_Note…())` (`V_DrawStretchyFixedPatch`, `V_DrawCroppedPatch`, `V_DrawFill`, `V_DrawFadeFill`, `V_DrawFlatFill`); без меню флаг `ps2mh_recording` ложен |
+| `src/m_menu.c` | `M_PRESENT_WAITBOX` (3 окна ожидания), `M_StartMessage` через `PS2UI_Message`, подписи «Press ESC» → иконки, заголовок и имена кнопок Setup Controls, `controlheight` 18→16 и `scrollareaheight` 72→68 (PS2), пункт Banpyura Options «Menu Button Hints», `M_PS2MenuKind/List/Enter/Cursor`, вызовы `PS2MenuHints_MenuStart()` / `PS2MenuHints_Draw()` в `M_Drawer` |
+| `src/netcode/client_connection.c`, `commands.c` | подсказки экранов подключения с иконками (`HINT_*`); `connect` не показывает старое окно, если экран сети уже сказал об ошибке (`PS2Net_Reported`) |
+| `src/ps2/ps2_net.c`, `ps2_net.h`, `ps2_osk.c/.h`, `tools/ps2/sources.txt` | переписан подъём сети; строка подсказок экранной клавиатуры; три новых файла в списке сборки |
+
+Для сводки `docs/DEVIATIONS.md` (файл не правил — общий): «PS2-330..339 | Только PS2 (`src/ps2/ps2_netui.c`, `ps2_net.c`, `ps2_uiicons*.c`, `ps2_menuhints.c`, точечно `m_menu.c`, `v_video.c`, `d_main.c`) | Экран подъёма сети (в Software и Hardware, отмена, окно ошибки), иконки кнопок DualShock в строках (символы 0x01..0x15), подсказки кнопок по углам меню с проверкой отсутствия перекрытий; Setup Controls и прокручиваемые меню на 1–2 строки короче; геймплей, рендереры и сеть-протокол не затронуты. Проверка: `opt11-NETUI.md`.»
+
+## 7. Реестр записей PS2-330..349
+
+| № | Что | Где |
+|---|---|---|
+| PS2-330 | подъём сети опросом (`Bringup`, шаг 100 мс, отмена Circle/Esc, повтор, окно ошибки) и экран сети в стиле меню в обоих рендерерах | `src/ps2/ps2_net.c`, `ps2_netui.c/.h`, `commands.c` (`PS2Net_Reported`) |
+| PS2-331 | `-vidshot nN` (кадр экрана сети), отладочные `-netslow`, `-netuiready`, `-netuifail` | `src/ps2/i_video.c`, `ps2_netui.c` |
+| PS2-332 | окна ожидания меню Multiplayer («Searching for servers...», «Fetching room info...», «Connecting to server...») показываются и в Hardware (`M_PRESENT_WAITBOX`) | `src/m_menu.c` |
+| PS2-333 | иконки кнопок: генератор пиксель-артом с проверкой симметрии, эталон с листа | `tools/ps2/ui_icons*.py`, `src/ps2/ps2_uiicons_data.inc` |
+| PS2-334 | управляющие символы 0x01..0x15 в строках (`V_DrawString`, `V_StringWidth`, `V_WordWrap`) | `src/v_video.c`, `ps2_uiicons.c/.h` |
+| PS2-335 | иконки на экране сети | `ps2_netui.c` |
+| PS2-336 | иконки в остальных подсказках (экраны подключения, окна «Press…», экранная клавиатура, Setup Controls), тестовая карта `ps2_icons` | `client_connection.c`, `m_menu.c`, `ps2_osk.c`, `ps2_uiicons.c` |
+| PS2-337 | не использован | — |
+| PS2-338 | подсказки кнопок меню: данные, виды пунктов, cvar `menuhints`, пункт в Options | `src/ps2/ps2_menuhints.c/.h`, `m_menu.c` (`M_PS2MenuKind`, пункт Banpyura Options) |
+| PS2-339 | отсутствие перекрытий: карта занятости кадра, поля и безопасная зона, порядок вариантов, пиксельная проверка, обход всех меню, самопроверки геометрии и размещения | `ps2_menuhints.c`, хуки в `v_video.c`, `d_main.c`, `m_menu.c` (`M_PS2MenuList`, `M_PS2MenuEnter`), `tools/ps2/menu_crawl.py`, `menu_go_shots.py`, `menu_hint_diff.py` |
+| PS2-340 | малый набор иконок (7 px, 20 штук) для строк шрифта; размер выбирает шрифт (`PS2UI_SmallFor`), иконка по центру чернильных строк заглавных (`PS2_CapInk`), большие (13 px) остаются для угловых плашек; колонка клавиш Setup Controls мерится вместе с иконками и укорачивается (`M_ShortKeyName`, `M_PS2ControlText`); пункт списка меню «Setup Controls второго игрока» | `ui_icons_pixel.py`, `ui_icons_build.py`, `ps2_uiicons_data.inc`, `ps2_uiicons.c`, `v_video.c`, `m_menu.c` |
+| PS2-341 | «одна подсказка — одно место»: при `menuhints On` собственные строки-подсказки меню и окон не рисуются (`PS2MenuHints_Shows`, `StripHintLines`), при `Off` возвращаются с иконками; журнал подсказок кадра (кнопка, подпись) и проверка дубликатов (`HINTCHK ... dup=`) | `ps2_menuhints.c`, `ps2_uiicons.c`, `m_menu.c`, `ps2_osk.c`, `ps2_netui.c`, `client_connection.c` |
+| PS2-342 | автопроверка иконок в строках: прямоугольники иконок и символов кадра (Software и Hardware) и пиксели текста (Software), `ICONCHK` / `MHCHECK ... ICONOVERLAP`, тест на заведомо плохом случае `-iconsbig`; обход Setup Controls обоих игроков с длинными именами клавиш и всеми кнопками пада (`--stress-controls`), экранная клавиатура над полями ввода, окно подтверждения видеорежима | `ps2_menuhints.c`, `menu_crawl.py`, `menu_go_shots.py`, `menu_crawl_icons.py` |
+| PS2-343..349 | свободны | — |
+
+## 8. Иконки в строках текста и Setup Controls (PS2-340, PS2-342)
+
+**Сдано без проверки (по решению пользователя: «без тестов, сразу»).** Последняя сборка (`build/out4/SRB2.ELF`, HW+SW, и ПК `build/pc-netui`) только **собирается**; после неё эмулятор не запускался, golden не прогонялся. Поэтому `menuhints` по умолчанию **Off** (в Options → Banpyura включается пунктом «Menu Button Hints»). Что было и что не было запущено, см. ниже.
+
+**Что сделано.**
+* Малый набор 7 px (`icons-small-contact.png`, `icons-small-real-size.png`): ✕ ○ □ △, L1/R1/L2/R2, Start/Select, стрелки D-pad (↑ ↓ ← →, ↕, ↔), стики L/R, L3/R3. Нарисованы вручную, сборка проверяет симметрию (таблица в выводе `ui_icons_build.py`: силуэты 0 px по обеим осям там, где форма симметрична). Движок берёт размер по шрифту: у шрифта с заглавными ниже 13 px — малый, иначе большой; угловые подсказки (плашка 15 px) рисуются большим набором. Иконка не выше строки, стоит по центру чернильных строк заглавных (у `hu_font` это строки 1..7 клетки 8x8), зазор до соседей ≥ 1 px.
+* Setup Controls: ширина колонки считается с настоящей шириной иконок, правый край — 24 px от края экрана (overscan), 8 px до названия; не влезает — «LEFT ARROW → LEFT, LSHIFT → LSHFT, SPACE → SPC, KEYPAD 4 → KP4 …», дальше только первая клавиша. Высота строки списка 16 вместо 18, прокрутка 68 вместо 72. Окно «ждёт кнопку» на PS2: «Press a button for X».
+* Автопроверка: в каждом кадре иконки против букв, других иконок и картинок (прямоугольники, Software и Hardware) и против пикселей текста (Software). Результат: `MHCHECK … icons= on_text= icon_icon= text_on_icon= ink= touch= iconok|ICONOVERLAP`, для экранов вне меню `ICONCHK screen=…`.
+
+**Запущено (до команды остановиться; сборка `out2`/`out3`, Software 320x200, эмулятор `netui1`):**
+
+| Экран | состояний | иконок в тексте | перекрытий иконок |
+|---|--:|--:|--:|
+| Setup Controls, P1, стандартные клавиши (все страницы, обе колонки) | 39 | 170 | **0/39** |
+| Setup Controls, P2, стандартные клавиши | 31 | 133 | **0/31** |
+| Setup Controls, P1, длинные имена клавиш + все 16 кнопок пада (`--stress-controls`) | 39 | 203 | **0/39** |
+| Setup Controls, P2, то же | 31 | 186 | **0/31** |
+| **Тот же P1 с иконками 13 px (`-iconsbig`, как было у пользователя)** | 39 | 203 | **39/39** (проверка видит ошибку) |
+| Экранная клавиатура над MP_ConnectDef / MP_PlayerSetupDef | 4 + 4 | 20 + 20 | **0/4, 0/4** |
+| Окно видеорежима «keep this mode» | 1 | 0 (строки скрыты углом) | 0/1 |
+| MessageDef (короткое, длинное, да/нет, ожидание кнопки) | 4 | 0 (строки скрыты углом) | 0/4 |
+
+Файлы таблиц: `crawl-stress-p1.md`, `crawl-stress-p2.md`, `crawl-iconsbig-negative-p1.md`, `crawl-osk-sw.md`. Картинки ×4 (строки Jump/Spin и соседние, до — иконки 13 px, после — 7 px): `setup-controls-before-after-x4.png`; стресс-набор ×4 и 4 страницы ×1: `setup-controls-stress-x4.png`, `setup-controls-stress.png`.
+
+**Не закрыто / не проверено:**
+* Полный обход всех меню с новыми проверками (`crawl-sw-320x200-out3.md`, сборка out3): **10/478 состояний с перекрытием иконки** — все в Record Attack / NiGHTS Attack / Marathon (строка «○ Exit» на собственном фоне меню). После этого пиксельная часть проверки переписана (текст ищется отрисовкой меню без букв, нестабильные пиксели анимированного фона исключены): Record/NiGHTS Attack 0/3 и 0/3, **Marathon осталось 1/5** (не разобрано: возможно, анимация фона, возможно, настоящее касание). Обход в остальных пяти режимах (SW 640x480, PAL, HW) на последней сборке **не делался** (старые таблицы `crawl-*.md` без колонок иконок и дубликатов).
+* Hardware: пиксельной проверки нет (только прямоугольники); Setup Controls и угловые подсказки на последней сборке в Hardware **не запускались**.
+* Экран сети и экраны подключения с `-iconcheck` (`netui_icnet.sh`) **не запускались**; `-netfakelink` (нет линка) не запускался вообще.
+* Сетевые сессии (сборка out1, до малого набора иконок): PS2-клиент SW ↔ ПК-сервер — прошла; ПК-клиент ↔ PS2-сервер SW и HW — прошли (NETSYNC gametic=1400); **PS2-клиент Hardware ↔ ПК-сервер — не прошла** (первый раз «эмулятор застыл», второй — таймаут 900 с, `NETSYNC gametic=600` не достигнут); причина не выяснена (не проверено, связано ли это с экраном сети).
+* Golden `ps2-head` (0 differ) после правок **не прогонялся**. ПК-сборка (`ninja -C build/pc-netui SRB2SDL2`) собирается.
+* Реальное железо ничего не проверялось. Основная ветка `claude/lucid-mayer-1izlqe` не вливалась по решению координатора.
+
+## 9. Одна подсказка — одно место (PS2-341)
+
+### 9.1 Опись: где движок сам показывает подсказки кнопок (до правки) и что делает «одна подсказка — одно место»
+
+| № | Где | Что говорилось | С `menuhints On` (по умолчанию) | С `menuhints Off` | Угловая подсказка (On) |
+|--:|---|---|---|---|---|
+| 1 | Setup Controls, под заголовком (`M_DrawControl`) | «Press Enter to change, Backspace to clear» → на PS2 «✕ Change □ Clear» | строка не рисуется (угол говорит то же) | «✕ Change □ Clear» (с иконками) | «↕ Select ✕ Assign / □ Clear ○ Back» |
+| 2 | Record Attack / NiGHTS Attack / Marathon, слева внизу | «Press ESC to exit» → «○ Exit» | не рисуется, если угол показан; если места в углу нет (экран закрыт картинкой), остаётся она одна | «○ Exit» | «○ Back» |
+| 3 | Окна-сообщения (`M_StartMessage` → `PS2UI_Message`) | «(Press a key)», «Press ESC», «Press ENTER … or ESC to cancel», «(Press 'Y' to confirm)», «(Press 'Y' to quit)», «(Y/N)» | строки-подсказки убираются из окна (текст сообщения остаётся) | те же строки с иконками: «Press ✕ or ○», «(Press ✕ to confirm)», «(✕ Yes ○ No)» | «✕ OK ○ Close» / «✕ Yes ○ No» |
+| 4 | Окно «ждёт новую кнопку» (Setup Controls) | «Hit the new key for X / ESC for Cancel» → на PS2 «Press a button for X» | (угол пуст: вид CAPTURE) | то же | нет (любая кнопка назначается, подсказка в самом окне) |
+| 5 | Меню видеорежима после смены | «Press ENTER again to keep this mode / or press ESC to return» → «✕ … / ○ …» | обе строки не рисуются | обе строки с иконками | «✕ Keep this mode / ○ Return» |
+| 6 | Экранная клавиатура | своя строка «✕ type □ shift △ del ▶ ok ○ close» | на время клавиатуры угол выключен: подсказка одна | то же | (выключен) |
+| 7 | Экраны подключения к серверу (`client_connection.c`) | `HINT_ABORT/CANCEL/BACK/SCROLL/DOWNLOAD/JOIN/SWITCH` | это не меню: угловых подсказок нет, строка одна | то же | нет |
+| 8 | Экран подъёма сети | нижняя строка «○ Cancel / ✕ Continue / ✕ Try again / ○ Back» | то же (не меню, углов нет) | то же | нет |
+| 9 | Заставка «Press ENTER to skip…» (`f_finale.c`) | клавиатурное слово | не меню, углов нет; не менялась | то же | нет |
+| 10 | «Press F11 to toggle fullscreen» (меню видеорежимов) | клавиатура | на PS2 уже заменена на «Output format: Video Options» (не подсказка кнопки) | то же | нет |
+
+**Правило.** С `menuhints On` угол говорит кнопки текущего пункта, строки меню и окон с теми же кнопками не рисуются (если угол не поместился — «hidden» в таблице обхода — остаётся единственная собственная строка); с `Off` собственные строки возвращаются с иконками. В углах порядок один: слева движение и главная кнопка (↕ Select, ↔ Change, ✕ OK), справа боковые (□ △) и ○ последней; один набор не повторяет ни кнопку, ни действие.
+
+**Автопроверка дубликатов.** Каждый кадр ведёт журнал (кнопка, подпись) всех подсказок: угловых, собственных строк меню, окон, экранной клавиатуры, экранов сети и подключения (`HINTCHK … hints=N dup=M`). Одна и та же кнопка или одна и та же подпись дважды в кадре — дубликат; обход меню считает кадры с дубликатами.
+
+**Запущено:** Setup Controls P1 (39 состояний) и P2 (31), стресс-набор (39 + 31), экранная клавиатура (8), окна (4), видеорежим (1) — **дубликатов 0** во всех (таблицы файлов выше; колонки «hints / duplicates»). Полный обход (`crawl-sw-320x200-out3.md`, 478 состояний, 1664 подсказок): **дубликатов 0/478**. Закрытое сравнение «до/после» Setup Controls: до — заголовок «✕ Change □ Clear» и угол «✕ Select ✕ Assign □ Clear ○ …» (скриншот пользователя), после — заголовок не рисуется, угол «↕ Select ✕ Assign / □ Clear ○ Back» (проверено `ctl-sw` на сборке out2; картинка `setup-controls-stress.png`).
+**Не запущено:** дубликаты в Hardware на последней сборке, при `menuhints Off` (возврат собственных строк) на последней сборке, экраны сети и подключения, 5 режимов обхода кроме SW 320x200.
