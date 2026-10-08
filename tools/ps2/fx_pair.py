@@ -41,6 +41,7 @@ def main():
     ap.add_argument('--addon', default='', help='a PWAD/pk3 loaded with -file on both sides (tools/ps2/make_fxflat.py)')
     ap.add_argument('--tree', default='', help='a directory copied into the home of the PC engine and next to the PS2 ELF (models.dat, models/*.md3: tools/ps2/make_fxmodel.py)')
     ap.add_argument('--hwargs', default='')
+    ap.add_argument('--pak', default='', help='OPT11-MODEL: folder with the packs of the PS2 run (default build/pak; build/pak-m has MODELS.PAK too)')
     ap.add_argument('--zreserve', default='1536')
     ap.add_argument('--timeout', type=float, default=900)
     ap.add_argument('--norun', action='store_true')
@@ -85,6 +86,8 @@ def main():
             cmd += ['--files', ','.join(str(Path(f).resolve()) for f in a.addon.split(',') if f)]
         if a.tree:
             cmd += ['--tree', str(Path(a.tree).resolve())]
+        if a.pak:
+            cmd += ['--pak', a.pak]
         if a.emu:
             cmd += ['--emu', a.emu]
         cmd += ['--', '-skipintro', '-warp', a.map, '-renderer', 'Hardware', '-zreserve', a.zreserve, '-vidshot', spec, '-hwfbh', '200', '-hwlt', str(a.lt if a.lt >= 0 else a.tick + 1)]
