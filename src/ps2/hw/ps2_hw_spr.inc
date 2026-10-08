@@ -14,8 +14,9 @@
 
 #ifdef __mips__
 
-#define SPR_MAXENT 896 // entries of the list of the sprites, SPR_MAXSHD of the shadows; a sprite that finds the list full takes the old way (DEMO_004: 650 sprites and 190 shadows a frame at most)
-#define SPR_MAXSHD 256
+#define SPR_MAXENT 512 // entries of the list of the sprites, SPR_MAXSHD of the shadows; a sprite that finds the list full takes the old way (the batch). 896 + 256 (what DEMO_004 would fill: 650 + 190) took 66 KB more of the zone and DEMO_003 ended with "Out of memory allocating 663552 bytes" on the merged tree: the sizes are memory, not speed (the batch takes the overflow at the same EE cost)
+#define SPR_MAXSHD 160
+#define SPR_MAXBUF 1024 // the largest list the command line may ask for (-hwsprent / -hwsprshd), and the size of the group array
 #define SPR_NGROUP 16 // plans (groups of equal surface) of a list that are told apart; the entries of the last group may differ
 
 typedef ps2spr_t spr_ent_t;
@@ -29,7 +30,7 @@ static struct
 {
 	spr_ent_t *ent[2]; // [0] shadows, [1] sprites (zone blocks, PS2HWD_Init)
 	u32 n[2], cap[2];
-	u8 gid[SPR_MAXENT]; // the group of every entry of the list being drawn (0xFF: skipped, 0xFE: the way of the single draws)
+	u8 gid[SPR_MAXBUF]; // the group of every entry of the list being drawn (0xFF: skipped, 0xFE: the way of the single draws)
 	int in_flush; // diagnostics: PS2HWD_SprFlush is running
 	// the plan the sprite chunk is in
 	int valid;
@@ -67,8 +68,8 @@ static void spr_alloc(void)
 		ne = (u32)atoi(M_GetNextParm());
 	if (M_CheckParm("-hwsprshd") && M_IsNextParm())
 		ns = (u32)atoi(M_GetNextParm());
-	ne = ne < 16 ? 16 : ne > SPR_MAXENT ? SPR_MAXENT : ne;
-	ns = ns < 16 ? 16 : ns > SPR_MAXENT ? SPR_MAXENT : ns;
+	ne = ne < 16 ? 16 : ne > SPR_MAXBUF ? SPR_MAXBUF : ne;
+	ns = ns < 16 ? 16 : ns > SPR_MAXBUF ? SPR_MAXBUF : ns;
 	SPR.ent[0] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * ns, PU_STATIC, NULL, 6);
 	SPR.ent[1] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * ne, PU_STATIC, NULL, 6);
 	if (!SPR.ent[0] || !SPR.ent[1])
