@@ -2545,12 +2545,20 @@ static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
 }
 #endif
 
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-214): half of the calls of HWR_AddLine are segs that face away: they are rejected after the two angles, and the function saved and restored ten registers for
+// the part that follows. The rest is a function of its own; the front keeps what the rejected seg needs.
+static void HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2);
+#endif
+
 static void HWR_AddLine(seg_t * line)
 {
 	angle_t angle1, angle2;
 
+#ifndef PS2_PROFILE
 	// SoM: Backsector needs to be run through R_FakeFlat
 	static sector_t tempsec;
+#endif
 
 	fixed_t v1x, v1y, v2x, v2y; // the seg's vertexes as fixed_t
 	if (line->polyseg && !(line->polyseg->flags & POF_RENDERSIDES))
@@ -2612,6 +2620,16 @@ static void HWR_AddLine(seg_t * line)
 		HWD_ADD(HWC_AL_BACK);
 		return;
 	}
+
+#ifdef PS2_PROFILE
+	HWR_AddLineSeen(line, angle1, angle2);
+}
+
+static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2)
+{
+	// SoM: Backsector needs to be run through R_FakeFlat
+	static sector_t tempsec;
+#endif
 
 	// PrBoom: use REAL clipping math YAYYYYYYY!!!
 
