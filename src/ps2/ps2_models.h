@@ -34,6 +34,9 @@ void PS2Models_Touch(model_t *model);
 // Frees a model made by PS2Models_Load (the block, its sprite 2 tables, readjusted texture coordinates): owner is cleared by Z_Free.
 void PS2Models_Free(model_t *model);
 
+// The size of a model made by PS2Models_Load (0 = unknown: a loose file): the farthest vertex from its origin over every frame, in 1/64 MD3 units (the units of the vertices)
+float PS2Models_Radius(const model_t *model);
+
 // True if `model` was made by PS2Models_Load
 boolean PS2Models_Is(const model_t *model);
 
@@ -68,7 +71,8 @@ void PS2Models_FreeBlend(ps2_blend_t *b);
 // Does the pack hold a blend map for `rel` (without loading it)
 boolean PS2Models_HasBlend(const char *rel);
 
-// statistics line (console command ps2_models)
+// statistics: alive, KiB alive, loads, frees, reclaims, loads refused for memory, damaged, cycles of all loads, cycles of the longest load
+void PS2Models_Stats(unsigned int *out);
 void PS2Models_Report(void);
 
 #endif // PS2_PROFILE

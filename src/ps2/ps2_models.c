@@ -24,6 +24,7 @@
 #include "../command.h"
 #include "../hardware/hw_glob.h"
 #include "ps2_models.h"
+#include "ps2_mem.h"
 
 #ifdef PS2_PROFILE
 
@@ -156,12 +157,14 @@ typedef struct
 	model_t *model;
 	size_t bytes;
 	UINT32 stamp; // Z_FrameCount() of the last use
+	md2_t *md2; // its owner (the table entry whose retry time is set when the model is taken back)
+	float radius; // of the model, in the units of its vertices (1/64 of an MD3 unit): the farthest vertex over every frame
 } live_t;
 
 static live_t live[MAXLIVE];
 static size_t live_bytes;
 static boolean hook_added;
-static UINT32 st_loads, st_frees, st_reclaims, st_fail_mem, st_fail_bad, st_reload_same_frame;
+static UINT32 st_loads, st_frees, st_reclaims, st_fail_mem, st_fail_bad, st_reload_same_frame, st_load_cyc, st_load_max;
 
 static live_t *Live_Find(const model_t *m)
 {
@@ -176,6 +179,13 @@ static live_t *Live_Find(const model_t *m)
 boolean PS2Models_Is(const model_t *model)
 {
 	return model && Live_Find(model) != NULL;
+}
+
+float PS2Models_Radius(const model_t *model)
+{
+	const live_t *l = Live_Find(model);
+
+	return l ? l->radius : 0.0f;
 }
 
 void PS2Models_Touch(model_t *model)
@@ -217,27 +227,33 @@ void PS2Models_Free(model_t *model)
 }
 
 // the least recently used model not used in this frame; NULL if every one is in use
-static live_t *Live_Victim(void)
+static live_t *Live_Victim(UINT32 minage)
 {
 	const UINT32 now = Z_FrameCount();
 	live_t *v = NULL;
 	int i;
 
 	for (i = 0; i < MAXLIVE; i++)
-		if (live[i].model && live[i].stamp != now && (!v || (INT32)(live[i].stamp - v->stamp) < 0))
+		if (live[i].model && live[i].stamp != now && now - live[i].stamp >= minage && (!v || (INT32)(live[i].stamp - v->stamp) < 0))
 			v = &live[i];
 	return v;
 }
+
+#define RETRY_FRAMES 280 // a model taken back is not loaded again for this many frames (8 seconds): memory is short, a sprite is drawn meanwhile
 
 static size_t Reclaim(size_t want)
 {
 	size_t got = 0;
 	live_t *v;
 
-	while (got < want && (v = Live_Victim()) != NULL)
+	while (got < want && (v = Live_Victim(0)) != NULL)
 	{
+		md2_t *md2 = v->md2;
+
 		got += v->bytes;
 		PS2Models_Free(v->model);
+		if (md2)
+			md2->ps2_retry = Z_FrameCount() + RETRY_FRAMES;
 		st_reclaims++;
 	}
 	return got;
@@ -533,6 +549,8 @@ model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 	size_t need;
 	int slot;
 
+	const unsigned c0 = PS2Mem_Cycles();
+
 	*why = 0;
 	if (!PK_Open() || !(l = PK_Find(rel)))
 		return NULL;
@@ -558,7 +576,7 @@ model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 	// the models alive at once: give back those not used in this frame before the budget is passed
 	while (live_bytes + need > m_budget)
 	{
-		live_t *v = Live_Victim();
+		live_t *v = Live_Victim(105); // over the budget: a model that was not used for three seconds goes (one in use is never thrown out to be loaded again)
 
 		if (!v)
 			break;
@@ -677,11 +695,44 @@ model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 	if (!model->spr2frames)
 		LoadModelInterpolationSettings(model);
 	live[slot].model = model;
+	live[slot].md2 = (md2_t *)(void *)((char *)owner - offsetof(md2_t, model)); // owner = &md2->model
 	live[slot].bytes = need;
 	live[slot].stamp = Z_FrameCount();
+	{
+		UINT32 rb = U32At(hdr + 28);
+		float rf;
+
+		memcpy(&rf, &rb, sizeof rf);
+		live[slot].radius = rf > 0.0f && rf < 1.0e7f ? rf : 0.0f;
+	}
 	live_bytes += need;
 	st_loads++;
+	{
+		const unsigned dt = PS2Mem_Cycles() - c0;
+
+		st_load_cyc += dt;
+		if (dt > st_load_max)
+			st_load_max = dt;
+	}
 	return model;
+}
+
+void PS2Models_Stats(unsigned int *out)
+{
+	int i, n = 0;
+
+	for (i = 0; i < MAXLIVE; i++)
+		if (live[i].model)
+			n++;
+	out[0] = (unsigned)n;
+	out[1] = (unsigned)(live_bytes / 1024);
+	out[2] = st_loads;
+	out[3] = st_frees;
+	out[4] = st_reclaims;
+	out[5] = st_fail_mem;
+	out[6] = st_fail_bad;
+	out[7] = st_load_cyc;
+	out[8] = st_load_max;
 }
 
 void PS2Models_Report(void)

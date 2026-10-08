@@ -45,6 +45,7 @@
 #include "../v_video.h"
 #ifdef PS2_PROFILE
 #include "../ps2/ps2_models.h" // OPT11-MODEL: models from MODELS.PAK, 8 bit textures
+#include "../ps2/hw/ps2_hwd.h" // PS2HWD_ModelWanted
 #endif
 #ifdef HAVE_PNG
 
@@ -1666,6 +1667,20 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 			newmodel = true;
 		}
 		PS2Models_Touch(md2->model); // used in this frame: the reclaim hook leaves it alone
+
+		// PS2-HW-266: an object a few pixels big is its sprite (the model of a ring is 140 triangles, a level shows a hundred rings)
+		{
+			const float mr = PS2Models_Radius(md2->model);
+
+			if (mr > 0.0f)
+			{
+				const float sx = FIXED_TO_FLOAT(interp.scale) * FIXED_TO_FLOAT(interp.spritexscale), sy = FIXED_TO_FLOAT(interp.scale) * FIXED_TO_FLOAT(interp.spriteyscale);
+				const float wr = mr * md2->scale * (sx > sy ? sx : sy) * (0.5f / 64.0f);
+
+				if (!PS2HWD_ModelWanted(FIXED_TO_FLOAT(interp.x), FIXED_TO_FLOAT(interp.y), FIXED_TO_FLOAT(flip ? interp.z + interp.height : interp.z), wr, (unsigned)md2->model->meshes[0].numTriangles * (unsigned)md2->model->numMeshes))
+					return false; // the sprite
+			}
+		}
 
 		// texture loading, so it knows if sprite graphics are used, which means that texture coordinates have to be adjusted
 		gpatch = md2->grpatch;

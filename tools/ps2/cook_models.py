@@ -16,7 +16,7 @@ The indices are what the OpenGL palette rendering shader makes of the texel (gr_
 nearest palette colour (NearestPaletteColor of r_data.c, first of equals), see PC_cell() / nearest() below.
 
 SRMD layout (little endian, every section 4 byte aligned; the loader uses the arrays in place):
-  header 32 B : "SRMD", u32 version = 1, u32 total size, u16 numSurfaces, u16 numFrames (max over surfaces), u32 frameNamesOff, u32 surfaceTableOff, u32 flags, u32 0
+  header 32 B : "SRMD", u32 version = 1, u32 total size, u16 numSurfaces, u16 numFrames (max over surfaces), u32 frameNamesOff, u32 surfaceTableOff, u32 flags, float radius
   frame names : numFrames x 16 B (NUL terminated)
   surface table : numSurfaces x 48 B { u32 numVerts, numTris, numFrames, uvOff, idxOff, posOff, nrmOff, 5 x reserved }
   per surface : float uv[2 * numVerts]; u16 idx[3 * numTris] (padded to 4); s16 pos[numFrames][numVerts][3] = (x, z, 1 - y) as hw_md3load.c stores them
@@ -152,8 +152,13 @@ def cook_md3(path):
         body.append((o_pos, s['pos'].tobytes()))
         body.append((o_nrm, s['nrm'].tobytes()))
     total = off
+    # radius: the farthest vertex from the origin over every frame, in the units of the vertices (1/64 of an MD3 unit): the size of the model on the screen (level of detail)
+    radius = 0.0
+    for s in surfs:
+        p3 = s['pos'].astype(np.float64)
+        radius = max(radius, float(np.sqrt((p3 ** 2).sum(axis=-1)).max()))
     buf = bytearray(total)
-    buf[0:hdr_size] = struct.pack('<4sIIHHIIII', b'SRMD', SRMD_VERSION, total, len(surfs), nframes, names_off, surf_tab, 1, 0)
+    buf[0:hdr_size] = struct.pack('<4sIIHHIIIf', b'SRMD', SRMD_VERSION, total, len(surfs), nframes, names_off, surf_tab, 1, radius)
     buf[names_off:names_off + nframes * 16] = b''.join(names)
     buf[surf_tab:surf_tab + len(surfs) * 48] = b''.join(tab)
     for o, b in body:

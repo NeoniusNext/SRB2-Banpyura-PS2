@@ -136,6 +136,7 @@ extern int ps2hwd_hash_on; // -hwhash: HWHASH lines (a hash of the GIF stream of
 extern int ps2hwd_dbg_flags;
 extern int ps2hwd_water_ab; // -hwwater N (OPT11 FX, A/B of the water): bit 0 the OPT10 sweep (a constant shift per band), bit 1 every plane of the ripple table, bit 2 put_vertex for the strips (not -hwdbg: its low bits belong to hw_main.c)
 extern int ps2hwd_model_ab; // -hwmodel N (OPT11 MODEL, A/B): bit 0 = the corner by corner path of OPT10 for every mesh, bit 1 = no model lighting
+extern int ps2hwd_model_px, ps2hwd_model_tris; // -hwmodelpx / -hwmodeltris (OPT11 MODEL): the level of detail of models
 extern int ps2hwd_force_lt; // -hwlt N (OPT11 FX, diagnostics): the water ripple phase of level time N whatever the frame (pictures comparable with the PC engine at tic N)
 
 #endif
