@@ -139,6 +139,15 @@ Details, numbers and what was not reached: `docs/GATES/g1/opt11-FX.md` section 6
 * Result: DEMO_001 wall -2.1 %, DEMO_004 -4.0 % (same ELF, whole-tic frames, no profiler console); between two tics -3.7 % / -5.8 %. Pictures: 0 differing pixels in 40 snapshots (4 demos, whole tics and between tics, paths on / off). The goal of round 2 (0.8 M cycles for sprites + HUD + sky + water on DEMO_001, 2 M on DEMO_004) is not reached: 2.19 M and 3.64 M.
 * Trap for A/B between two different ELFs: the pictures of two builds differ by up to 0.5 % of the pixels (1-2 pixel lines along wall edges) when the allocation pattern differs (the size of `gl_vissprite_t` alone does it): the batch order of polygons with one texture depends on a hash of the texture's pointer (`HWR_ProcessPolygon`). Compare pictures of one ELF.
 
+## OPT11 round 2, GEOM2 (2026-10-08): the engine side of the walk - geometry cache of walls, determinism tools
+
+Details, numbers, commands: `docs/GATES/g1/opt11-GEOM.md` (round 2, R2.1..R2.7; registry PS2-HW-200..219).
+
+* **Geometry cache of the walls** (`hw_gcache.inc`, on by default): the polygons a seg makes (`HWR_ProcessSeg`) are recorded as the calls the function makes to the three sinks of the walk and made again when the key - plain words, the inputs of the function (sector versions, line and side words, texture numbers, ...) - is the same; exact, no hashing. Planes are cached with `-hwgc 1` (no gain after the block collection of PS2-HW-233: a hit costs about what the calculation does). 3D floors with an animated texture hit (the record is patched to the texture of the moment: PS2-HW-213). The arena (640 KB) doubles while it is full and the zone has room; the zone can take it back (`Z_AddReclaimHook`).
+* **Determinism tools**: `-hwpolyhash` (HWPH line: `h=` all polygons, `w=` the polygons of the world only, `s=` heights/lights/flats of all sectors, `v=` the view), `tools/ps2/gm_polycmp.py A B [--world]`; `-singletics` on a map makes one tic for every frame drawn (PS2-HW-208: two runs of a map show the same frames); `-hwgc 2` calculates every hit again and compares; `build/mapcamp3.sh` (15 maps against the reference stream) in the worktree.
+* **A/B switches** (`-hwgo` bits): 1 AddLine angle reuse, 4 QuadHidden two-corner exit, 8 HWR_Lighting fast path, 16 wall light memo, 32 shader table per batch, 1024 inline R_FakeFlat, 2048 light table once per view, 4096 vertex angle once per view, 8388608 no growth of the cache arena, 16384 BSP walk without walls and planes (a measurement), 32768 flat of a plane chosen at once; `-hwgc N`, `-hwgcmem KB`.
+* Traps: (1) memory: the cache takes 0.8 MB (a big level: 1 MB); the level of DEMO_002 (26203 segs) is at the edge of the zone and cliffs (textures purged and read again from the PAK: 6..20 M cycles a frame in a few windows) for some sizes of any long-lived block, with the cache off as well as on - a zone/STAB matter. (2) A run of a map is only comparable with `-singletics` (frame = tic) and without screen shake (MAP12).
+
 ## Complete callback matrix
 
 `P` = implementation exercised by standalone primitive/readback tests;
