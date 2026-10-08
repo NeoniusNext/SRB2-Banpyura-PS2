@@ -11,19 +11,28 @@
 //    word by word when it is looked up (gc_seg_words, gc_plane_words), so they cannot disagree, and a compare is exact (no hash collisions).
 //  * the OUTPUT is the sequence of calls that the function made to the three sinks of the walk (HWR_SetCurrentTexture, HWR_ProcessPolygon,
 //    HWR_AddTransparentWall): recorded while the function runs (hwr_grec_on, hw_batching.c) into an arena, and made again by gc_replay when the
-//    key of the next call is the same. The batch gets the same polygons in the same order (-hwpolyhash: the same stream, bit for bit).
+//    key of the next call is the same. The batch gets the same polygons in the same order (-hwpolyhash: the same stream, bit for bit). The record of a polygon holds the
+//    surface, the vertices, the flags, the shader target and the texture; the replay makes that texture current and calls HWR_ProcessPolygon (the block collection of the VU
+//    branch, PS2-HW-233, takes it from there). The texture a function ended with is in the header of the record (the one the caller would see as current).
+//  * the places of the records (OPT11 round 2): a small level has a place of its own for every seg and every plane of a sector (8 bytes, no hashing), a big one and the planes of 3D
+//    floors a hashed table of 2 ways; the angle of a vertex of the map in a view is in a table with a tag (HWR_VertAngle).
+//  * HWR_PlaneFlat: the flat of a plane is chosen before HWR_RenderPlane and made current only when the plane is not served from the cache (the key holds the flat's number and the chroma key).
+//  * 3D floors: the polygons and translucent walls of a floor are made with the animated texture of the control side. The key holds only whether the side has a texture; the ops hold the
+//    number, and a hit makes them as the side is now (gc_src_ok: same size of texture; gc_src_patch).
 //  * segs of polyobjects, planes of a subsector with a horizon line (they hold the view position), polygons of more than 250 vertices and records
 //    longer than GC_MAXREC are not cached. The records are dropped when the level changes, when a texture record or a light table goes away
 //    (HWR_GCacheFlush) and when a setting of the lighting changes (gc.epoch).
 //  * the arena is two halves: the current one is written; when it is full the one before is dropped and the full one becomes the old one; a hit in the old half copies the
-//    record to the current one (gc_promote), so what is used survives and what is not goes (the first version dropped all at once: a miss of the whole frame every few frames).
+//    record to the current one (gc_promote), so what is used survives and what is not goes. It starts at GC_DEFAULT_KB and is doubled (up to GC_MAX_AUTO_KB) while it was full three times
+//    in a window of views and the zone has room (a big level is at the edge of the memory: textures need it more; D2 of the demos cliffs at sizes of the cache that change the zone's layout).
 //  * the memory is one block of the zone (PU_HWRPLANE), asked with Z_TryMallocAlign when the zone has room for it and for the renderer; the zone can take it back
 //    (Z_AddReclaimHook -> HWR_GCacheReclaim: the cache is gone until the next level, what ran is not affected: gc_rec_end writes nothing without the block, and the room a replay needs
 //    in the batch arrays is made BEFORE it starts, HWR_GCReserve).
-// -hwgc N: 0 off, 1 on with the planes, 5 (default) on, walls only, 2 every hit is calculated again and the two records are compared (HWGC lines: the number of differences must be
+// -hwgc N: 0 off, 1 (default) on, walls and planes, 2 every hit is calculated again and the two records are compared (HWGC lines: the number of differences must be
 // 0), 3 on, and one hit in 16 is checked that way (on a difference the entry is dropped). +4 no planes, +8 no walls, +16 report the sectors that change. -hwgcmem KB: both halves of the arena
-// (default GC_DEFAULT_KB), -hwgcsets N: the number of sets of the table (2 ways), -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th reserve (a test).
-// HWPROF32 (counts and cycles of the window), HWPROF39 (misses of segs never seen / seen with another key, cycles of the replay), HWPROF50 (which word of the key differed), HWPROF51 (misses of segs by the cycles they took).
+// (fixed: no growth), -hwgcsets N: the number of sets of the hashed table (2 ways), -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th reserve (a test).
+// HWPROF32 (counts and cycles of the window), HWPROF39 (misses of segs never seen / seen with another key, cycles of the replay), HWPROF50 (which word of the key differed), HWPROF51 (misses of segs by the cycles they took),
+// HWPROF53 (the translucent planes and walls of HWR_CreateDrawNodes).
 
 #define GC_WAYS 2u
 #define GC_WINDOW 24u // views of the window in which the hit rate is looked at
@@ -57,7 +66,7 @@ typedef struct
 } gchent_t; // the hashed table (the planes of 3D floors: their id is the subsector, the side of the plane and the control sector); segs and the planes of the sectors themselves have a place of their own
 
 // a record in the arena: this header, keyw words of key (the inputs the result was made from; compared word by word with the live ones), then the ops
-typedef struct { UINT16 keyw, opsoff, npoly, nvert, nwall, flags; GLMipmap_t *last; } gcrh_t; // (npoly, nvert, nwall: what the replay adds to the batch arrays and the list of transparent walls; flags bit 0: the function set the texture, `last` is the one it ended with = current_texture after the replay)
+typedef struct { UINT16 keyw, opsoff, npoly, nvert, nwall, flags; GLMipmap_t *last; INT32 lsrc, ltnum; } gcrh_t; // (npoly, nvert, nwall: what the replay adds to the batch arrays and the list of transparent walls; flags bit 0: the function set the texture, `last` is the one it ended with = current_texture after the replay; bit 1: some op takes the animated texture of a 3D floor's side; lsrc, ltnum: the same for `last`)
 #define GC_KEYMAX 80u
 
 static struct
@@ -88,6 +97,7 @@ static struct
 	UINT32 rec_start, rec_pos, rec_limit, rec_np, rec_nv, rec_nw;
 	boolean rec_fail, rec_full, rec_lastset, rec_hassrc;
 	GLMipmap_t *rec_last;
+	INT32 rec_lsrc, rec_ltnum;
 	// statistics of the window (HWPROF32)
 	UINT32 s_seg_hit, s_seg_miss, s_seg_skip, s_pl_hit, s_pl_miss, s_pl_skip, s_flush, s_full, s_chk, s_bad, s_rep_ops, s_rec_ops;
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
@@ -913,6 +923,13 @@ void HWR_GCRecTex(GLMipmap_t *texture)
 		return;
 	gc.rec_last = texture; // (no op: the polygons that follow hold their texture, the record the one the function ends with)
 	gc.rec_lastset = true;
+	if (hwr_gc_src && texture && texture->regen_kind == 1 && texture->regen_id == hwr_gc_tnum)
+	{
+		gc.rec_lsrc = hwr_gc_src;
+		gc.rec_ltnum = hwr_gc_tnum;
+	}
+	else
+		gc.rec_lsrc = gc.rec_ltnum = 0;
 }
 
 static void HWR_GCRecTWall(const FOutVector *wallVerts, const FSurfaceInfo *pSurf, INT32 texnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap)
@@ -950,6 +967,7 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	gc.rec_np = gc.rec_nv = gc.rec_nw = 0;
 	gc.rec_lastset = false;
 	gc.rec_hassrc = false;
+	gc.rec_lsrc = gc.rec_ltnum = 0;
 	gc.rec_last = NULL;
 	hwr_gc_src = 0;
 	hwr_grec_on = true;
@@ -959,6 +977,7 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 		rh->opsoff = (UINT16)(sizeof(gcrh_t) + 4u * (UINT32)keyw);
 		rh->npoly = rh->nvert = rh->nwall = rh->flags = 0;
 		rh->last = NULL;
+		rh->lsrc = rh->ltnum = 0;
 		{
 			UINT32 *kd = (UINT32 *)(rh + 1);
 			int j;
@@ -1011,6 +1030,14 @@ static boolean gc_src_ok(const gcrh_t *rh, UINT32 len)
 		}
 		p += step;
 	}
+	if (rh->lsrc > 0 && rh->lsrc <= (INT32)numsides)
+	{
+		const INT32 t2 = R_GetTextureNum(sides[rh->lsrc - 1].midtexture);
+
+		if (t2 != rh->ltnum && (t2 <= 0 || t2 >= numtextures || rh->ltnum <= 0 || rh->ltnum >= numtextures || !textures[t2] || !textures[rh->ltnum]
+			|| textures[t2]->width != textures[rh->ltnum]->width || textures[t2]->height != textures[rh->ltnum]->height))
+			return false;
+	}
 	return true;
 }
 
@@ -1040,8 +1067,6 @@ static void gc_src_patch(gcrh_t *rh, UINT32 len)
 						lastsrc = h->src;
 						lastt = t2;
 					}
-					if (rh->last == h->tex)
-						rh->last = lasttex;
 					h->tex = lasttex;
 					h->tnum = t2;
 				}
@@ -1058,6 +1083,21 @@ static void gc_src_patch(gcrh_t *rh, UINT32 len)
 		}
 		else
 			break;
+	}
+	if (rh->lsrc > 0)
+	{
+		const INT32 t2 = R_GetTextureNum(sides[rh->lsrc - 1].midtexture);
+
+		if (t2 != rh->ltnum)
+		{
+			if (!(lastsrc == rh->lsrc && lastt == t2))
+			{
+				HWR_GetTexture(t2, true);
+				lasttex = current_texture;
+			}
+			rh->last = lasttex;
+			rh->ltnum = t2;
+		}
 	}
 }
 
@@ -1111,6 +1151,16 @@ static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 
 	for (i = 0; i < n && a[i] == b[i]; i++)
 		;
 	I_OutputMsg("HWGC MISMATCH %s %u: cached %u bytes, calculated %u bytes, first difference at %u (op %u)\n", kind, (unsigned)idx, (unsigned)alen, (unsigned)blen, (unsigned)i, (unsigned)(i < n ? a[i] : 0));
+	if (i >= n && base)
+	{
+		// the ops are the same: the header or the key differ
+		const UINT32 *ha = (const UINT32 *)(a - base), *hb = (const UINT32 *)(b - base);
+		UINT32 w;
+
+		for (w = 0; w < base / 4u; w++)
+			if (ha[w] != hb[w])
+				I_OutputMsg("  header word %u: cached %08x calculated %08x (keyw %u)\n", (unsigned)w, (unsigned)ha[w], (unsigned)hb[w], (unsigned)(base - sizeof(gcrh_t)) / 4u);
+	}
 	if (gc.reports <= 6)
 	{
 		// decode: which op, which vertex, which field differs
@@ -1179,6 +1229,10 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const c
 		rh->nwall = (UINT16)gc.rec_nw;
 		rh->flags = (gc.rec_lastset ? 1 : 0) | (gc.rec_hassrc ? 2 : 0);
 		rh->last = gc.rec_lastset ? gc.rec_last : NULL;
+		rh->lsrc = gc.rec_lastset ? gc.rec_lsrc : 0;
+		rh->ltnum = gc.rec_lastset ? gc.rec_ltnum : 0;
+		if (rh->lsrc)
+			rh->flags |= 2;
 	}
 	if (check)
 	{
