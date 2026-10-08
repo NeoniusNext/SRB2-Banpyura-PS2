@@ -38,6 +38,7 @@
 #include "ps2_vmodes.h"
 #include "ps2_boot.h"
 #include "ps2_hwfb.h" // PS2-170
+#include "ps2_memhud.h" // OPT11-MEM (PS2-HW-300): showmem
 
 #ifdef HWRENDER
 #include "../hardware/hw_main.h"
@@ -980,6 +981,7 @@ static void Impl_HWProf(void)
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
 	PS2HWD_ProfExtra((unsigned int)frames); // OPT10 HG
+	PS2MemHud_ProfLine((unsigned int)frames); // OPT11-MEM (PS2-HW-300)
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);
 	wall = 0;
 	frames = 0;
@@ -1333,6 +1335,9 @@ void I_FinishUpdate(void)
 
 	if (cv_ticrate.value)
 		SCR_DisplayTicRate();
+
+	if (cv_showmem.value) // OPT11-MEM (PS2-HW-300): Off costs this compare
+		PS2MemHud_Draw();
 
 	if (cv_showping.value && (
 		(netgame && consoleplayer != serverplayer)

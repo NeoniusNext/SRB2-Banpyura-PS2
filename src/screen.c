@@ -220,6 +220,9 @@ void SCR_Startup(void)
 	V_Recalc();
 
 	CV_RegisterVar(&cv_ticrate);
+#ifdef PS2
+	CV_RegisterVar(&cv_showmem); // OPT11-MEM (PS2-HW-300)
+#endif
 	CV_RegisterVar(&cv_constextsize);
 	CV_RegisterVar(&cv_menucaps);
 	CV_RegisterVar(&cv_menucolor);
