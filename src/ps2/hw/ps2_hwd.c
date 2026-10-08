@@ -1022,13 +1022,13 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 // word made once a frame; the flags of the polygon are tested with two masks.
 static int pallit_frame_gate(void)
 {
-	static u32 frame = ~0u, shaders = ~0u;
+	static u32 key = ~0u;
 	static int on;
+	const u32 k = H.frame_no * 2u + (H.shaders_on ? 1u : 0u);
 
-	if (frame != H.frame_no || shaders != (u32)H.shaders_on)
+	if (key != k)
 	{
-		frame = H.frame_no;
-		shaders = (u32)H.shaders_on;
+		key = k;
 		on = H.up && V.on && V.ready && H.shaders_on && !(ps2hwd_dbg_flags & (2048 | 8192 | HWDBG_NOVU1 | HWDBG_NOLIGHTMERGE)) && palette_mode_fr();
 	}
 	return on;
@@ -1038,16 +1038,16 @@ int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int s
 {
 	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
 	const GLMipmap_t *m = (const GLMipmap_t *)vtex;
-	u32 lt;
+	u32 lt, blend, ok;
 
-	if (!H.up || !pallit_frame_gate() || !surf || !m || (unsigned int)shader > 5u)
+	if (!surf || !m)
 		return 0;
-	if ((flags & (PF_ColorMapped | PF_NoTexture | PF_Invisible | PF_Ripple | PF_Corona | PF_WireFrame)) != PF_ColorMapped)
-		return 0;
-	if ((flags & PF_Blending) == PF_Fog || (flags & PF_Blending) == (PF_Multiplicative & PF_Blending))
-		return 0;
+	// the conditions are made as bits and tested once: every compare with its own branch costs two cycles on the machine of the profile (the branch and its delay slot) on top of the compare
 	lt = surf->LightTableId;
-	if (lt - 1u >= (u32)(PR_TBL - 1) || lt >= LT_MAX || !lt_idx[lt])
+	blend = flags & PF_Blending;
+	ok = (u32)(H.up != 0) & (u32)((unsigned int)shader <= 5u) & (u32)((flags & (PF_ColorMapped | PF_NoTexture | PF_Invisible | PF_Ripple | PF_Corona | PF_WireFrame)) == PF_ColorMapped)
+		& (u32)(blend != PF_Fog) & (u32)(blend != (PF_Multiplicative & PF_Blending)) & (u32)(lt - 1u < (u32)(PR_TBL - 1)) & (u32)(lt_idx[lt & (PR_TBL - 1)] != NULL); // (PR_TBL <= LT_MAX)
+	if (!ok || !pallit_frame_gate())
 		return 0;
 	if (m->format == GL_TEXFMT_P_8)
 		return 1;
