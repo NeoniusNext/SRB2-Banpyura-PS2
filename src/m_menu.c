@@ -1493,6 +1493,11 @@ static menuitem_t OP_ColorOptionsMenu[] =
 };
 
 #ifdef HWRENDER
+#ifdef PS2_PROFILE
+#define GLY(y) ((y) + 10) // OPT11-MODEL: the "Detail" item (gr_modeldetail) makes room for one more line
+#else
+#define GLY(y) (y)
+#endif
 static menuitem_t OP_OpenGLOptionsMenu[] =
 {
 	{IT_HEADER, NULL, "3D Models", NULL, 0},
@@ -1503,23 +1508,24 @@ static menuitem_t OP_OpenGLOptionsMenu[] =
 	{IT_STRING|IT_CVAR,         NULL, "Detail",              &cv_glmodeldetail,        42}, // OPT11-MODEL: how many models a frame (High / Medium / Low)
 #endif
 
-	{IT_HEADER, NULL, "General", NULL, 51},
-	{IT_STRING|IT_CVAR,         NULL, "Shaders",             &cv_glshaders,            63},
-	{IT_STRING|IT_CVAR,         NULL, "Palette rendering",   &cv_glpaletterendering,   73},
-	{IT_STRING|IT_CVAR,         NULL, "Lack of perspective", &cv_glshearing,           83},
-	{IT_STRING|IT_CVAR,         NULL, "Field of view",       &cv_fov,                  93},
+	{IT_HEADER, NULL, "General", NULL, GLY(51)},
+	{IT_STRING|IT_CVAR,         NULL, "Shaders",             &cv_glshaders,            GLY(63)},
+	{IT_STRING|IT_CVAR,         NULL, "Palette rendering",   &cv_glpaletterendering,   GLY(73)},
+	{IT_STRING|IT_CVAR,         NULL, "Lack of perspective", &cv_glshearing,           GLY(83)},
+	{IT_STRING|IT_CVAR,         NULL, "Field of view",       &cv_fov,                  GLY(93)},
 
-	{IT_HEADER, NULL, "Miscellaneous", NULL, 112},
-	{IT_STRING|IT_CVAR,         NULL, "Bit depth",           &cv_scr_depth,           124},
-	{IT_STRING|IT_CVAR,         NULL, "Texture filter",      &cv_glfiltermode,        134},
-	{IT_STRING|IT_CVAR,         NULL, "Anisotropic",         &cv_glanisotropicmode,   144},
+	{IT_HEADER, NULL, "Miscellaneous", NULL, GLY(112)},
+	{IT_STRING|IT_CVAR,         NULL, "Bit depth",           &cv_scr_depth,           GLY(124)},
+	{IT_STRING|IT_CVAR,         NULL, "Texture filter",      &cv_glfiltermode,        GLY(134)},
+	{IT_STRING|IT_CVAR,         NULL, "Anisotropic",         &cv_glanisotropicmode,   GLY(144)},
 #ifdef ALAM_LIGHTING
-	{IT_SUBMENU|IT_STRING,      NULL, "Lighting...",         &OP_OpenGLLightingDef,   154},
+	{IT_SUBMENU|IT_STRING,      NULL, "Lighting...",         &OP_OpenGLLightingDef,   GLY(154)},
 #endif
 #if defined (_WINDOWS) && (!(defined (__unix__) || defined (UNIXCOMMON) || defined (HAVE_SDL)))
-	{IT_STRING|IT_CVAR,         NULL, "Fullscreen",          &cv_fullscreen,          164},
+	{IT_STRING|IT_CVAR,         NULL, "Fullscreen",          &cv_fullscreen,          GLY(164)},
 #endif
 };
+#undef GLY
 
 #ifdef ALAM_LIGHTING
 static menuitem_t OP_OpenGLLightingMenu[] =
