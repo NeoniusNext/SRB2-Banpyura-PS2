@@ -14982,7 +14982,9 @@ INT32 M_PS2MenuList(INT32 i, menu_t **menu, const char **name)
 #endif
 	E(OP_EraseDataDef),
 	{&OP_ChangeControlsDef, "OP_ChangeControlsDef P2"}, // the same list, for the second player (the keys of the second pad)
-	{&MessageDef, "MessageDef short"}, {&MessageDef, "MessageDef long"}, {&MessageDef, "MessageDef yes/no"}, {&MessageDef, "MessageDef capture"}
+	{&MessageDef, "MessageDef short"}, {&MessageDef, "MessageDef long"}, {&MessageDef, "MessageDef yes/no"}, {&MessageDef, "MessageDef capture"},
+	{&MP_ConnectDef, "OSK over MP_ConnectDef"}, {&MP_PlayerSetupDef, "OSK over MP_PlayerSetupDef"}, // the on-screen keyboard over a text field (PS2-135)
+	{&OP_VideoModeDef, "OP_VideoModeDef confirm"} // the mode was changed: "Press <Cross> again to keep this mode"
 	};
 #undef E
 	const INT32 n = (INT32)(sizeof all / sizeof all[0]);
@@ -14996,7 +14998,9 @@ INT32 M_PS2MenuList(INT32 i, menu_t **menu, const char **name)
 }
 
 // PS2-339: the crawler brings a menu up the way the game does (the entry function of the item that leads to it, which sets up what the drawing needs: the list of
-// saves, the level platter, the player skins), then makes it the current one whatever the entry did. MessageDef has four variants.
+// saves, the level platter, the player skins), then makes it the current one whatever the entry did. The end of the list holds the variants of a screen: Setup Controls of
+// the second player (total - 8), the four boxes of MessageDef (total - 7 .. total - 4), two menus with the on-screen keyboard open over them (total - 3, total - 2) and the
+// video mode menu in its "keep this mode?" state (total - 1).
 static void M_PS2EnterLoad(INT32 choice) // M_LoadGame asks about the tutorial first when the game was never started: the list of saves is what the menu needs
 {
 	(void)choice;
@@ -15022,13 +15026,15 @@ INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
 	size_t i;
 
 	hidetitlemap = false; // (the character select sets it: the title map would stay hidden behind the next menus)
-	if (m == &OP_ChangeControlsDef && index == total - 5)
+	PS2OSK_TestClose();
+	vidm_testingmode = 0;
+	if (m == &OP_ChangeControlsDef && index == total - 8)
 	{
 		M_Setup2PControlsMenu(0);
 		currentMenu = m;
 		return 1;
 	}
-	if (m == &MessageDef)
+	if (m == &MessageDef && index >= total - 7 && index < total - 3)
 	{
 		static const char *const texts[4] =
 		{
@@ -15037,7 +15043,7 @@ INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
 			"Do you really want to do it?\n\n(Y/N)\n",
 			"Press the new button for this control\n",
 		};
-		const INT32 v = index - (total - 4);
+		const INT32 v = index - (total - 7);
 
 		M_StartMessage(texts[v & 3], NULL, v == 2 ? MM_YESNO : v == 3 ? MM_EVENTHANDLER : MM_NOTHING); // (the kind of the box is kept in alphaKey)
 		return 1;
@@ -15047,9 +15053,15 @@ INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
 		{
 			entries[i].entry(0);
 			currentMenu = m;
+			if (index >= total - 3 && index < total - 1)
+				PS2OSK_TestOpen();
+			if (index == total - 1) // (the timer is long: the mode is not switched back during the crawl)
+				vidm_testingmode = 100000;
 			return 1;
 		}
 	currentMenu = m;
+	if (index >= total - 3 && index < total - 1)
+		PS2OSK_TestOpen();
 	return 0;
 }
 

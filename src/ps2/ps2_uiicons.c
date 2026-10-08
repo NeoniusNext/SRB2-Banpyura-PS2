@@ -4,6 +4,7 @@
 #include "../r_defs.h"
 #include "../r_patch.h"
 #include "../z_zone.h"
+#include "../m_argv.h"
 
 #include "ps2_menuhints.h" // cv_menuhints
 #include "ps2_uiicons.h"
@@ -35,7 +36,11 @@ INT32 PS2UI_TokenIcon(UINT8 c)
 
 boolean PS2UI_SmallFor(INT32 capheight)
 {
-	return capheight < 13;
+	static INT32 forcebig = -1;
+
+	if (forcebig < 0)
+		forcebig = M_CheckParm("-iconsbig") ? 1 : 0; // the test of the icon check: the 13 px icons in every line, as before the small set (the check must report overlaps)
+	return !forcebig && capheight < 13;
 }
 
 patch_t *PS2UI_PatchSized(INT32 icon, boolean small)
@@ -201,6 +206,8 @@ static boolean IsHintLine(const char *line, size_t len)
 		return true;
 	if (len >= 7 && !strncmp(line, "(Press ", 7))
 		return true;
+	if (len >= 6 && line[0] == '(' && line[1] == PS2I_CROSS[0] && !strncmp(line + 2, " Yes", 4)) // "(Y/N)" after PS2UI_Message turned it into the buttons
+		return true;
 	return len == 5 && !strncmp(line, "(Y/N)", 5);
 }
 
@@ -248,6 +255,29 @@ char *PS2UI_Message(const char *src)
 		size_t i;
 		boolean done = false;
 
+		{
+			// the boxes that ask: Cross is Enter, which confirms, and Circle is Escape, which cancels
+			static const struct { const char *text, *with; } phrases[] =
+			{
+				{"(Press 'Y' to confirm)", "(Press " PS2I_CROSS " to confirm)"}, {"(Press 'Y' to quit)", "(Press " PS2I_CROSS " to quit)"}, {"(Y/N)", "(" PS2I_CROSS " Yes   " PS2I_CIRCLE " No)"},
+			};
+			size_t k;
+
+			for (k = 0; k < sizeof phrases / sizeof phrases[0] && !done; k++)
+			{
+				const size_t pl = strlen(phrases[k].text), wl = strlen(phrases[k].with);
+
+				if (!strncmp(s, phrases[k].text, pl))
+				{
+					memcpy(o, phrases[k].with, wl);
+					o += wl;
+					s += pl;
+					done = true;
+				}
+			}
+			if (done)
+				continue;
+		}
 		if (!strncmp(s, "Press a key", 11))
 		{
 			// the keys that close a message box are Enter, Escape, Space, N, Y and Delete: of the pad's buttons Cross and Circle (and Triangle = N)

@@ -29,6 +29,9 @@ def main():
     ap.add_argument('--strips', default='', help='OUT.png: the bottom 44 rows of every picture, enlarged x3, one under the other (the corners with the hints)')
     ap.add_argument('--step', type=int, default=30, help='display frames between two pictures')
     ap.add_argument('--extra-engine', default='')
+    ap.add_argument('--cfg', action='append', default=[])
+    ap.add_argument('--stress-controls', action='store_true')
+    ap.add_argument('--iconcheck', action='store_true')
     ap.add_argument('menus', nargs='+')
     a = ap.parse_args()
     shots, labels, items = [], [], []
@@ -43,7 +46,16 @@ def main():
     if a.warp:
         cmd += ['-warp', str(a.warp)]
     cmd += a.args.split() + a.extra_engine.split()
+    if a.iconcheck:
+        cmd += ['-iconcheck']
     cmd += ['-menuseq', '%d,%s' % (a.step, ','.join(items)), '-vidshot', ','.join(shots)]
+    cfg = list(a.cfg)
+    if a.stress_controls:
+        sys.path.insert(0, str(ROOT / 'tools/ps2'))
+        import menu_crawl
+        cfg += menu_crawl.stress_lines()
+    for line in cfg:
+        cmd[cmd.index('--'):cmd.index('--')] = ['--cfg', line]
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL)
     pics = []
     run = ROOT / 'build/runs' / a.name

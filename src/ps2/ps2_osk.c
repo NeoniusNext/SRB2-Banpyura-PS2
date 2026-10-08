@@ -86,6 +86,12 @@ static void Move(INT32 dir)
 	}
 }
 
+void PS2OSK_TestClose(void)
+{
+	active = false;
+	held_dir = -1;
+}
+
 void PS2OSK_TestOpen(void)
 {
 	active = true;

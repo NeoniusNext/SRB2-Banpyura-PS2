@@ -56,7 +56,7 @@ static const hintset_t hintsets[PS2MH_NUMKINDS] =
 	[PS2MH_SCROLL]     = {PS2I_DPAD_UD " Scroll", PS2I_CIRCLE " Back"},
 	[PS2MH_ADDONS]     = {PS2I_DPAD_UD " Select   " PS2I_CROSS " Open", PS2I_CIRCLE " Back"},
 	[PS2MH_VIDEOMODE]  = {PS2I_DPAD_UD PS2I_DPAD_LR " Select   " PS2I_CROSS " Set", PS2I_CIRCLE " Back"},
-	[PS2MH_CHANGE]     = {PS2I_DPAD_UD " Select   " PS2I_DPAD_LR " Change", PS2I_CROSS " OK   " PS2I_CIRCLE " Back"},
+	[PS2MH_CHANGE]     = {PS2I_DPAD_UD " Select   " PS2I_DPAD_LR " Change   " PS2I_CROSS " OK", PS2I_CIRCLE " Back"}, // (the order of every set: move, the main button; then the side ones, Circle last)
 	[PS2MH_VMCONFIRM]  = {PS2I_CROSS " Keep this mode", PS2I_CIRCLE " Return"},
 	[PS2MH_NONE]       = {NULL, NULL},
 };
@@ -141,6 +141,15 @@ static void BmSet(UINT8 (*bm)[IC_W / 8], const INT32 *r)
 	for (y = max(r[1], 0); y < min(r[3], IC_H); y++)
 		for (x = max(r[0], 0); x < min(r[2], IC_W); x++)
 			bm[y][x >> 3] |= (UINT8)(1u << (x & 7));
+}
+
+static void BmClear(UINT8 (*bm)[IC_W / 8], const INT32 *r)
+{
+	INT32 x, y;
+
+	for (y = max(r[1], 0); y < min(r[3], IC_H); y++)
+		for (x = max(r[0], 0); x < min(r[2], IC_W); x++)
+			bm[y][x >> 3] &= (UINT8)~(1u << (x & 7));
 }
 
 static boolean BmAny(UINT8 (*bm)[IC_W / 8], const INT32 *r, INT32 grow)
@@ -250,6 +259,12 @@ static boolean NoteGeom(fixed_t x, fixed_t y, fixed_t w, fixed_t h, INT32 flags,
 		if (BmAny(ic_icon, real, 0))
 			ic_glyph_on_icon++;
 		BmSet(ic_glyph, real);
+	}
+	else if (!(flags & V_ALPHAMASK))
+	{
+		// an opaque fill (the panel of the on-screen keyboard, a plate) hides what was drawn under it: that is no longer in the way of an icon drawn on top
+		BmClear(ic_glyph, real);
+		BmClear(ic_icon, real);
 	}
 	return false;
 }
@@ -666,7 +681,9 @@ static void MenuMask(UINT8 bg, UINT8 *mask, UINT8 *content, UINT8 *ink)
 	dummy.numitems = 0;
 	ClearScreen(bg);
 	currentMenu = &dummy;
+	ps2ui_hideicons = content != NULL; // (what the frame has apart from the menu, the on-screen keyboard, has icons of its own: they must not count as the menu's icons)
 	M_Drawer();
+	ps2ui_hideicons = false;
 	currentMenu = real;
 	memcpy(ref, screens[0], chk_size);
 	if (content)
@@ -1073,7 +1090,7 @@ void PS2MenuHints_Draw(void)
 	shown_menu = (cv_menuhints.value && placing_bits) ? currentMenu : NULL;
 	if (opt_check)
 	{
-		UINT32 sig = (UINT32)(size_t)currentMenu * 2654435761u + (UINT32)M_PS2MenuCursor(-1) * 40503u + (UINT32)numplates;
+		UINT32 sig = (UINT32)(size_t)currentMenu * 2654435761u + (UINT32)M_PS2MenuCursor(-1) * 40503u + (UINT32)numplates + (PS2OSK_Active() ? 977u : 0u);
 		INT32 p;
 
 		for (p = 0; p < numplates; p++)

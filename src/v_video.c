@@ -1675,7 +1675,7 @@ void V_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c, UINT16 color, U
 		return;
 
 #ifdef PS2
-	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, c)) // PS2-339
+	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, c | V_ALPHAMASK)) // PS2-339 (a fade is not opaque: it does not hide what is under it)
 		return;
 #endif
 

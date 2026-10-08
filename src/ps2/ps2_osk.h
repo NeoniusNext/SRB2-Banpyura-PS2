@@ -9,6 +9,7 @@
 boolean PS2OSK_Responder(const event_t *ev); // true: the event was consumed (call first in M_Responder)
 void PS2OSK_Draw(void); // after the menu was drawn
 boolean PS2OSK_Active(void);
+void PS2OSK_TestClose(void); // (the crawler of ps2_menuhints.c: the next menu starts without the keyboard)
 void PS2OSK_TestOpen(void); // PS2-336: opens the keyboard without a text field (the test card "ps2_icons 2" takes its picture)
 
 // m_menu.c: the highlighted menu item takes typed text

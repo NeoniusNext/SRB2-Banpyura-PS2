@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def run_once(name, elf, first, hw, extra, timeout, keep_args, warp, cfg=()):
+def run_once(name, elf, first, hw, extra, timeout, keep_args, warp, cfg=(), last=''):
     cmd = [sys.executable, str(ROOT / 'tools/ps2/netui_run.py'), '--name', name, '--elf', elf, '--timeout', str(timeout), '--until', 'MHCRAWL done', '--stall', 'MHC=75', '--', '-skipintro', '-menuhintscheck']
     if hw:
         cmd += ['-renderer', 'Hardware', '-zreserve', '1536']
@@ -31,7 +31,7 @@ def run_once(name, elf, first, hw, extra, timeout, keep_args, warp, cfg=()):
     cmd += keep_args + extra
     for line in cfg:
         cmd[cmd.index('--') :cmd.index('--')] = ['--cfg', line]
-    cmd += ['-netcmd', '%d:ps2_menucrawl %d' % (150 if warp else 60, first)]
+    cmd += ['-netcmd', '%d:ps2_menucrawl %d %s' % (150 if warp else 60, first, last)]
     subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL)
     return (ROOT / 'build/runs' / name / 'boot.txt').read_text(errors='replace')
 
@@ -42,13 +42,24 @@ CONTROLS = ['forward', 'backward', 'strafeleft', 'straferight', 'turnleft', 'tur
 
 
 def stress_lines():
-    """setcontrol lines: a long key name and a pad button of every kind (the 11 px shoulder buttons and the 7 px ones, the D-pad)"""
-    keys = ['right arrow', 'left arrow', 'down arrow', 'up arrow', 'keypad enter', 'lshift', 'rshift', 'rctrl', 'space', 'backspace', 'tab', 'keypad 4']
+    """setcontrol lines: every control gets a long key name, 16 of them (the first rows, Jump/Spin, Look up/down, the camera) also one of the 16 buttons of a pad (the 11 px shoulder buttons, the 7 px ones, the D-pad). setcontrol
+    takes a key away from the control that had it (G_CheckDoubleUsage), so every name is used once per player."""
+    names = (['space', 'backspace', 'tab', 'caps lock', 'numlock', 'scrolllock', 'leftwin', 'rightwin', 'menu', 'lshift', 'rshift', 'lctrl', 'rctrl', 'lalt', 'ralt',
+              'right arrow', 'left arrow', 'down arrow', 'up arrow', 'keypad /', 'keypad -', 'keypad +', 'keypad .'] + ['keypad %d' % i for i in range(10)] +
+             ['home', 'end', 'pgup', 'pgdn', 'ins', 'del'] + ['f%d' % i for i in range(1, 13)] + ['pause/break'] + ['mouse%d' % i for i in range(1, 9)] +
+             ['wheel 1 up', 'wheel 1 down', 'wheel 2 up', 'wheel 2 down'] + [chr(c) for c in range(ord('a'), ord('z') + 1)])
+    assert len(names) >= 2 * len(CONTROLS)
     pads = ['joy11', 'joy12', 'joy5', 'joy6', 'joy9', 'joy10', 'joy7', 'joy8', 'joy1', 'joy2', 'joy3', 'joy4', 'hatup', 'hatdown', 'hatleft', 'hatright']
+    # the controls that get a pad button as the second binding: the ones of the first rows and the ones next to each other (Jump/Spin, Look up/down, the camera)
+    padded = ['forward', 'backward', 'strafeleft', 'straferight', 'jump', 'spin', 'lookup', 'lookdown', 'centerview', 'camtoggle', 'camreset', 'fire', 'firenormal', 'weaponnext',
+              'weaponprev', 'console']
     out = []
     for i, c in enumerate(CONTROLS):
-        out.append('setcontrol "%s" "%s" "%s"' % (c, keys[i % len(keys)], pads[i % len(pads)]))
-        out.append('setcontrol2 "%s" "%s" "%s"' % (c, keys[(i + 5) % len(keys)], 'sec_' + pads[(i + 3) % len(pads)]))
+        second = ' "%s"' % pads[padded.index(c)] if c in padded else ''
+        out.append('setcontrol "%s" "%s"%s' % (c, names[i], second))
+    for i, c in enumerate(CONTROLS):
+        second = ' "sec_%s"' % pads[(padded.index(c) + 3) % len(pads)] if c in padded else ''
+        out.append('setcontrol2 "%s" "%s"%s' % (c, names[len(CONTROLS) + i], second))
     return out
 
 
@@ -90,6 +101,8 @@ def main():
     ap.add_argument('--warp', type=int, default=0)
     ap.add_argument('--timeout', type=int, default=420)
     ap.add_argument('--out', default='')
+    ap.add_argument('--first', type=int, default=0, help='the first menu of the list')
+    ap.add_argument('--last', default='', help='the last menu of the list')
     ap.add_argument('--cfg', action='append', default=[], help='a line of the config of the run, e.g. \'menuhints "Off"\'')
     ap.add_argument('--stress-controls', action='store_true', help='every control of Setup Controls gets a long keyboard name and a pad button of the widest kind (both players)')
     a = ap.parse_args()
@@ -97,9 +110,9 @@ def main():
     cfg = list(a.cfg) + (stress_lines() if a.stress_controls else [])
     menus = OrderedDict()
     skipped = []
-    first = 0
+    first = a.first
     for attempt in range(40):
-        text = run_once('crawl-' + a.label, a.elf, first, a.hw, [], a.timeout, keep, a.warp, cfg)
+        text = run_once('crawl-' + a.label, a.elf, first, a.hw, [], a.timeout, keep, a.warp, cfg, a.last)
         done, cur = parse(text, menus)
         lastidx = max(menus) if menus else -1
         if done:
