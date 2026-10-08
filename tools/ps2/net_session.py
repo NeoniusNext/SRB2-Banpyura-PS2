@@ -281,7 +281,7 @@ def run_session(spec):
                             result['runaway'] = True
                             print(f'[{time.strftime("%H:%M:%S")}] {n.id}: RUNAWAY emulator log, session stopped', flush=True)
                             raise StopIteration
-                    if n.spec['kind'] == 'ps2' and not n.spec.get('may_exit'):
+                    if n.spec['kind'] == 'ps2' and (not n.spec.get('may_exit') or n.proc.poll() is None):  # OPT11-STAB: a node that may exit is watched while it is alive (hw-net-coop waited 900 s for a frozen client)
                         # STALL WATCHDOG: PCSX2 itself hangs now and then under load (seen 4 times: gdb on the stuck process shows the CPU thread waiting in MTGS::s_sem_Vsync
                         # and the GS thread in xcb_wait_for_reply, the Xvfb idle; the guest sits in the BIOS idle loop): the engine log stops growing. A node whose log does
                         # not grow for STALL seconds ends the session (code 7, run again by --retries)
