@@ -29,6 +29,9 @@
 #include "m_misc.h"
 #include "m_random.h"
 #include "doomstat.h"
+#ifdef PS2
+#include "ps2/ps2_uiicons.h" // PS2-334: pad button icons inside strings (control characters 0x01..0x15)
+#endif
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h"
@@ -2107,6 +2110,14 @@ char *V_FontWordWrap(INT32 x, INT32 w, INT32 option, fixed_t scale, const char *
 			continue;
 		}
 
+#ifdef PS2
+		if ((UINT8)c < 0x16 && PS2UI_TokenIcon((UINT8)c) >= 0)
+		{
+			x += FixedMul(PS2UI_TokenWidth((UINT8)c), scale); // PS2-334: a pad button icon is a word, not a space
+			continue;
+		}
+#endif
+
 		c = (option & V_ALLOWLOWERCASE ? c : toupper(c)) - FONTSTART;
 		if (c < 0 || c >= FONTSIZE || !font.chars[c])
 		{
@@ -2202,6 +2213,23 @@ void V_DrawFontStringAtFixed(fixed_t x, fixed_t y, INT32 option, fixed_t pscale,
 			cy += FixedMul(((option & V_RETURN8) ? 8 : font.linespacing)<<FRACBITS, dupy);
 			continue;
 		}
+#ifdef PS2
+		if ((UINT8)*ch < 0x16 && PS2UI_TokenIcon((UINT8)*ch) >= 0)
+		{
+			// PS2-334: a pad button icon (ps2_uiicons.h): drawn like a letter, centred on the line of the font
+			patch_t *ip = PS2UI_Patch(PS2UI_TokenIcon((UINT8)*ch));
+
+			if (ip)
+			{
+				const patch_t *ref = font.chars['A' - FONTSTART];
+				const INT32 fh = ref ? ref->height : 8;
+
+				V_DrawStretchyFixedPatch(cx, cy + (fixed_t)((fh - ip->height) / 2) * vscale, pscale, vscale, option, ip, NULL);
+			}
+			cx += FixedMul(PS2UI_TokenWidth((UINT8)*ch)<<FRACBITS, dupx);
+			continue;
+		}
+#endif
 
 		c = (lowercase ? *ch : toupper(*ch)) - FONTSTART;
 		if (c < 0 || c >= FONTSIZE || !font.chars[c])
@@ -2549,6 +2577,13 @@ INT32 V_FontStringWidth(const char *string, INT32 option, fontdef_t font)
 		}
 		if (string[i] & 0x80)
 			continue;
+#ifdef PS2
+		if ((UINT8)string[i] < 0x16 && PS2UI_TokenIcon((UINT8)string[i]) >= 0)
+		{
+			w += PS2UI_TokenWidth((UINT8)string[i]); // PS2-334: a pad button icon
+			continue;
+		}
+#endif
 
 		c = (option & V_ALLOWLOWERCASE ? string[i] : toupper(string[i])) - FONTSTART;
 		if (c < 0 || c >= FONTSIZE || !font.chars[c])

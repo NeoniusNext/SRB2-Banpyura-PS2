@@ -26,6 +26,7 @@
 #include "../z_zone.h"
 #include "ps2_hwfb.h"
 #include "ps2_netui.h"
+#include "ps2_uiicons.h"
 
 enum { UI_PROGRESS, UI_READY, UI_FAILED };
 
@@ -225,7 +226,7 @@ static void DrawProgress(void)
 	}
 	if (tip && ms >= 3000)
 		V_DrawCenteredThinString(BASEVIDWIDTH/2, 122, V_ALLOWLOWERCASE, tip);
-	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, va("%s - %s", M_GetText("Circle/ESC"), M_GetText("Cancel")));
+	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, va("%s %s", PS2I_CIRCLE, M_GetText("Cancel")));
 	DrawBar(96, true);
 }
 
@@ -242,7 +243,7 @@ static void DrawReady(void)
 		V_DrawString(TEXT_X + 16, 98 + i * 11, MENUCOLOR|MENUCAPS, M_GetText(names[i]));
 		V_DrawString(TEXT_X + 88, 98 + i * 11, 0, vals[i][0] ? vals[i] : "-");
 	}
-	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, va("%s - %s", M_GetText("Cross/Enter"), M_GetText("Continue")));
+	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, va("%s %s", PS2I_CROSS, M_GetText("Continue")));
 	DrawBar(96, false);
 }
 
@@ -279,9 +280,9 @@ static void DrawFailed(void)
 		reason = why;
 	}
 	if (ui.can_retry)
-		snprintf(keys, sizeof keys, "%s%s\x80 - %s     %s%s\x80 - %s", mc, M_GetText("Cross"), M_GetText("Try again"), mc, M_GetText("Circle"), M_GetText("Back"));
+		snprintf(keys, sizeof keys, "%s%s %s\x80      %s%s %s\x80", mc, PS2I_CROSS, M_GetText("Try again"), mc, PS2I_CIRCLE, M_GetText("Back"));
 	else
-		snprintf(keys, sizeof keys, "%s%s\x80 - %s", mc, M_GetText("Circle"), M_GetText("Back"));
+		snprintf(keys, sizeof keys, "%s%s %s\x80", mc, PS2I_CIRCLE, M_GetText("Back"));
 	snprintf(msg, sizeof msg, "%s%s\x80\n\n\x85%s\x80\n\n%s\n\n%s", mc, M_GetText("The network is not available"), reason, hint, keys);
 	x = (INT32)((BASEVIDWIDTH - V_StringWidth(msg, 0) - 32) / 2);
 	y = (INT32)((BASEVIDHEIGHT - V_StringHeight(msg, V_RETURN8)) / 2);

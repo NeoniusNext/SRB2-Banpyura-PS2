@@ -111,6 +111,7 @@ src/netcode/mserv.c
 src/netcode/http-mserv.c
 src/ps2/ps2_net.c
 src/ps2/ps2_netui.c
+src/ps2/ps2_uiicons.c
 src/netcode/i_tcp.c
 src/netcode/d_netfil.c
 src/ps2/ps2_boot.c
