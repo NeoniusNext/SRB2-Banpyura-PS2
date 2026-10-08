@@ -1720,7 +1720,11 @@ void D_SRB2Main(void)
 	// -- Monster Iestyn 20/02/20
 #ifdef PS2_PROFILE
 	if (M_CheckParm("-singletics"))
+	{
+		extern boolean ps2_lockstep; // d_clisrv.c
 		singletics = true; // OPT11 GEOM2: one game tic for every frame drawn, as in a timedemo, so that two runs of a map show the same frames whatever each frame costs (-hwpolyhash comparisons)
+		ps2_lockstep = true; // and on a map the tic is made by TryRunTics, not by the clock (PS2-HW-208)
+	}
 #endif
 	if (M_CheckParm("-warp") && M_IsNextParm())
 	{
