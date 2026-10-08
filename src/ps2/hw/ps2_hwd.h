@@ -36,6 +36,10 @@ struct GLMipmap_s;
 // Fan batches of hw_batching.c: desc holds nfans pairs (index of the first vertex in base, vertex count); one plan for all of them.
 struct FSurfaceInfo_s;
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc); // desc: nfans triples (first vertex, vertex count, light level of the polygon's sector) since OPT11 (PS2-HW-106)
+// OPT11 round 2 (VU2, PS2-HW-233): the same for the polygon blocks of the batch pool (hardware/hw_pbatch.inc): blks = nblk offsets (in quadwords) into pool, in the order of the draw;
+// a block is a header quadword (x = vertex count as an integer, y = light level as a float), a quadword (s min, t min, s extent, t extent), then for each vertex a quadword x y z and a quadword s t.
+void PS2HWD_DrawBlocks(void *surf, const void *pool, unsigned int nblk, unsigned int flags, const unsigned int *blks);
+void PS2HWD_PlanBlock(struct GLMipmap_s *mipmap, const void *block); // PlanPolygon for a block of the pool
 // Is the polygon lit by the palette rows of the VU1 program (its light level then does not belong in the key of a batch)? vsurf FSurfaceInfo, vtex GLMipmap_t, shader = the base shader slot.
 int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int shader);
 // The frame plan (PS2-HW-34): every polygon of the frame goes through PlanPolygon before the first batch is drawn; the driver notes which mip level each big texture needs.

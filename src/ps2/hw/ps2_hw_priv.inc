@@ -93,13 +93,28 @@ static inline u32 phys(const void *p)
 
 // OPT10 (PS2-HW-53): floorf of newlib is a call of ~40 cycles; the integer conversion gives the same value for every float of int range
 // (above 2^24 a float is an integer already), and the EE has MIN.S / MAX.S instructions that gcc does not use for the ?: form (NaN rules).
+// OPT11 round 2 (PS2-HW-228): the bits of a float. A positive float orders like its bits as an integer and a negative one is below every positive one, so a compare
+// of a float with a constant is an integer compare (a floating point compare with its branch costs 5 cycles on the machine of the profile, an integer one 1), and the sign of
+// a difference is its top bit.
+static inline int fbits(float f)
+{
+	union
+	{
+		float f;
+		int i;
+	} u;
+
+	u.f = f;
+	return u.i;
+}
+
 static inline float hw_floorf(float x)
 {
-	if (x > -2147483000.0f && x < 2147483000.0f)
+	if ((fbits(x) & 0x7FFFFFFF) < 0x4F000000) // |x| < 2^31
 	{
 		const int i = (int)x;
 
-		return (float)(i - (x < (float)i));
+		return (float)(i - ((unsigned)fbits(x - (float)i) > 0x80000000u)); // -1 when the truncation went up (a negative x with a fraction; -0.0 is no fraction)
 	}
 	return __builtin_floorf(x);
 }
@@ -405,7 +420,7 @@ typedef struct
 	u32 upgrades; // images made again at a finer level than they were stored at
 	u32 downgrades; // images made again at a coarser level than they were stored at (PS2-HW-37)
 	u32 invisible; // textures not uploaded: no polygon of the frame can see them
-	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc, alloc_fail, alloc_frag, alloc_frag_blk, thrash_n, thrash_blk, lvl_cyc, plan_np, plan_mcyc, split_up, split_poly, split_sub; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
+	u32 plan_blk, plan_exact, unplanned, need_in_plan, need_out_plan, plan_cyc, imm_cyc, alloc_fail, alloc_frag, alloc_frag_blk, thrash_n, thrash_blk, lvl_cyc, plan_np, plan_mcyc, plan_inv, split_up, split_poly, split_sub; // PS2-HW-37: planned working set per frame (budget applied / exact), summed over the window; the textures that are not planned
 } txstats_t;
 static txstats_t TX;
 

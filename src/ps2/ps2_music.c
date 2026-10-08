@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <limits.h>
+#include <malloc.h>
 #ifdef PS2_AUDIO_VORBIS
 #define OV_EXCLUDE_STATIC_CALLBACKS
 #include <vorbis/vorbisfile.h>
@@ -33,7 +34,8 @@ struct ps2_music
 	uint32_t rate, length_ms, loop_ms, fraction, step;
 	unsigned channels, playing, paused, looping, error;
 	size_t buffered, cursor;
-	int16_t buffer[DECODE_FRAMES * 2];
+	unsigned skipped;                  // PS2-317: the position moved without decoding; the decoder is behind (resynchronised by PS2_MusicRender)
+	int16_t buffer[DECODE_FRAMES * 2] __attribute__((aligned(16))); // PS2-316: the VU0 PCM conversion stores 16 bytes at a time
 	uint8_t raw[DECODE_FRAMES * 4];
 };
 
@@ -73,7 +75,8 @@ ps2_music *PS2_MusicOpen(const ps2_audio_input *in)
 	uint8_t h[12];
 	ps2_music *m;
 	if (!in || in->size > INT_MAX || PS2_AudioRead(in, 0, h, 12) != 12) return NULL;
-	m = calloc(1, sizeof *m); if (!m) return NULL;
+	m = memalign(16, sizeof *m); if (!m) return NULL;
+	memset(m, 0, sizeof *m);
 	m->in = *in;
 	if (!memcmp(h, "RIFF", 4))
 	{
@@ -188,11 +191,11 @@ int PS2_MusicSpeed(ps2_music *m, float speed)
 	m->step = (uint32_t)((float)m->rate * (65536.0f / PS2_AUDIO_RATE) * speed); return 1;
 }
 
-int PS2_MusicSeek(ps2_music *m, uint32_t ms)
+// Seek to a source frame (ms is the same position in milliseconds, for the MIDI player and the length check).  PS2-317: the resynchronisation
+// after a skipped stretch (PS2_MusicRender) seeks by FRAME; going through whole milliseconds put the music up to 22 frames early (0.9 ms at 22050 Hz).
+static int SeekFrame(ps2_music *m, uint64_t frame, uint32_t ms)
 {
-	uint64_t frame;
 	if (!m || (m->length_ms && ms > m->length_ms)) return 0;
-	frame = (uint64_t)ms * m->rate / 1000;
 	if (m->type == PS2_MUSIC_WAV)
 	{ if (frame > m->pcm.frames) return 0; }
 	else if (m->type == PS2_MUSIC_MIDI)
@@ -211,7 +214,12 @@ int PS2_MusicSeek(ps2_music *m, uint32_t ms)
 #endif
 	else return 0;
 	m->position = m->decoded = frame;
-	m->buffered = m->cursor = m->fraction = m->error = 0; return 1;
+	m->buffered = m->cursor = m->fraction = m->error = m->skipped = 0; return 1;
+}
+int PS2_MusicSeek(ps2_music *m, uint32_t ms)
+{
+	if (!m) return 0;
+	return SeekFrame(m, (uint64_t)ms * m->rate / 1000, ms);
 }
 int PS2_MusicPlay(ps2_music *m, int loop)
 {
@@ -255,15 +263,7 @@ static size_t Decode(ps2_music *m)
 		long got = ov_read_float(&m->ogg, &pcm, DECODE_FRAMES, &section);
 		if (got < 0 || section != 0) { m->error = 1; return 0; }
 		n = (size_t)got;
-		if (m->channels == 2)
-			for (i = 0; i < n; i++)
-			{
-				m->buffer[i*2] = PS2_FloatToS16(pcm[0][i]);
-				m->buffer[i*2+1] = PS2_FloatToS16(pcm[1][i]);
-			}
-		else
-			for (i = 0; i < n; i++)
-				m->buffer[i*2] = m->buffer[i*2+1] = PS2_FloatToS16(pcm[0][i]);
+		PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
 	}
 #endif
 #ifdef PS2_AUDIO_MP3
@@ -301,11 +301,40 @@ static int Ensure(ps2_music *m)
 	m->playing = m->paused = 0; return 0;
 }
 
+// PS2-317: a muted Ogg/MP3 song may move its position without decoding, but never across the end of the song: length_ms is a rounded-down
+// time (up to 22 frames short of the real end at 22050 Hz) and the real end, where the decoder loops or stops, is only known to the decoder.
+// So skipping stops SKIP_MARGIN frames before the (rounded) end; the next steps decode (after a frame exact seek) up to the real end and loop
+// exactly as without the mute.
+#define SKIP_MARGIN 4096
+int PS2_MusicCanSkip(const ps2_music *m, size_t frames)
+{
+	return m && m->playing && !m->paused && !m->error && (m->type == PS2_MUSIC_OGG || m->type == PS2_MUSIC_MP3)
+		&& m->length_ms && m->step == 65536 && !m->fraction
+		&& m->position + frames + SKIP_MARGIN <= (uint64_t)m->length_ms * m->rate / 1000;
+}
+
+size_t PS2_MusicSkip(ps2_music *m, size_t frames)
+{
+	if (!PS2_MusicCanSkip(m, frames)) return 0;
+	m->skipped = 1;
+	m->buffered = m->cursor = 0;
+	m->position += frames;
+	m->decoded = m->position;
+	return frames;
+}
+
 size_t PS2_MusicRender(ps2_music *m, int16_t *out, size_t frames)
 {
 	size_t f;
 	memset(out, 0, frames * 2 * sizeof *out);
 	if (!m || !m->playing || m->paused) return 0;
+	if (m->skipped)
+	{
+		// the position was moved by PS2_MusicSkip: bring the decoder there (a sample exact seek)
+		uint64_t pos = m->position;
+		m->skipped = 0;
+		if (!SeekFrame(m, pos, (uint32_t)(pos * 1000 / m->rate))) { m->error = 1; return 0; }
+	}
 	if (m->step == 65536 && !m->fraction)
 	{
 		// source rate == output rate at normal speed: one source frame per output frame, straight copies
