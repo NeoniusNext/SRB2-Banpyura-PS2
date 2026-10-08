@@ -56,6 +56,7 @@ static inline void drv_out(void)
 #define HG_SKY(br, dt) do { if (ps2hwp_skyview) { G.sk_n[br]++; G.sk_c[br] += (dt); } } while (0)
 
 #ifdef __mips__ // (the x86 host tests have no log)
+extern void HWR_PBProf(unsigned int frames); // OPT11 round 2 VU2: HWPROF50, the collection of the batch (hardware/hw_pbatch.inc)
 extern void HWR_GCacheProf(unsigned int frames); // OPT11 GEOM: HWPROF32, the geometry cache (hardware/hw_gcache.inc)
 void PS2HWD_ProfExtra(unsigned int frames)
 {
@@ -92,6 +93,7 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		ps2hwp_cnt[HWC_PKM_T] / frames, ps2hwp_cnt[HWC_PKM_O] / frames, ps2hwp_cnt[HWC_PKM_E] / frames, ps2hwp_cnt[HWC_PKM_P] / frames);
 	I_OutputMsg("HWPROF17 band_sweep: polys=%u pieces=%u ripple_planes=%u\n", G.wf_polys / frames, G.wf_pieces / frames, G.wf_bands / frames);
 	HWR_GCacheProf(frames);
+	HWR_PBProf(frames);
 	I_OutputMsg("HWPROF37 HWR_RenderPlane parts: setup=%u buffer+flat=%u vertices=%u lightlevel=%u lighting=%u flags+shader=%u polygon=%u (the last, the sum of the two before it, is what HWR_ProcessPolygon takes)\n", (unsigned)(ps2hwp_cyc[HWP_PL_A] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_PL_B] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_C] / frames), 0u, (unsigned)(ps2hwp_cyc[HWP_PL_D] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_E] / frames), (unsigned)(ps2hwp_cyc[HWP_PL_F] / frames));
 	I_OutputMsg("HWPROF36 HWR_DrawDropShadow parts: interp=%u groundz=%u checks=%u getpatch=%u verts=%u quadtest=%u setup=%u polygon=%u\n", (unsigned)(ps2hwp_cyc[HWP_SH_A] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_B] / frames), (unsigned)(ps2hwp_cyc[HWP_SH_C] / frames),

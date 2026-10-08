@@ -75,7 +75,7 @@ static int pb_tab_dirty;
 static UINT32 pb_xk[HWR_PB_XSLOTS][2]; // (hi, texture) of the order of the textures: the first polygon of the texture in the batch
 static UINT16 pb_xv[HWR_PB_XSLOTS];
 static int pb_x_dirty;
-static UINT32 pb_ncache_miss, pb_nbucket_find; // -hwgo 65536 comparison counters (HWPROF)
+static UINT32 pb_ngen, pb_nslow, pb_nfind, pb_ncreate, pb_nbuckets, pb_npolys, pb_nflush, pb_nbatches; // HWPROF50 (per window)
 
 static inline int HWR_PBOn(void)
 {
@@ -262,6 +262,7 @@ static UINT32 HWR_PBNew(const FSurfaceInfo *s, GLMipmap_t *tex, UINT32 flags, UI
 	if (pb_nb >= pb_bcap)
 		HWR_PBGrowB();
 	bi = pb_nb++;
+	pb_ncreate++;
 	b = &pb_bk[bi];
 	b->surf = *s;
 	b->texture = tex;
@@ -285,7 +286,7 @@ static UINT32 __attribute__((noinline)) HWR_PBSlow(const FSurfaceInfo *s, GLMipm
 	const UINT32 pal = PS2HWD_PalLit(s, flags, tex, shader_target) ? 1u : 0u;
 	UINT32 h = h1 ^ (ex * 0x27D4EB2Fu), t, e;
 
-	pb_ncache_miss++;
+	pb_nslow++;
 	if (flags & PF_ColorMapped)
 	{
 		h ^= (s->TintColor.rgba * 0x165667B1u) ^ (s->FadeColor.rgba * 0xD3A2646Cu) ^ (s->LightTableId * 0xFD7046C5u) ^ ((s->LightInfo.fade_start | (s->LightInfo.fade_end << 8)) * 0xB55A4F09u);
@@ -300,7 +301,7 @@ static UINT32 __attribute__((noinline)) HWR_PBSlow(const FSurfaceInfo *s, GLMipm
 		if (HWR_PBMatch(b, s, tex, flags, ex))
 		{
 			pb_cache[ci] = (UINT16)e;
-			pb_nbucket_find++;
+			pb_nfind++;
 			return e - 1;
 		}
 		t = (t + 1) & (HWR_PB_TSLOTS - 1);
@@ -422,6 +423,7 @@ static void __attribute__((noinline)) HWR_PBAdd(const FSurfaceInfo *s, const FOu
 	const UINT32 need = 2u + 2u * (UINT32)n;
 	UINT32 bi;
 
+	pb_ngen++;
 	if (!s)
 		I_Error("Got a null FSurfaceInfo in batching");// nulls should not come in the stuff that batching currently applies to
 	if (!(flags & PF_NoTexture) && !horizon)
@@ -533,6 +535,7 @@ static void HWR_PBDrawBatch(FSurfaceInfo *surf, const UINT32 *blks, int count, F
 		}
 		I_OutputMsg("HWDC lt=%u n=%d fl=%x surf=%08x content=%08x\n", (unsigned)leveltime, count, (unsigned)polyFlags, (unsigned)HWR_PBTraceSurf(surf, polyFlags), (unsigned)h);
 	}
+	pb_nbatches++;
 	PS2HWD_DrawBlocks(surf, pb_pool, (unsigned int)count, polyFlags, blks);
 	HWP_SPAN_END2(tdb, HWP_B_DB, HWP_KB_DB);
 }
@@ -588,7 +591,22 @@ static int HWR_PBRender(void)
 			ps2hwp_cyc[HWP_SF_SORT] += (unsigned int)(ps2hwp_now() - tb_sort);
 #endif
 	}
+	if ((hwr_geo_off & 0x100000u) && leveltime >= 374 && leveltime <= 375)
+	{
+		// -hwgo 1048576: the states of the batch (one line each), to see what splits them
+		for (i = 0; i < m; i++)
+		{
+			const hwr_pbk_t *q = &pb_bk[i];
+
+			I_OutputMsg("HWPB lt=%u b=%u n=%u first=%u tex=%d/%d fl=%x pc=%08x tint=%08x fade=%08x ltid=%u light=%u fs=%u fe=%u ex=%x pal=%d sh=%d\n", (unsigned)leveltime, (unsigned)i, (unsigned)q->cnt, (unsigned)q->first,
+				q->texture ? (int)q->texture->regen_kind : -1, q->texture ? (int)q->texture->regen_id : -1, (unsigned)q->polyFlags, (unsigned)q->surf.PolyColor.rgba, (unsigned)q->surf.TintColor.rgba, (unsigned)q->surf.FadeColor.rgba,
+				(unsigned)q->surf.LightTableId, (unsigned)q->surf.LightInfo.light_level, (unsigned)q->surf.LightInfo.fade_start, (unsigned)q->surf.LightInfo.fade_end, (unsigned)q->ex, q->lmask ? 0 : 1, (int)q->shader);
+		}
+	}
 	currently_batching = false; // no longer collecting batches
+	pb_npolys += n;
+	pb_nbuckets += m;
+	pb_nflush++;
 	ps2hwp_cnt[HWC_PROC] += n; // (the counters of HWPROF4: the collection does not count each polygon)
 	ps2hwp_cnt[HWC_PROC_BATCH] += n;
 	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
@@ -702,4 +720,14 @@ static int HWR_PBRender(void)
 		PS_STOP_TIMING(ps_hw_batchdrawtime);
 	}
 	return 1;
+}
+
+// HWPROF50: the collection of a window of frames (called by the driver's profile print)
+void HWR_PBProf(unsigned int frames)
+{
+	if (!frames)
+		frames = 1;
+	I_OutputMsg("HWPROF50 collection: polygons=%u in %u batches (%u buckets) | general path=%u (cache missed: slow=%u found=%u created=%u) | batches drawn=%u\n", pb_npolys / frames, pb_nflush / frames, pb_nbuckets / frames, pb_ngen / frames,
+		pb_nslow / frames, pb_nfind / frames, pb_ncreate / frames, pb_nbatches / frames);
+	pb_ngen = pb_nslow = pb_nfind = pb_ncreate = pb_nbuckets = pb_npolys = pb_nflush = pb_nbatches = 0;
 }
