@@ -26,6 +26,7 @@ add slopecontrast_on "gr_slopecontrast~On;con_hudlines~0" ""
 add batching_off    "gr_batching~Off;con_hudlines~0" ""
 for n in "${@:-${ORDER[@]}}"; do
 	[ -z "${CMD[$n]}" ] && { echo "unknown scene $n"; continue; }
+	cp "$SRB2_PCWADDIR/reference.default" "$SRB2_PCWADDIR/reference.cfg"  # the PC engine saves every CV_SAVE variable there at exit: the option of the previous scene must not stay (-ps2ref-cmd takes 160 chars only)
 	pre=()
 	[ -n "${PRE[$n]}" ] && pre=(--pre "${PRE[$n]}")
 	python3 tools/ps2/fx_pair.py "mx_$n" --elf "$ELF" --map "${MAP[$n]}" --tick 300 --cfg 'chasecam "Off"' --cmd "${CMD[$n]}" "${pre[@]}" 2>&1 | tail -1 | sed "s/^/$n: /"
