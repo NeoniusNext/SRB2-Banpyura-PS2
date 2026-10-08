@@ -562,6 +562,27 @@ static boolean HWR_PlaneHasHorizon(const subsector_t *sub)
 }
 #endif
 
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-211): the flat of a plane is chosen (HWR_GetLevelFlat) before HWR_RenderPlane, which made the texture current for a plane that the cache then served from its record, and
+// the record holds the texture itself. The choice is kept here and made by HWR_RenderPlane when the plane is not served from the cache (-hwgo 32768: made at once, as before).
+static levelflat_t *hwr_lf_flat;
+static boolean hwr_lf_pending, hwr_lf_chroma;
+
+static void HWR_PlaneFlat(levelflat_t *levelflat, boolean chromakeyed)
+{
+	if (gc.on && currently_batching && !(gc.mode & 4) && !(hwr_geo_off & 32768))
+	{
+		hwr_lf_flat = levelflat;
+		hwr_lf_chroma = chromakeyed;
+		hwr_lf_pending = true;
+		return;
+	}
+	HWR_GetLevelFlat(levelflat, chromakeyed);
+}
+#else
+#define HWR_PlaneFlat HWR_GetLevelFlat
+#endif
+
 // -----------------+
 // HWR_RenderPlane  : Render a floor or ceiling convex polygon
 // -----------------+
@@ -577,6 +598,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	INT32 i;
 #ifdef PS2_PROFILE
 	gcent_t *gce = NULL; // OPT11 PS2-HW-80: the geometry cache entry this plane is recorded into
+	boolean lfpend = hwr_lf_pending; // the flat the caller chose is not set yet (HWR_PlaneFlat): the cache does not need it for a hit
+	const boolean lfchroma = hwr_lf_chroma;
 	UINT32 gckey[GC_KEYMAX];
 	int gckn = 0;
 	boolean gccheck = false;
@@ -597,12 +620,13 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 	HWD_LOCAL; // OPT11: the parts of this function (HWPROF37, --hwdetail)
 
-	if (!r_renderfloors)
-		return;
 #ifdef PS2_PROFILE
+	hwr_lf_pending = false;
 	if (hwr_geo_off & 16384) // (measurement only)
 		return;
 #endif
+	if (!r_renderfloors)
+		return;
 
 	// no convex poly were generated for this subsector
 	if (!xsub->planepoly)
@@ -632,7 +656,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 #ifdef PS2_PROFILE
 	// OPT11 PS2-HW-80: the polygon of this plane is served from the geometry cache when everything it is made of is as it was (hw_gcache.inc)
-	if (gc.on && currently_batching && nrPlaneVerts < 250 && !(gc.mode & 4) && (!subsector || !HWR_PlaneHasHorizon(subsector)))
+	if (gc.on && lfpend && currently_batching && nrPlaneVerts < 250 && !(gc.mode & 4) && (!subsector || !HWR_PlaneHasHorizon(subsector)))
 	{
 		const UINT32 t0 = ps2hwp_now();
 		const sector_t *src = FOFsector ? FOFsector : gl_frontsector;
@@ -655,7 +679,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		{
 			const gcrh_t *rh = (const gcrh_t *)(gc.ar + gce->off);
 
-			gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, planecolormap, (UINT32 *)(rh + 1), false);
+			gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, (UINT32 *)(rh + 1), false);
 			gc.c_key += ps2hwp_now() - t0;
 			if (gckn == (int)rh->keyw)
 			{
@@ -687,7 +711,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		else
 			gc.s_new++;
 		gc.w_q++;
-		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, planecolormap, gckey, true);
+		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, gckey, true);
 		if (gckn >= 0 && HWR_GCReserve(1, (UINT32)nrPlaneVerts + 8u, 0))
 			gc_rec_begin(gccheck, gckey, gckn);
 		else
@@ -702,7 +726,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		gc.s_pl_skip++;
 	}
 gc_plane_nocache:
-	;
+	if (lfpend) // (not served from the cache: the flat is set now, inside the record when there is one)
+		HWR_GetLevelFlat(levelflat, lfchroma);
 #endif
 
 	HWD_LAP(HWP_PL_A);
@@ -3033,7 +3058,7 @@ static void HWR_Subsector(size_t num)
 		{
 			if (sub->validcount != validcount)
 			{
-				HWR_GetLevelFlat(&levelflats[gl_frontsector->floorpic], false);
+				HWR_PlaneFlat(&levelflats[gl_frontsector->floorpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], false,
 					// Hack to make things continue to work around slopes.
 					locFloorHeight == cullFloorHeight ? locFloorHeight : gl_frontsector->floorheight,
@@ -3049,7 +3074,7 @@ static void HWR_Subsector(size_t num)
 		{
 			if (sub->validcount != validcount)
 			{
-				HWR_GetLevelFlat(&levelflats[gl_frontsector->ceilingpic], false);
+				HWR_PlaneFlat(&levelflats[gl_frontsector->ceilingpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], true,
 					// Hack to make things continue to work around slopes.
 					locCeilingHeight == cullCeilingHeight ? locCeilingHeight : gl_frontsector->ceilingheight,
@@ -3124,7 +3149,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_GetLevelFlat(&levelflats[*rover->bottompic], rover->fofflags & FOF_SPLAT);
+					HWR_PlaneFlat(&levelflats[*rover->bottompic], rover->fofflags & FOF_SPLAT);
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, viewz < bottomCullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], false, *rover->bottomheight, HWR_RippleBlend(gl_frontsector, rover, false)|PF_Occlude,
 					                HWR_FloorLightLevel(rover->master->frontsector, *gl_frontsector->lightlist[light].lightlevel),
@@ -3170,7 +3195,7 @@ static void HWR_Subsector(size_t num)
 				}
 				else
 				{
-					HWR_GetLevelFlat(&levelflats[*rover->toppic], rover->fofflags & FOF_SPLAT);
+					HWR_PlaneFlat(&levelflats[*rover->toppic], rover->fofflags & FOF_SPLAT);
 					light = R_GetPlaneLight(gl_frontsector, centerHeight, viewz < topCullHeight ? true : false);
 					HWR_RenderPlane(sub, &extrasubsectors[num], true, *rover->topheight, HWR_RippleBlend(gl_frontsector, rover, false)|PF_Occlude,
 					                  HWR_CeilingLightLevel(rover->master->frontsector, *gl_frontsector->lightlist[light].lightlevel),

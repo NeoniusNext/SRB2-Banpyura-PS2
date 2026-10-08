@@ -378,7 +378,7 @@ static inline __attribute__((always_inline)) int gc_seg_words(const seg_t *sg, c
 // arguments), the texture record the caller chose (the sort key of the polygon is made with it) and the colormap. No sector version: a light that flickers or a floor that
 // moves in the same sector changes the arguments of the planes it concerns, and nothing else.
 static inline __attribute__((always_inline)) int gc_plane_words(const pslope_t *slope, const sector_t *src, boolean isceiling, fixed_t fixedheight, FBITFIELD PolyFlags, INT32 lightlevel, UINT8 alpha,
-	const levelflat_t *levelflat, const extracolormap_t *cm, UINT32 *kbase, const boolean rec)
+	const levelflat_t *levelflat, const boolean chroma, const extracolormap_t *cm, UINT32 *kbase, const boolean rec)
 {
 	UINT32 *kp = kbase;
 	UINT32 *const kend = kbase + GC_KEYMAX;
@@ -416,8 +416,9 @@ static inline __attribute__((always_inline)) int gc_plane_words(const pslope_t *
 	GCW(PolyFlags);
 	GCW(lightlevel);
 	GCW(alpha);
-	GCW(levelflat ? (UINT32)R_GetTextureNumForFlat((levelflat_t *)levelflat) : 0xFFFFFFFFu);
-	GCW((UINT32)(uintptr_t)current_texture);
+	// the flat the caller chose (HWR_PlaneFlat: it has not set the texture yet - the texture of the record is the one this flat and the chroma key make)
+	GCW((levelflat && levelflat->texture_id >= 0) ? ((UINT32)R_GetTextureNumForFlat((levelflat_t *)levelflat) | ((UINT32)levelflat->type << 24)) : 0xFFFFFFFFu);
+	GCW(chroma ? 1u : 0u);
 	if (!cm)
 		GCW(0x9c3a5d01u);
 	else
