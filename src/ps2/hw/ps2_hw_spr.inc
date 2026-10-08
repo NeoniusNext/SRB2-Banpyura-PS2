@@ -14,8 +14,8 @@
 
 #ifdef __mips__
 
-#define SPR_MAXENT 512 // entries of the list of the sprites, SPR_MAXSHD of the shadows; a full list is drawn at once
-#define SPR_MAXSHD 160
+#define SPR_MAXENT 896 // entries of the list of the sprites, SPR_MAXSHD of the shadows; a sprite that finds the list full takes the old way (DEMO_004: 650 sprites and 190 shadows a frame at most)
+#define SPR_MAXSHD 256
 #define SPR_NGROUP 16 // plans (groups of equal surface) of a list that are told apart; the entries of the last group may differ
 
 typedef ps2spr_t spr_ent_t;
@@ -29,7 +29,7 @@ static struct
 {
 	spr_ent_t *ent[2]; // [0] shadows, [1] sprites (zone blocks, PS2HWD_Init)
 	u32 n[2], cap[2];
-	u8 gid[512]; // the group of every entry of the list being drawn (0xFF: skipped, 0xFE: the way of the single draws)
+	u8 gid[SPR_MAXENT]; // the group of every entry of the list being drawn (0xFF: skipped, 0xFE: the way of the single draws)
 	int in_flush; // diagnostics: PS2HWD_SprFlush is running
 	// the plan the sprite chunk is in
 	int valid;

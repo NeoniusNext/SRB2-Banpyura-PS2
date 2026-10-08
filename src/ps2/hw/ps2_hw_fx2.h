@@ -19,6 +19,7 @@
 #define FX3_NODRAW 0x2000
 #define FX3_NOSPR 0x40000 // PS2-HW-255 (FX3): the sprite stream (VU1 sprite program) is off: sprites and shadows go through the batch as before
 #define FX3_NOLEAN2 0x100000 // PS2-HW-257 (FX3): the projection of a thing as before (the exact quad test, W_CachePatchNum, R_GetTranslationForThing for every thing)
+#define FX3_NOSHORT 0x800000 // PS2-HW-258 (FX3): the plain sprite of the sprite batch takes the whole way through HWR_DrawSprites / HWR_DrawSprite as before
 #define FX3_NOPCACHE 0x200000 // PS2-HW-257a (measurement): the patch of a sprite lump is asked for by every vissprite (W_CachePatchNum), not once per view
 #define FX3_NOSPHERE 0x400000 // PS2-HW-257b (measurement): the exact quad test of the sprite (PS2HWD_ParaHidden), not the sphere of the view
 #define FX3_NOSPR2 0x80000 // PS2-HW-256 (FX3): the sprite stream takes the polygon of HWR_DrawSprite (no builder straight from the vissprite)

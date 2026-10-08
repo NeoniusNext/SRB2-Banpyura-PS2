@@ -5494,7 +5494,26 @@ static void HWR_DrawSprites(void)
 		}
 #endif
 		HWP_SPAN_BEGIN(tsd);
-		if (spr->bbox)
+		if ((spr->ps2_skey & 4) && sprwas && hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPR2 | FX3_NOSHORT | FX2_PRECHECK)))
+		{
+			// PS2-HW-258 (OPT11 round 3, FX3): the plain sprite of the sprite batch (made by HWR_ProjectPlain: no link draw, no skin, no model, no hitbox) goes from the sorted list to its drop shadow and
+			// its record at once: what HWR_DrawSprites and HWR_DrawSprite do for it before they get there (the kind of the sprite, the link draw pair, the model table) is nothing for such a thing
+			if (spr->mobj->shadowscale && cv_shadow.value && !skipshadow) // (the shadow of the tracer of a link draw pair was drawn before the pair)
+			{
+				hwr_sprite_shadow = true;
+				HWC_ADD(HWC_SPR_SHADOW);
+				{
+				HWP_SPAN_BEGIN(tsh);
+				HWR_DrawDropShadow(spr->mobj, spr, spr->mobj->shadowscale);
+				HWP_SPAN_END(tsh, HWP_SP_SHADOW);
+				}
+				hwr_sprite_shadow = false;
+			}
+			skipshadow = false;
+			if (!HWR_DrawSpriteStream(spr))
+				HWR_DrawSprite(spr);
+		}
+		else if (spr->bbox)
 			HWR_DrawBoundingBox(spr);
 		else if (spr->precip)
 			HWR_DrawPrecipitationSprite(spr);
@@ -6197,7 +6216,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 		vis = HWR_NewVisSprite();
 		vis->ps2_hid = ps2_hidden;
 	}
-	vis->ps2_skey = (UINT8)(((thing->flags2 & MF2_SHADOW) || (frame & FF_TRANSMASK)) ? 1 : 0);
+	vis->ps2_skey = (UINT8)((((thing->flags2 & MF2_SHADOW) || (frame & FF_TRANSMASK)) ? 1 : 0) | 4); // (bit 2: made by HWR_ProjectPlain: no skin, no link draw, no model, no floor or paper sprite)
 	vis->ps2_iok = !(ps2hwd_fx2 & FX2_NOINTERP);
 	vis->ps2_ix = interp.x;
 	vis->ps2_iy = interp.y;
@@ -6268,7 +6287,7 @@ static void HWR_FX_ProjectChecked(mobj_t *thing)
 #define FXC(f) (same = same && !memcmp(&a.f, &b->f, sizeof a.f))
 			FXC(x1); FXC(x2); FXC(z1); FXC(z2); FXC(tz); FXC(tracertz); FXC(renderflags); FXC(rotateflags); FXC(shadowheight); FXC(shadowscale); FXC(dispoffset); FXC(flip);
 			FXC(scale); FXC(spritexscale); FXC(spriteyscale); FXC(spritexoffset); FXC(spriteyoffset); FXC(rotated); FXC(gpatch); FXC(mobj); FXC(colormap); FXC(gzt); FXC(gz);
-			FXC(vflip); FXC(precip); FXC(bbox); FXC(angle); FXC(ps2_hid); FXC(ps2_skey); FXC(ps2_iok); FXC(ps2_ix); FXC(ps2_iy); FXC(ps2_iz); FXC(ps2_ih); FXC(ps2_ir); FXC(ps2_isub);
+			FXC(vflip); FXC(precip); FXC(bbox); FXC(angle); FXC(ps2_hid); same = same && ((a.ps2_skey & 3) == (b->ps2_skey & 3)); FXC(ps2_iok); FXC(ps2_ix); FXC(ps2_iy); FXC(ps2_iz); FXC(ps2_ih); FXC(ps2_ir); FXC(ps2_isub);
 #undef FXC
 		}
 		if (!same)
