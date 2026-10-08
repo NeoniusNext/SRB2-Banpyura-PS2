@@ -18,6 +18,7 @@
 // OPT11 round 3 (FX3), measurement only: bit 13 (0x2000) draws no sprites and no shadows (HWR_DrawSprites does nothing): the difference of two runs is what the drawing costs
 #define FX3_NODRAW 0x2000
 #define FX3_NOSPR 0x40000 // PS2-HW-255 (FX3): the sprite stream (VU1 sprite program) is off: sprites and shadows go through the batch as before
+#define FX3_NOSPR2 0x80000 // PS2-HW-256 (FX3): the sprite stream takes the polygon of HWR_DrawSprite (no builder straight from the vissprite)
 #define FX3_NOPLAIN 0x20000 // PS2-HW-254 (FX3): HWR_ProjectSprite for every thing (the plain sprite path is off)
 #define FX3_NOLEAN 0x10000 // PS2-HW-253 (FX3): the lean paths of the sprite batch (planner call, collect, sort) are off, as before
 #define FX3_NOFILL 0x8000 // PS2-HW-252 (FX3): the texels of a patch are stored by the fast loop only when the width is a multiple of 4 (as before)
@@ -25,6 +26,26 @@
 #define FX2_PTRORDER 0x1000 // PS2-HW-250 (FX3): the order of the patches in the batches by the hash of their address, as before (A/B)
 
 extern int ps2hwd_fx2;
+
+// PS2-HW-255/256 (OPT11 round 3, FX3): a record of the sprite stream: the parallelogram of a sprite or of a drop shadow (corner 0 = p0, corner 1 = p0 + r, corner 3 = p0 + u, corner 2 = p0 + r + u),
+// the texture coordinates of its sides (s of the left / right corners, t of the lower / upper corners), the polygon flags, the shader slot, the texture and the surface (light, colours).
+// The engine fills the slot the driver hands out (PS2HWD_SprSlot) and asks the driver to keep it (PS2HWD_SprCommit): 0 = the driver does not take it, the engine draws the polygon the old way.
+typedef struct
+{
+	float p0[3], tt; // corner 0; t of the upper corners
+	float r[3], sr; // corner 1 - corner 0; s of the right corners
+	float u[3], tb; // corner 3 - corner 0; t of the lower corners
+	float sl; // s of the left corners
+	unsigned int flags;
+	int shader;
+	void *tex; // GLMipmap_t
+	FSurfaceInfo surf;
+} __attribute__((aligned(16))) ps2spr_t;
+
+extern ps2spr_t *PS2HWD_SprSlot(int is_shadow);
+extern int PS2HWD_SprCommit(int is_shadow);
+// the four vertices of a sprite polygon (FOutVector x, y, z, s, t) as a record; 0 = it is not the parallelogram of a sprite
+extern int PS2HWD_SprFromVerts(ps2spr_t *e, const void *verts);
 
 // The view of the driver as a bound for a sphere: the four clip coordinates of a point (X, Y, Z in the coordinates of FOutVector: x, height, y) are
 //     c[k] = r[k][0] * X + r[k][1] * Y + r[k][2] * Z + r[k][3]     k = 0 x, 1 y, 2 (z unused), 3 w

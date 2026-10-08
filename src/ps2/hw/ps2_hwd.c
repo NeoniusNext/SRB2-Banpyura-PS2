@@ -304,6 +304,7 @@ boolean PS2HWD_Init(void)
 	if (!hwbig_alloc())
 		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
+	spr_alloc(); // PS2-HW-255: the lists of the sprite stream (zone blocks while the driver runs; no stream when there is no room)
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
 	vu_norecord = M_CheckParm("-hwnorecord") != 0; // PS2-HW-111 off: a retargeted plan sets its GS state up as before
@@ -1520,7 +1521,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 		// runs out; here a frame whose textures do not fit the pool, or a texture whose data the zone purged, loses polygons.
 		H.st.tex_missing++;
 		if (H.st.tex_missing <= 4)
-			CONS_Printf("HWD texture not resident: %s %s fmt=%d %ux%u flags=0x%x data=%p pool used %u/%u blocks, free ranges %d (draws skipped)\n", tex_fail_why, HWR_PS2_TexName(TexInfo),
+			CONS_Printf("HWD texture not resident [frame %u phase %d spr_flush %d tex %p dl %u]: %s %s fmt=%d %ux%u flags=0x%x data=%p pool used %u/%u blocks, free ranges %d (draws skipped)\n", (unsigned)H.frame_no, batch_phase, SPR.in_flush, (void *)TexInfo, (unsigned)TexInfo->downloaded, tex_fail_why, HWR_PS2_TexName(TexInfo),
 				(int)TexInfo->format, (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)TexInfo->flags, (void *)TexInfo->data,
 				(unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n);
 		hw_limit(HW_MISSING, "a texture could not be made resident in the GS pool (or its data was purged); its draws are skipped");

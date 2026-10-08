@@ -52,6 +52,7 @@
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hw_prof.h" // PS2-HW-15: COP0 phase accumulators of the hardware renderer (HWPROF lines)
 #include "../ps2/hw/ps2_hw_fx2.h" // OPT11 round 2 (FX2): -hwfx bits, the sphere test data of the driver
+#include "../ps2/hw/ps2_hwd.h" // PS2HWD_TouchTexture (the sprite stream, PS2-HW-256)
 unsigned long long ps2hwp_cyc[HWP_NUM];
 unsigned int ps2hwp_cnt[HWC_NUM];
 int ps2hwp_skyview;
@@ -3191,6 +3192,12 @@ static boolean hwr_fx_plain; // PS2-HW-254: HWR_ProjectPlain may be tried (this 
 static float hwr_fx_rsin, hwr_fx_rcos; // the right vector of the view (sprites that face the viewer), made once per view
 static boolean HWR_ProjectPlain(mobj_t *thing);
 static void HWR_FX_ProjectChecked(mobj_t *thing);
+static boolean hwr_fx_lm_ok; // PS2-HW-256: the surface of the last light level (HWR_FX_SpriteBuild), made again in every view
+static UINT8 hwr_fx_lm_level;
+static FSurfaceInfo hwr_fx_lm_surf;
+static int hwr_fx_spr_shader; // the shader slot of SHADER_SPRITE (what HWR_ProcessPolygon asks of HWR_ShaderOfTarget)
+static ps2spr_t hwr_fx_chk; // check mode (-hwfx 2): what the stream's builder made of the sprite, HWR_DrawSprite compares it with the polygon it makes
+static boolean hwr_fx_chk_ok;
 
 // PS2-HW-248: R_ThingVisible with what does not change in a view made once per view (it was 70 cycles for each of the 1771 things of a DEMO_004 frame)
 static inline boolean HWR_FX_ThingVisible(mobj_t *thing)
@@ -3279,6 +3286,8 @@ static void HWR_ClearSprites(void)
 	hwr_fx_interp = R_UsingFrameInterpolation() && !paused; // PS2-HW-245: asked once per view (the answer costs 100 cycles: the refresh rate of the display mode is looked up), not by every thing
 	hwr_fx_lerp = hwr_fx_interp && rendertimefrac != FRACUNIT; // (PS2-HW-240)
 	hwr_fx_plain = !cv_glmodels.value && r_renderthings && !(ps2hwd_fx2 & FX3_NOPLAIN); // PS2-HW-254
+	hwr_fx_lm_ok = false;
+	hwr_fx_spr_shader = HWR_GetShaderFromTarget(SHADER_SPRITE);
 	hwr_fx_rsin = FIXED_TO_FLOAT(FINESINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
 	hwr_fx_rcos = FIXED_TO_FLOAT(FINECOSINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
 	if (hwr_fx_ext_lumps != numspritelumps || hwr_fx_ext_wads != numwadfiles)
@@ -4170,6 +4179,203 @@ static void HWR_DrawBoundingBox(gl_vissprite_t *vis)
 //                  : (monsters, bonuses, weapons, lights, ...)
 // Returns          :
 // -----------------+
+#ifdef PS2_PROFILE
+// --------------------------------------------------------------------------
+// PS2-HW-256 (OPT11 round 3, FX3): the plain sprite of the sprite batch straight to the sprite stream of the driver (ps2_hw_spr.inc).
+// HWR_DrawSprite builds four vertices, a surface and the flags for HWR_ProcessPolygon, which copies them into the batch, where the driver unpacks them again into the record it
+// draws from; for the common sprite the same numbers (the same operations in the same order: the record is what PS2HWD_SprFromVerts makes of the polygon) go into the record
+// at once. A sprite that is not the common one (a floor or paper sprite, a link draw, a sector with 3D floor lights or a colormap, a translated or not yet resident picture, a
+// blend that is not opaque) returns false and takes the old way, which is all HWR_DrawSprite did before. -hwfx 2 (check mode): the old way runs for every sprite, and what it hands
+// to HWR_ProcessPolygon is compared with the record made here (HWC stream MISMATCH). -hwfx 524288 (FX3_NOSPR2): this builder is off, the stream takes the polygon of HWR_DrawSprite.
+// --------------------------------------------------------------------------
+static boolean HWR_FX_SpriteBuild(gl_vissprite_t *spr, ps2spr_t *e)
+{
+	mobj_t *mo = spr->mobj;
+	sector_t *sector;
+	GLPatch_t *gp;
+	GLMipmap_t *m;
+	INT32 blendmode;
+	UINT8 lightlevel;
+	float wx0, wx1, wy0, wy1, wy2, wz0, wz1, wz3;
+	float x3, x2c, z3, y3;
+	FBITFIELD blend;
+
+	if (spr->bbox || spr->precip || spr->rotated || !mo || !mo->subsector || !spr->gpatch)
+		return false;
+	if ((mo->flags2 & (MF2_LINKDRAW | MF2_SPLAT)) || (mo->frame & (FF_FLOORSPRITE | FF_PAPERSPRITE | FF_TRANSMASK)) || (mo->renderflags & (RF_FLOORSPRITE | RF_PAPERSPRITE | RF_SHADOWEFFECTS))
+		|| (mo->flags2 & MF2_SHADOW) || mo->alpha != FRACUNIT || (spr->colormap && spr->colormap != colormaps) || !cv_translucency.value || !HWR_UseShader())
+		return false;
+	sector = mo->subsector->sector;
+	if (sector->numlights || sector->extra_colormap)
+		return false;
+	if (cv_glspritebillboarding.value && !spr->ps2_iok)
+		return false; // (the aim rotation needs the state of the projection)
+	gp = (GLPatch_t *)spr->gpatch->hardware;
+	if (!gp)
+		return false;
+	m = gp->mipmap;
+	if (!m->downloaded)
+		return false; // not resident: the old way makes the data and the upload
+
+	// the blend: an opaque sprite (the batch takes these) of the thing's blend mode
+	if (mo->frame & FF_BLENDMASK)
+		blendmode = ((mo->frame & FF_BLENDMASK) >> FF_BLENDSHIFT) + 1;
+	else
+		blendmode = mo->blendmode;
+	blend = HWR_GetBlendModeFlag(blendmode);
+	if (blend != PF_Translucent && blend != PF_Masked)
+		return false;
+
+	// the corners (HWR_DrawSprite, HWR_RotateSpritePolyToAim)
+	wx0 = spr->x1;
+	x2c = spr->x2;
+	wy0 = spr->gz;
+	y3 = spr->gzt;
+	wz0 = spr->z1;
+	wz1 = spr->z2;
+	if (spr->dispoffset)
+	{
+		const float co = -gl_viewcos * (0.05f * spr->dispoffset);
+		const float si = -gl_viewsin * (0.05f * spr->dispoffset);
+
+		wz0 = wz0 + si;
+		wz1 = wz1 + si;
+		wx0 = wx0 + co;
+		x2c = x2c + co;
+	}
+	wx1 = x2c; // corner 1 (x2, gz, z2); corner 3 (x1, gzt, z1)
+	wy1 = wy0;
+	wy2 = y3;
+	x3 = wx0;
+	z3 = wz0;
+	wz3 = wz0;
+	(void)wy2;
+	if (cv_glspritebillboarding.value)
+	{
+		float basey, lowy;
+
+		basey = P_MobjFlip(mo) == -1 ? FIXED_TO_FLOAT(spr->ps2_iz + spr->ps2_ih) : FIXED_TO_FLOAT(spr->ps2_iz);
+		lowy = wy0;
+		y3 = (spr->gzt - basey) * gl_viewludsin + basey;
+		wy0 = (lowy - basey) * gl_viewludsin + basey;
+		wy1 = wy0;
+		x3 += ((spr->gzt - basey) * gl_viewludcos) * gl_viewcos;
+		wx0 += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		wx1 += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		z3 += ((spr->gzt - basey) * gl_viewludcos) * gl_viewsin;
+		wz0 += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+		wz1 += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+		wz3 = z3;
+	}
+	e->p0[0] = wx0;
+	e->p0[1] = wy0;
+	e->p0[2] = wz0;
+	e->r[0] = wx1 - wx0;
+	e->r[1] = wy1 - wy0;
+	e->r[2] = wz1 - wz0;
+	e->u[0] = x3 - wx0;
+	e->u[1] = y3 - wy0;
+	e->u[2] = wz3 - wz0;
+	if (spr->flip)
+	{
+		e->sl = gp->max_s;
+		e->sr = 0;
+	}
+	else
+	{
+		e->sl = 0;
+		e->sr = gp->max_s;
+	}
+	if (spr->vflip)
+	{
+		e->tt = gp->max_t;
+		e->tb = 0;
+	}
+	else
+	{
+		e->tt = 0;
+		e->tb = gp->max_t;
+	}
+
+	// the surface: the light of the sector (HWR_Lighting without a colormap)
+	if (R_ThingIsFullBright(mo))
+		lightlevel = 255;
+	else if (R_ThingIsFullDark(mo))
+		lightlevel = 0;
+	else
+		lightlevel = sector->lightlevel > 255 ? 255 : sector->lightlevel;
+	if (R_ThingIsSemiBright(mo))
+		lightlevel = 128 + (lightlevel >> 1);
+	if (!hwr_fx_lm_ok || hwr_fx_lm_level != lightlevel)
+	{
+		hwr_fx_lm_surf.PolyFlags = 0;
+		HWR_Lighting(&hwr_fx_lm_surf, lightlevel, NULL);
+		hwr_fx_lm_level = lightlevel;
+		hwr_fx_lm_ok = true;
+	}
+	e->surf = hwr_fx_lm_surf;
+	e->surf.PolyColor.s.alpha = 0xFF;
+	e->flags = (unsigned int)(blend | PF_Occlude | PF_ColorMapped | PF_Modulated);
+	e->shader = hwr_fx_spr_shader;
+	e->tex = m;
+	return true;
+}
+
+// the sprite goes to the stream (true) or takes the old way (false)
+static boolean HWR_DrawSpriteStream(gl_vissprite_t *spr)
+{
+	ps2spr_t *e;
+	GLMipmap_t *m;
+
+	if (!(currently_batching && hwr_sprite_batch) || (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPR2)))
+		return false;
+	e = PS2HWD_SprSlot(0);
+	if (!e || !HWR_FX_SpriteBuild(spr, e))
+		return false;
+	m = (GLMipmap_t *)e->tex;
+	PS2HWD_TouchTexture(m); // (what HWR_GetMappedPatch does in a batch: the picture stays in the GS pool until the batch is drawn)
+	if (m->data)
+		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+	return PS2HWD_SprCommit(0) != 0;
+}
+
+// check mode: the polygon the old way made of the sprite against the record of the builder
+static void HWR_FX_SpriteCheck(const FSurfaceInfo *surf, const FOutVector *v, FBITFIELD flags, int shader_target)
+{
+	static unsigned chk, bad;
+	ps2spr_t cur;
+	boolean same;
+
+	memset(&cur, 0, sizeof cur);
+	chk++;
+	if (!PS2HWD_SprFromVerts(&cur, v))
+	{
+		same = false;
+	}
+	else
+	{
+		same = !memcmp(cur.p0, hwr_fx_chk.p0, sizeof cur.p0) && !memcmp(cur.r, hwr_fx_chk.r, sizeof cur.r) && !memcmp(cur.u, hwr_fx_chk.u, sizeof cur.u)
+			&& cur.sl == hwr_fx_chk.sl && cur.sr == hwr_fx_chk.sr && cur.tt == hwr_fx_chk.tt && cur.tb == hwr_fx_chk.tb && flags == hwr_fx_chk.flags && hwr_fx_chk.shader == HWR_GetShaderFromTarget(shader_target)
+			&& surf->PolyColor.rgba == hwr_fx_chk.surf.PolyColor.rgba && surf->TintColor.rgba == hwr_fx_chk.surf.TintColor.rgba && surf->FadeColor.rgba == hwr_fx_chk.surf.FadeColor.rgba
+			&& surf->LightTableId == hwr_fx_chk.surf.LightTableId && surf->LightInfo.light_level == hwr_fx_chk.surf.LightInfo.light_level && surf->LightInfo.fade_start == hwr_fx_chk.surf.LightInfo.fade_start
+			&& surf->LightInfo.fade_end == hwr_fx_chk.surf.LightInfo.fade_end;
+	}
+	if (!same)
+	{
+		bad++;
+		if (bad <= 20)
+			CONS_Printf("HWC stream MISMATCH %u of %u: p0 %.3f %.3f %.3f / %.3f %.3f %.3f r %.3f %.3f %.3f / %.3f %.3f %.3f u %.3f %.3f %.3f / %.3f %.3f %.3f fl %x/%x sh %d/%d light %d/%d\n", bad, chk,
+				cur.p0[0], cur.p0[1], cur.p0[2], hwr_fx_chk.p0[0], hwr_fx_chk.p0[1], hwr_fx_chk.p0[2], cur.r[0], cur.r[1], cur.r[2], hwr_fx_chk.r[0], hwr_fx_chk.r[1], hwr_fx_chk.r[2],
+				cur.u[0], cur.u[1], cur.u[2], hwr_fx_chk.u[0], hwr_fx_chk.u[1], hwr_fx_chk.u[2], (unsigned)flags, (unsigned)hwr_fx_chk.flags, HWR_GetShaderFromTarget(shader_target), hwr_fx_chk.shader,
+				(int)surf->LightInfo.light_level, (int)hwr_fx_chk.surf.LightInfo.light_level);
+	}
+	else if (!(chk & 1023))
+	{
+		CONS_Printf("HWC stream check: %u sprites, %u differ\n", chk, bad);
+	}
+}
+#endif
+
 static void HWR_DrawSprite(gl_vissprite_t *spr)
 {
 	FOutVector wallVerts[4];
@@ -4189,6 +4395,17 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 		HWR_SplitSprite(spr);
 		return;
 	}
+
+#ifdef PS2_PROFILE
+	hwr_fx_chk_ok = false;
+	if (!splat)
+	{
+		if (ps2hwd_fx2 & FX2_PRECHECK)
+			hwr_fx_chk_ok = (currently_batching && hwr_sprite_batch) && HWR_FX_SpriteBuild(spr, &hwr_fx_chk);
+		else if (HWR_DrawSpriteStream(spr))
+			return;
+	}
+#endif
 
 	// cache sprite graphics
 	//12/12/99: Hurdler:
@@ -4512,6 +4729,13 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 			HWD_ADD(HWC_FX_SPRHID); // (measurement only: the sprites drawn although their quad shows no pixel)
 		if (spr->mobj->shadowscale && cv_shadow.value)
 			HWD_ADD(HWC_FX_SPRSH);
+#endif
+#ifdef PS2_PROFILE
+		if (hwr_fx_chk_ok)
+		{
+			hwr_fx_chk_ok = false;
+			HWR_FX_SpriteCheck(&Surf, wallVerts, blend|PF_Modulated, shader);
+		}
 #endif
 		HWR_ProcessPolygon(&Surf, wallVerts, 4, blend|PF_Modulated, shader, false);
 		HWD_LAP(HWP_DS_F);
@@ -5720,6 +5944,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 	boolean vflip, hflip;
 	const boolean lerp = hwr_fx_lerp && !(ps2hwd_fx2 & FX2_NOINTERP);
 	const INT32 frame = thing->frame;
+	HWD_LOCAL; // the laps of HWPROF33 as HWR_ProjectSprite has them (detail builds)
 
 	if (thing->skin || thing->type == MT_OVERLAY || (thing->flags2 & (MF2_LINKDRAW | MF2_SPLAT)) || (frame & (FF_PAPERSPRITE | FF_FLOORSPRITE))
 		|| (thing->renderflags & (RF_PAPERSPRITE | RF_FLOORSPRITE | RF_ABSOLUTEOFFSETS | RF_SHADOWEFFECTS)) || thing->spriteroll || thing->old_spriteroll)
@@ -5765,6 +5990,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 		interp.spritexoffset = thing->spritexoffset;
 		interp.spriteyoffset = thing->spriteyoffset;
 	}
+	HWD_LAP(HWP_PS_A);
 	if (interp.spritexscale < 1 || interp.spriteyscale < 1)
 		return true;
 
@@ -5813,6 +6039,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 		flip = sprframe->flip & (1 << rot);
 	}
 
+	HWD_LAP(HWP_PS_B);
 	spr_width = spritecachedinfo[lumpoff].width;
 	spr_height = spritecachedinfo[lumpoff].height;
 	spr_offset = spritecachedinfo[lumpoff].offset;
@@ -5854,6 +6081,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 		gz = gzt - (FIXED_TO_FLOAT(spr_height) * this_yscale);
 	}
 
+	HWD_LAP(HWP_PS_C);
 	if (thing->subsector->sector->cullheight)
 	{
 		if (HWR_DoCulling(thing->subsector->sector->cullheight, viewsector->cullheight, gl_viewz, gz, gzt))
@@ -5879,6 +6107,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 			return true;
 	}
 
+	HWD_LAP(HWP_PS_D);
 	{
 		UINT8 ps2_hidden = 0;
 
@@ -5896,6 +6125,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 				ps2_hidden = 1;
 			}
 		}
+		HWD_LAP(HWP_PS_E);
 		HWD_ADD(HWC_FX_VIS);
 		vis = HWR_NewVisSprite();
 		vis->ps2_hid = ps2_hidden;
@@ -5935,6 +6165,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 	vis->precip = false;
 	vis->bbox = false;
 	vis->angle = interp.angle;
+	HWD_LAP(HWP_PS_F);
 	return true;
 }
 #endif

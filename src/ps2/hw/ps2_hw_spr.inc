@@ -14,27 +14,18 @@
 
 #ifdef __mips__
 
-#define SPR_MAXENT 512 // entries of a list; a full list is drawn at once
+#define SPR_MAXENT 512 // entries of the list of the sprites, SPR_MAXSHD of the shadows; a full list is drawn at once
+#define SPR_MAXSHD 160
 
-typedef struct
-{
-	float p0[3], tt; // corner 0; t of the upper corners
-	float r[3], sr; // corner 1 - corner 0; s of the right corners
-	float u[3], tb; // corner 3 - corner 0; t of the lower corners
-	float sl; // s of the left corners
-	u32 flags;
-	int shader;
-	GLMipmap_t *tex;
-	FSurfaceInfo surf;
-} __attribute__((aligned(16))) spr_ent_t;
+typedef ps2spr_t spr_ent_t;
 
 #define SPR_KW 8 // words of the surface key of a record
 
 static struct
 {
-	spr_ent_t *ent[2]; // [0] shadows, [1] sprites (allocated at first use)
-	u32 n[2];
-	int alloc_failed;
+	spr_ent_t *ent[2]; // [0] shadows, [1] sprites (zone blocks, PS2HWD_Init)
+	u32 n[2], cap[2];
+	int in_flush; // diagnostics: PS2HWD_SprFlush is running
 	// the plan the sprite chunk is in
 	int valid;
 	u32 kw[SPR_KW]; // the surface key of the plan
@@ -53,32 +44,25 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 
 static void spr_free(void)
 {
-	free(SPR.ent[0]);
-	free(SPR.ent[1]);
+	Z_Free(SPR.ent[0]);
+	Z_Free(SPR.ent[1]);
 	SPR.ent[0] = SPR.ent[1] = NULL;
-	SPR.n[0] = SPR.n[1] = 0;
+	SPR.n[0] = SPR.n[1] = SPR.cap[0] = SPR.cap[1] = 0;
 	SPR.valid = 0;
-	SPR.alloc_failed = 0;
 }
 
-static int spr_alloc(void)
+static void spr_alloc(void)
 {
-	if (SPR.ent[0])
-		return 1;
-	if (SPR.alloc_failed)
-		return 0;
-	SPR.ent[0] = (spr_ent_t *)memalign(64, sizeof(spr_ent_t) * SPR_MAXENT);
-	SPR.ent[1] = (spr_ent_t *)memalign(64, sizeof(spr_ent_t) * SPR_MAXENT);
+	spr_free();
+	SPR.ent[0] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * SPR_MAXSHD, PU_STATIC, NULL, 6);
+	SPR.ent[1] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * SPR_MAXENT, PU_STATIC, NULL, 6);
 	if (!SPR.ent[0] || !SPR.ent[1])
 	{
-		free(SPR.ent[0]);
-		free(SPR.ent[1]);
-		SPR.ent[0] = SPR.ent[1] = NULL;
-		SPR.alloc_failed = 1;
-		return 0;
+		spr_free(); // no room: the stream is off (the polygons go through the batch)
+		return;
 	}
-	SPR.n[0] = SPR.n[1] = 0;
-	return 1;
+	SPR.cap[0] = SPR_MAXSHD;
+	SPR.cap[1] = SPR_MAXENT;
 }
 
 // the view and the shader state a plan of the VU1 programs depends on (the words of vu_key_make that are not about the surface or the texture)
@@ -265,7 +249,17 @@ static void spr_flush_list(int which)
 			settex_now(e[i].tex);
 			r = rec_of(e[i].tex);
 			if (r)
+			{
 				H.rec[img_of((int)(r - H.rec))].done = 0; // (settex_now marked it drawn: it is not yet)
+			}
+			else
+			{
+				static unsigned nmsg;
+
+				if (nmsg++ < 12)
+					CONS_Printf("HWSPR not resident: list %d entry %u of %u tex=%p dl_now=%u data=%p fmt=%d %ux%u frame=%u phase=%d\n", which, i, n, e[i].tex, (unsigned)((GLMipmap_t *)e[i].tex)->downloaded,
+						(void *)((GLMipmap_t *)e[i].tex)->data, (int)((GLMipmap_t *)e[i].tex)->format, (unsigned)((GLMipmap_t *)e[i].tex)->width, (unsigned)((GLMipmap_t *)e[i].tex)->height, (unsigned)H.frame_no, batch_phase);
+			}
 		}
 	}
 	for (i = 0; i < n; i++, e++)
@@ -314,8 +308,10 @@ void PS2HWD_SprFlush(int which)
 		return;
 	t0 = cyc();
 	drv_in();
+	SPR.in_flush = 1;
 	spr_flush_list(0);
 	spr_flush_list(1);
+	SPR.in_flush = 0;
 	drv_out();
 	G.spr_cyc += cyc() - t0;
 }
@@ -357,61 +353,65 @@ static inline int spr_geom_ok(const float *p0, const float *r, const float *u)
 	return fabsf(cy) + cs->ny * R <= gyw;
 }
 
-// A sprite or shadow polygon of the sprite batch (hw_batching.c). 1: kept for the stream (it is drawn by the flush of the batch); 0: the caller makes a batch polygon of it.
-int PS2HWD_SprPoly(const void *vsurf, const void *vverts, unsigned int flags, int shader, void *vtex, int is_shadow)
+// the slot of the next record of a list (the engine fills it), NULL: the stream is off or the list is full
+ps2spr_t *PS2HWD_SprSlot(int is_shadow)
 {
-	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
-	const FOutVector *v = (const FOutVector *)vverts;
-	GLMipmap_t *m = (GLMipmap_t *)vtex;
-	spr_ent_t *e;
-	float r[3], u[3];
 	const int which = is_shadow ? 0 : 1;
-	u32 blend;
 
-	if ((ps2hwd_fx2 & FX3_NOSPR) || !H.up || !V.on || !V.ready || !VU.spr_base || !m || !surf || !spr_alloc())
-		return 0;
-	blend = flags & PF_Blending;
-	if ((m->format != GL_TEXFMT_P_8 && m->format != GL_TEXFMT_AP_88) || m->regen_kind || (blend != PF_Masked && blend != (PF_Translucent & PF_Blending)) || (flags & ~(u32)(PF_Blending | PF_Occlude | PF_Modulated | PF_ColorMapped)))
+	if ((ps2hwd_fx2 & FX3_NOSPR) || !H.up || !V.on || !V.ready || !VU.spr_base || !SPR.ent[0])
+		return NULL;
+	if (SPR.n[which] >= SPR.cap[which])
+	{
+		SPR.st_rj_full++;
+		return NULL;
+	}
+	return &SPR.ent[which][SPR.n[which]];
+}
+
+// keeps the record of the slot (the engine has filled it): the checks the stream needs of it; 0: the engine draws the polygon the old way
+int PS2HWD_SprCommit(int is_shadow)
+{
+	const int which = is_shadow ? 0 : 1;
+	const spr_ent_t *e = &SPR.ent[which][SPR.n[which]];
+	const GLMipmap_t *m = (const GLMipmap_t *)e->tex;
+	const u32 blend = e->flags & PF_Blending;
+
+	if ((m->format != GL_TEXFMT_P_8 && m->format != GL_TEXFMT_AP_88) || m->regen_kind || (blend != PF_Masked && blend != (PF_Translucent & PF_Blending))
+		|| (e->flags & ~(u32)(PF_Blending | PF_Occlude | PF_Modulated | PF_ColorMapped)))
 	{
 		SPR.st_rj_gate++;
 		return 0;
 	}
-	if (!PS2HWD_PalLit(surf, flags, m, shader))
+	if (!PS2HWD_PalLit(&e->surf, e->flags, m, e->shader))
 	{
 		SPR.st_rj_tex++;
 		return 0;
 	}
-	if (SPR.n[which] >= SPR_MAXENT)
+	if (!spr_geom_ok(e->p0, e->r, e->u))
 	{
-		SPR.st_rj_full++;
+		SPR.st_rj_geom++;
 		return 0;
 	}
-	// the polygon must be the parallelogram of a sprite: corners 0, 1, 3 give P0, R, U, corner 2 is P0 + R + U, the texture coordinates are those of a rectangle
+	SPR.n[which]++;
+	SPR.st_kept++;
+	return 1;
+}
+
+int PS2HWD_SprFromVerts(ps2spr_t *e, const void *vverts)
+{
+	const FOutVector *v = (const FOutVector *)vverts;
+	float r[3], u[3];
+
 	r[0] = v[1].x - v[0].x;
 	r[1] = v[1].y - v[0].y;
 	r[2] = v[1].z - v[0].z;
 	u[0] = v[3].x - v[0].x;
 	u[1] = v[3].y - v[0].y;
 	u[2] = v[3].z - v[0].z;
+	// the polygon must be the parallelogram of a sprite: corners 0, 1, 3 give P0, R, U, corner 2 is P0 + R + U, the texture coordinates are those of a rectangle
 	if (fabsf(v[2].x - (v[0].x + r[0] + u[0])) > 0.01f || fabsf(v[2].y - (v[0].y + r[1] + u[1])) > 0.01f || fabsf(v[2].z - (v[0].z + r[2] + u[2])) > 0.01f
 		|| v[0].s != v[3].s || v[1].s != v[2].s || v[0].t != v[1].t || v[2].t != v[3].t)
-	{
-		SPR.st_rj_para++;
 		return 0;
-	}
-	{
-		float p0[3];
-
-		p0[0] = v[0].x;
-		p0[1] = v[0].y;
-		p0[2] = v[0].z;
-		if (!spr_geom_ok(p0, r, u))
-		{
-			SPR.st_rj_geom++;
-			return 0;
-		}
-	}
-	e = &SPR.ent[which][SPR.n[which]++];
 	e->p0[0] = v[0].x;
 	e->p0[1] = v[0].y;
 	e->p0[2] = v[0].z;
@@ -425,12 +425,26 @@ int PS2HWD_SprPoly(const void *vsurf, const void *vverts, unsigned int flags, in
 	e->u[2] = u[2];
 	e->tb = v[0].t;
 	e->sl = v[0].s;
+	return 1;
+}
+
+// A sprite or shadow polygon of the sprite batch (hw_batching.c). 1: kept for the stream (it is drawn by the flush of the batch); 0: the caller makes a batch polygon of it.
+int PS2HWD_SprPoly(const void *vsurf, const void *vverts, unsigned int flags, int shader, void *vtex, int is_shadow)
+{
+	ps2spr_t *e = PS2HWD_SprSlot(is_shadow);
+
+	if (!e || !vtex || !vsurf)
+		return 0;
+	if (!PS2HWD_SprFromVerts(e, vverts))
+	{
+		SPR.st_rj_para++;
+		return 0;
+	}
 	e->flags = flags;
 	e->shader = shader;
-	e->tex = m;
-	e->surf = *surf;
-	SPR.st_kept++;
-	return 1;
+	e->tex = vtex;
+	e->surf = *(const FSurfaceInfo *)vsurf;
+	return PS2HWD_SprCommit(is_shadow);
 }
 
 void PS2HWD_SprProf(unsigned int frames)
@@ -446,6 +460,24 @@ void PS2HWD_SprProf(unsigned int frames)
 }
 
 #else // host test build
+
+ps2spr_t *PS2HWD_SprSlot(int is_shadow)
+{
+	(void)is_shadow;
+	return NULL;
+}
+
+int PS2HWD_SprCommit(int is_shadow)
+{
+	(void)is_shadow;
+	return 0;
+}
+
+int PS2HWD_SprFromVerts(ps2spr_t *e, const void *verts)
+{
+	(void)e; (void)verts;
+	return 0;
+}
 
 int PS2HWD_SprPoly(const void *vsurf, const void *vverts, unsigned int flags, int shader, void *vtex, int is_shadow)
 {
@@ -463,6 +495,10 @@ void PS2HWD_SprReset(void)
 }
 
 static void spr_free(void)
+{
+}
+
+static void spr_alloc(void)
 {
 }
 
