@@ -24,5 +24,7 @@ int PS2Net_Unlink(const char *path);
 
 // -netcmd "N:command|..." (diagnostic): console commands at displayed frame N; called once per frame
 void PS2Net_Frame(void);
+// PS2-NET-3: -netwd starts the stall watchdog thread (prints the state of every EE thread when the game thread stops reading the clock for 3 s)
+void PS2Net_StartWatchdog(void);
 
 #endif

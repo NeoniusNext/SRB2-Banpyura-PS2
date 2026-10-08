@@ -25,6 +25,7 @@
 #include "d_net.h"
 #include "../w_wad.h"
 #include "d_netfil.h"
+#include "netlat.h"
 #include "d_clisrv.h"
 #include "server_connection.h" // jointimeout (PS2-112 diagnostic)
 #include "tic_command.h"
@@ -845,6 +846,7 @@ boolean HSendPacket(INT32 node, boolean reliable, UINT8 acknum, size_t packetlen
 			DebugPrintpacket("SENT");
 #endif
 		I_NetSend();
+		NetLat_Sent(netbuffer->packettype, doomcom->datalength); // PS2-NET-1 (diagnostic)
 #ifdef PACKETDROP
 	}
 	else

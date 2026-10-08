@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 EMU1 = 'net1'
 EMU2 = 'net2'
 PAK = 'build/pakx'  # links of the cooked packs of the main tree + FINEACON.DAT (python3 tools/ps2/net_env.py makes it)
-BASE = 'build/opt10-x'
+BASE = 'build/opt12-net'
 
 
 def pc_exe(kind='pc-net'):

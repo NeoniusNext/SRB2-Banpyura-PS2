@@ -71,6 +71,7 @@
 #include "z_zone.h"
 #include "d_main.h"
 #include "netcode/d_netfil.h"
+#include "netcode/netlat.h"
 #include "m_cheat.h"
 #include "y_inter.h"
 #include "p_local.h" // chasecam
@@ -841,6 +842,7 @@ static void D_RunFrame(void)
 		}
 
 		I_UpdateTime(cv_timescale.value);
+		NetLat_Frame(); // PS2-NET-1 (diagnostic: -netlat)
 
 		if (lastwipetic)
 		{

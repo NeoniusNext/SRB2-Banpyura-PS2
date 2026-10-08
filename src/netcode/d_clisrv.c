@@ -28,6 +28,7 @@
 #include "../m_menu.h"
 #include "../console.h"
 #include "d_netfil.h"
+#include "netlat.h"
 #include "../byteptr.h"
 #include "../p_saveg.h"
 #include "../z_zone.h"
@@ -1260,6 +1261,7 @@ static void HandlePacketFromPlayer(SINT8 node)
   */
 void GetPackets(void)
 {
+	NetLat_Poll(); // PS2-NET-1 (diagnostic)
 	while (HGetPacket())
 	{
 		SINT8 node = doomcom->remotenode;
@@ -1405,6 +1407,7 @@ boolean TryRunTics(tic_t realtics)
 				if (update_stats)
 					PS_START_TIMING(ps_tictime);
 
+				NetLat_TicRun(gametic, (INT32)(neededtic - gametic)); // PS2-NET-1 (diagnostic)
 				G_Ticker((gametic % NEWTICRATERATIO) == 0);
 				ExtraDataTicker();
 				gametic++;

@@ -115,6 +115,7 @@ src/ps2/net_stub.c
 src/ps2/ps2_curl.c
 src/ps2/ps2_osk.c
 src/netcode/mserv.c
+src/netcode/netlat.c
 src/netcode/http-mserv.c
 src/ps2/ps2_net.c
 src/ps2/ps2_netui.c
