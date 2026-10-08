@@ -79,6 +79,41 @@ static long NowMs(void)
 #endif
 }
 
+#ifdef _EE
+// PS2-NET-3 (OPT12): lwIP's select() with a time-out waits on the SDK's alarm library (WaitSemaEx), the one whose lost wake-ups hung the game thread (docs/GATES/g1/opt12-NET.md).
+// The game thread polls instead: select() with a zero time-out every millisecond (PS2_SleepUs) until the time is up.
+#include "ps2_sys.h"
+static int SelectWait(int nfds, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
+{
+	const long end = NowMs() + (tv ? (long)tv->tv_sec * 1000 + tv->tv_usec / 1000 : 0);
+
+	for (;;)
+	{
+		fd_set r1, w1, e1;
+		struct timeval zero = {0, 0};
+		int rc;
+
+		if (r) r1 = *r;
+		if (w) w1 = *w;
+		if (e) e1 = *e;
+		rc = select(nfds, r ? &r1 : NULL, w ? &w1 : NULL, e ? &e1 : NULL, &zero);
+		if (rc != 0 || NowMs() >= end)
+		{
+			if (rc > 0)
+			{
+				if (r) *r = r1;
+				if (w) *w = w1;
+				if (e) *e = e1;
+			}
+			return rc;
+		}
+		PS2_SleepUs(1000);
+	}
+}
+#else
+#define SelectWait select
+#endif
+
 #ifdef __GNUC__
 static void Fail(char *errbuf, size_t errsize, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
 #endif
@@ -259,7 +294,7 @@ static int ConnectPoll(sock_t s, const char *host, long waitms, int *done, char 
 	FD_SET(s, &efds); // Winsock reports a refused connection here
 	tv.tv_sec = waitms / 1000;
 	tv.tv_usec = (waitms % 1000) * 1000;
-	rc = select((int)s + 1, NULL, &wfds, &efds, &tv);
+	rc = SelectWait((int)s + 1, NULL, &wfds, &efds, &tv);
 	*done = 0;
 	if (rc > 0)
 	{
@@ -320,7 +355,7 @@ static int SendAll(sock_t s, const char *p, size_t n, long deadline)
 		FD_SET(s, &wfds);
 		tv.tv_sec = (left > 500 ? 500 : left) / 1000;
 		tv.tv_usec = ((left > 500 ? 500 : left) % 1000) * 1000;
-		if (select((int)s + 1, NULL, &wfds, NULL, &tv) <= 0)
+		if (SelectWait((int)s + 1, NULL, &wfds, NULL, &tv) <= 0)
 			continue;
 		k = (int)send(s, p, (int)(n > 1400 ? 1400 : n), 0);
 		if (k <= 0)
@@ -475,7 +510,7 @@ static int Exchange(const url_t *u, int is_post, const char *post, long postsize
 		FD_SET(s, &rfds);
 		tv.tv_sec = (left > 500 ? 500 : left) / 1000;
 		tv.tv_usec = ((left > 500 ? 500 : left) % 1000) * 1000;
-		if (select((int)s + 1, &rfds, NULL, NULL, &tv) <= 0)
+		if (SelectWait((int)s + 1, &rfds, NULL, NULL, &tv) <= 0)
 			continue;
 		k = (int)recv(s, tmp, sizeof tmp, 0);
 		if (k < 0)

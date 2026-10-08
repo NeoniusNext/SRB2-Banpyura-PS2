@@ -20,6 +20,22 @@ LINE = re.compile(r'NETLAT (?P<what>[a-z-]+) (?P<name>\S*) ?n=(?P<n>\d+) min=(?P
 HEAD = re.compile(r'NETLAT --- t=(?P<t>\d+) gametic=(?P<g>\d+) maketic=\d+ neededtic=\d+ ping=(?P<ping>\d+) ms sent=(?P<sent>\d+) \((?P<bytes>\d+) B\)(?: buf=(?P<buf>\d+) starves=(?P<st>\d+))?')
 
 
+LOSS = re.compile(r'NETLAT loss cmd-missed=(\d+) \(total (\d+)\) tic-holes=(\d+) \(total (\d+)\)')
+
+
+def losses(path):
+    """cmds the server had to repeat and holes in the client's tic stream: the totals of the last line"""
+    last = None
+    try:
+        for line in Path(path).read_text(errors='replace').splitlines():
+            m = LOSS.search(line)
+            if m:
+                last = (int(m[2]), int(m[4]))
+    except OSError:
+        pass
+    return last
+
+
 def parse(path, from_gametic):
     acc = {}
     pings = []
@@ -70,12 +86,14 @@ def main():
             if p.exists():
                 stats, pings = parse(p, from_g)
                 if stats or pings:
-                    res[node] = {'stats': stats, 'ping_ms': {'avg': round(sum(pings) / len(pings), 1), 'max': max(pings), 'n': len(pings)} if pings else None}
+                    res[node] = {'losses': losses(p), 'stats': stats, 'ping_ms': {'avg': round(sum(pings) / len(pings), 1), 'max': max(pings), 'n': len(pings)} if pings else None}
                 break
     if '--json' in sys.argv:
         print(json.dumps(res, indent=1))
         return
     for node, r in res.items():
+        if r.get('losses'):
+            print(f'[{node}]  cmds repeated by the server: {r["losses"][0]}, holes in the tic stream of the client: {r["losses"][1]}')
         print(f'[{node}]' + (f'  ping shown: avg {r["ping_ms"]["avg"]} max {r["ping_ms"]["max"]} ms ({r["ping_ms"]["n"]} windows)' if r['ping_ms'] else ''))
         for k, s in sorted(r['stats'].items()):
             print(f'  {k:22s} n={s["n"]:5d}  min {s["min_ms"]:7.1f}  avg {s["avg_ms"]:7.1f}  p95 {s["p95_ms"]:7.1f}  max {s["max_ms"]:8.1f} ms')

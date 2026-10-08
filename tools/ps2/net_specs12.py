@@ -52,8 +52,13 @@ def write_(name, timeout, nodes, tics):
 
 lat_pair('lat-sw', 'Software')
 lat_pair('lat-hw', 'Hardware')
-lat_pair('lat-sw-trace', 'Software', tics=900, extra_cli=['-netlattrace'])
+lat_pair('lat-sw-trace', 'Software', tics=1100, extra_cli=['-netlattrace'])
 lat_pair('lat-sw-noearly', 'Software', extra_cli=['-netnoearly'])
+lat_pair('lat-sw-trace-noearly', 'Software', tics=1100, extra_cli=['-netlattrace', '-netnoearly'])
+lat_pair('lat-sw-trace-buf0', 'Software', tics=1100, extra_cli=['-netlattrace', '-netearlybuf', '0'])
+lat_pair('lat-hw-trace', 'Hardware', tics=1100, extra_cli=['-netlattrace'])
+lat_pair('lat-hw-trace-noearly', 'Hardware', tics=1100, extra_cli=['-netlattrace', '-netnoearly'])
+lat_pair('lat-hw-trace-buf0', 'Hardware', tics=1100, extra_cli=['-netlattrace', '-netearlybuf', '0'])
 lat_pair('lat-hw-noearly', 'Hardware', extra_cli=['-netnoearly'])
 
 # Menu path in the hardware renderer: Multiplayer > "Specify server address" > on-screen keyboard (what a person does)
@@ -120,6 +125,14 @@ impaired('cable-long', ['--schedule', '40:blackhole=25'], long_timeout=True, abo
 # ---- soak: 10 minutes of game time (21000 tics) with both ends walking, the state hash compared afterwards (net_batch.py) ----
 for _r in ('Software', 'Hardware'):
     lat_pair(f'soak10-{_r[:2].lower()}', _r, tics=21000, timeout=3000, walkto=21000 * 3 + 3000)
+
+# ---- add-on download from a PC server over the game connection (UDP): NSK.pk3 (408 KB) and ZT.pk3 (2 MB); the time between "Downloading addon" and "Finished download" is in the client log ----
+ADDONS = S.ADDONS
+for _name, _files in (('dl-nsk', ['NSK.pk3']), ('dl-both', ['NSK.pk3', 'ZT.pk3'])):
+    srv = pcsrv(extra=['-netlat', '-file'] + [f'{ADDONS}/{f}' for f in _files], start=3)
+    cli = ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'],
+              files={'pad.txt': pad(*crosses(200, 4000))}, cfg=CFG_SYNC, start=10)
+    mine(_name, {'timeout': 900, 'nodes': [srv, cli], 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 1400}], 'grace': 3})
 
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]

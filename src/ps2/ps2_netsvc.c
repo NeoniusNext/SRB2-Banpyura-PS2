@@ -18,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <malloc.h>
+#include <stdlib.h>
 #include <string.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
@@ -48,7 +49,7 @@ static struct
 } nsv = {NULL, 0, 0, false, false, false, 0, -1, -1, {0, 0, 0, 0, 0, 0}, 0};
 
 static nsv_packet_t scratch; // where a datagram goes when the ring is full (it is dropped, as lwIP would have)
-static UINT8 nsv_stack[NSV_STACK] __attribute__((aligned(16)));
+static UINT8 *nsv_stack; // from the heap while a game socket is open (not 16 KiB of bss for the single-player game)
 extern void *_gp;
 
 #define BARRIER() __asm__ volatile("sync" ::: "memory")
@@ -161,6 +162,12 @@ boolean PS2NetSvc_Start(int fd)
 		if (!nsv.ring)
 			return false;
 	}
+	if (!nsv_stack)
+	{
+		nsv_stack = (UINT8 *)memalign(16, NSV_STACK);
+		if (!nsv_stack)
+			return false;
+	}
 	nsv.head = nsv.tail = 0;
 	nsv.stop = false;
 	nsv.joined = false;
@@ -174,7 +181,7 @@ boolean PS2NetSvc_Start(int fd)
 	memset(&t, 0, sizeof t);
 	t.func = (void *)SvcThread;
 	t.stack = nsv_stack;
-	t.stack_size = sizeof nsv_stack;
+	t.stack_size = NSV_STACK;
 	t.gp_reg = &_gp;
 	t.initial_priority = NSV_PRIO;
 	nsv.tid = CreateThread(&t);
@@ -206,6 +213,11 @@ void PS2NetSvc_Stop(void)
 		nsv.tid = -1;
 	}
 	nsv.joined = false;
+	if (nsv_stack)
+	{
+		free(nsv_stack); // the thread is deleted: nothing runs on it any more
+		nsv_stack = NULL;
+	}
 }
 
 boolean PS2NetSvc_Running(void)

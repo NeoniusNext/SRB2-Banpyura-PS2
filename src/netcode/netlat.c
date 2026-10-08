@@ -48,6 +48,7 @@ static nl_stat_t nl_frame;           // time between two passes of the main loop
 static precise_t nl_framelast;
 static nl_stat_t nl_backlog;         // tics waiting when one runs (in units of 1000)
 static UINT32 nl_sent, nl_sentbytes;
+static UINT32 nl_cmdmiss_win, nl_cmdmiss_total, nl_hole_win, nl_hole_total; // missed cmds of the server (this window / since the start), holes in the tic stream of the client
 
 static boolean On(void)
 {
@@ -142,6 +143,23 @@ void NetLat_Pass(INT32 type, INT32 realtics)
 {
 	nl_passtype = type;
 	nl_passreal = realtics;
+}
+
+void NetLat_CmdMissed(INT32 player)
+{
+	(void)player;
+	if (!On())
+		return;
+	nl_cmdmiss_win++;
+	nl_cmdmiss_total++;
+}
+
+void NetLat_TicHole(void)
+{
+	if (!On())
+		return;
+	nl_hole_win++;
+	nl_hole_total++;
 }
 
 void NetLat_RunPass(void)
@@ -255,6 +273,8 @@ void NetLat_Frame(void)
 #endif
 		CONS_Printf("NETLAT --- t=%u gametic=%u maketic=%u neededtic=%u ping=%u ms sent=%u (%u B) buf=%d starves=%u\n", (unsigned)t, (unsigned)gametic, (unsigned)maketic, (unsigned)neededtic,
 			(unsigned)playerpingtable[consoleplayer], (unsigned)nl_sent, (unsigned)nl_sentbytes, (int)buf, (unsigned)starves);
+		CONS_Printf("NETLAT loss cmd-missed=%u (total %u) tic-holes=%u (total %u)\n", (unsigned)nl_cmdmiss_win, (unsigned)nl_cmdmiss_total, (unsigned)nl_hole_win, (unsigned)nl_hole_total);
+		nl_cmdmiss_win = nl_hole_win = 0;
 	}
 	Print("frame", "", &nl_frame);
 	Print("poll", "", &nl_poll);

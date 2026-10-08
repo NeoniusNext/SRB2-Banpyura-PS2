@@ -25,6 +25,9 @@ void NetLat_RxAge(UINT64 arrival);
 void NetLat_RunPass(void);
 // client: the kind of the pass that is about to run tics (0 = the clock ticked, 1 = early) and its realtics (-netlattrace)
 void NetLat_Pass(INT32 type, INT32 realtics);
+// server: the tic cmd of a player was not there when the tic was made (the previous one is repeated); client: a packet of tics arrived with a hole in front of it
+void NetLat_CmdMissed(INT32 player);
+void NetLat_TicHole(void);
 // both: once per main loop pass (printing, frame time)
 void NetLat_Frame(void);
 // both: a packet of the game connection went out / came in (type, size)
@@ -37,6 +40,8 @@ void NetLat_Sent(INT32 type, INT32 bytes);
 #define NetLat_Poll() ((void)0)
 #define NetLat_RxAge(a) ((void)0)
 #define NetLat_RunPass() ((void)0)
+#define NetLat_CmdMissed(p) ((void)0)
+#define NetLat_TicHole() ((void)0)
 #define NetLat_Pass(t, r) ((void)0)
 #define NetLat_Frame() ((void)0)
 #define NetLat_Sent(t, b) ((void)0)

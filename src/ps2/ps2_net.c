@@ -51,7 +51,7 @@ static UINT64 retry_after; // I_GetPreciseTime() of the earliest new attempt aft
 // how the waiting thread and its semaphore are named. Switched on by -netwd (tests); the price is a thread that wakes once a second.
 extern void *_gp;
 volatile UINT32 ps2net_beat; // raised by I_UpdateTime (src/i_time.c)
-static UINT8 wd_stack[8192] __attribute__((aligned(16)));
+static UINT8 *wd_stack; // heap, only with -netwd
 static INT32 wd_tid = -1;
 
 static void WdPrint(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
@@ -115,10 +115,13 @@ void PS2Net_StartWatchdog(void)
 
 	if (wd_tid >= 0 || !M_CheckParm("-netwd"))
 		return;
+	wd_stack = (UINT8 *)memalign(16, 8192);
+	if (!wd_stack)
+		return;
 	memset(&t, 0, sizeof t);
 	t.func = (void *)WdThread;
 	t.stack = wd_stack;
-	t.stack_size = sizeof wd_stack;
+	t.stack_size = 8192;
 	t.gp_reg = &_gp;
 	t.initial_priority = 1;
 	wd_tid = CreateThread(&t);
@@ -361,6 +364,14 @@ boolean PS2Net_Up(void)
 	INT32 attempt = 0;
 	boolean ui;
 
+	if (netstate > 0 && modules_up && !M_CheckParm("-netnolinkcheck")
+		&& NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0) != NETMAN_NETIF_ETH_LINK_STATE_UP)
+	{
+		// PS2-NET-8 (OPT12): the network was up at the last connect, and the cable has been pulled since (the game gave up on the server after 10 s and went back to the title):
+		// the next "connect" waits for the link and the lease again, with the network screen, instead of sending into nothing
+		CONS_Printf("PS2 net: the Ethernet link is gone, bringing the network up again\n");
+		netstate = 0;
+	}
 	if (netstate)
 		return netstate > 0;
 	if (retry_after && (INT64)(I_GetPreciseTime() - retry_after) < 0)

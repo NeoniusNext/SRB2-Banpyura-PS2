@@ -260,6 +260,8 @@ void PT_ServerTics(SINT8 node, INT32 netconsole)
 
 	realend = min(realend, gametic + CLIENTBACKUPTICS);
 	cl_packetmissed = realstart > neededtic;
+	if (cl_packetmissed)
+		NetLat_TicHole(); // PS2-NET-1 (diagnostic)
 	NetLat_ServerTics(realstart, realend, neededtic); // PS2-NET-1 (diagnostic)
 
 	if (realstart <= neededtic && realend > neededtic)
@@ -532,6 +534,7 @@ void SV_Maketic(void)
 			else
 			{
 				DEBFILE(va("MISS tic%4d for player %d\n", maketic, i));
+				NetLat_CmdMissed(i); // PS2-NET-1 (diagnostic)
 				// Copy the input from the previous tic
 				*ticcmd = *prevticcmd;
 				ticcmd->angleturn &= ~TICCMD_RECEIVED;
