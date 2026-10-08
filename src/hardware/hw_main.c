@@ -3184,6 +3184,28 @@ static UINT16 hwr_fx_ext_wads;
 static boolean hwr_fx_interp; // R_UsingFrameInterpolation() && !paused, once per view (HWR_ClearSprites)
 static boolean hwr_fx_lerp; // this frame's things are drawn between two tics (rendertimefrac < 1): their positions are bounded by the old ones
 static patch_t *hwr_fx_dshadow; // the picture of the drop shadow of this frame (PS2-HW-242)
+static const ps2cull_t *hwr_fx_cs; // the view's sphere test data while HWR_AddSprites runs (NULL: no sphere test of the sprites that have a drop shadow)
+static boolean hwr_fx_blok; // R_BlendLevelVisible(AST_TRANSLUCENT, 0) (a thing of full alpha and the default blend mode), made once per view
+static boolean hwr_fx_viewok; // the view's object has not been removed (R_ThingVisible asks for every thing)
+static mobj_t *hwr_fx_follow; // ... and the object that follows the view's player
+
+// PS2-HW-248: R_ThingVisible with what does not change in a view made once per view (it was 70 cycles for each of the 1771 things of a DEMO_004 frame)
+static inline boolean HWR_FX_ThingVisible(mobj_t *thing)
+{
+	if (thing->sprite == SPR_NULL || (thing->flags2 & MF2_DONTDRAW) || (thing->drawonlyforplayer && thing->drawonlyforplayer != viewplayer))
+		return false;
+	if (thing->alpha == FRACUNIT && thing->blendmode == AST_TRANSLUCENT)
+	{
+		if (!hwr_fx_blok)
+			return false;
+	}
+	else if (!R_BlendLevelVisible(thing->blendmode, R_GetThingTransTable(thing->alpha, 0)))
+		return false;
+	if (hwr_fx_viewok && (r_viewmobj == thing || hwr_fx_follow == thing || r_viewmobj == thing->dontdrawforviewmobj))
+		return false;
+	return true;
+}
+
 
 // the sphere of radius R around (X, Y, Z) (the coordinates of FOutVector: x, height, y) lies wholly outside one side of the view volume, with every point of it at least
 // twice the near plane away from the eye: a quad inside it is hidden for PS2HWD_QuadHidden
@@ -3211,6 +3233,9 @@ static void HWR_ClearSprites(void)
 	gl_visspritecount = 0;
 #ifdef PS2_PROFILE
 	hwr_fx_dshadow = NULL;
+	hwr_fx_blok = R_BlendLevelVisible(AST_TRANSLUCENT, 0);
+	hwr_fx_viewok = !P_MobjWasRemoved(r_viewmobj);
+	hwr_fx_follow = (hwr_fx_viewok && r_viewmobj->player) ? r_viewmobj->player->followmobj : NULL;
 	hwr_fx_interp = R_UsingFrameInterpolation() && !paused; // PS2-HW-245: asked once per view (the answer costs 100 cycles: the refresh rate of the display mode is looked up), not by every thing
 	hwr_fx_lerp = hwr_fx_interp && rendertimefrac != FRACUNIT; // (PS2-HW-240)
 	if (hwr_fx_ext_lumps != numspritelumps || hwr_fx_ext_wads != numwadfiles)
@@ -3418,6 +3443,9 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 #endif
 	if (!(gpatch && gpatch->hardware && ((GLPatch_t *)gpatch->hardware)->mipmap->format)) return;
 	HWD_LAP(HWP_SH_C);
+#ifdef PS2_PROFILE
+	if (ps2hwd_fx2 & FX2_NOSHADOW) // PS2-HW-242: the picture is made resident only for a shadow that is drawn (after the quad test below; 150 cycles for the 70 % that are not)
+#endif
 	HWR_GetPatch(gpatch);
 	HWD_LAP(HWP_SH_D);
 
@@ -3437,6 +3465,34 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		offset = ((gpatch->height)/2) * fscale;
 	else
 		offset = (float)((gpatch->height)/2);
+
+#ifdef PS2_PROFILE
+	// PS2-HW-124: the shadow lies 0.05 units above the floor, which is not enough for the GS: the depth of a floor polygon at a pixel is interpolated from vertices
+	// snapped to 1/16 pixel, a floor seen from a low camera changes by ~400000 / h depth steps per pixel (h = camera height above it), so the snap alone moves
+	// the floor's depth by hundreds of steps, while 0.05 units are 67e6 * 0.05 / d^2 steps (d = distance): the floor won the depth test and the shadow of the
+	// player and the enemies was gone on 1/3 of the maps. The lift grows with d^2 / h (four times the snap error), at most 6 units (a pixel or two on the screen).
+	// (PS2-HW-242: made before the corners, the sphere test below needs it)
+	{
+		const float sdx = fx - gl_viewx, sdy = fy - gl_viewy, sdz = gl_viewz - FIXED_TO_FLOAT(groundz);
+		float sh = fabsf(sdz), lift;
+
+		sh = sh < 16.0f ? 16.0f : sh;
+		lift = (sdx * sdx + sdy * sdy + sdz * sdz) * (1.0f / 640.0f) / sh;
+		shadowlift = lift < 0.05f ? 0.05f : lift > 6.0f ? 6.0f : lift;
+	}
+	if (!(ps2hwd_fx2 & (FX2_NOSHADOW | FX2_PRECHECK)) && !groundslope && cv_shadow.value != 2 && !HWR_PS2_NoCull())
+	{
+		// PS2-HW-242: a shadow that no pixel of the view can show is not made at all: the quad is a square of half side `offset` on a level floor; the sphere around its
+		// centre that holds its corners (and the lift) is wholly outside one side of the view
+		const ps2cull_t *cs = PS2HWD_CullSetup();
+
+		if (cs->valid && HWR_FX_SphereHidden(cs, fx, FIXED_TO_FLOAT(groundz) + flip * shadowlift, fy, offset * 1.4143f + shadowlift + 0.5f))
+		{
+			HWD_ADD(HWC_FX_SHQHID);
+			return;
+		}
+	}
+#endif
 
 	shadowVerts[2].x = shadowVerts[3].x = fx + offset;
 	shadowVerts[1].x = shadowVerts[0].x = fx - offset;
@@ -3514,20 +3570,6 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		shadowVerts[i].z = fy + ((oldx - fx) * gl_shadowsin) + ((oldy - fy) * gl_shadowcos);
 	}
 
-#ifdef PS2_PROFILE
-	// PS2-HW-124: the shadow lies 0.05 units above the floor, which is not enough for the GS: the depth of a floor polygon at a pixel is interpolated from vertices
-	// snapped to 1/16 pixel, a floor seen from a low camera changes by ~400000 / h depth steps per pixel (h = camera height above it), so the snap alone moves
-	// the floor's depth by hundreds of steps, while 0.05 units are 67e6 * 0.05 / d^2 steps (d = distance): the floor won the depth test and the shadow of the
-	// player and the enemies was gone on 1/3 of the maps. The lift grows with d^2 / h (four times the snap error), at most 6 units (a pixel or two on the screen).
-	{
-		const float sdx = fx - gl_viewx, sdy = fy - gl_viewy, sdz = gl_viewz - FIXED_TO_FLOAT(groundz);
-		float sh = fabsf(sdz), lift;
-
-		sh = sh < 16.0f ? 16.0f : sh;
-		lift = (sdx * sdx + sdy * sdy + sdz * sdz) * (1.0f / 640.0f) / sh;
-		shadowlift = lift < 0.05f ? 0.05f : lift > 6.0f ? 6.0f : lift;
-	}
-#endif
 	if (groundslope)
 	{
 		for (i = 0; i < 4; i++)
@@ -3549,19 +3591,12 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	if (!HWR_PS2_NoCull())
 	{
 		boolean sph = false;
+		const ps2cull_t *cs = (ps2hwd_fx2 & FX2_PRECHECK) ? PS2HWD_CullSetup() : NULL;
 
-		if (!(ps2hwd_fx2 & FX2_NOSHADOW) && !groundslope && cv_shadow.value != 2)
-		{
-			// PS2-HW-242: the quad is a square of half side `offset` on a level floor: the sphere around its centre that holds its corners (and the lift) is tested first
-			const ps2cull_t *cs = PS2HWD_CullSetup();
-
-			sph = cs->valid && HWR_FX_SphereHidden(cs, fx, shadowVerts[0].y, fy, offset * 1.4143f + shadowlift + 0.5f);
-			if (sph && !(ps2hwd_fx2 & FX2_PRECHECK))
-			{
-				HWD_ADD(HWC_FX_SHQHID);
-				return;
-			}
-		}
+		if (cs && !cs->valid)
+			cs = NULL;
+		if (cs && (ps2hwd_fx2 & FX2_PRECHECK) && !(ps2hwd_fx2 & FX2_NOSHADOW) && !groundslope && cv_shadow.value != 2)
+			sph = HWR_FX_SphereHidden(cs, fx, shadowVerts[0].y, fy, offset * 1.4143f + shadowlift + 0.5f); // check mode: the exact test below must agree
 		if (PS2HWD_QuadHidden(shadowVerts))
 		{
 			HWD_ADD(HWC_FX_SHQHID);
@@ -3578,6 +3613,10 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 #endif
 
 	HWD_ADD(HWC_FX_SHADOW);
+#ifdef PS2_PROFILE
+	if (!(ps2hwd_fx2 & FX2_NOSHADOW))
+		HWR_GetPatch(gpatch);
+#endif
 	shadowVerts[0].s = shadowVerts[3].s = 0;
 	shadowVerts[2].s = shadowVerts[1].s = ((GLPatch_t *)gpatch->hardware)->max_s;
 
@@ -5320,6 +5359,17 @@ static void HWR_FX_ExtMake(UINT32 spr, hwr_fx_ext_t *e)
 	e->vr = vr;
 }
 
+// the quad of a sprite (HWR_ProjectSprite's x1 .. gzt, before the aim rotation) lies in a sphere that is outside the view: nothing of the sprite is drawn
+static inline boolean HWR_FX_QuadSphereHidden(const ps2cull_t *cs, float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim)
+{
+	const float X = (x1 + x2) * 0.5f, Z = (z1 + z2) * 0.5f, Y = (gz + gzt) * 0.5f;
+	float R = (fabsf(x2 - x1) + fabsf(z2 - z1) + fabsf(gzt - gz)) * 0.5f + 0.05f * (float)abs(dispoffset);
+
+	if (aim) // (the corners turn around the foot: each moves by at most twice its height above it)
+		R += 2.0f * (fabsf(Y - basey) + fabsf(gzt - gz) * 0.5f);
+	return HWR_FX_SphereHidden(cs, X, Y, Z, R * 1.002f + 1.0f);
+}
+
 static inline boolean HWR_FX_ThingHidden(const mobj_t *thing, const ps2cull_t *cs)
 {
 	hwr_fx_ext_t *e;
@@ -5395,19 +5445,25 @@ static void HWR_AddSprites(sector_t *sec)
 #ifdef PS2_PROFILE
 	{
 		// PS2-HW-240: a thing whose sprite cannot put a pixel on the screen (a sphere around it is outside the view volume) is not projected at all
-		const ps2cull_t *cs = (ps2hwd_fx2 & FX2_NOPRE) ? NULL : PS2HWD_CullSetup();
+		const ps2cull_t *csb = ((ps2hwd_fx2 & (FX2_NOPRE | FX2_NOSPRITE)) == (FX2_NOPRE | FX2_NOSPRITE)) ? NULL : PS2HWD_CullSetup();
+		const ps2cull_t *cs = (ps2hwd_fx2 & FX2_NOPRE) ? NULL : csb;
 
 		const boolean boxes = cv_renderhitbox.value != 0; // (R_ThingBoundingBoxVisible answers "no" for every thing when the hitboxes are off)
 
 		if (cs && !cs->valid)
 			cs = NULL;
+		hwr_fx_cs = (csb && csb->valid && !(ps2hwd_fx2 & FX2_NOSPRITE)) ? csb : NULL; // (HWR_ProjectSprite: the sprites that have a drop shadow)
 		for (thing = sec->thinglist; thing; thing = thing->snext)
 		{
 			HWD_ADD(HWC_FX_THINGS);
 			// (no draw distance set: the distance is not looked at; R_ThingWithinDist computes it for nothing)
 			if ((thing->sprite == SPR_HOOP ? !hoop_limit_dist : !limit_dist) || R_ThingWithinDist(thing, limit_dist, hoop_limit_dist))
 			{
-				if (R_ThingVisible(thing))
+				const boolean vis0 = (ps2hwd_fx2 & FX2_NOVIS) ? R_ThingVisible(thing) : HWR_FX_ThingVisible(thing);
+
+				if ((ps2hwd_fx2 & FX2_PRECHECK) && vis0 != R_ThingVisible(thing))
+					CONS_Printf("HWC visible MISMATCH\n");
+				if (vis0)
 				{
 					HWD_ADD(HWC_FX_PROJ);
 					if (cs && HWR_FX_ThingHidden(thing, cs))
@@ -5594,9 +5650,9 @@ static void HWR_ProjectSprite(mobj_t *thing)
 
 
 #ifdef PS2_PROFILE
-	if (!(ps2hwd_fx2 & FX2_NOINTERP)) // PS2-HW-245: without the subsector and the angles the sprite does not use (what the full interpolation makes of them is 400 cycles)
+	if (hwr_fx_lerp && !(ps2hwd_fx2 & FX2_NOINTERP)) // PS2-HW-245: between two tics, without the subsector and the angles the sprite does not use (what the full interpolation makes of them is 400 cycles)
 	{
-		R_InterpolateMobjStateLite(thing, HWR_USING_INTERP() ? rendertimefrac : FRACUNIT, &interp);
+		R_InterpolateMobjStateLite(thing, rendertimefrac, &interp);
 	}
 	else
 #endif
@@ -5996,19 +6052,31 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		const boolean aim = cv_glspritebillboarding.value && !papersprite && fabsf(gl_viewludcos) > 1.0e-6f; // as HWR_RotateSpritePolyToAim: not for a view that looks level
 		const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-		if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+		if (cv_shadow.value && thing->shadowscale)
+		{
+			// the sphere around the quad (60 cycles; the exact test of the driver is 340 and no better for a quad that is not tiny): the sprite is only marked, the vissprite
+			// stays for the shadow
+			const ps2cull_t *cs = hwr_fx_cs;
+
+			if (cs && HWR_FX_QuadSphereHidden(cs, x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+			{
+				HWD_ADD(HWC_FX_QHID);
+				if (!(ps2hwd_fx2 & FX2_PRECHECK))
+					ps2_hidden = 2; // only the shadow is drawn
+				else if (!HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim)) // check mode: the exact test must agree
+				{
+					static unsigned bad;
+
+					CONS_Printf("HWC sprite sphere MISMATCH %u\n", ++bad);
+				}
+			}
+		}
+		else if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
 		{
 			HWD_ADD(HWC_FX_QHID);
-			if (cv_shadow.value && thing->shadowscale)
-			{
-				ps2_hidden = 2; // only the shadow is drawn
-			}
-			else
-			{
-				if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds
-					return;
-				ps2_hidden = 1;
-			}
+			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds
+				return;
+			ps2_hidden = 1;
 		}
 	}
 #endif
