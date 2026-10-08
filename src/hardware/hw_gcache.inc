@@ -26,6 +26,9 @@
 // HWPROF32 (counts and cycles of the window), HWPROF39 (misses of segs never seen / seen with another key, cycles of the replay), HWPROF40 (which word of the key differed).
 
 #define GC_WAYS 2u
+#define GC_WINDOW 24u // views of the window in which the hit rate is looked at
+#define GC_BYPASS_MIN 16u
+#define GC_BYPASS_MAX 512u
 #define GC_DEFAULT_KB 640u // both halves of the arena
 #define GC_SCRATCH (24u << 10) // the record of a hit that is checked (mode 2, 3)
 #define GC_MAXREC (12u << 10) // longest record that is kept
@@ -76,6 +79,7 @@ static struct
 	UINT32 s_seg_hit, s_seg_miss, s_seg_skip, s_pl_hit, s_pl_miss, s_pl_skip, s_flush, s_full, s_chk, s_bad, s_rep_ops, s_rec_ops;
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
 	UINT32 ch[10], cl[10]; // misses of segs by the cycles the calculation took (buckets of 512) and the bytes of their records
+	UINT32 bypass, bypass_len, w_views, w_q, w_hit, s_bypass; // adaptive: a window of views in which fewer than a third of the queries hit puts the cache out of use for a while (bypass views), longer every time
 	UINT32 sdbg, nsets, nsets_user, s_reclaim, s_promo, test_rec, test_res, test_n1, test_n2; // -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th HWR_GCReserve (tests of the reclaim)
 	UINT32 mmpos, mm[34], mmp[34]; // the position of the first word of a key that differed (1 = the first), histograms of the segs and of the planes
 	UINT32 s_new, s_stale, c_rpoly, c_rtex, n_rpoly, n_rtex; // misses of a seg or plane never seen / seen with another key; cycles and number of the polygon and texture ops of the replays
@@ -471,6 +475,7 @@ void HWR_GCacheFlush(void)
 // a new level: the zone has freed the block (PU_HWRPLANE), all pointers into it are gone
 static void HWR_GCacheLevel(void)
 {
+	gc.bypass = gc.bypass_len = gc.w_views = gc.w_q = gc.w_hit = 0;
 	gc.dead = false;
 	gc.blk = NULL;
 	gc.on = false;
@@ -658,6 +663,31 @@ static boolean HWR_GCacheFrame(void)
 		gc.dead = true; // no room (until the next level)
 		return false;
 	}
+	// A scene whose walls do not fit in the arena (THZ2: 1400 segs of 5 polygons a frame, nothing in the arena is ever used again) only pays for the records. After a window of views with
+	// fewer than a third of the queries hitting, the cache is out of use for a while (the records stay: a key that still fits is a hit when it comes back); a longer while every time.
+	if (gc.bypass)
+	{
+		gc.bypass--;
+		gc.s_bypass++;
+		return false;
+	}
+	if (++gc.w_views >= GC_WINDOW)
+	{
+		if ((gc.mode & 3) == 1 && gc.w_q >= 64u && gc.w_hit * 3u < gc.w_q) // (not while checking: a checked hit is not counted as a hit)
+		{
+			gc.bypass = gc.bypass_len ? gc.bypass_len : GC_BYPASS_MIN;
+			gc.bypass_len = gc.bypass_len ? (gc.bypass_len * 2u > GC_BYPASS_MAX ? GC_BYPASS_MAX : gc.bypass_len * 2u) : GC_BYPASS_MIN * 2u;
+		}
+		else if (gc.w_hit * 2u > gc.w_q)
+			gc.bypass_len = 0;
+		gc.w_views = gc.w_q = gc.w_hit = 0;
+		if (gc.bypass)
+		{
+			gc.bypass--;
+			gc.s_bypass++;
+			return false;
+		}
+	}
 	sig = (UINT32)cv_secbright.value * 2654435761u;
 	sig ^= (UINT32)cv_glshaders.value << 3;
 	sig ^= (UINT32)cv_glallowshaders.value << 4;
@@ -739,10 +769,13 @@ static void *gc_rec_alloc(UINT32 bytes)
 
 static size_t HWR_GCacheReclaim(size_t want);
 
-void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon)
+void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon, UINT32 hash)
 {
 	const UINT32 size = (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo) + n * sizeof(FOutVector));
 	gcphdr_t *h;
+	UINT32 *d;
+	const UINT32 *sp;
+	UINT32 k;
 
 	if (gc.test_rec && ++gc.test_n1 == gc.test_rec)
 		HWR_GCacheReclaim(0); // (test: the zone takes the cache back in the middle of a record)
@@ -762,10 +795,17 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 	h->tex = current_texture; // (what HWR_ProcessPolygon takes: the sort key depends on it)
 	h->texid = HWR_GCTexId(current_texture);
 	h->hashed = (!(flags & PF_NoTexture) && !horizon) ? 1 : 0;
-	h->h16 = (UINT16)(h->hashed ? HWR_GCPolyHash(current_texture, surf, flags, shader) : 0);
-	memcpy(h + 1, surf, sizeof(FSurfaceInfo));
+	h->h16 = (UINT16)(h->hashed ? hash & 0xFFFFu : 0);
+	// (word copies: memcpy of newlib takes a byte loop for what is not 8 byte aligned)
+	d = (UINT32 *)(h + 1);
+	sp = (const UINT32 *)surf;
+	for (k = 0; k < sizeof(FSurfaceInfo) / 4u; k++)
+		d[k] = sp[k];
 	((FSurfaceInfo *)(h + 1))->PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
-	memcpy((UINT8 *)(h + 1) + sizeof(FSurfaceInfo), verts, n * sizeof(FOutVector));
+	d = (UINT32 *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo));
+	sp = (const UINT32 *)verts;
+	for (k = 0; k < n * 5u; k++)
+		d[k] = sp[k];
 	gc.rec_np++;
 	gc.rec_nv += n;
 	gc.s_rec_ops++;
@@ -819,7 +859,13 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 		rh->keyw = (UINT16)keyw;
 		rh->opsoff = (UINT16)(sizeof(gcrh_t) + 4u * (UINT32)keyw);
 		rh->npoly = rh->nvert = rh->nwall = rh->pad = 0;
-		memcpy(rh + 1, key, 4u * (UINT32)keyw);
+		{
+			UINT32 *kd = (UINT32 *)(rh + 1);
+			int j;
+
+			for (j = 0; j < keyw; j++)
+				kd[j] = key[j];
+		}
 	}
 }
 
@@ -1018,9 +1064,9 @@ void HWR_GCacheProf(unsigned int frames)
 		memset(gc.cl, 0, sizeof gc.cl);
 	}
 	gc.s_new = gc.s_stale = gc.c_rpoly = gc.c_rtex = gc.n_rpoly = gc.n_rtex = 0;
-	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | reclaim=%u promote=%u | arena=%u/%u\n",
+	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | reclaim=%u promote=%u bypass=%u | arena=%u/%u\n",
 		gc.mode, gc.blk ? 1 : 0, gc.s_seg_hit / frames, gc.s_seg_miss / frames, gc.s_seg_skip / frames, gc.s_pl_hit / frames, gc.s_pl_miss / frames, gc.s_pl_skip / frames, gc.s_rep_ops / frames, gc.s_rec_ops / frames,
-		gc.s_flush, gc.s_full, gc.s_chk, gc.s_bad, gc.c_key / frames, gc.c_fp / frames, gc.n_fpb / frames, gc.n_fpf / frames, gc.c_hit / frames, gc.c_miss / frames, gc.s_reclaim, gc.s_promo / frames, (unsigned)((gc.ar_used - gc.hbase) >> 10), (unsigned)(gc.hsize >> 10));
+		gc.s_flush, gc.s_full, gc.s_chk, gc.s_bad, gc.c_key / frames, gc.c_fp / frames, gc.n_fpb / frames, gc.n_fpf / frames, gc.c_hit / frames, gc.c_miss / frames, gc.s_reclaim, gc.s_promo / frames, gc.s_bypass / frames, (unsigned)((gc.ar_used - gc.hbase) >> 10), (unsigned)(gc.hsize >> 10));
 	gc.s_seg_hit = gc.s_seg_miss = gc.s_seg_skip = gc.s_pl_hit = gc.s_pl_miss = gc.s_pl_skip = gc.s_flush = gc.s_full = gc.s_chk = gc.s_bad = gc.s_rep_ops = gc.s_rec_ops = 0;
-	gc.c_hit = gc.c_miss = gc.c_key = gc.c_fp = gc.n_fpb = gc.n_fpf = gc.s_promo = 0;
+	gc.c_hit = gc.c_miss = gc.c_key = gc.c_fp = gc.n_fpb = gc.n_fpf = gc.s_promo = gc.s_bypass = 0;
 }

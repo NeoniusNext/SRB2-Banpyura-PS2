@@ -42,9 +42,8 @@ void HWR_RenderBatches(void);
 // sinks of the BSP walk (HWR_ProcessPolygon, HWR_SetCurrentTexture, HWR_AddTransparentWall) append what they are given to the record.
 extern boolean hwr_grec_on;
 extern UINT32 hwr_geo_off; // -hwgo: OPT11 optimisations switched off (hw_gcache.inc)
-void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon);
+void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon, UINT32 hash); // hash: the sort key HWR_ProcessPolygon made of the polygon
 void HWR_GCRecTex(GLMipmap_t *texture);
-UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIELD PolyFlags, int shader_target); // the 16 bit state hash of the sort key
 UINT32 HWR_GCTexId(const GLMipmap_t *tex); // the frame independent part of the texture order
 typedef struct { UINT8 op, n, horizon, hashed; UINT16 size, h16; FBITFIELD flags; INT32 shader; UINT32 texid; GLMipmap_t *tex; } gcphdr_t; // 24 bytes, followed by an FSurfaceInfo and n FOutVector: what the cache keeps of one HWR_ProcessPolygon
 void HWR_GCBatchReserve(int npoly, int nvert); // room in the batch arrays for that many more polygons and vertices (it may allocate: the cache asks before it replays)

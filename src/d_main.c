@@ -1710,6 +1710,10 @@ void D_SRB2Main(void)
 	// this must be done after loading gamedata,
 	// to avoid setting off the corrupted gamedata code in G_LoadGameData if a SOC with custom gamedata is added
 	// -- Monster Iestyn 20/02/20
+#ifdef PS2_PROFILE
+	if (M_CheckParm("-singletics"))
+		singletics = true; // OPT11 GEOM2: one game tic for every frame drawn, as in a timedemo, so that two runs of a map show the same frames whatever each frame costs (-hwpolyhash comparisons)
+#endif
 	if (M_CheckParm("-warp") && M_IsNextParm())
 	{
 		const char *word = M_GetNextParm();

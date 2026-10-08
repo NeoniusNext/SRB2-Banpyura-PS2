@@ -355,8 +355,6 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 #ifdef PS2_PROFILE
 	if (hwr_ph_on > 0)
 		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
-	if (hwr_grec_on)
-		HWR_GCRecPoly(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // OPT11: the geometry cache records what the BSP walk hands to the batch
 	if (currently_batching && hwr_sprite_batch)
 	{
 		// PS2-HW-52: batched sprite polygons are drawn in texture order, not in depth order. That is the same picture for polygons that write the depth
@@ -464,6 +462,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 #endif
 		}
 
+#ifdef PS2_PROFILE
+		if (hwr_grec_on)
+			HWR_GCRecPoly(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, (UINT32)polygonArray[polygonArraySize-1].hash); // OPT11: the geometry cache records what the BSP walk hands to the batch (with the sort key made just now)
+#endif
 		memcpy(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts * sizeof(FOutVector));
 		unsortedVertexArraySize += iNumPts;
 	}
@@ -475,35 +477,6 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 }
 
 #ifdef PS2_PROFILE
-// OPT11 (PS2-HW-80): the state hash of a polygon of the batch: the same digest as HWR_ProcessPolygon makes, for the geometry cache (it keeps the result with the polygon)
-// KEEP IN STEP with the DIGEST list of HWR_ProcessPolygon (a change there, e.g. the PalLit condition of the light level, must be made here as well; -hwgc 2 finds a difference)
-UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIELD PolyFlags, int shader_target)
-{
-	UINT32 hash = 0x811c9dc5u;
-
-#define DIGEST(h, x) h ^= (x); h *= 0x01000193
-	if (tex)
-	{
-		DIGEST(hash, (UINT32)(uintptr_t)tex);
-	}
-	DIGEST(hash, PolyFlags);
-	DIGEST(hash, pSurf->PolyColor.rgba);
-	if (cv_glshaders.value && gl_shadersavailable)
-	{
-		DIGEST(hash, shader_target);
-		DIGEST(hash, pSurf->TintColor.rgba);
-		DIGEST(hash, pSurf->FadeColor.rgba);
-		if (!PS2HWD_PalLit(pSurf, PolyFlags, tex, shader_target)) // PS2-HW-106: as in HWR_ProcessPolygon
-		{
-			DIGEST(hash, pSurf->LightInfo.light_level);
-		}
-		DIGEST(hash, pSurf->LightInfo.fade_start);
-		DIGEST(hash, pSurf->LightInfo.fade_end);
-	}
-#undef DIGEST
-	return (hash ^ (hash >> 16)) & 0xFFFFu;
-}
-
 UINT32 HWR_GCTexId(const GLMipmap_t *tex)
 {
 	return HWR_PS2_TextureId(tex);

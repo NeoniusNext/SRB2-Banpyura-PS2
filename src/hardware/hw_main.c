@@ -653,6 +653,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 						rh = gc_promote(gce, rh);
 						gc_replay((const UINT8 *)rh + rh->opsoff, (UINT32)gce->len - rh->opsoff);
 						gc.s_pl_hit++;
+						gc.w_q++;
+						gc.w_hit++;
 						gc.c_hit += ps2hwp_now() - t1;
 						return;
 					}
@@ -668,6 +670,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		}
 		else
 			gc.s_new++;
+		gc.w_q++;
 		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, planecolormap, gckey, true);
 		if (gckn >= 0 && HWR_GCReserve(1, (UINT32)nrPlaneVerts + 8u, 0))
 			gc_rec_begin(gccheck, gckey, gckn);
@@ -2286,6 +2289,8 @@ static void HWR_ProcessSegC(void)
 				gl_linedef = sg->linedef;
 				gc_replay((const UINT8 *)rh + rh->opsoff, (UINT32)e->len - rh->opsoff);
 				gc.s_seg_hit++;
+				gc.w_q++;
+				gc.w_hit++;
 				gc.c_hit += ps2hwp_now() - t1;
 				HWP_SPAN_END(t, HWP_SEG);
 				return;
@@ -2299,6 +2304,7 @@ static void HWR_ProcessSegC(void)
 		}
 		else
 			gc.s_new++;
+		gc.w_q++;
 		kn = gc_seg_words(sg, gl_frontsector, gl_backsector, gckey, true);
 		if (kn < 0)
 		{
