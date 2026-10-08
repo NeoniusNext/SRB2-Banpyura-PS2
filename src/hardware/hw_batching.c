@@ -16,6 +16,7 @@
 #include <limits.h>
 #ifdef PS2
 #include "../z_zone.h"
+#include "../p_tick.h" // leveltime (-hwgo 256)
 #include "../ps2/hw/ps2_hwd.h"
 #include "hw_sort.h"
 #include "../ps2/hw/ps2_hw_prof.h"
@@ -111,19 +112,7 @@ static UINT32 HWR_PS2_TextureId(const GLMipmap_t *t) // OPT11: the part of the o
 		return (UINT32)t->regen_id & 0x1FFFu;
 	if (t->regen_kind == 2)
 		return 0x2000u | ((UINT32)t->regen_id & 0x1FFFu);
-	// PS2-HW-250 (OPT11 round 3, FX3): the order of the patches (sprites, HUD) is the order of their first use in a batch, not a hash of their address: polygons of equal depth
-	// (z ties of the sprites, the shadows) were drawn in an order that moved with every change of the heap layout (a different build, any allocation): two ELFs made
-	// pictures that differed by 0.5 % of the pixels without any difference in the drawing. -hwfx 4096 (FX2_PTRORDER): the address hash as before.
-	if (!(ps2hwd_fx2 & FX2_PTRORDER))
-	{
-		static UINT32 hwr_ord_serial;
-		GLMipmap_t *w = (GLMipmap_t *)t;
-
-		if (!w->ps2_ord)
-			w->ps2_ord = ++hwr_ord_serial;
-		return w->ps2_ord & 0x3FFFu;
-	}
-	return (((UINT32)(uintptr_t)t >> 4) * 2654435761u) >> 18; // patches: any fixed order
+	return 0x3FF0u; // patches (PS2-HW-231): one slot of the order after the map textures and flats; HWR_GroupPlan orders them by the order of arrival (the address of a patch gave an order that changed with the layout of the heap)
 }
 
 static inline UINT32 HWR_PS2_OrderOf(UINT32 id, UINT32 scan_dir)
@@ -142,6 +131,43 @@ static UINT32 HWR_PS2_TextureOrder(const GLMipmap_t *t)
 #ifdef PS2
 static UINT32 *rkeys, *rtmpk, *rtmpi; // the scratch of the radix sort of HWR_RenderBatches
 static int rcap;
+static UINT16 *bgrp; // PS2-HW-226: the bucket of every polygon (HWR_RenderBatchesV2)
+static int bgcap;
+
+// OPT11 round 2 (PS2-HW-224): the vertices of a polygon (3..16 of 20 bytes) into the batch's pool. newlib's memcpy takes the byte loop for a source or destination that is
+// not 8 byte aligned (a pool of 20 byte vertices is aligned to 4 only for every second vertex): 70..150 cycles for the 80 bytes of a quad, 150 K cycles a frame in
+// DEMO_001. Five words a vertex, no call. (The empty asm keeps the compiler from turning the loop back into a call of memcpy.)
+static inline void HWR_CopyVerts(FOutVector *dst, const FOutVector *src, FUINT n)
+{
+	typedef UINT32 __attribute__((may_alias)) hwr_word_t;
+	const hwr_word_t *s = (const hwr_word_t *)(const void *)src;
+	hwr_word_t *d = (hwr_word_t *)(void *)dst;
+	FUINT k;
+
+	// integer registers (lw / sw: the words are only moved); a triangle and a quad (nine polygons in ten) without the loop
+#define HWR_CP5(o) do { const UINT32 a_ = s[(o)], b_ = s[(o) + 1], c_ = s[(o) + 2], e_ = s[(o) + 3], f_ = s[(o) + 4]; d[(o)] = a_; d[(o) + 1] = b_; d[(o) + 2] = c_; d[(o) + 3] = e_; d[(o) + 4] = f_; } while (0)
+	if (n == 4)
+	{
+		HWR_CP5(0);
+		HWR_CP5(5);
+		HWR_CP5(10);
+		HWR_CP5(15);
+	}
+	else if (n == 3)
+	{
+		HWR_CP5(0);
+		HWR_CP5(5);
+		HWR_CP5(10);
+	}
+	else
+		for (k = 0; k < n; k++)
+		{
+			HWR_CP5(5 * k);
+			__asm__ volatile("" ::: "memory");
+		}
+#undef HWR_CP5
+	__asm__ volatile("" ::: "memory");
+}
 #endif
 
 #ifdef PS2_PROFILE
@@ -267,6 +293,10 @@ static int HWR_BatchCapacity(int old, int required, size_t element)
 	return (int)cap;
 }
 
+#ifdef PS2
+#include "hw_pbatch.inc" // OPT11 round 2 (VU2, PS2-HW-233): the polygons collected as VU1 blocks into their states (buckets); -hwgo 65536: the earlier collection below
+#endif
+
 #ifdef PS2_PROFILE
 // OPT10-HF (PS2-HW-79): the batch arrays grow to the busiest frame seen and are non-purgeable, so after the vertex-heavy maps (THZ2, ACZ1: 32 000
 // vertices a frame) they stay 1.45 MB big (0.42 MB on the light maps) for the rest of the session: the next big level (12 MB of PU_LEVEL) then did not fit.
@@ -282,6 +312,10 @@ void HWR_ReleaseBatching(void)
 	Z_Free(rkeys);
 	Z_Free(rtmpk);
 	Z_Free(rtmpi);
+	Z_Free(bgrp);
+	bgrp = NULL;
+	bgcap = 0;
+	HWR_PBFree();
 	finalVertexIndexArray = NULL;
 	polygonArray = NULL;
 	polygonIndexArray = NULL;
@@ -297,24 +331,104 @@ void HWR_ReleaseBatching(void)
 #endif
 
 // One draw call of the batch being built: triangle indices, or on the PS2 (first vertex, count) pairs of fans (see HWR_RenderBatches)
-static void HWR_DrawBatch(FSurfaceInfo *surf, int count, FBITFIELD polyFlags)
+static void HWR_DrawBatch(FSurfaceInfo *surf, const UINT32 *indices, int count, FBITFIELD polyFlags)
 {
 #ifdef PS2
 	HWP_SPAN_BEGIN(tdb);
-	PS2HWD_DrawFans(surf, HWR_BATCH_VERTICES, (unsigned int)count / 3, polyFlags, finalVertexIndexArray); // PS2-HW-106: (first vertex, count, light level) per polygon
+	if ((hwr_geo_off & 256) && leveltime >= 372 && leveltime <= 376)
+	{
+		// -hwgo 256: what the driver is given, in a line per batch for the level tics 372..376 (two runs that differ in a picture are compared with it)
+		UINT32 h = 0x811c9dc5u, hs = 0x811c9dc5u;
+		const UINT32 *w = (const UINT32 *)(const void *)surf;
+		int j;
+
+		for (j = 0; j < (int)(sizeof(FSurfaceInfo) / 4); j++)
+			hs = (hs ^ w[j]) * 16777619u;
+		for (j = 0; j < count; j++)
+			h = (h ^ indices[j]) * 16777619u;
+		I_OutputMsg("HWDF lt=%u n=%d fl=%x surf=%08x [%08x %08x %08x %08x %08x %08x %08x %08x] desc=%08x\n", (unsigned)leveltime, count / 3, (unsigned)polyFlags, (unsigned)hs,
+			(unsigned)w[0], (unsigned)w[1], (unsigned)w[2], (unsigned)w[3], (unsigned)w[4], (unsigned)w[5], (unsigned)w[6], (unsigned)w[7], (unsigned)h);
+	}
+	PS2HWD_DrawFans(surf, HWR_BATCH_VERTICES, (unsigned int)count / 3, polyFlags, indices); // PS2-HW-106: (first vertex, count, light level) per polygon
 	HWP_SPAN_END2(tdb, HWP_B_DB, HWP_KB_DB);
 #else
-	HWD.pfnDrawIndexedTriangles(surf, HWR_BATCH_VERTICES, count, polyFlags, finalVertexIndexArray);
+	HWD.pfnDrawIndexedTriangles(surf, HWR_BATCH_VERTICES, count, polyFlags, (UINT32 *)indices);
 #endif
 }
 
 // Call HWR_RenderBatches to render all the collected geometry.
+#ifdef PS2
+// -hwbench2 (OPT11 round 2): the cost of HWR_ProcessPolygon for a typical wall quad / triangle, measured on the machine the profile comes from (the 30th batch of the run, the driver is up):
+// the same polygon a thousand times through the real function, the arrays emptied again. One line: HWBENCH2.
+static void HWR_BenchProcess(int reps)
+{
+	static GLMipmap_t tex;
+	FSurfaceInfo surf;
+	FOutVector v[4];
+	int i, k;
+
+	memset(&tex, 0, sizeof tex);
+	tex.regen_kind = 1;
+	tex.regen_id = 7;
+	tex.flags = TF_WRAPXY; // (walls and flats repeat: the collection finds the extent of s, t)
+	tex.format = GL_TEXFMT_P_8;
+	tex.width = tex.height = 64;
+	memset(&surf, 0, sizeof surf);
+	surf.PolyColor.rgba = 0xFFFFFFFFu;
+	surf.FadeColor.rgba = 0xFF000000u;
+	surf.LightTableId = 1;
+	surf.LightInfo.light_level = 240;
+	surf.LightInfo.fade_end = 31;
+	for (i = 0; i < 4; i++)
+	{
+		v[i].x = (float)(i * 64);
+		v[i].y = (float)((i & 1) * 128);
+		v[i].z = (float)(i * 8);
+		v[i].s = (float)(i & 1);
+		v[i].t = (float)(i >> 1);
+	}
+	for (k = 3; k <= 4; k++)
+	{
+		unsigned int t0, t1 = 0, tmin = ~0u, dt;
+		int rep;
+
+		current_texture = &tex;
+		for (rep = 0; rep < reps; rep++) // (more than one repetition: for the sampler, which needs a few thousand samples; the least of the passes is printed: an interrupt in a pass adds to it)
+		{
+			t0 = ps2hwp_now();
+			for (i = 0; i < 1000; i++)
+				HWR_ProcessPolygon(&surf, v, (FUINT)k, 0x9101, SHADER_WALL, false);
+			dt = ps2hwp_now() - t0;
+			t1 += dt;
+			if (dt < tmin)
+				tmin = dt;
+			if (rep + 1 < reps)
+			{
+				polygonArraySize = 0;
+				unsortedVertexArraySize = 0;
+				HWR_PBReset();
+			}
+		}
+		I_OutputMsg("HWBENCH2 HWR_ProcessPolygon n=%d: %u cycles a polygon (least of %d passes; mean %u; %d polygons collected)\n", k, tmin / 1000u, reps, t1 / (1000u * (unsigned int)reps), polygonArraySize + (int)pb_n);
+		polygonArraySize = 0;
+		unsortedVertexArraySize = 0;
+		HWR_PBReset();
+	}
+	current_texture = NULL;
+}
+#endif
+
 void HWR_StartBatching(void)
 {
 	if (currently_batching)
 		I_Error("Repeat call to HWR_StartBatching without HWR_RenderBatches");
 
 	// init arrays if that has not been done yet
+#ifdef PS2
+	if (HWR_PBOn())
+		HWR_PBAlloc();
+	else
+#endif
 	if (!polygonArray)
 	{
 #ifndef PS2
@@ -332,6 +446,18 @@ void HWR_StartBatching(void)
 #ifdef PS2_PROFILE
 	hwr_scan_dir = PS2HWD_ScanDirection();
 	hwr_shader_have = 0;
+	{
+		static int bench = -1, calls;
+
+		if (bench < 0)
+		{
+			bench = 0;
+			if (M_CheckParm("-hwbench2"))
+				bench = M_IsNextParm() ? atoi(M_GetNextParm()) : 1;
+		}
+		if (bench > 0 && ++calls == 400)
+			HWR_BenchProcess(bench);
+	}
 #endif
 #endif
 }
@@ -358,10 +484,51 @@ void HWR_SetCurrentTexture(GLMipmap_t *texture)
     }
 }
 
+#ifdef PS2
+// PS2-HW-232: the checks and the growth of the batch arrays, taken out of HWR_ProcessPolygon (called when the arrays are full: a few times a level)
+static void __attribute__((noinline)) HWR_BatchRoom(FUINT iNumPts)
+{
+	if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
+		I_Error("Hardware batch geometry exceeds addressable storage");
+	if (polygonArraySize == polygonArrayAllocSize)
+	{
+		polygonArrayAllocSize = HWR_BatchCapacity(polygonArrayAllocSize, polygonArraySize + 1, sizeof(PolygonArrayEntry));
+		polygonArray = HWR_BatchResize(polygonArray, (size_t)polygonArrayAllocSize * sizeof(PolygonArrayEntry));
+		polygonIndexArray = HWR_BatchResize(polygonIndexArray, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+	}
+	if (unsortedVertexArraySize + (int)iNumPts > unsortedVertexArrayAllocSize)
+	{
+		unsortedVertexArrayAllocSize = HWR_BatchCapacity(unsortedVertexArrayAllocSize, unsortedVertexArraySize + (int)iNumPts, sizeof(FOutVector));
+		unsortedVertexArray = HWR_BatchResize(unsortedVertexArray, (size_t)unsortedVertexArrayAllocSize * sizeof(FOutVector));
+	}
+}
+#endif
+
 // If batching is enabled, this function collects the polygon data and the chosen texture
 // for later use in HWR_RenderBatches. Otherwise the rendering backend is used to
 // render the polygon immediately.
+#ifdef PS2
+static void __attribute__((noinline)) HWR_ProcessPolygonSlow(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial);
+
+// PS2-HW-233: the common case (a batched world polygon: nothing hashes or records it, no sprite batch to flush) goes straight to the collection, without the frame of the general function
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
+{
+	if (iNumPts < 3)
+		return; // no triangles; do not advance the fan writer past its allocation
+	if (currently_batching && !((UINT32)hwr_sprite_batch | (UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB)))
+	{
+		if (HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, 0))
+			return;
+		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+		return;
+	}
+	HWR_ProcessPolygonSlow(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+}
+
+static void HWR_ProcessPolygonSlow(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
+#else
+void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
+#endif
 {
     if (iNumPts < 3)
         return; // no triangles; do not advance the fan writer past its allocation
@@ -404,6 +571,80 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 #ifdef PS2_HWDETAIL
 		const unsigned int sf_t0 = ps2hwp_now();
 #endif
+#ifdef PS2
+		if (HWR_PBOn())
+		{
+			ps2hwp_cnt[HWC_PROC]--; // (counted when the batch is drawn)
+			ps2hwp_cnt[HWC_PROC_BATCH]--;
+			if (!HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, (hwr_sprite_batch && !hwr_sprite_shadow) ? 1u : 0u))
+				HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
+#ifdef PS2_HWDETAIL
+			if (hwr_sprite_batch)
+				ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);
+#endif
+			return;
+		}
+		// PS2-HW-232 (OPT11 round 2, VU2): the entry is written through a pointer, from the two counters read once (the stores of ints into the entry may alias the counters as far
+		// as the compiler knows: every store reloaded them and made the address of the entry again), one test for the room, the digest of the state in one block
+		PolygonArrayEntry *pe;
+		const int idx0 = polygonArraySize, vbase = unsortedVertexArraySize;
+		INT32 key;
+
+		if (!pSurf)
+			I_Error("Got a null FSurfaceInfo in batching");// nulls should not come in the stuff that batching currently applies to
+		if ((unsigned int)idx0 >= (unsigned int)polygonArrayAllocSize || (unsigned int)vbase + (unsigned int)iNumPts > (unsigned int)unsortedVertexArrayAllocSize)
+			HWR_BatchRoom(iNumPts);
+		pe = &polygonArray[idx0];
+		pe->surf = *pSurf;
+		pe->vertsIndex = (unsigned int)vbase;
+		pe->numVerts = iNumPts;
+		pe->polyFlags = PolyFlags;
+		pe->texture = current_texture;
+#ifdef PS2_PROFILE
+		pe->shader = HWR_ShaderOfTarget(shader_target);
+#else
+		pe->shader = (shader_target != SHADER_NONE) ? HWR_GetShaderFromTarget(shader_target) : shader_target;
+#endif
+		pe->horizonSpecial = horizonSpecial;
+		// default to the index so we don't lose order on horizon lines (yes, it's supposed to be negative, since we're sorting in that direction)
+		key = -idx0;
+		if (!(PolyFlags & PF_NoTexture) && !horizonSpecial)
+		{
+			// use FNV-1a to hash polygons for later sorting.
+			UINT32 hash = 0x811c9dc5u; // FNV multiplication intentionally wraps modulo 2^32
+#define DIGEST(h, x) h ^= (x); h *= 0x01000193
+			if (current_texture)
+			{
+				DIGEST(hash, (UINT32)(uintptr_t)current_texture); // PS2-HW-22: the texture's identity, not its GS handle: nothing is uploaded while polygons are collected, so every texture that is not resident has handle 0
+			}
+			DIGEST(hash, PolyFlags);
+			DIGEST(hash, pSurf->PolyColor.rgba);
+			if (cv_glshaders.value && gl_shadersavailable)
+			{
+				DIGEST(hash, shader_target);
+				DIGEST(hash, pSurf->TintColor.rgba);
+				DIGEST(hash, pSurf->FadeColor.rgba);
+				// PS2-HW-106: polygons the VU1 program lights by palette rows carry their own light level: the sectors' levels do not split the batches (248 -> 93 batches on a GFZ1 frame)
+				if (!PS2HWD_PalLit(pSurf, PolyFlags, current_texture, shader_target))
+				{
+					DIGEST(hash, pSurf->LightInfo.light_level);
+				}
+				DIGEST(hash, pSurf->LightInfo.fade_start);
+				DIGEST(hash, pSurf->LightInfo.fade_end);
+			}
+#undef DIGEST
+			// PS2-HW-31: the texture first (14 bits), then the state hash (16 bits)
+			key = (INT32)((HWR_PS2_TextureOrder(current_texture) << 16) | ((hash ^ (hash >> 16)) & 0xFFFFu));
+#ifdef PS2_PROFILE
+			if (hwr_sprite_batch && !hwr_sprite_shadow)
+				key |= 0x40000000; // PS2-HW-52: the shadows are drawn first, as each is drawn before its sprite
+#endif
+		}
+		pe->hash = key;
+		HWR_CopyVerts(&unsortedVertexArray[vbase], pOutVerts, iNumPts);
+		unsortedVertexArraySize = vbase + (int)iNumPts;
+		polygonArraySize = idx0 + 1;
+#else
 		if (!pSurf)
 			I_Error("Got a null FSurfaceInfo in batching");// nulls should not come in the stuff that batching currently applies to
 		if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
@@ -448,7 +689,7 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			if (current_texture)
 			{
 #ifdef PS2 // PS2-HW-22: the texture's identity, not its GS handle: nothing is uploaded while polygons are collected, so every texture that is not resident has handle 0
-				DIGEST(hash, (ps2hwd_fx2 & FX2_PTRORDER) ? (UINT32)(uintptr_t)current_texture : HWR_PS2_TextureId(current_texture)); // PS2-HW-250: the texture's identity, not its address
+				DIGEST(hash, (UINT32)(uintptr_t)current_texture);
 #else
 				DIGEST(hash, current_texture->downloaded);
 #endif
@@ -473,7 +714,7 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			}
 #undef DIGEST
 			// remove the sign bit to ensure that skybox and horizon line comes first.
-#ifdef PS2 // PS2-HW-31: the texture first (14 bits), then the state hash (16 bits)
+#ifdef PS2 // (not compiled here)
 			polygonArray[polygonArraySize-1].hash = (INT32)((HWR_PS2_TextureOrder(current_texture) << 16) | ((hash ^ (hash >> 16)) & 0xFFFFu));
 #ifdef PS2_PROFILE
 			if (hwr_sprite_batch && !hwr_sprite_shadow)
@@ -484,8 +725,13 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 #endif
 		}
 
+#ifdef PS2
+		HWR_CopyVerts(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts);
+#else
 		memcpy(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts * sizeof(FOutVector));
+#endif
 		unsortedVertexArraySize += iNumPts;
+#endif
 #ifdef PS2_HWDETAIL
 		if (hwr_sprite_batch)
 			ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);
@@ -508,7 +754,7 @@ UINT32 HWR_GCPolyHash(const GLMipmap_t *tex, const FSurfaceInfo *pSurf, FBITFIEL
 #define DIGEST(h, x) h ^= (x); h *= 0x01000193
 	if (tex)
 	{
-		DIGEST(hash, (ps2hwd_fx2 & FX2_PTRORDER) ? (UINT32)(uintptr_t)tex : HWR_PS2_TextureId(tex)); // PS2-HW-250 (KEEP IN STEP with HWR_ProcessPolygon)
+		DIGEST(hash, (UINT32)(uintptr_t)tex);
 	}
 	DIGEST(hash, PolyFlags);
 	DIGEST(hash, pSurf->PolyColor.rgba);
@@ -542,6 +788,13 @@ void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FU
 	HWC_ADD(HWC_PROC_BATCH);
 	if (hwr_ph_on > 0)
 		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+	if (HWR_PBOn())
+	{
+		ps2hwp_cnt[HWC_PROC]--; // (counted when the batch is drawn)
+		ps2hwp_cnt[HWC_PROC_BATCH]--;
+		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233: the digest the record keeps (texid, h16) is not needed
+		return;
+	}
 	if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
 		I_Error("Hardware batch geometry exceeds addressable storage");
 	if (polygonArraySize == polygonArrayAllocSize)
@@ -568,7 +821,7 @@ void HWR_GCReplayPoly(const FSurfaceInfo *pSurf, const FOutVector *pOutVerts, FU
 	else
 		pe->hash = -polygonArraySize; // (to stay in order on horizon lines)
 	polygonArraySize++;
-	memcpy(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts * sizeof(FOutVector));
+	HWR_CopyVerts(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts);
 	unsortedVertexArraySize += iNumPts;
 }
 #endif
@@ -584,9 +837,456 @@ static int comparePolygons(const void *p1, const void *p2)
 }
 #endif
 
+#ifdef PS2
+// PS2-HW-34: the driver plans the frame's textures (mip level, visibility) before the first batch is drawn
+static void HWR_PlanPass(void)
+{
+	int i;
+#ifdef PS2_PROFILE
+	HWP_SPAN_BEGIN(tb_plan);
+#endif
+	PS2HWD_PlanBegin();
+	{
+		// PS2-HW-230: the driver plans only the big map textures and flats (palette images of at least PLAN_MIN_TEXELS texels, ps2_hw_plan.inc: plan_wants, KEEP IN STEP): 9 polygons
+		// in 10 are not, and the call (and its prologue) cost 40 cycles for each. The verdict of the texture of the polygon before is kept.
+		const GLMipmap_t *last = NULL;
+		int lastwants = 0;
+
+		for (i = 0; i < polygonArraySize; i++)
+		{
+			const PolygonArrayEntry *pa = &polygonArray[i];
+			const GLMipmap_t *m = pa->texture;
+
+			if (!m || (pa->polyFlags & PF_NoTexture))
+				continue;
+			if (m != last)
+			{
+				last = m;
+				lastwants = (m->regen_kind == 1 || m->regen_kind == 2) && m->format == GL_TEXFMT_P_8 && (UINT32)m->width * m->height >= 65536u;
+			}
+			if (lastwants)
+				PS2HWD_PlanPolygon(pa->texture, &unsortedVertexArray[pa->vertsIndex], pa->numVerts);
+		}
+	}
+	PS2HWD_PlanEnd();
+#ifdef PS2_PROFILE
+	HWP_SPAN_END2(tb_plan, HWP_B_PLAN, HWP_KB_PLAN);
+#ifdef PS2_HWDETAIL
+	if (hwr_sprite_batch)
+		ps2hwp_cyc[HWP_SF_PLAN] += (unsigned int)(ps2hwp_now() - tb_plan);
+#endif
+#endif
+}
+
+// -hwgo 128: the batches the walk of HWR_RenderBatchesOld would make (a dry run over the sorted order: no drawing), to be compared with those of HWR_RenderBatchesV2
+#define HWR_BCMP_MAX 8192
+static UINT32 (*bcmp_new)[3], (*bcmp_old)[3]; // first polygon, polygons, hash of the state the batch is drawn with (made when -hwgo 128 is given: 200 KB of .bss would be 200 KB less zone)
+static int bcmp_nnew, bcmp_nold;
+
+static UINT32 HWR_BCmpHash(const FSurfaceInfo *s, FBITFIELD flags, GLMipmap_t *tex)
+{
+	UINT32 h = 0x811c9dc5u;
+
+	h = (h ^ s->PolyColor.rgba) * 16777619u;
+	h = (h ^ s->TintColor.rgba) * 16777619u;
+	h = (h ^ s->FadeColor.rgba) * 16777619u;
+	h = (h ^ (UINT32)s->LightInfo.light_level) * 16777619u;
+	h = (h ^ (UINT32)s->LightInfo.fade_start) * 16777619u;
+	h = (h ^ (UINT32)s->LightInfo.fade_end) * 16777619u;
+	h = (h ^ s->LightTableId) * 16777619u;
+	h = (h ^ flags) * 16777619u;
+	h = (h ^ (UINT32)(uintptr_t)tex) * 16777619u;
+	return h;
+}
+
+static int HWR_BatchesOldDry(const UINT32 *ti, int n)
+{
+	int p, nb = 0, bs = 0, vwrite = 0;
+	int cshader = polygonArray[ti[0]].shader;
+	GLMipmap_t *ctex = polygonArray[ti[0]].texture;
+	FBITFIELD cflags = polygonArray[ti[0]].polyFlags;
+	FSurfaceInfo cs = polygonArray[ti[0]].surf;
+
+	if (cflags & PF_NoTexture)
+		ctex = NULL;
+	for (p = 0; p < n; p++)
+	{
+		const PolygonArrayEntry *e = &polygonArray[ti[p]];
+		int stop = 0, change = 0;
+
+		if ((int)e->numVerts > finalVertexArrayAllocSize - vwrite && p > bs)
+		{
+			if (nb < HWR_BCMP_MAX)
+			{
+				bcmp_old[nb][0] = (UINT32)bs;
+				bcmp_old[nb][1] = (UINT32)(p - bs);
+				bcmp_old[nb][2] = HWR_BCmpHash(&cs, cflags, ctex);
+			}
+			nb++;
+			bs = p;
+			vwrite = 0;
+		}
+		vwrite += (int)e->numVerts;
+		if (p + 1 >= n)
+			stop = 1;
+		else
+		{
+			const PolygonArrayEntry *ne = &polygonArray[ti[p + 1]];
+
+			if (e->hash != ne->hash || e->texture != ne->texture || e->polyFlags != ne->polyFlags || e->surf.PolyColor.rgba != ne->surf.PolyColor.rgba)
+			{
+				int nshader = ne->shader;
+				GLMipmap_t *ntex = ne->texture;
+				FBITFIELD nflags = ne->polyFlags;
+				int cshd = 0, ctx = 0, cfl = 0, csf = 0;
+
+				if (nflags & PF_NoTexture)
+					ntex = 0;
+				if (cshader != nshader && cv_glshaders.value && gl_shadersavailable)
+				{
+					change = 1;
+					cshd = 1;
+				}
+				if (ctex != ntex)
+				{
+					change = 1;
+					ctx = 1;
+				}
+				if (cflags != nflags)
+				{
+					change = 1;
+					cfl = 1;
+				}
+				if (cv_glshaders.value && gl_shadersavailable)
+				{
+					if (cs.PolyColor.rgba != ne->surf.PolyColor.rgba || cs.TintColor.rgba != ne->surf.TintColor.rgba || cs.FadeColor.rgba != ne->surf.FadeColor.rgba
+						|| cs.LightInfo.light_level != ne->surf.LightInfo.light_level || cs.LightInfo.fade_start != ne->surf.LightInfo.fade_start
+						|| cs.LightInfo.fade_end != ne->surf.LightInfo.fade_end)
+					{
+						change = 1;
+						csf = 1;
+					}
+				}
+				else if (cs.PolyColor.rgba != ne->surf.PolyColor.rgba)
+				{
+					change = 1;
+					csf = 1;
+				}
+				if (change)
+				{
+					if (nb < HWR_BCMP_MAX)
+					{
+						bcmp_old[nb][0] = (UINT32)bs;
+						bcmp_old[nb][1] = (UINT32)(p + 1 - bs);
+						bcmp_old[nb][2] = HWR_BCmpHash(&cs, cflags, ctex);
+					}
+					nb++;
+					bs = p + 1;
+					vwrite = 0;
+					if (cshd)
+						cshader = nshader;
+					if (ctx)
+						ctex = ntex;
+					if (cfl)
+						cflags = nflags;
+					if (csf)
+						cs = ne->surf;
+				}
+			}
+		}
+		if (stop)
+		{
+			if (nb < HWR_BCMP_MAX)
+			{
+				bcmp_old[nb][0] = (UINT32)bs;
+				bcmp_old[nb][1] = (UINT32)(p + 1 - bs);
+				bcmp_old[nb][2] = HWR_BCmpHash(&cs, cflags, ctex);
+			}
+			nb++;
+		}
+	}
+	return nb;
+}
+
+// OPT11 round 2 (PS2-HW-226): the batches of a frame without the sorted index array. HWR_RenderBatches used to give every polygon an index, sort the indices by key
+// (HWR_GroupSort32: a table lookup per polygon, a scatter of the indices), and then walk the sorted polygons comparing each with its neighbour to find the batch
+// boundaries, writing the (first vertex, count, light) triple of each into the index array of the driver: five passes over the polygons, about 150 cycles each. The
+// polygons with one key (texture order and state hash) are a bucket; the buckets are sorted (a few hundred), and one pass puts the triple of every polygon where it
+// belongs (the bucket's range, in the order the polygons came), checking on the way that the polygon is in the state of the first of its bucket (the key has 30 bits:
+// two states can collide, and the walk below would have cut the batch there; then this function gives up and the old walk runs). The state changes are looked for between
+// the first polygons of consecutive buckets with the tests of the old walk. The same batches in the same order (-hwgo 64: the old walk; -hwgo 128: both, the polygon order
+// compared). Returns 0 when it did nothing.
+static int HWR_RenderBatchesV2(void)
+{
+	unsigned int first[HWR_GS_MAX], start[HWR_GS_MAX], cnt[HWR_GS_MAX];
+	unsigned short border[HWR_GS_MAX];
+	const int n = polygonArraySize;
+	UINT32 *desc;
+	int m, i, bi, pos, bstart;
+	int currentShader, nextShader;
+	GLMipmap_t *currentTexture;
+	FBITFIELD currentPolyFlags;
+	FSurfaceInfo currentSurfaceInfo;
+	const PolygonArrayEntry *e;
+
+	if (n < 1 || n > INT_MAX / 3)
+		return 0;
+	if (bgcap < polygonArrayAllocSize)
+	{
+		bgrp = HWR_BatchResize(bgrp, (size_t)polygonArrayAllocSize * sizeof(UINT16));
+		bgcap = polygonArrayAllocSize;
+	}
+	{
+		HWP_SPAN_BEGIN(tb_sort);
+
+		m = HWR_GroupPlan((const unsigned char *)&polygonArray[0].hash, (const unsigned char *)&polygonArray[0].texture, (unsigned int)sizeof(PolygonArrayEntry), (unsigned int)n, bgrp, first, start, cnt, border);
+		if (m < 0)
+			return 0; // more than HWR_GS_MAX distinct keys: the old walk (radix sort)
+		if (n > finalVertexArrayAllocSize)
+		{
+			finalVertexArrayAllocSize = HWR_BatchCapacity(finalVertexArrayAllocSize, n, sizeof(FOutVector) + 3 * sizeof(UINT32));
+			if (finalVertexArrayAllocSize > INT_MAX / 3)
+				finalVertexArrayAllocSize = INT_MAX / 3;
+			finalVertexIndexArray = HWR_BatchResize(finalVertexIndexArray, (size_t)finalVertexArrayAllocSize * 3 * sizeof(UINT32));
+		}
+		desc = finalVertexIndexArray;
+		for (i = 0; i < n; i++)
+		{
+			const unsigned int g = bgrp[i];
+			const PolygonArrayEntry *p = &polygonArray[i], *f = &polygonArray[first[g]];
+			UINT32 *d;
+
+			if (p->texture != f->texture || p->polyFlags != f->polyFlags || p->surf.PolyColor.rgba != f->surf.PolyColor.rgba)
+				return 0; // two states with one key: the old walk cuts the batch between them
+			d = desc + 3 * start[g]++;
+			d[0] = p->vertsIndex;
+			d[1] = (UINT32)p->numVerts;
+			d[2] = (UINT32)p->surf.LightInfo.light_level; // PS2-HW-106
+		}
+		HWP_SPAN_END2(tb_sort, HWP_BATCHSORT, HWP_KB_SORT);
+#ifdef PS2_HWDETAIL
+		if (hwr_sprite_batch)
+			ps2hwp_cyc[HWP_SF_SORT] += (unsigned int)(ps2hwp_now() - tb_sort);
+#endif
+	}
+	if (hwr_geo_off & 128)
+	{
+		// compared with the sorted index array of the old walk: the same polygon at every position
+		static UINT32 *ref_idx;
+		static int ref_cap;
+		unsigned int bad = 0;
+
+		if (!bcmp_new)
+		{
+			bcmp_new = HWR_BatchResize(NULL, (size_t)HWR_BCMP_MAX * 3 * sizeof(UINT32));
+			bcmp_old = HWR_BatchResize(NULL, (size_t)HWR_BCMP_MAX * 3 * sizeof(UINT32));
+		}
+
+		if (ref_cap < n)
+		{
+			ref_idx = HWR_BatchResize(ref_idx, (size_t)n * sizeof(UINT32));
+			ref_cap = n;
+		}
+		{
+			UINT32 *k = HWR_BatchResize(NULL, (size_t)n * 3 * sizeof(UINT32));
+			UINT32 *ti = k + n, *tk = ti + n;
+			int j;
+
+			unsigned int rank[HWR_GS_MAX];
+
+			for (j = 0; j < m; j++)
+				rank[border[j]] = (unsigned int)j;
+			for (j = 0; j < n; j++)
+			{
+				ref_idx[j] = (UINT32)j;
+				k[j] = rank[bgrp[j]]; // (PS2-HW-231: the order of the buckets is not the order of the keys any more; this checks the scatter and the batches, the order itself is tested by hw_sort_hosttest)
+			}
+			if (HWR_GroupSort32(k, ref_idx, tk, ti, (UINT32)n) == 0)
+			{
+				for (j = 0; j < n; j++)
+					if (polygonArray[ti[j]].vertsIndex != desc[3 * j])
+						bad++;
+				bcmp_nold = HWR_BatchesOldDry(ti, n);
+			}
+			else
+				bcmp_nold = -1;
+			Z_Free(k);
+		}
+		if (bad)
+			I_OutputMsg("HWBATCH2 %u polygons differ in order of %d\n", bad, n);
+		bcmp_nnew = 0;
+	}
+
+	currently_batching = false; // no longer collecting batches
+	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
+	ps_hw_numpolys.value.i = n;
+	ps_hw_numcalls.value.i = ps_hw_numverts.value.i = 0;
+	ps_hw_numshaders.value.i = ps_hw_numtextures.value.i = ps_hw_numpolyflags.value.i = ps_hw_numcolors.value.i = 1;
+	HWR_PlanPass();
+	{
+		HWP_SPAN_BEGIN(tb_draw);
+		PS_START_TIMING(ps_hw_batchdrawtime);
+
+		e = &polygonArray[first[border[0]]];
+		currentShader = e->shader;
+		currentTexture = e->texture;
+		currentPolyFlags = e->polyFlags;
+		currentSurfaceInfo = e->surf;
+		if (cv_glshaders.value && gl_shadersavailable)
+			HWD.pfnSetShader(currentShader);
+		if (currentPolyFlags & PF_NoTexture)
+			currentTexture = NULL;
+		else
+		{
+			HWP_SPAN_BEGIN(tst);
+			HWD.pfnSetTexture(currentTexture);
+			HWP_SPAN_END2(tst, HWP_B_TEX, HWP_KB_TEX);
+		}
+		bstart = 0;
+		pos = (int)cnt[border[0]];
+		for (bi = 1; bi < m; bi++)
+		{
+			const unsigned int g = border[bi];
+			boolean changeState = false, changeShader = false, changeTexture = false, changePolyFlags = false, changeSurfaceInfo = false;
+			GLMipmap_t *nextTexture;
+			FBITFIELD nextPolyFlags;
+			const FSurfaceInfo *ns;
+
+			e = &polygonArray[first[g]];
+			nextShader = e->shader;
+			nextTexture = e->texture;
+			nextPolyFlags = e->polyFlags;
+			ns = &e->surf;
+			if (nextPolyFlags & PF_NoTexture)
+				nextTexture = 0;
+			if (currentShader != nextShader && cv_glshaders.value && gl_shadersavailable)
+			{
+				changeState = true;
+				changeShader = true;
+			}
+			if (currentTexture != nextTexture)
+			{
+				changeState = true;
+				changeTexture = true;
+			}
+			if (currentPolyFlags != nextPolyFlags)
+			{
+				changeState = true;
+				changePolyFlags = true;
+			}
+			if (cv_glshaders.value && gl_shadersavailable)
+			{
+				if (currentSurfaceInfo.PolyColor.rgba != ns->PolyColor.rgba ||
+					currentSurfaceInfo.TintColor.rgba != ns->TintColor.rgba ||
+					currentSurfaceInfo.FadeColor.rgba != ns->FadeColor.rgba ||
+					currentSurfaceInfo.LightInfo.light_level != ns->LightInfo.light_level ||
+					currentSurfaceInfo.LightInfo.fade_start != ns->LightInfo.fade_start ||
+					currentSurfaceInfo.LightInfo.fade_end != ns->LightInfo.fade_end)
+				{
+					changeState = true;
+					changeSurfaceInfo = true;
+				}
+			}
+			else if (currentSurfaceInfo.PolyColor.rgba != ns->PolyColor.rgba)
+			{
+				changeState = true;
+				changeSurfaceInfo = true;
+			}
+			if (changeState)
+			{
+				if (hwr_geo_off & 128)
+				{
+					if (bcmp_nnew < HWR_BCMP_MAX)
+					{
+						bcmp_new[bcmp_nnew][0] = (UINT32)bstart;
+						bcmp_new[bcmp_nnew][1] = (UINT32)(pos - bstart);
+						bcmp_new[bcmp_nnew][2] = HWR_BCmpHash(&currentSurfaceInfo, currentPolyFlags, currentTexture);
+					}
+					bcmp_nnew++;
+				}
+				HWR_DrawBatch(&currentSurfaceInfo, desc + 3 * bstart, 3 * (pos - bstart), currentPolyFlags);
+				ps_hw_numcalls.value.i++;
+				ps_hw_numverts.value.i += 3 * (pos - bstart);
+				bstart = pos;
+				if (changeShader)
+				{
+					HWD.pfnSetShader(nextShader);
+					currentShader = nextShader;
+					ps_hw_numshaders.value.i++;
+				}
+				if (changeTexture)
+				{
+					HWP_SPAN_BEGIN(tst);
+					HWD.pfnSetTexture(nextTexture);
+					HWP_SPAN_END2(tst, HWP_B_TEX, HWP_KB_TEX);
+					currentTexture = nextTexture;
+					ps_hw_numtextures.value.i++;
+				}
+				if (changePolyFlags)
+				{
+					currentPolyFlags = nextPolyFlags;
+					ps_hw_numpolyflags.value.i++;
+				}
+				if (changeSurfaceInfo)
+				{
+					currentSurfaceInfo = *ns;
+					ps_hw_numcolors.value.i++;
+				}
+			}
+			pos += (int)cnt[g];
+		}
+		if (hwr_geo_off & 128)
+		{
+			int j, diff = 0;
+
+			if (bcmp_nnew < HWR_BCMP_MAX)
+			{
+				bcmp_new[bcmp_nnew][0] = (UINT32)bstart;
+				bcmp_new[bcmp_nnew][1] = (UINT32)(pos - bstart);
+				bcmp_new[bcmp_nnew][2] = HWR_BCmpHash(&currentSurfaceInfo, currentPolyFlags, currentTexture);
+			}
+			bcmp_nnew++;
+			if (bcmp_nold != bcmp_nnew)
+				diff = 1;
+			else
+				for (j = 0; j < bcmp_nnew && j < HWR_BCMP_MAX && !diff; j++)
+					if (bcmp_new[j][0] != bcmp_old[j][0] || bcmp_new[j][1] != bcmp_old[j][1] || bcmp_new[j][2] != bcmp_old[j][2])
+						diff = j + 1;
+			{
+				static unsigned checked;
+
+				if (++checked % 500 == 0)
+					I_OutputMsg("HWBATCH2 checked %u batch lists, last: %d batches of %d polygons\n", checked, bcmp_nnew, n);
+			}
+			if (diff)
+				I_OutputMsg("HWBATCH2 batches differ: new %d old %d first difference at %d (new %u/%u/%08x old %u/%u/%08x)\n", bcmp_nnew, bcmp_nold, diff - 1,
+					diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_new[diff - 1][0] : 0u, diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_new[diff - 1][1] : 0u, diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_new[diff - 1][2] : 0u,
+					diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_old[diff - 1][0] : 0u, diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_old[diff - 1][1] : 0u, diff > 0 && diff <= HWR_BCMP_MAX ? bcmp_old[diff - 1][2] : 0u);
+		}
+		HWR_DrawBatch(&currentSurfaceInfo, desc + 3 * bstart, 3 * (pos - bstart), currentPolyFlags);
+		ps_hw_numcalls.value.i++;
+		ps_hw_numverts.value.i += 3 * (pos - bstart);
+		polygonArraySize = 0;
+		unsortedVertexArraySize = 0;
+		HWP_SPAN_END2(tb_draw, HWP_BATCHDRAW, HWP_KB_DRAW);
+#ifdef PS2_HWDETAIL
+		if (hwr_sprite_batch)
+			ps2hwp_cyc[HWP_SF_DRAW] += (unsigned int)(ps2hwp_now() - tb_draw);
+#endif
+		{
+			HWP_SPAN_BEGIN(tb_end);
+			PS2HWD_BatchEnd();
+			HWP_SPAN_END2(tb_end, HWP_B_END, HWP_KB_END);
+		}
+		PS_STOP_TIMING(ps_hw_batchdrawtime);
+	}
+	return 1;
+}
+#endif
+
 // This function organizes the geometry collected by HWR_ProcessPolygon calls into batches and uses
 // the rendering backend to draw them.
-void HWR_RenderBatches(void)
+static void HWR_RenderBatchesOld(void)
 {
     int finalVertexWritePos = 0;// position in finalVertexArray
 	int finalIndexWritePos = 0;// position in finalVertexIndexArray
@@ -618,9 +1318,6 @@ void HWR_RenderBatches(void)
 #endif
 #ifdef PS2
 	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
-#ifdef PS2_PROFILE
-	PS2HWD_SprFlush(0); // PS2-HW-255: the drop shadows and the sprites of the sprite stream come first (before the uploads of the batch: their textures are resident now and are not needed again)
-#endif
 #endif
 	if (!polygonArraySize)
 	{
@@ -638,6 +1335,30 @@ void HWR_RenderBatches(void)
 	ps_hw_numshaders.value.i = ps_hw_numtextures.value.i
 		= ps_hw_numpolyflags.value.i = ps_hw_numcolors.value.i = 1;
 	// init polygonIndexArray
+#ifdef PS2 // PS2-HW-225: the sort keys are made in the same pass (it was a second pass over the polygon array)
+	if (rcap < polygonArrayAllocSize)
+	{
+		rkeys = HWR_BatchResize(rkeys, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+		rtmpk = HWR_BatchResize(rtmpk, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+		rtmpi = HWR_BatchResize(rtmpi, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+		rcap = polygonArrayAllocSize;
+	}
+	{
+		INT32 prev = 0;
+
+		for (i = 0; i < polygonArraySize; i++)
+		{
+			const INT32 h = polygonArray[i].hash;
+
+			polygonIndexArray[i] = i;
+			rkeys[i] = (UINT32)h ^ 0x80000000u; // the signed order of comparePolygons
+			// Keep qsort's existing equal-key order: only bypass it for strictly ordered keys.
+			if (i && prev >= h)
+				sorted = false;
+			prev = h;
+		}
+	}
+#else
 	for (i = 0; i < polygonArraySize; i++)
 	{
 		polygonIndexArray[i] = i;
@@ -645,6 +1366,7 @@ void HWR_RenderBatches(void)
 		if (i && polygonArray[i-1].hash >= polygonArray[i].hash)
 			sorted = false;
 	}
+#endif
 
 #ifdef PS2_PROFILE
 	HWP_SPAN_END2(tb_init, HWP_B_INIT, HWP_KB_INIT);
@@ -657,15 +1379,6 @@ void HWR_RenderBatches(void)
 #ifdef PS2 // PS2-HW-19: stable radix sort of the polygon keys (qsort of ~2000 polygons costs about 1.3 M cycles)
 	if (!sorted)
 	{
-		if (rcap < polygonArrayAllocSize)
-		{
-			rkeys = HWR_BatchResize(rkeys, (size_t)polygonArrayAllocSize * sizeof(UINT32));
-			rtmpk = HWR_BatchResize(rtmpk, (size_t)polygonArrayAllocSize * sizeof(UINT32));
-			rtmpi = HWR_BatchResize(rtmpi, (size_t)polygonArrayAllocSize * sizeof(UINT32));
-			rcap = polygonArrayAllocSize;
-		}
-		for (i = 0; i < polygonArraySize; i++)
-			rkeys[i] = (UINT32)polygonArray[i].hash ^ 0x80000000u; // the signed order of comparePolygons
 		// PS2-HW-59: the batches of a frame are ~250 distinct keys among thousands of polygons: HWR_GroupSort32 (-hwdbg 8192 = the radix sort only)
 		if ((ps2hwd_dbg_flags & 8192) || HWR_GroupSort32(rkeys, polygonIndexArray, rtmpk, rtmpi, (UINT32)polygonArraySize) < 0)
 		{
@@ -694,28 +1407,8 @@ void HWR_RenderBatches(void)
 	// 4. colors + light level
 	// not sure about what order of the last 2 should be, or if it even matters
 
-#ifdef PS2 // PS2-HW-34: the driver plans the frame's textures (mip level, visibility) before the first batch is drawn
-#ifdef PS2_PROFILE
-	HWP_SPAN_BEGIN(tb_plan);
-#endif
-	PS2HWD_PlanBegin();
-	for (i = 0; i < polygonArraySize; i++)
-	{
-		const PolygonArrayEntry *pa = &polygonArray[i];
-
-		// PS2-HW-253 (OPT11 round 3, FX3): only the map textures and flats are planned (plan_wants: regen_kind 1 or 2); a sprite or a patch is asked for nothing: 120 cycles
-		// a polygon for the call alone (-hwfx 65536: the call for every polygon as before)
-		if (pa->texture && !(pa->polyFlags & PF_NoTexture) && ((pa->texture->regen_kind - 1u) < 2u || (ps2hwd_fx2 & FX3_NOLEAN)))
-			PS2HWD_PlanPolygon(pa->texture, &unsortedVertexArray[pa->vertsIndex], pa->numVerts);
-	}
-	PS2HWD_PlanEnd();
-#ifdef PS2_PROFILE
-	HWP_SPAN_END2(tb_plan, HWP_B_PLAN, HWP_KB_PLAN);
-#ifdef PS2_HWDETAIL
-	if (hwr_sprite_batch)
-		ps2hwp_cyc[HWP_SF_PLAN] += (unsigned int)(ps2hwp_now() - tb_plan);
-#endif
-#endif
+#ifdef PS2
+	HWR_PlanPass();
 #endif
 
 #ifdef PS2_PROFILE
@@ -779,7 +1472,7 @@ void HWR_RenderBatches(void)
 		// Bounded output scratch: draw a full chunk before copying the next fan, with state/order intact.
 		if (numVerts > finalVertexArrayAllocSize - finalVertexWritePos && finalIndexWritePos)
 		{
-			HWR_DrawBatch(&currentSurfaceInfo, finalIndexWritePos, currentPolyFlags);
+			HWR_DrawBatch(&currentSurfaceInfo, finalVertexIndexArray, finalIndexWritePos, currentPolyFlags);
 			ps_hw_numcalls.value.i++;
 			ps_hw_numverts.value.i += finalIndexWritePos;
 			finalVertexWritePos = finalIndexWritePos = 0;
@@ -890,16 +1583,7 @@ void HWR_RenderBatches(void)
 		if (changeState || stopFlag)
 		{
 			// execute draw call
-#ifdef PS2_HWDETAIL
-			{
-			const unsigned int sf_db0 = ps2hwp_now();
-#endif
-            HWR_DrawBatch(&currentSurfaceInfo, finalIndexWritePos, currentPolyFlags);
-#ifdef PS2_HWDETAIL
-			if (hwr_sprite_batch)
-				ps2hwp_cyc[HWP_SF_DRAWB] += (unsigned int)(ps2hwp_now() - sf_db0);
-			}
-#endif
+            HWR_DrawBatch(&currentSurfaceInfo, finalVertexIndexArray, finalIndexWritePos, currentPolyFlags);
 			// update stats
 			ps_hw_numcalls.value.i++;
 			ps_hw_numverts.value.i += finalIndexWritePos;
@@ -978,6 +1662,26 @@ void HWR_RenderBatches(void)
 #endif
 
 	PS_STOP_TIMING(ps_hw_batchdrawtime);
+}
+
+void HWR_RenderBatches(void)
+{
+#ifdef PS2
+#ifdef PS2_PROFILE
+	if (currently_batching)
+	{
+		// PS2-HW-255 (OPT11 round 3, FX3): the drop shadows and the sprites of the sprite stream come first, in every collection path (before the uploads of the batch: their textures
+		// are made resident now and are not needed again; the order of the stream is its own, shadows then sprites, as the batch drew them)
+		PS2HWD_BatchDraw();
+		PS2HWD_SprFlush(0);
+	}
+#endif
+	if (currently_batching && pb_n > 0 && HWR_PBOn() && HWR_PBRender())
+		return;
+	if (currently_batching && polygonArraySize > 0 && !(hwr_geo_off & 64) && HWR_RenderBatchesV2())
+		return;
+#endif
+	HWR_RenderBatchesOld();
 }
 
 

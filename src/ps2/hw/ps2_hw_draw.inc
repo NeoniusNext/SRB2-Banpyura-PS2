@@ -78,6 +78,8 @@ enum
 
 enum { LM_NONE = 0, LM_BANDS, LM_RAMP };
 
+extern unsigned int hwr_geo_off; // -hwgo (hardware/hw_gcache.inc)
+#define hwr_geo_off_dbg hwr_geo_off
 static int vu_plan_valid; // PS2-HW-103: P and the constants in the VU1 memory belong to the key of the last single draw (VK, ps2_hw_vu1.inc); begin_draw clears it
 
 // the plan of the polygon being drawn (set by begin_draw)
@@ -985,6 +987,9 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	// PS2-HW-100: the VU1 program takes the plans with one pass and no texture repeat cut: the common world polygon (fast), flat colours, and (palette lighting) the polygons lit by the colormap rows of a light table (P.pal:
 	// the program cuts them at the row steps and loads the CLUT of every piece); the lit plans of the GLSL equations (fog classes) take the general path
 	P.vuok = V.on && V.ready && (P.fast || (P.litfast && P.pal)) && !P.vcol && !(flags & PF_Invisible) && P.pass[0].tex == (u8)textured && !P.oldpath;
+	if (!P.vuok && (P.cutx || P.cuty) && !vu_nocut && V.on && V.ready && P.npass == 1 && !P.water && !P.pass[0].ramp && !(flags & PF_Ripple) && !P.vcol && !(flags & PF_Invisible) && P.pass[0].tex == (u8)textured
+		&& !P.oldpath && !(ps2hwd_dbg_flags & 64) && (P.lmode == LM_NONE || (P.lmode == LM_BANDS && P.pal && r && (r->clut == 2 || (r->clut == 1 && H.rec[img_of(H.cur_tex)].shareable && !H.rec[img_of(H.cur_tex)].has255)))))
+		P.vuok = 1; // PS2-HW-236 (a lit plan only with the keyed rows of its light table, as vu_plan_setup chooses them: the plain rows of the other kind are another 32 CLUT images a table, and the 124 of the CLUT cache do not hold four such sets): a texture with a side that is not a power of two: the polygons are cut at the repeats in object space (vu_cut_blk) and the program draws the pieces
 	P.serial = H.serial - 1; // the first polygon sets the state up
 	xf_update();
 	P.zmax = PS2HWD_ZMAX;
@@ -2312,6 +2317,20 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		gt2 = cyc() - gt1;
 		G.c_cutold += gt2;
 		G.cw_n[why]++, G.cw_c[why] += gt2;
+		if ((hwr_geo_off_dbg & 0x400000u) && H.frame_no % 105 == 60 && P.textured && P.r)
+		{
+			float s0 = 1e30f, s1 = -1e30f, t0 = 1e30f, t1 = -1e30f;
+			int q;
+
+			for (q = 0; q < cnt; q++)
+			{
+				s0 = hw_minf(s0, v[q].a[0]);
+				s1 = hw_maxf(s1, v[q].a[0]);
+				t0 = hw_minf(t0, v[q].a[1]);
+				t1 = hw_maxf(t1, v[q].a[1]);
+			}
+			CONS_Printf("HWCUT why=%d n=%d->%d tex=%s %ux%u npot=%d/%d wrap=%d/%d s=[%.2f,%.2f] t=[%.2f,%.2f] cyc=%u\n", why, n, cnt, HWR_PS2_TexName(P.r->owner), (unsigned)P.r->w, (unsigned)P.r->h, P.r->npot_x, P.r->npot_y, P.wrapx, P.wrapy, s0, s1, t0, t1, (unsigned)gt2);
+		}
 	}
 	H.st.cyc_draw += cyc() - t0;
 }
