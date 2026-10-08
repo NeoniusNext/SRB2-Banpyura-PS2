@@ -73,7 +73,6 @@ void PS2HWD_SetFatalHandler(void (*handler)(const char *message))
 }
 
 static int trace_frame = -1;
-static int pallit_memo_off; // -hwnopallitmemo (PS2-HW-221)
 
 void PS2HWD_SetTrace(int frame, int dbg_flags)
 {
@@ -256,7 +255,6 @@ boolean PS2HWD_Init(void)
 		return true;
 	memset(&H, 0, sizeof H);
 	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
-	pallit_memo_off = M_CheckParm("-hwnopallitmemo") != 0; // PS2-HW-221 off (A/B)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
@@ -929,7 +927,7 @@ static void hw_DrawPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNu
 // are 93 without it), and must be: a plan that is not the palette rows (fog classes of the GLSL equations, water, a texture of 32 bit colours) keeps the level in its key.
 // What it asks is what begin_draw_inner decides at draw time (the shader state is the base shader slot of the polygon), as far as it can be known before the
 // texture is uploaded: map textures and flats (P_8) and the patches whose record is a palette image already.
-static int pallit_eval(const void *vsurf, unsigned int flags, const void *vtex, int shader)
+int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int shader)
 {
 	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
 	const GLMipmap_t *m = (const GLMipmap_t *)vtex;
@@ -939,7 +937,7 @@ static int pallit_eval(const void *vsurf, unsigned int flags, const void *vtex, 
 		return 0;
 	if ((flags & (PF_NoTexture | PF_Invisible | PF_Ripple | PF_Corona | PF_WireFrame)) || blend == PF_Fog || blend == (PF_Multiplicative & PF_Blending))
 		return 0;
-	if ((ps2hwd_dbg_flags & (2048 | 8192 | HWDBG_NOVU1 | HWDBG_NOLIGHTMERGE)) || !palette_mode())
+	if ((ps2hwd_dbg_flags & (2048 | 8192 | HWDBG_NOVU1 | HWDBG_NOLIGHTMERGE)) || !palette_mode_fr())
 		return 0;
 	if (!surf->LightTableId || !lt_ok(surf->LightTableId) || surf->LightTableId >= PR_TBL)
 		return 0;
@@ -952,35 +950,6 @@ static int pallit_eval(const void *vsurf, unsigned int flags, const void *vtex, 
 		return r->used && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2) && !r->screen;
 	}
 	return 0;
-}
-
-// PS2-HW-221 (OPT11 round 2, VU2): the batcher asks this for every polygon of the frame (2250 times in DEMO_004, 140 cycles each). The answer depends on the texture, the
-// flags, the shader and the light table of the polygon and on state that changes with a frame, a texture made resident or dropped, or a new palette: it is remembered for
-// those (a direct mapped table; -hwnopallitmemo: every call is evaluated).
-int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int shader)
-{
-	static struct
-	{
-		const void *tex;
-		u32 flags, shader_lt, epoch; // epoch: the frame, the texture version and the palette generation folded into one word (bit 0 = the answer)
-	} memo[1024];
-	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
-	u32 h, k2, ep;
-	int r;
-
-	if (!surf || pallit_memo_off)
-		return pallit_eval(vsurf, flags, vtex, shader);
-	k2 = ((u32)shader & 0xFFu) | (surf->LightTableId << 8) | ((u32)H.shaders_on << 31);
-	ep = (H.frame_no * 0x9E3779B1u + H.tex_ver * 0x85EBCA6Bu + H.pal_gen * 0xC2B2AE35u) & ~1u;
-	h = ((((u32)(uintptr_t)vtex >> 4) * 0x9E3779B1u) ^ (flags * 0x85EBCA6Bu) ^ (k2 * 0xC2B2AE35u)) >> 22;
-	if (memo[h].tex == vtex && memo[h].flags == flags && memo[h].shader_lt == k2 && (memo[h].epoch & ~1u) == ep)
-		return (int)(memo[h].epoch & 1u);
-	r = pallit_eval(vsurf, flags, vtex, shader);
-	memo[h].tex = vtex;
-	memo[h].flags = flags;
-	memo[h].shader_lt = k2;
-	memo[h].epoch = ep | (u32)(r != 0);
-	return r;
 }
 
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc)
@@ -1518,7 +1487,6 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		tex_drop((int)(r - H.rec), 0);
 	}
 	TexInfo->downloaded = 0;
-	H.tex_ver++;
 }
 
 static void hw_GClipRect(INT32 minx, INT32 miny, INT32 maxx, INT32 maxy, float nearclip)

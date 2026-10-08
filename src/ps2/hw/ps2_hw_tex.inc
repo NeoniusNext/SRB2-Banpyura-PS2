@@ -312,7 +312,6 @@ static void tex_drop(int i, int count_eviction)
 {
 	texrec_t *r = &H.rec[i];
 
-	H.tex_ver++;
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_account(r);
 
@@ -1804,7 +1803,6 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
-	H.tex_ver++;
 	u32 sw = m->width, sh = m->height;
 	u32 W2, H2, bpp, tbw, nblk, align, blk, i, n;
 	int psm, clut, baked = 0, holes = 0, uses255 = 0, ri, shareable = 0, has255 = 0;

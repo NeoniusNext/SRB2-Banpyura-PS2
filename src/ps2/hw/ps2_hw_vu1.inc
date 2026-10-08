@@ -669,17 +669,7 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 	w[27] = H.pal_gen;
 	w[28] = H.sciss_x0 | (H.sciss_y0 << 16);
 	w[29] = H.sciss_x1 | (H.sciss_y1 << 16);
-	{
-		static u32 pm_frame = ~0u; // the palette rendering switch is read once a frame here (begin_draw_inner reads it for every plan)
-		static u32 pm_val;
-
-		if (pm_frame != H.frame_no)
-		{
-			pm_frame = H.frame_no;
-			pm_val = (u32)palette_mode();
-		}
-		w[30] = (u32)H.target | (H.frame_no << 4) | (pm_val << 3);
-	}
+	w[30] = (u32)H.target | (H.frame_no << 4) | ((u32)palette_mode_fr() << 3);
 	w[31] = 0;
 }
 
