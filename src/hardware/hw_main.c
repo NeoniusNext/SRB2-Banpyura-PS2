@@ -2296,6 +2296,27 @@ static void HWR_ProcessSegC(void)
 #define HWR_ProcessSeg HWR_ProcessSegC
 #endif
 
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-200): R_FakeFlat makes a copy of the sector only when it has a height sector (water) and no colormap; for all the others it returns the sector itself after
+// working out the two light levels. That is what runs for nearly every call of the BSP walk (a subsector and a two sided seg each), so it is done here without the call.
+// -hwgo 64: R_FakeFlat for all.
+static inline sector_t *HWR_FakeFlat(sector_t *sec, sector_t *tempsec, INT32 *floorlightlevel, INT32 *ceilinglightlevel, boolean back)
+{
+	if ((sec->extra_colormap || sec->heightsec == -1) && !(hwr_geo_off & 64))
+	{
+		if (floorlightlevel)
+			*floorlightlevel = sec->floorlightsec == -1 ?
+				(sec->floorlightabsolute ? sec->floorlightlevel : max(0, min(255, sec->lightlevel + sec->floorlightlevel))) : sectors[sec->floorlightsec].lightlevel;
+		if (ceilinglightlevel)
+			*ceilinglightlevel = sec->ceilinglightsec == -1 ?
+				(sec->ceilinglightabsolute ? sec->ceilinglightlevel : max(0, min(255, sec->lightlevel + sec->ceilinglightlevel))) : sectors[sec->ceilinglightsec].lightlevel;
+		return sec;
+	}
+	return R_FakeFlat(sec, tempsec, floorlightlevel, ceilinglightlevel, back);
+}
+#define R_FakeFlat HWR_FakeFlat
+#endif
+
 // From PrBoom:
 //
 // e6y: Check whether the player can look beyond this line
@@ -2903,6 +2924,9 @@ static void HWR_Subsector(size_t num)
 	locFloorHeight    = P_GetSectorFloorZAt  (gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 	locCeilingHeight  = P_GetSectorCeilingZAt(gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 
+#ifdef PS2_PROFILE
+	if (gl_frontsector->ffloors || (hwr_geo_off & 64)) // OPT11 (PS2-HW-200): the function does nothing for a sector without 3D floors
+#endif
 	R_CheckSectorLightLists(sub->sector, gl_frontsector, &floorlightlevel, &ceilinglightlevel, &floorcolormap, &ceilingcolormap);
 
 	sub->sector->extra_colormap = gl_frontsector->extra_colormap;
