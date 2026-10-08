@@ -34,6 +34,9 @@ SCEN = {
     # no demo: the player stands still in MAP01 (a pause, then a track change; no SFX of its own)
     'm1_ref': ('MAP:MAP01', [], []),
     'm1_mute': ('MAP:MAP01', [], ['-acmd', '200', 'digmusicvolume 0', '-acmd', '500', 'digmusicvolume 16']),
+    # a short song (O__1UP, 4.99 s, loops) muted for 8.6 s: the skipped position must wrap exactly where the decoder would (PS2-317)
+    'm2_ref': ('MAP:MAP01', [], ['-acmd', '100', 'tunes _1up']),
+    'm2_mute': ('MAP:MAP01', [], ['-acmd', '100', 'tunes _1up', '-acmd', '200', 'digmusicvolume 0', '-acmd', '500', 'digmusicvolume 16']),
     'm1_pause': ('MAP:MAP01', [], ['-acmd', '300', 'pause', '-acmd', '600', 'pause']),
     'm1_none': ('MAP:MAP01', [], ['-acmd', '300', 'tunes -none']),
 }

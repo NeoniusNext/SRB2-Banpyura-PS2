@@ -301,33 +301,24 @@ static int Ensure(ps2_music *m)
 	m->playing = m->paused = 0; return 0;
 }
 
-int PS2_MusicCanSkip(const ps2_music *m)
+// PS2-317: a muted Ogg/MP3 song may move its position without decoding, but never across the end of the song: length_ms is a rounded-down
+// time (up to 22 frames short of the real end at 22050 Hz) and the real end, where the decoder loops or stops, is only known to the decoder.
+// So skipping stops SKIP_MARGIN frames before the (rounded) end; the next steps decode (after a frame exact seek) up to the real end and loop
+// exactly as without the mute.
+#define SKIP_MARGIN 4096
+int PS2_MusicCanSkip(const ps2_music *m, size_t frames)
 {
 	return m && m->playing && !m->paused && !m->error && (m->type == PS2_MUSIC_OGG || m->type == PS2_MUSIC_MP3)
-		&& m->length_ms && m->step == 65536 && !m->fraction;
+		&& m->length_ms && m->step == 65536 && !m->fraction
+		&& m->position + frames + SKIP_MARGIN <= (uint64_t)m->length_ms * m->rate / 1000;
 }
 
 size_t PS2_MusicSkip(ps2_music *m, size_t frames)
 {
-	uint64_t end;
-	if (!PS2_MusicCanSkip(m)) return 0;
-	end = (uint64_t)m->length_ms * m->rate / 1000;
+	if (!PS2_MusicCanSkip(m, frames)) return 0;
 	m->skipped = 1;
 	m->buffered = m->cursor = 0;
 	m->position += frames;
-	if (m->position >= end)
-	{
-		if (m->looping)
-		{
-			uint64_t loop = (uint64_t)m->loop_ms * m->rate / 1000, span = end > loop ? end - loop : 0;
-			m->position = span ? loop + (m->position - end) % span : loop;
-		}
-		else
-		{
-			frames -= (size_t)(m->position - end);
-			m->position = end; m->playing = m->paused = 0;
-		}
-	}
 	m->decoded = m->position;
 	return frames;
 }
