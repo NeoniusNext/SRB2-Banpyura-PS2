@@ -41,6 +41,18 @@ L=$ROOT/build/logs/stab-$TAG.txt
 OPT="python3 -B tools/ps2/opt_run.py"
 
 say() { echo "$@" >> "$L"; }
+# The disk is shared by the agents: after every stage the heavy parts of this tag's run directories go (ELF copies, pack links, frame dumps, big emulator logs);
+# the engine logs (boot.txt), summaries and screenshots stay. SRB2_STAB_KEEP=1 keeps everything.
+slim_runs() {
+	local d
+	[ -n "$SRB2_STAB_KEEP" ] && return
+	for d in "$ROOT/build/runs/$TAG"-* "$ROOT"/build/runs/sweep/"$TAG"-*/* "$ROOT"/build/runs/msweep/"$TAG"-*/* "$ROOT"/build/runs/inject/"$TAG"-*/* "$ROOT"/build/stab-net/run/*/*; do
+		[ -d "$d" ] || continue
+		rm -f "$d/SRB2.ELF" "$d"/*.PAK "$d/FINEACON.DAT"
+		rm -rf "$d/refout"
+		find "$d" -maxdepth 1 -name pcsx2.log -size +2M -delete
+	done
+}
 run() { "$@" >> "$L" 2>&1; }
 grep_run() { # grep_run RUN PATTERN [cut]
 	grep -h "$2" "build/runs/$1/boot.txt" 2>/dev/null | cut -c1-${3:-230} >> "$L"
@@ -305,6 +317,7 @@ for s in $STAGES; do
 	fi
 	say "== $s"
 	"stage_$s"
+	slim_runs
 	say "STAGE-DONE $s"
 done
 say "STAB-RUN-DONE"
