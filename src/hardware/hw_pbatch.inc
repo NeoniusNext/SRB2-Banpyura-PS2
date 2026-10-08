@@ -75,7 +75,7 @@ static int pb_tab_dirty;
 static UINT32 pb_xk[HWR_PB_XSLOTS][2]; // (hi, texture) of the order of the textures: the first polygon of the texture in the batch
 static UINT16 pb_xv[HWR_PB_XSLOTS];
 static int pb_x_dirty;
-static UINT32 pb_ngen, pb_nslow, pb_nfind, pb_ncreate, pb_nbuckets, pb_npolys, pb_nflush, pb_nbatches; // HWPROF50 (per window)
+static UINT32 pb_ngen, pb_nslow, pb_nfind, pb_ncreate, pb_nbuckets, pb_npolys, pb_nflush, pb_nbatches, pb_nplanned; // HWPROF50 (per window)
 
 static inline int HWR_PBOn(void)
 {
@@ -107,6 +107,24 @@ static inline float hwr_minf(float a, float b)
 static inline float hwr_maxf(float a, float b)
 {
 	return b > a ? b : a;
+}
+#endif
+
+#ifdef __mips__
+static inline float hwr_i2f(UINT32 u) // (the word is in an integer register already: mtc1 costs one cycle, a second load into a floating point register two)
+{
+	float f;
+
+	__asm__("mtc1 %1,%0" : "=f"(f) : "r"(u));
+	return f;
+}
+#else
+static inline float hwr_i2f(UINT32 u)
+{
+	union { UINT32 u; float f; } c;
+
+	c.u = u;
+	return c.f;
 }
 #endif
 
@@ -257,7 +275,7 @@ static UINT32 HWR_PBNew(const FSurfaceInfo *s, GLMipmap_t *tex, UINT32 flags, UI
 	hwr_pbk_t *b;
 	UINT32 bi;
 
-	if (pb_nb >= HWR_PB_BMAX)
+	if (pb_nb >= ((hwr_geo_off & 0x200000u) ? 24u : HWR_PB_BMAX)) // (-hwgo 2097152: a batch holds 24 states, to test the cut)
 		HWR_PBFlushEarly();
 	if (pb_nb >= pb_bcap)
 		HWR_PBGrowB();
@@ -335,9 +353,12 @@ static inline __attribute__((always_inline)) void HWR_PBPut(hwr_pbk_t *b, UINT32
 		e_[0].w[0] = x_; HWR_PBBAR; e_[0].w[1] = y_; HWR_PBBAR; e_[0].w[2] = z_; HWR_PBBAR; e_[1].w[0] = s_; HWR_PBBAR; e_[1].w[1] = t_; HWR_PBBAR; } while (0)
 	if (b->needext)
 	{
-#define HWR_PBV(i) do { const float s_ = v[(i)].s, t_ = v[(i)].t; HWR_PBC(i); smin = hwr_minf(smin, s_); smax = hwr_maxf(smax, s_); tmin = hwr_minf(tmin, t_); tmax = hwr_maxf(tmax, t_); } while (0)
-		smin = smax = v[0].s;
-		tmin = tmax = v[0].t;
+#define HWR_PBV(i) do { const hwr_word_t *q_ = w + 5 * (i); hwr_qw_t *e_ = d + 2 * (i); const UINT32 x_ = q_[0], y_ = q_[1], z_ = q_[2], s_ = q_[3], t_ = q_[4]; \
+		const float sf_ = hwr_i2f(s_), tf_ = hwr_i2f(t_); \
+		e_[0].w[0] = x_; HWR_PBBAR; e_[0].w[1] = y_; HWR_PBBAR; e_[0].w[2] = z_; HWR_PBBAR; e_[1].w[0] = s_; HWR_PBBAR; e_[1].w[1] = t_; HWR_PBBAR; \
+		smin = hwr_minf(smin, sf_); smax = hwr_maxf(smax, sf_); tmin = hwr_minf(tmin, tf_); tmax = hwr_maxf(tmax, tf_); } while (0)
+		smin = smax = hwr_i2f(w[3]);
+		tmin = tmax = hwr_i2f(w[4]);
 		if (n == 4)
 		{
 			HWR_PBV(0);
@@ -605,6 +626,7 @@ static int HWR_PBRender(void)
 	}
 	currently_batching = false; // no longer collecting batches
 	pb_npolys += n;
+	pb_nplanned += pb_nplan;
 	pb_nbuckets += m;
 	pb_nflush++;
 	ps2hwp_cnt[HWC_PROC] += n; // (the counters of HWPROF4: the collection does not count each polygon)
@@ -727,7 +749,7 @@ void HWR_PBProf(unsigned int frames)
 {
 	if (!frames)
 		frames = 1;
-	I_OutputMsg("HWPROF50 collection: polygons=%u in %u batches (%u buckets) | general path=%u (cache missed: slow=%u found=%u created=%u) | batches drawn=%u\n", pb_npolys / frames, pb_nflush / frames, pb_nbuckets / frames, pb_ngen / frames,
-		pb_nslow / frames, pb_nfind / frames, pb_ncreate / frames, pb_nbatches / frames);
-	pb_ngen = pb_nslow = pb_nfind = pb_ncreate = pb_nbuckets = pb_npolys = pb_nflush = pb_nbatches = 0;
+	I_OutputMsg("HWPROF50 collection: polygons=%u in %u batches (%u buckets) | general path=%u (cache missed: slow=%u found=%u created=%u) | batches drawn=%u | planned polygons=%u\n", pb_npolys / frames, pb_nflush / frames, pb_nbuckets / frames, pb_ngen / frames,
+		pb_nslow / frames, pb_nfind / frames, pb_ncreate / frames, pb_nbatches / frames, pb_nplanned / frames);
+	pb_nplanned = pb_ngen = pb_nslow = pb_nfind = pb_ncreate = pb_nbuckets = pb_npolys = pb_nflush = pb_nbatches = 0;
 }

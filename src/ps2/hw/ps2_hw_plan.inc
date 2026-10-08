@@ -57,9 +57,13 @@ static void plan_sync(void)
 
 static u32 plan_t0;
 
+static const GLMipmap_t *blk_plan_m;
+static planinfo_t *blk_plan_pi;
+
 void PS2HWD_PlanBegin(void)
 {
 	plan_t0 = cyc();
+	blk_plan_m = NULL;
 	plan_active = H.up && !(ps2hwd_dbg_flags & HWDBG_NOPLAN);
 	if (plan_active)
 	{
@@ -692,7 +696,14 @@ void PS2HWD_PlanBlock(GLMipmap_t *m, const void *vb)
 
 	if (!plan_active || n < 3 || n > PS2HWD_MAXPOLY)
 		return; // (the texture is one the plan wants: the batch listed the polygon for that)
-	pi = plan_key(m);
+	if (m == blk_plan_m)
+		pi = blk_plan_pi; // (the polygons of one texture come in runs: the record of the texture in this frame's table once)
+	else
+	{
+		pi = plan_key(m);
+		blk_plan_m = m;
+		blk_plan_pi = pi;
+	}
 	if (!pi)
 		return;
 	{

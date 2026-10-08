@@ -621,7 +621,7 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 	if (H.mat_dirty)
 		xf_update();
 	w[0] = flags;
-	if (surf)
+	if (surf && (flags & PF_ColorMapped))
 	{
 		w[1] = surf->PolyColor.rgba;
 		w[2] = surf->TintColor.rgba;
@@ -630,6 +630,13 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 		w[6] = (u32)surf->LightInfo.light_level;
 		w[7] = (u32)surf->LightInfo.fade_start;
 		w[8] = (u32)surf->LightInfo.fade_end;
+	}
+	else if (surf)
+	{
+		// (PS2-HW-235) a polygon the shader does not light: begin_draw_inner reads the colour only; the rest of the surface is what the caller left on its stack, and it made the key of
+		// two draws of one plan differ for nothing
+		w[1] = surf->PolyColor.rgba;
+		w[2] = w[3] = w[4] = w[6] = w[7] = w[8] = 0;
 	}
 	else
 	{

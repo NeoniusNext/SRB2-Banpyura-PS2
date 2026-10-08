@@ -369,6 +369,7 @@ static void HWR_BenchProcess(int reps)
 	memset(&tex, 0, sizeof tex);
 	tex.regen_kind = 1;
 	tex.regen_id = 7;
+	tex.flags = TF_WRAPXY; // (walls and flats repeat: the collection finds the extent of s, t)
 	tex.format = GL_TEXFMT_P_8;
 	tex.width = tex.height = 64;
 	memset(&surf, 0, sizeof surf);
