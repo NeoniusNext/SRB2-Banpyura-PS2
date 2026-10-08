@@ -205,9 +205,9 @@ class Node:
         except OSError:
             return ''
 
-    def stop(self):
+    def stop(self, hard=False):
         if self.proc:
-            if self.proc.poll() is None:
+            if self.proc.poll() is None and not hard:  # hard (stop_when "signal": "KILL"): no I_Quit, no "server shutdown" packet: the other side has to find out by itself
                 killgroup(self.proc, signal.SIGINT)  # polite first: PCSX2 flushes its log, the engine runs I_Quit
                 try:
                     self.proc.wait(25)  # PCSX2 saves PCSX2.ini on its way out: a kill during that write leaves an empty file (see emu_path)
@@ -263,7 +263,7 @@ def run_session(spec):
                 if n.started and sw and not n.stopped and sw['text'] in next(x for x in nodes if x.id == sw['node']).text(sw.get('file', '')):
                     time.sleep(sw.get('delay', 0))
                     print(f'[{time.strftime("%H:%M:%S")}] stopping {n.id} on purpose', flush=True)
-                    n.stop()
+                    n.stop(hard=sw.get('signal') == 'KILL')
                     n.stopped = True
                 if n.started and not n.stopped:
                     n.feed()

@@ -197,7 +197,7 @@ stage_netb() { # add-on download (UDP, HTTP, HTTP 404, chunked HTTP, from a PS2 
 	net_batch addons-udp addons-http addons-http-404 addons-http-chunked addons-ps2srv-pccli
 }
 stage_netc() { # menus, master server (mock), on-screen keyboard, broken connections, quit, hardware renderer in a network game
-	net_batch ps2host-menu menu-browse osk-connect server-kill client-kill ms-blackhole ms-refused quit-coop-2p quit-match-2p sw-net-coop hw-net-coop hw-net-match reconnect
+	net_batch ps2host-menu menu-browse osk-connect server-kill server-kill-hard client-kill ms-blackhole ms-refused quit-coop-2p quit-match-2p sw-net-coop hw-net-coop hw-net-match reconnect
 }
 stage_netd() { # long sessions
 	net_batch soak-pcsrv-ps2cli soak-ps2srv-pccli soak-ps2srv-ps2cli
