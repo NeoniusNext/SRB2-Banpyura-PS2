@@ -12,8 +12,15 @@
 // The pixels are the same as the old path's (same triangles, same vertex values up to the VU0 rounding the old path would have had
 // on its VU0 route); sky_fast_ok() refuses meshes the shortcut cannot reproduce (texture coordinates beyond 4 repeats: the old path
 // subtracts whole repeats per triangle) and the old path stays available (-hwdbg 4096).
+//
+// PS2-HW-110 (OPT11 VU): a texture whose width or height is not a power of two (the 512 x 768 sky of DEMO_002) has its repeats made by cutting at whole texture widths
+// (P.cutx / P.cuty, the texture is clamped to its own region): the dome took the old path, 1.45 M cycles a frame. The bands of the dome (and its caps) are bounded by
+// whole texture heights / widths of the coordinates (rings at t = k / 4), so no band crosses a repeat: every band is drawn in its own repeat with the whole repeats
+// removed from its coordinates (what the old path's cuts and sb / tb make of such a triangle). A mesh with a band that does cross a repeat takes the old path.
 
 #ifdef HW_VU0
+
+#define SKY_MAXLOOPS 32
 
 static struct
 {
@@ -26,7 +33,11 @@ static struct
 	u8 *oc; // per frame: outcodes
 	int cap;
 	int ok; // the converted mesh can take the shortcut
+	int cellx, celly; // every textured loop lies inside one repeat of the texture in s / t: the shortcut also takes a texture that is cut at its repeats on that axis (PS2-HW-110)
+	float lsb[SKY_MAXLOOPS], ltb[SKY_MAXLOOPS]; // whole repeats of s, t of a loop
 } SKY;
+
+static float sky_sb, sky_tb; // the repeats removed from s, t of the loop being drawn (0 unless the plan cuts at the repeats)
 
 static void sky_fast_free(void)
 {
@@ -100,6 +111,54 @@ static int sky_fast_prepare(const gl_sky_t *sky)
 	}
 	if (lim > 4.0f)
 		SKY.ok = 0; // the old path drops whole repeats from the coordinates of every triangle: not reproduced here
+	SKY.cellx = SKY.celly = sky->loopcount <= SKY_MAXLOOPS;
+	for (l = 0; l < sky->loopcount && SKY.ok && (SKY.cellx || SKY.celly); l++)
+	{
+		const gl_skyloopdef_t *loop = &sky->loops[l];
+		float smn = 1e30f, smx = -1e30f, tmn = 1e30f, tmx = -1e30f;
+
+		for (i = 0; i < loop->vertexcount; i++)
+		{
+			const FOutVector *v = &SKY.v[loop->vertexindex + i];
+
+			smn = v->s < smn ? v->s : smn;
+			smx = v->s > smx ? v->s : smx;
+			tmn = v->t < tmn ? v->t : tmn;
+			tmx = v->t > tmx ? v->t : tmx;
+		}
+		SKY.lsb[l] = floorf(smn + 1.0e-4f);
+		SKY.ltb[l] = floorf(tmn + 1.0e-4f);
+		if (smx - SKY.lsb[l] > 1.0f + 1.0e-4f)
+			SKY.cellx = 0; // a band that crosses a repeat: the cuts of the old path
+		if (tmx - SKY.ltb[l] > 1.0f + 1.0e-4f)
+			SKY.celly = 0;
+	}
+	{
+		float smn = 1e30f, smx = -1e30f, tmn = 1e30f, tmx = -1e30f;
+
+		for (i = 0; i < n; i++)
+		{
+			smn = SKY.v[i].s < smn ? SKY.v[i].s : smn;
+			smx = SKY.v[i].s > smx ? SKY.v[i].s : smx;
+			tmn = SKY.v[i].t < tmn ? SKY.v[i].t : tmn;
+			tmx = SKY.v[i].t > tmx ? SKY.v[i].t : tmx;
+		}
+		CONS_Printf("HWD sky: s [%.3f, %.3f] t [%.3f, %.3f]\n", smn, smx, tmn, tmx);
+		for (l = 0; l < sky->loopcount; l++)
+		{
+			const gl_skyloopdef_t *loop = &sky->loops[l];
+			float a = 1e30f, b = -1e30f;
+
+			for (i = 0; i < loop->vertexcount; i++)
+			{
+				const float t = SKY.v[loop->vertexindex + i].t;
+
+				a = t < a ? t : a;
+				b = t > b ? t : b;
+			}
+			CONS_Printf("HWD sky loop %d: first %d count %d mode %d tex %d t [%.3f, %.3f]\n", l, loop->vertexindex, loop->vertexcount, (int)loop->mode, (int)loop->use_texture, a, b);
+		}
+	}
 	CONS_Printf("HWD sky: %d vertices, %d loops, texture %dx%d, max |s,t| %.2f -> %s\n", n, sky->loopcount, sky->width, sky->height, lim, SKY.ok ? "strips" : "old path");
 	SKY.src = sky->data;
 	SKY.n = n;
@@ -114,8 +173,8 @@ static inline qw_t *sky_put(qw_t *o, const cv_t *c, const pv_t *p, u32 rgba)
 {
 	const float q = p->q;
 
-	o->f[0] = c->a[0] * P.tsx * q;
-	o->f[1] = c->a[1] * P.tsy * q;
+	o->f[0] = (c->a[0] - sky_sb) * P.tsx * q;
+	o->f[1] = (c->a[1] - sky_tb) * P.tsy * q;
 	o->f[2] = q;
 	o->w[3] = 0;
 	o++;
@@ -151,6 +210,8 @@ static void sky_tri_clipped(int ia, int ib, int ic, int or_)
 	pk.fmt = 4;
 	pk.nreg = 3;
 	pk.fog = 255;
+	pk.sb = sky_sb;
+	pk.tb = sky_tb;
 	o = pk_alloc((u32)(1 + (cnt - 2) * 9));
 	o[0].d[0] = HWGIF_TAG((cnt - 2) * 3, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, 3);
 	o[0].d[1] = GIF_REGS_STQ_RGBA_XYZ;
@@ -205,14 +266,14 @@ static int sky_dome_fast(gl_sky_t *sky)
 		if (!okb)
 			goto done;
 	}
-	if (!(P.vu0 && P.npass == 1 && P.lmode == LM_NONE && !P.cutx && !P.cuty && !P.water && P.pass[0].tex == (u8)P.textured))
+	if (!(P.vu0 && P.npass == 1 && P.lmode == LM_NONE && (!P.cutx || SKY.cellx) && (!P.cuty || SKY.celly) && !P.water && P.pass[0].tex == (u8)P.textured))
 	{
 		ok = 0; // a plan the shortcut does not cover: the old path draws it
 		{
 			static int said;
 
 			if (!said++)
-				CONS_Printf("HWD sky: plan not covered (vu0 %d npass %d lmode %d cutx %d cuty %d water %d tex %d/%d)\n", P.vu0, P.npass, P.lmode, P.cutx, P.cuty, P.water, (int)P.pass[0].tex, P.textured);
+				CONS_Printf("HWD sky: plan not covered (vu0 %d npass %d lmode %d cutx %d cuty %d cells %d/%d water %d tex %d/%d)\n", P.vu0, P.npass, P.lmode, P.cutx, P.cuty, SKY.cellx, SKY.celly, P.water, (int)P.pass[0].tex, P.textured);
 		}
 		goto done;
 	}
@@ -249,6 +310,8 @@ static int sky_dome_fast(gl_sky_t *sky)
 
 				if (j == 0 ? loop->use_texture : !loop->use_texture)
 					continue;
+				sky_sb = (P.cutx && loop->use_texture) ? SKY.lsb[i] : 0.0f; // (the caps have s = t = 0)
+				sky_tb = (P.cuty && loop->use_texture) ? SKY.ltb[i] : 0.0f;
 				if (loop->mode == HWD_SKYLOOP_FAN)
 				{
 					int all = 0x3F;
