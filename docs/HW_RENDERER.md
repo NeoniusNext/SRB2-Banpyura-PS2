@@ -130,6 +130,15 @@ Facts from runs in the emulator against the PC OpenGL engine (details, numbers, 
 * Tools: `fx_pair.py` (one scene on both renderers), `fx_sweep.py`, `fx_shift.py` (block matching of the water), `fx_chain.py`, `fx_queue.sh`, `fx_water.sh`, `fx_watertab.py`, `fxscene.lua`/`fxflash.lua`, `make_fxmodel.py`, `-hwlt N`, `-hwwater N`.
 * Trap: the PC engine reads and **saves** `/opt/srb2-assets/reference.cfg`: a run that sets `gamma 4` or `gr_models On` leaves it for the next PC runs of everybody (`pcshot.py` now resets them at the start of every run).
 
+## OPT11 round 2, FX2 (2026-10-08): speed of the sprites, shadows, sky dome and sky box water on the EE
+
+Details, numbers and what was not reached: `docs/GATES/g1/opt11-FX.md` section 6 (PS2-HW-240..249).
+
+* **Sphere tests before the work** (`ps2_hw_fx2.inc` `PS2HWD_CullSetup`: the rows of the clip transform and the gradient lengths of the four side planes): a thing whose sprite cannot reach the view is not projected (`HWR_AddSprites`), a drop shadow and every quad of the sky dome are tested the same way. A sphere wholly outside one side of the view volume holds four corners outside it, which is what `PS2HWD_QuadHidden` calls hidden: the result is exact (check mode `-hwfx 2`: 0 differences on DEMO_001..004, 500 thousand things). Things with a drop shadow, models, link draws, floor and paper sprites, skins, overlays and rolled sprites are not tested by the sphere (their quad is still tested by `PS2HWD_QuadHidden` as before).
+* **A/B switches on one ELF** (`-hwfx N`, `ps2_hw_fx2.h`; a set bit switches one path off): 1 thing filter, 2 check mode, 4 sort keys in the vissprite, 8 shadows, 16 sky dome, 64 interpolated state kept in the vissprite, 256 sky box water, 1024 thing visibility; `-hwfx 1373` = every path off. `-fxfrac N` draws every frame N percent between two tics (the time demo draws whole tics only).
+* Result: DEMO_001 wall -2.1 %, DEMO_004 -4.0 % (same ELF, whole-tic frames, no profiler console); between two tics -3.7 % / -5.8 %. Pictures: 0 differing pixels in 40 snapshots (4 demos, whole tics and between tics, paths on / off). The goal of round 2 (0.8 M cycles for sprites + HUD + sky + water on DEMO_001, 2 M on DEMO_004) is not reached: 2.19 M and 3.64 M.
+* Trap for A/B between two different ELFs: the pictures of two builds differ by up to 0.5 % of the pixels (1-2 pixel lines along wall edges) when the allocation pattern differs (the size of `gl_vissprite_t` alone does it): the batch order of polygons with one texture depends on a hash of the texture's pointer (`HWR_ProcessPolygon`). Compare pictures of one ELF.
+
 ## Complete callback matrix
 
 `P` = implementation exercised by standalone primitive/readback tests;
