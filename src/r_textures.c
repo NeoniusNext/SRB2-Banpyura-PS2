@@ -1138,14 +1138,14 @@ static UINT8 *R_StreamTextureToFlat(size_t texnum)
 	{
 		const texpatch_t *patch = &texture->patches[i];
 		const size_t len = W_LumpLengthPwad(patch->wad, patch->lump);
-		UINT8 head[8];
+		INT16 head[4]; // width, height, leftoffset, topoffset (INT16 array: no unaligned halfword loads on the EE)
 		UINT32 *colofs;
 		INT32 pw, ph, x, x1, x2;
 		size_t winlo = 0, winhi = 0;
 
-		W_ReadLumpHeaderPwad(patch->wad, patch->lump, head, 8, 0);
-		pw = SHORT(*(INT16 *)(void *)head);
-		ph = SHORT(*(INT16 *)(void *)(head + 2));
+		W_ReadLumpHeaderPwad(patch->wad, patch->lump, head, sizeof head, 0);
+		pw = SHORT(head[0]);
+		ph = SHORT(head[1]);
 		if (pw <= 0 || ph <= 0 || (size_t)pw > (len - 8) / sizeof (UINT32))
 		{
 			ok = false;

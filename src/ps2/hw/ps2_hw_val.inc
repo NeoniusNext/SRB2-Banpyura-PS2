@@ -66,7 +66,7 @@ static struct
 	int on;
 	u32 left; // data qwords of the open GIF packet still to come
 	int open; // the last GIF tag had EOP = 0: the packet continues with the next tag
-	u32 errs, runs, flushes;
+	u32 errs, runs, flushes, next_report;
 } LINT;
 
 static void val_err(int cls, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -940,7 +940,14 @@ static void val_buffer(const qw_t *b, u32 wr)
 	u32 i = 0;
 
 	if (LINT.on)
+	{
 		lint_buffer(b, wr);
+		if (H.frame_no >= LINT.next_report) // a periodic line: the run may end (ZQUIT) before the engine shuts the driver down
+		{
+			LINT.next_report = H.frame_no + 50;
+			I_OutputMsg("HWVAL LINT SUMMARY: frame %u direct runs=%u flushes=%u errors=%u\n", H.frame_no, LINT.runs, LINT.flushes, LINT.errs);
+		}
+	}
 	if (!VAL.on)
 		return;
 	if (H.frame_no >= VAL.summary_frame + 300)
