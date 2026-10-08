@@ -102,8 +102,8 @@ void PS2HWD_ProfExtra(unsigned int frames)
 		(unsigned)(ps2hwp_cyc[HWP_SG_C] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_D] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_E] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_F] / frames), (unsigned)(ps2hwp_cyc[HWP_SG_G] / frames));
 	I_OutputMsg("HWPROF33 HWR_ProjectSprite parts: interp=%u frame=%u offsets=%u position=%u quadtest=%u vissprite=%u | AddSprites total=%u\n", (unsigned)(ps2hwp_cyc[HWP_PS_A] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_B] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_PS_C] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_D] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_E] / frames), (unsigned)(ps2hwp_cyc[HWP_PS_F] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames));
-	I_OutputMsg("HWPROF31 AddLine: calls=%u backface=%u clipped=%u empty=%u | boxes=%u rejected=%u\n", ps2hwp_cnt[HWC_AL_CALLS] / frames, ps2hwp_cnt[HWC_AL_BACK] / frames, ps2hwp_cnt[HWC_AL_CLIP] / frames,
-		ps2hwp_cnt[HWC_AL_EMPTY] / frames, ps2hwp_cnt[HWC_AL_BOX] / frames, ps2hwp_cnt[HWC_AL_BOXREJ] / frames);
+	I_OutputMsg("HWPROF31 AddLine: calls=%u backface=%u clipped=%u empty=%u | boxes=%u rejected=%u | vertex angle hits=%u\n", ps2hwp_cnt[HWC_AL_CALLS] / frames, ps2hwp_cnt[HWC_AL_BACK] / frames, ps2hwp_cnt[HWC_AL_CLIP] / frames,
+		ps2hwp_cnt[HWC_AL_EMPTY] / frames, ps2hwp_cnt[HWC_AL_BOX] / frames, ps2hwp_cnt[HWC_AL_BOXREJ] / frames, ps2hwp_cnt[HWC_AL_VHIT] / frames);
 	I_OutputMsg("HWPROF30 complex segs by first reason: polyseg=%u ffloors=%u slope=%u heightsec=%u lights=%u midtex=%u back=%u\n", ps2hwp_cnt[HWC_SR_POLY] / frames, ps2hwp_cnt[HWC_SR_FFLOORS] / frames, ps2hwp_cnt[HWC_SR_SLOPE] / frames,
 		ps2hwp_cnt[HWC_SR_HEIGHTSEC] / frames, ps2hwp_cnt[HWC_SR_LIGHTS] / frames, ps2hwp_cnt[HWC_SR_MID] / frames, ps2hwp_cnt[HWC_SR_BACK] / frames);
 	I_OutputMsg("HWPROF16 segs: one-sided simple=%u two-sided simple=%u complex=%u\n", ps2hwp_cnt[HWC_SEG_SIMPLE1] / frames, ps2hwp_cnt[HWC_SEG_SIMPLE2] / frames, ps2hwp_cnt[HWC_SEG_COMPLEX] / frames);

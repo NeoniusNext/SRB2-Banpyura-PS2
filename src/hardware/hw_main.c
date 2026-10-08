@@ -159,6 +159,14 @@ static boolean HWR_IsWireframeMode(void)
 	return (cv_glwireframe.value && cv_debug);
 }
 
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-205): the light table of the default colormap and whether palette rendering is on do not change inside a view; they are asked once per view (validcount is
+// the view's) and again after the light tables were cleared (HWR_GCacheFlush bumps hwr_lt_epoch). -hwgo 128: asked for every surface, as before.
+static UINT32 hwr_lt_epoch;
+static INT32 hl_view = -1;
+static UINT32 hl_epoch, hl_id;
+#endif
+
 void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *colormap)
 {
 	RGBA_t poly_color, tint_color, fade_color;
@@ -176,7 +184,18 @@ void HWR_Lighting(FSurfaceInfo *Surface, INT32 light_level, extracolormap_t *col
 		Surface->LightInfo.light_level = light_level;
 		Surface->LightInfo.fade_start = 0;
 		Surface->LightInfo.fade_end = 31;
-		Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+		if (hwr_geo_off & 128)
+			Surface->LightTableId = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+		else
+		{
+			if (hl_view != (INT32)validcount || hl_epoch != hwr_lt_epoch)
+			{
+				hl_id = HWR_ShouldUsePaletteRendering() ? HWR_GetLightTableID(NULL) : 0;
+				hl_view = (INT32)validcount;
+				hl_epoch = hwr_lt_epoch;
+			}
+			Surface->LightTableId = hl_id;
+		}
 		HWP_SPAN_END(hwp_tlight, HWP_LIGHT);
 		return;
 	}
@@ -2440,6 +2459,30 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 // Notes            : gl_cursectorlight is set to the current subsector -> sector -> light value
 //                  : (it may be mixed with the wall's own flat colour in the future ...)
 // -----------------+
+#ifdef PS2_PROFILE
+// OPT11 round 2 (PS2-HW-206): R_PointToAngle64 of a vertex of the map once per view (it is a function of the point and of the eye only). The segs of a subsector follow each other,
+// but the vertex is also an end of the segs of the next subsectors and of the other side of the line. -hwgo 256: calculated every time.
+static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
+{
+	if (v && gc.on && !(hwr_geo_off & 256))
+	{
+		const size_t i = (size_t)(v - vertexes);
+
+		if (i < gc.nvert)
+		{
+			if (gc.vst[i] == (UINT32)validcount)
+			{
+				HWD_ADD(HWC_AL_VHIT);
+				return gc.vang[i];
+			}
+			gc.vst[i] = (UINT32)validcount;
+			return gc.vang[i] = R_PointToAngle64(x, y);
+		}
+	}
+	return R_PointToAngle64(x, y);
+}
+#endif
+
 static void HWR_AddLine(seg_t * line)
 {
 	angle_t angle1, angle2;
@@ -2486,8 +2529,8 @@ static void HWR_AddLine(seg_t * line)
 		if (al_valid && !(hwr_geo_off & 1) && v1x == al_x && v1y == al_y && viewx == al_vx && viewy == al_vy)
 			angle1 = al_angle;
 		else
-			angle1 = R_PointToAngle64(v1x, v1y);
-		angle2 = R_PointToAngle64(v2x, v2y);
+			angle1 = HWR_VertAngle(gl_curline->pv1 ? NULL : gl_curline->v1, v1x, v1y);
+		angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
 		al_x = v2x;
 		al_y = v2y;
 		al_vx = viewx;

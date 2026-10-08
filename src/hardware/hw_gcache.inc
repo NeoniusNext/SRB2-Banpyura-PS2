@@ -1,25 +1,32 @@
-// OPT11 (GEOM), PS2-HW-80: the geometry cache of the BSP walk. Included by hw_main.c (PS2 profile only), after HWR_CeilingLightLevel.
+// OPT11 (GEOM, GEOM2), PS2-HW-80, 201..204: the geometry cache of the BSP walk. Included by hw_main.c (PS2 profile only), after HWR_CeilingLightLevel.
 //
 // What the BSP walk makes of a seg (HWR_ProcessSeg: the wall polygons, the sky walls, the translucent walls, the lighting of each) and of a floor or
 // ceiling (HWR_RenderPlane) is a function of the map state (heights, flats, light, colormaps, side textures and offsets, 3D floors, slopes ...) and of
-// some settings, and NOT of the view: on a map that is standing still the same polygons come out of the same functions at 1000 .. 1500 cycles each,
-// frame after frame. The cache keeps the last result of every seg and plane:
-//  * the INPUT of a result is a 64-bit fingerprint (two 32-bit lanes) of everything the function reads: the sector fields (gc_sector_base), for a
-//    sector with 3D floors every floor and the light list (gc_sector_full), the side and line fields, the translated texture numbers (texture animation),
-//    the TF_TRANSPARENT state of the textures, for a plane its arguments. The fingerprint of a sector is made once per view (a stamp per sector).
-//    A sector the engine fakes (R_FakeFlat: water) is a copy: its fingerprint is made of the copy every time, so the view dependence is in it.
+// some settings, and NOT of the view: on a map that is standing still the same polygons come out of the same functions at 1000 .. 2000 cycles each,
+// frame after frame. The cache keeps the last result of every seg (and, with -hwgc 1, plane):
+//  * the KEY of a record is a list of plain words, the inputs of the function: for a sector of the map ONE word, its version (a number that changes when the
+//    fingerprint of the sector - the fields the builders read, its 3D floors, its light list - changes; the fingerprint is made once per view), for a sector the
+//    engine made up for the frame (R_FakeFlat: water) its fingerprint, the side and line words, the translated texture numbers (texture animation), the TF_TRANSPARENT
+//    state of the textures; for a plane the slope and flat offsets it reads and its arguments. One function writes the key when the record is made and compares it
+//    word by word when it is looked up (gc_seg_words, gc_plane_words), so they cannot disagree, and a compare is exact (no hash collisions).
 //  * the OUTPUT is the sequence of calls that the function made to the three sinks of the walk (HWR_SetCurrentTexture, HWR_ProcessPolygon,
 //    HWR_AddTransparentWall): recorded while the function runs (hwr_grec_on, hw_batching.c) into an arena, and made again by gc_replay when the
-//    fingerprint of the next call is the same. The batch gets the same polygons in the same order.
+//    key of the next call is the same. The batch gets the same polygons in the same order (-hwpolyhash: the same stream, bit for bit).
 //  * segs of polyobjects, planes of a subsector with a horizon line (they hold the view position), polygons of more than 250 vertices and records
-//    longer than GC_MAXREC are not cached. The tables are dropped when the level changes, when a texture record or a light table goes away
-//    (HWR_GCacheFlush) and when a setting of the lighting changes (gc_epoch).
-// -hwgc N: 0 off (default: see opt11-GEOM.md), 1 on, 2 every hit is calculated again and the two records are compared (HWGC lines: the number of differences must be 0),
-// 3 on, and one hit in 16 is checked that way (on a difference the entry is dropped). -hwgcmem KB: the size of the record arena (default GC_DEFAULT_KB).
-// The memory is one block of the zone (PU_HWRPLANE), asked with Z_TryMallocAlign: when the zone has no room the cache stays off, nothing else fails.
+//    longer than GC_MAXREC are not cached. The records are dropped when the level changes, when a texture record or a light table goes away
+//    (HWR_GCacheFlush) and when a setting of the lighting changes (gc.epoch).
+//  * the arena is two halves: the current one is written; when it is full the one before is dropped and the full one becomes the old one; a hit in the old half copies the
+//    record to the current one (gc_promote), so what is used survives and what is not goes (the first version dropped all at once: a miss of the whole frame every few frames).
+//  * the memory is one block of the zone (PU_HWRPLANE), asked with Z_TryMallocAlign when the zone has room for it and for the renderer; the zone can take it back
+//    (Z_AddReclaimHook -> HWR_GCacheReclaim: the cache is gone until the next level, what ran is not affected: gc_rec_end writes nothing without the block, and the room a replay needs
+//    in the batch arrays is made BEFORE it starts, HWR_GCReserve).
+// -hwgc N: 0 off, 1 on with the planes, 5 (default) on, walls only, 2 every hit is calculated again and the two records are compared (HWGC lines: the number of differences must be
+// 0), 3 on, and one hit in 16 is checked that way (on a difference the entry is dropped). +4 no planes, +8 no walls, +16 report the sectors that change. -hwgcmem KB: both halves of the arena
+// (default GC_DEFAULT_KB), -hwgcsets N: the number of sets of the table (2 ways), -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th reserve (a test).
+// HWPROF32 (counts and cycles of the window), HWPROF39 (misses of segs never seen / seen with another key, cycles of the replay), HWPROF40 (which word of the key differed).
 
 #define GC_WAYS 2u
-#define GC_DEFAULT_KB 1280u // both halves of the arena
+#define GC_DEFAULT_KB 640u // both halves of the arena
 #define GC_SCRATCH (24u << 10) // the record of a hit that is checked (mode 2, 3)
 #define GC_MAXREC (12u << 10) // longest record that is kept
 
@@ -52,6 +59,9 @@ static struct
 	gcent_t *tab;
 	gcfp_t *bfp, *ffp; // per sector: the fingerprint of the sector alone / with its 3D floors and light list
 	UINT32 *bst, *fst; // ... and the view they were made in
+	angle_t *vang; // per vertex of the map: R_PointToAngle64 of it in the view vst says (HWR_VertAngle: a vertex belongs to the segs of several subsectors and to both sides of its lines)
+	UINT32 *vst;
+	size_t nvert;
 	UINT32 *bver, *fver; // ... and a number that changes when the fingerprint does (what the keys of segs and planes hold: one word for a sector)
 	UINT32 vctr;
 	UINT32 nsec, view, scan;
@@ -451,6 +461,7 @@ static void gc_swap_arena(void)
 
 void HWR_GCacheFlush(void)
 {
+	hwr_lt_epoch++; // (the light tables or the textures changed: HWR_Lighting asks for the table of the default colormap again)
 	if (gc.blk)
 		gc_flush_arena();
 	gc.s_flush++;
@@ -465,7 +476,8 @@ static void HWR_GCacheLevel(void)
 }
 
 // -hwgo N: bits of the OPT11 geometry micro-optimisations that are switched OFF (A/B on one ELF): 1 AddLine angle reuse (PS2-HW-81), 4 QuadHidden two-corner exit (PS2-HW-86),
-// 8 HWR_Lighting fast path (PS2-HW-83), 16 HWR_CalcWallLight memo (PS2-HW-84), 32 RenderBatches shader/scan-direction cache (PS2-HW-85)
+// 8 HWR_Lighting fast path (PS2-HW-83), 16 HWR_CalcWallLight memo (PS2-HW-84), 32 RenderBatches shader/scan-direction cache (PS2-HW-85), 64 inline R_FakeFlat / R_CheckSectorLightLists (PS2-HW-200),
+// 128 light table of the default colormap once per view (PS2-HW-205), 256 vertex angle once per view (PS2-HW-206)
 UINT32 hwr_geo_off;
 
 static void HWR_GCacheParse(void)
@@ -473,7 +485,7 @@ static void HWR_GCacheParse(void)
 	if (M_CheckParm("-hwgo") && M_IsNextParm())
 		hwr_geo_off = (UINT32)atoi(M_GetNextParm());
 	gc.mode_set = true;
-	gc.mode = 1; // ON by default since the round 2 (v2: a hit is a key of plain words and a lean replay, -0.4 .. -0.6 M cycles on DEMO_001/002, docs/GATES/g1/opt11-GEOM.md); -hwgc 0: off
+	gc.mode = 1 | 4; // ON by default since the round 2, the walls only (v2: a hit is a key of plain words and a lean replay; a plane costs about as much to replay as to make and its record is the biggest); -hwgc 0: off, -hwgc 1: the planes too
 	gc.kb = GC_DEFAULT_KB;
 	if (M_CheckParm("-hwgc") && M_IsNextParm())
 		gc.mode = atoi(M_GetNextParm());
@@ -554,14 +566,18 @@ static boolean gc_alloc_block(void)
 {
 	UINT32 want = 2048u;
 	size_t tab_b;
-	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32));
+	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32)) + (size_t)numvertexes * (sizeof(angle_t) + sizeof(UINT32));
 	size_t ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
 	size_t total;
 
 	// the table: a set for every subsector (a seg of it, its floor, its ceiling ...), 2 ways, at least 2048 and at most 8192 sets: 16 bytes an entry. A table that is smaller than what
 	// a run looks at evicts entries it needs (D1 with 2048 sets: 84 segs and planes a frame calculated that a table of 4096 sets kept: -0.2 M cycles)
-	while (want < (UINT32)numsubsectors && want < 8192u)
-		want <<= 1;
+	{
+		const UINT32 items = (gc.mode & 4) ? (UINT32)numsegs : (UINT32)numsegs + 2u * (UINT32)numsubsectors; // (what can be cached: the walls, the planes)
+
+		while (want < items / 2u && want < 8192u)
+			want <<= 1;
+	}
 	if (gc.nsets_user)
 		want = gc.nsets_user; // (-hwgcsets)
 	tab_b = (size_t)want * GC_WAYS * sizeof(gcent_t);
@@ -598,6 +614,12 @@ static boolean gc_alloc_block(void)
 	p += (size_t)numsectors * sizeof(UINT32);
 	gc.fver = (UINT32 *)p;
 	p += (size_t)numsectors * sizeof(UINT32);
+	gc.vang = (angle_t *)p;
+	p += (size_t)numvertexes * sizeof(angle_t);
+	gc.vst = (UINT32 *)p;
+	p += (size_t)numvertexes * sizeof(UINT32);
+	gc.nvert = numvertexes;
+	memset(gc.vst, 0, (size_t)numvertexes * sizeof(UINT32));
 	gc.ar = p;
 	gc.hsize = gc.kb * 512u & ~15u;
 	gc.hbase = 0;
