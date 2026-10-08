@@ -18,6 +18,7 @@
 #define HWFR_NOLEAFCULL 0x8 // PS2-HW-401: no test of the whole subsector (the box of its planes) before the planes are looked at one by one
 
 unsigned int hwr_fr_off; // -hwfr: OPT12 front paths switched off (see the HWFR_NO* bits)
+static UINT32 hwr_fr_level; // counts the levels (HWR_PlaneCacheReset): what is kept per level is not valid in the next one
 static UINT32 hwr_fr_dbg_lo = 1, hwr_fr_dbg_hi; // -hwfrdbg LO HI: the segs and planes the culls leave out in the frames LO..HI (the numbers of the HWPH lines) are printed (HWFRC lines)
 
 static void HWR_FrInit(void)

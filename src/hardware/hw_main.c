@@ -532,6 +532,7 @@ static size_t subhoriz_n;
 // a new level: nothing of the cache and of the horizon flags is valid
 static void HWR_PlaneCacheReset(void)
 {
+	hwr_fr_level++; // OPT12: what is kept per level (the table of vertex angles)
 	free(subhoriz);
 	subhoriz = NULL;
 	subhoriz_n = 0;
@@ -2619,6 +2620,25 @@ static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
 #endif
 
 #ifdef PS2_PROFILE
+// OPT12 PS2-HW-407: the angle of a vertex of the subsectors (a polyvertex: shared by the segs of the subsectors around it, and by the planes) once per view, kept in a table of 256 places by the
+// address of the vertex (R_PointToAngle64 is a function of the point and the eye; the places of the neighbours in the walk are the places that are still there). -hwfr 1024: calculated as before.
+static struct { const void *p; UINT32 view, lvl; angle_t a; } hwr_va[256];
+
+static inline angle_t HWR_PvAngle(const void *pv, fixed_t x, fixed_t y)
+{
+	const UINT32 k = (((UINT32)(uintptr_t)pv >> 2) * 2654435761u) >> 24;
+
+	if (hwr_va[k].p == pv && hwr_va[k].view == (UINT32)validcount && hwr_va[k].lvl == hwr_fr_level)
+	{
+		HWD_ADD(HWC_AL_VHIT);
+		return hwr_va[k].a;
+	}
+	hwr_va[k].p = pv;
+	hwr_va[k].view = (UINT32)validcount;
+	hwr_va[k].lvl = hwr_fr_level;
+	return hwr_va[k].a = R_PointToAngle64(x, y);
+}
+
 // OPT11 round 2 (PS2-HW-214): half of the calls of HWR_AddLine are segs that face away: they are rejected after the two angles, and the function saved and restored ten registers for
 // the part that follows. The rest is a function of its own; the front keeps what the rejected seg needs.
 static void HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2);
@@ -2671,9 +2691,14 @@ static void HWR_AddLine(seg_t * line)
 
 		if (al_valid && !(hwr_geo_off & 1) && v1x == al_x && v1y == al_y && viewx == al_vx && viewy == al_vy)
 			angle1 = al_angle;
+		else if (gl_curline->pv1 && !(hwr_fr_off & 1024u))
+			angle1 = HWR_PvAngle(gl_curline->pv1, v1x, v1y);
 		else
 			angle1 = HWR_VertAngle(gl_curline->pv1 ? NULL : gl_curline->v1, v1x, v1y);
-		angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
+		if (gl_curline->pv2 && !(hwr_fr_off & 1024u))
+			angle2 = HWR_PvAngle(gl_curline->pv2, v2x, v2y);
+		else
+			angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
 		al_x = v2x;
 		al_y = v2y;
 		al_vx = viewx;
@@ -3459,8 +3484,7 @@ static void HWR_Subsector(size_t num)
 // BP: big hack for a test in lighning ref : 1249753487AB
 fixed_t *hwbbox;
 
-#ifdef PS2_PROFILE
-static void HWR_RenderBSPNodeOld(INT32 bspnum)
+static void HWR_RenderBSPNode(INT32 bspnum)
 {
 	node_t *bsp = &nodes[bspnum];
 
@@ -3484,7 +3508,7 @@ static void HWR_RenderBSPNodeOld(INT32 bspnum)
 			//*(gl_drawsubsector_p++) = bspnum&(~NF_SUBSECTOR);
 			HWP_SPAN_BEGIN(tsub);
 #ifdef PS2_HWDETAIL
-			hwr_fr_subpolys = hwr_fr_subvis = 0;
+			hwr_fr_subpolys = hwr_fr_subvis = 0; // OPT12 census
 			HWR_Subsector(bspnum&(~NF_SUBSECTOR));
 			HWR_FrCensusSub();
 #else
@@ -3502,106 +3526,16 @@ static void HWR_RenderBSPNodeOld(INT32 bspnum)
 	hwbbox = bsp->bbox[side];
 
 	// Recursively divide front space.
-	HWR_RenderBSPNodeOld(bsp->children[side]);
+	HWR_RenderBSPNode(bsp->children[side]);
 
 	// Possibly divide back space.
 	if (HWR_CheckBBox(bsp->bbox[side^1]))
 	{
 		// BP: big hack for a test in lighning ref : 1249753487AB
 		hwbbox = bsp->bbox[side^1];
-		HWR_RenderBSPNodeOld(bsp->children[side^1]);
-	}
-}
-
-static inline void HWR_FrLeaf(INT32 sub)
-{
-	HWP_SPAN_BEGIN(tsub);
-#ifdef PS2_HWDETAIL
-	hwr_fr_subpolys = hwr_fr_subvis = 0;
-#endif
-	HWR_Subsector(sub == -1 ? 0 : (size_t)(sub & (~NF_SUBSECTOR)));
-#ifdef PS2_HWDETAIL
-	HWR_FrCensusSub();
-#endif
-	HWP_SPAN_END(tsub, HWP_SUBSEC);
-}
-
-static void HWR_RenderBSPNodeNew(INT32 bspnum)
-{
-	// OPT12 PS2-HW-405: the far child is the loop and a leaf child is not a call (the walk made 1500 calls a frame, each saving and restoring its registers); the first call checks -hwfr 256 (the walk as before)
-	for (;;)
-	{
-		node_t *bsp;
-
-		// Decide which side the view point is on
-		INT32 side, child;
-
-		ps_numbspcalls.value.i++;
-
-		// Found a subsector?
-		if (bspnum & NF_SUBSECTOR)
-		{
-			HWR_FrLeaf(bspnum);
-			return;
-		}
-		bsp = &nodes[bspnum];
-
-		// Decide which side the view point is on.
-		side = R_PointOnSide(viewx, viewy, bsp);
-
-		// BP: big hack for a test in lighning ref : 1249753487AB
-		hwbbox = bsp->bbox[side];
-
-		// Recursively divide front space.
-		child = bsp->children[side];
-		if (child & NF_SUBSECTOR)
-		{
-			ps_numbspcalls.value.i++;
-			HWR_FrLeaf(child);
-		}
-		else
-			HWR_RenderBSPNodeNew(child);
-
-		// Possibly divide back space.
-		if (!HWR_CheckBBox(bsp->bbox[side^1]))
-			return;
-		// BP: big hack for a test in lighning ref : 1249753487AB
-		hwbbox = bsp->bbox[side^1];
-		bspnum = bsp->children[side^1];
-	}
-}
-
-static void HWR_RenderBSPNode(INT32 bspnum)
-{
-	if (hwr_fr_off & 256u)
-		HWR_RenderBSPNodeOld(bspnum);
-	else
-		HWR_RenderBSPNodeNew(bspnum);
-}
-
-#else
-static void HWR_RenderBSPNode(INT32 bspnum)
-{
-	node_t *bsp = &nodes[bspnum];
-	INT32 side;
-
-	ps_numbspcalls.value.i++;
-
-	if (bspnum & NF_SUBSECTOR)
-	{
-		HWR_Subsector(bspnum == -1 ? 0 : (size_t)(bspnum&(~NF_SUBSECTOR)));
-		return;
-	}
-	side = R_PointOnSide(viewx, viewy, bsp);
-	hwbbox = bsp->bbox[side];
-	HWR_RenderBSPNode(bsp->children[side]);
-	if (HWR_CheckBBox(bsp->bbox[side^1]))
-	{
-		hwbbox = bsp->bbox[side^1];
 		HWR_RenderBSPNode(bsp->children[side^1]);
 	}
 }
-#endif
 
 // ==========================================================================
 // gl_things.c
@@ -5762,6 +5696,38 @@ static void HWR_SortVisSprites(void)
 				for (i = 0; i < n; i++)
 					tk[i] = dkey[p1[i]]; // the depth keys in that order
 				res = HWR_RadixSort32(tk, p1, k2, sc, n) ? p1 : sc;
+			}
+			else if (!(hwr_fr_off & 512u) && n <= MAXVISSPRITES)
+			{
+				// OPT12 PS2-HW-406: the sprites come in the traversal order, which is the depth order near to far in the main (the BSP walk is front to back): an insertion sort of the reversed order, by (depth key, index) -
+				// the order of the stable radix sort, ties keep the traversal order - costs the sprites and the few that are out of place. (The radix sort clears and adds up three tables of 2048 counters for 250 sprites.)
+				// More than 16 steps a sprite: the radix sort.
+				static UINT64 srt[MAXVISSPRITES];
+				UINT32 m = 0, steps = 0;
+				const UINT32 lim = 16u * n + 256u;
+
+				for (i = n; i-- > 0 && steps <= lim;)
+				{
+					const UINT64 v = ((UINT64)dkey[i] << 32) | i;
+					UINT32 j = m;
+
+					while (j > 0 && srt[j - 1] > v)
+					{
+						srt[j] = srt[j - 1];
+						j--;
+						steps++;
+					}
+					srt[j] = v;
+					m++;
+				}
+				if (m == n)
+				{
+					for (i = 0; i < n; i++)
+						dix[i] = (UINT32)srt[i];
+					res = dix;
+				}
+				else
+					res = HWR_RadixSort32(dkey, dix, tk, ti, n) ? dix : ti;
 			}
 			else
 			{
