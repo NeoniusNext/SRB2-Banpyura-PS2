@@ -138,17 +138,21 @@ static int bgcap;
 // DEMO_001. Five words a vertex, no call. (The empty asm keeps the compiler from turning the loop back into a call of memcpy.)
 static inline void HWR_CopyVerts(FOutVector *dst, const FOutVector *src, FUINT n)
 {
+	typedef UINT32 __attribute__((may_alias)) hwr_word_t;
+	const hwr_word_t *s = (const hwr_word_t *)(const void *)src;
+	hwr_word_t *d = (hwr_word_t *)(void *)dst;
 	FUINT k;
 
-	for (k = 0; k < n; k++)
+	// integer registers: an lw / sw pair costs half of an lwc1 / swc1 pair on the machine of the profile (-hwbench: 2.3 against 4.9 cycles), and the words are only moved
+	for (k = 0; k < n; k++, s += 5, d += 5)
 	{
-		const float x = src[k].x, y = src[k].y, z = src[k].z, s = src[k].s, t = src[k].t;
+		const UINT32 a = s[0], b = s[1], c = s[2], e = s[3], f = s[4];
 
-		dst[k].x = x;
-		dst[k].y = y;
-		dst[k].z = z;
-		dst[k].s = s;
-		dst[k].t = t;
+		d[0] = a;
+		d[1] = b;
+		d[2] = c;
+		d[3] = e;
+		d[4] = f;
 		__asm__ volatile("" ::: "memory");
 	}
 }
@@ -336,6 +340,61 @@ static void HWR_DrawBatch(FSurfaceInfo *surf, const UINT32 *indices, int count, 
 }
 
 // Call HWR_RenderBatches to render all the collected geometry.
+#ifdef PS2
+// -hwbench2 (OPT11 round 2): the cost of HWR_ProcessPolygon for a typical wall quad / triangle, measured on the machine the profile comes from (the 30th batch of the run, the driver is up):
+// the same polygon a thousand times through the real function, the arrays emptied again. One line: HWBENCH2.
+static void HWR_BenchProcess(int reps)
+{
+	static GLMipmap_t tex;
+	FSurfaceInfo surf;
+	FOutVector v[4];
+	int i, k;
+
+	memset(&tex, 0, sizeof tex);
+	tex.regen_kind = 1;
+	tex.regen_id = 7;
+	tex.format = GL_TEXFMT_P_8;
+	tex.width = tex.height = 64;
+	memset(&surf, 0, sizeof surf);
+	surf.PolyColor.rgba = 0xFFFFFFFFu;
+	surf.FadeColor.rgba = 0xFF000000u;
+	surf.LightTableId = 1;
+	surf.LightInfo.light_level = 240;
+	surf.LightInfo.fade_end = 31;
+	for (i = 0; i < 4; i++)
+	{
+		v[i].x = (float)(i * 64);
+		v[i].y = (float)((i & 1) * 128);
+		v[i].z = (float)(i * 8);
+		v[i].s = (float)(i & 1);
+		v[i].t = (float)(i >> 1);
+	}
+	for (k = 3; k <= 4; k++)
+	{
+		unsigned int t0, t1 = 0;
+		int rep;
+
+		current_texture = &tex;
+		for (rep = 0; rep < reps; rep++) // (more than one repetition: for the sampler, which needs a few thousand samples)
+		{
+			t0 = ps2hwp_now();
+			for (i = 0; i < 1000; i++)
+				HWR_ProcessPolygon(&surf, v, (FUINT)k, 0x9101, SHADER_WALL, false);
+			t1 += ps2hwp_now() - t0;
+			if (rep + 1 < reps)
+			{
+				polygonArraySize = 0;
+				unsortedVertexArraySize = 0;
+			}
+		}
+		I_OutputMsg("HWBENCH2 HWR_ProcessPolygon n=%d: %u cycles a polygon (%d polygons collected)\n", k, t1 / (1000u * (unsigned int)reps), polygonArraySize);
+		polygonArraySize = 0;
+		unsortedVertexArraySize = 0;
+	}
+	current_texture = NULL;
+}
+#endif
+
 void HWR_StartBatching(void)
 {
 	if (currently_batching)
@@ -359,6 +418,18 @@ void HWR_StartBatching(void)
 #ifdef PS2_PROFILE
 	hwr_scan_dir = PS2HWD_ScanDirection();
 	hwr_shader_have = 0;
+	{
+		static int bench = -1, calls;
+
+		if (bench < 0)
+		{
+			bench = 0;
+			if (M_CheckParm("-hwbench2"))
+				bench = M_IsNextParm() ? atoi(M_GetNextParm()) : 1;
+		}
+		if (bench > 0 && ++calls == 400)
+			HWR_BenchProcess(bench);
+	}
 #endif
 #endif
 }
