@@ -92,6 +92,14 @@
 #define FIXUPO0
 #endif
 
+// PS2-332: the "please wait" boxes of the network menus are drawn and the blocking request follows at once. Software flips the picture (I_FinishUpdate) so that the box
+// is seen; the Hardware renderer never did (its frame stayed open: the menu stood frozen without a word). On the PS2 both present the frame.
+#ifdef PS2
+#define M_PRESENT_WAITBOX() (rendermode != render_none)
+#else
+#define M_PRESENT_WAITBOX() (rendermode == render_soft)
+#endif
+
 #define SKULLXOFF -32
 #define LINEHEIGHT 16
 #define STRINGHEIGHT 8
@@ -11410,7 +11418,7 @@ static void M_Refresh(INT32 choice)
 	V_DrawCenteredString(BASEVIDWIDTH/2, (BASEVIDHEIGHT/2)+12, MENUCAPS, "Please wait.");
 	I_OsPolling();
 	I_UpdateNoBlit();
-	if (rendermode == render_soft)
+	if (M_PRESENT_WAITBOX())
 		I_FinishUpdate(); // page flip or blit buffer
 
 	// note: this is the one case where 0 is a valid room number
@@ -11864,7 +11872,7 @@ static void M_RoomMenu(INT32 choice)
 	V_DrawCenteredString(BASEVIDWIDTH/2, (BASEVIDHEIGHT/2)+12, 0, "Please wait.");
 	I_OsPolling();
 	I_UpdateNoBlit();
-	if (rendermode == render_soft)
+	if (M_PRESENT_WAITBOX())
 		I_FinishUpdate(); // page flip or blit buffer
 
 	for (i = 1; i < NUM_LIST_ROOMS+1; ++i)
@@ -12212,7 +12220,7 @@ static void M_ConnectIP(INT32 choice)
 	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT/2, 0, "Connecting to server...");
 	I_OsPolling();
 	I_UpdateNoBlit();
-	if (rendermode == render_soft)
+	if (M_PRESENT_WAITBOX())
 		I_FinishUpdate(); // page flip or blit buffer
 }
 
