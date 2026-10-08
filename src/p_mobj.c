@@ -162,6 +162,7 @@ FUNCINLINE static ATTRINLINE void P_CycleStateAnimation(mobj_t *mobj)
 //
 static void P_CycleMobjState(mobj_t *mobj)
 {
+	PS2_CYC_T0(t_cy);
 	// state animations
 	P_CycleStateAnimation(mobj);
 
@@ -176,6 +177,7 @@ static void P_CycleMobjState(mobj_t *mobj)
 			if (!P_SetMobjState(mobj, mobj->state->nextstate))
 				return; // freed itself
 	}
+	PS2_CYC_ADD(3, t_cy);
 }
 
 #ifdef PS2_PROFILE
@@ -10415,9 +10417,56 @@ static void P_SceneryInitTypes(void)
 	ps2_scenery_ready = true;
 }
 
+#ifdef PS2_QUICKCHECK // shadow check of PS2-500 (host and EE): the quick pair is computed (P_SceneryPairEval), the ORIGINAL pair runs, and the two are compared (P_SceneryPairCheckEnd)
+static mobj_t qc_before;
+static UINT32 qc_rng;
+static ps2_scenerypair_t qc_pred;
+static mobj_t *qc_mo;
+static boolean qc_valid;
+unsigned ps2_qc_checked;
+#include <stdio.h>
+static void P_QCheckDump(void) { fprintf(stderr, "QCHECK scenery pairs compared: %u\n", ps2_qc_checked); }
+
+static void P_SceneryPairCheckBegin(mobj_t *mobj)
+{
+	sector_t *s2;
+
+	if (qc_valid)
+		I_Error("PS2-500 check: the predicted pair of mobj type %d did not run", (int)qc_mo->type);
+	if (P_SceneryPairEval(mobj, &qc_pred, &s2))
+	{
+		qc_before = *mobj;
+		qc_rng = P_GetRandSeed();
+		qc_mo = mobj;
+		qc_valid = true;
+	}
+}
+
+static void P_SceneryPairCheckEnd(mobj_t *mobj)
+{
+	mobj_t exp;
+
+	if (!qc_valid || qc_mo != mobj)
+		return;
+	qc_valid = false;
+	exp = qc_before;
+	exp.eflags &= ~(MFE_PUSHED|MFE_SPRUNG);
+	exp.z = qc_pred.z;
+	exp.floorz = qc_pred.floorz;
+	exp.ceilingz = qc_pred.ceilingz;
+	exp.floorrover = exp.ceilingrover = NULL;
+	if (memcmp((const char *)&exp + sizeof(thinker_t), (const char *)mobj + sizeof(thinker_t), sizeof(mobj_t) - sizeof(thinker_t)) || P_GetRandSeed() != qc_rng)
+		I_Error("PS2-500 check: the original pair of mobj type %d differs from the quick one (z %d/%d floorz %d/%d ceilingz %d/%d)", (int)mobj->type,
+			(int)exp.z, (int)mobj->z, (int)exp.floorz, (int)mobj->floorz, (int)exp.ceilingz, (int)mobj->ceilingz);
+	if (!ps2_qc_checked++)
+		atexit(P_QCheckDump);
+}
+#endif
+
 static boolean P_SceneryQuick(mobj_t *mobj)
 {
 	const subsector_t *ss;
+	boolean ground;
 
 	if ((mobj->flags & (MF_NOTHINK|MF_BOSS|MF_SCENERY|MF_BOXICON)) != MF_SCENERY // thinks, scenery thinker, not a boss, not a monitor icon
 		|| (mobj->flags2 & MF2_SHIELD)
@@ -10425,10 +10474,9 @@ static boolean P_SceneryQuick(mobj_t *mobj)
 		|| mobj->scale != mobj->destscale
 		|| mobj->momx || mobj->momy || mobj->momz
 		|| mobj->fuse
-		|| PS2_MOBJHOOKS_ANY
-		|| !(mobj->eflags & MFE_ONGROUND)
-		|| ((mobj->eflags & MFE_VERTICALFLIP) ? mobj->z + mobj->height != mobj->ceilingz : mobj->z != mobj->floorz))
+		|| PS2_MOBJHOOKS_ANY)
 		return false;
+	ground = (mobj->eflags & MFE_ONGROUND) && ((mobj->eflags & MFE_VERTICALFLIP) ? mobj->z + mobj->height == mobj->ceilingz : mobj->z == mobj->floorz);
 
 	if (!ps2_scenery_ready)
 		P_SceneryInitTypes();
@@ -10439,6 +10487,28 @@ static boolean P_SceneryQuick(mobj_t *mobj)
 	if ((ss && (ss->sector->flags & MSF_TRIGGERLINE_MOBJ)) || P_IsObjectInGoop(mobj))
 		return false;
 
+	if (!ground)
+	{
+		// PS2-500: not resting on the floor: the original runs the ZMovement + CheckPosition pair (every tic); a motionless NOCLIP decoration in a plain
+		// sector gets its answer from the sector heights (p_map.c: P_SceneryPairStill, false = not covered, nothing changed)
+#ifdef PS2_QUICKCHECK
+		P_SceneryPairCheckBegin(mobj);
+		return false;
+#else
+		if (PS2_QUICK_OFF(0) || !P_SceneryPairStill(mobj))
+		{
+			PS2_CNT(1);
+			return false;
+		}
+		PS2_CNT(0);
+		mobj->eflags &= ~(MFE_PUSHED|MFE_SPRUNG);
+		tmfloorthing = tmhitthing = NULL;
+		P_CycleMobjState(mobj);
+		return true;
+#endif
+	}
+
+	PS2_CNT(2);
 	mobj->eflags &= ~(MFE_PUSHED|MFE_SPRUNG|MFE_JUSTHITFLOOR);
 	tmfloorthing = tmhitthing = NULL;
 	mobj->pmomz = 0;
@@ -10454,12 +10524,19 @@ static boolean P_SceneryQuick(mobj_t *mobj)
 void P_MobjThinker(mobj_t *mobj)
 {
 	PS2_TYPESTAT_N(0, mobj);
+	PS2_CNT(5);
 	I_Assert(mobj != NULL);
 	I_Assert(!P_MobjWasRemoved(mobj));
 
 #if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK)
-	if ((mobj->flags & (MF_NOTHINK|MF_BOSS|MF_SCENERY|MF_BOXICON)) == MF_SCENERY && P_SceneryQuick(mobj)) // (the flags test is P_SceneryQuick's first, here so that no call is made for the rest)
-		return;
+	if ((mobj->flags & (MF_NOTHINK|MF_BOSS|MF_SCENERY|MF_BOXICON)) == MF_SCENERY)
+	{
+		PS2_CYC_T0(t_q);
+		const boolean quick = P_SceneryQuick(mobj);
+		PS2_CYC_ADD(7, t_q);
+		if (quick)
+			return;
+	}
 #endif
 
 	if (mobj->flags & MF_NOTHINK)
@@ -10512,7 +10589,9 @@ void P_MobjThinker(mobj_t *mobj)
 	// Special thinker for scenery objects
 	if (mobj->flags & MF_SCENERY)
 	{
+		PS2_CYC_T0(t_sc);
 		P_MobjSceneryThink(mobj);
+		PS2_CYC_ADD(5, t_sc);
 		return;
 	}
 
@@ -10549,7 +10628,10 @@ void P_MobjThinker(mobj_t *mobj)
 	}
 	else
 	{
-		if (!P_MobjRegularThink(mobj))
+		PS2_CYC_T0(t_rt);
+		const boolean rt_ok = P_MobjRegularThink(mobj);
+		PS2_CYC_ADD(4, t_rt);
+		if (!rt_ok)
 			return;
 	}
 	if (P_MobjWasRemoved(mobj))
@@ -10576,7 +10658,9 @@ void P_MobjThinker(mobj_t *mobj)
 
 	if (mobj->momx || mobj->momy || (mobj->flags2 & MF2_SKULLFLY))
 	{
+		PS2_CYC_T0(t_xy);
 		P_XYMovement(mobj);
+		PS2_CYC_ADD(6, t_xy);
 		if (P_MobjWasRemoved(mobj))
 			return;
 	}
@@ -10589,13 +10673,17 @@ void P_MobjThinker(mobj_t *mobj)
 		|| P_IsObjectInGoop(mobj))
 	{
 		PS2_TYPESTAT_N(1, mobj);
+		PS2_CNT(3);
 #ifdef PS2_DORMSTAT
 		mobj_t dorm_copy = *mobj;
 		UINT32 dorm_rng = P_GetRandSeed();
 #endif
+		PS2_CYC_T0(t_pair);
 		if (!P_ZMovement(mobj))
 			return; // mobj was removed
+		PS2_CYC_ADD(13, t_pair);
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
+		PS2_CYC_ADD(1, t_pair);
 		if (P_MobjWasRemoved(mobj))
 			return;
 #ifdef PS2_DORMSTAT
@@ -10814,13 +10902,16 @@ void P_SceneryThinker(mobj_t *mobj)
 		|| P_IsObjectInGoop(mobj))
 	{
 		PS2_TYPESTAT_N(3, mobj);
+		PS2_CNT(4);
 #ifdef PS2_DORMSTAT
 		mobj_t dorm_copy = *mobj;
 		UINT32 dorm_rng = P_GetRandSeed();
 #endif
+		PS2_CYC_T0(t_spair);
 		if (!P_SceneryZMovement(mobj))
 			return; // mobj was removed
 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
+		PS2_CYC_ADD(2, t_spair);
 		if (P_MobjWasRemoved(mobj))
 			return;
 		mobj->floorz = tmfloorz;
@@ -10829,6 +10920,9 @@ void P_SceneryThinker(mobj_t *mobj)
 		mobj->ceilingrover = tmceilingrover;
 #ifdef PS2_DORMSTAT
 		PS2_DormNote(1, mobj->type, &dorm_copy, dorm_rng, mobj);
+#endif
+#ifdef PS2_QUICKCHECK
+		P_SceneryPairCheckEnd(mobj);
 #endif
 	}
 	else

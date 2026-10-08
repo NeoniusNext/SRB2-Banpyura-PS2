@@ -461,6 +461,7 @@ static inline void P_RunThinkers(void)
 	size_t i;
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 	{
+		PS2_CYC_T0(t_list);
 		PS_START_TIMING(ps_thlist_times[i]);
 		for (currentthinker = thlist[i].next; currentthinker != &thlist[i]; currentthinker = currentthinker->next)
 		{
@@ -495,6 +496,10 @@ static inline void P_RunThinkers(void)
 			currentthinker->function(currentthinker);
 		}
 		PS_STOP_TIMING(ps_thlist_times[i]);
+		if (i == THINK_MOBJ)
+			PS2_CYC_ADD(0, t_list);
+		else
+			PS2_CYC_ADD(8, t_list);
 	}
 
 }
@@ -817,7 +822,11 @@ void P_Ticker(boolean run)
 
 	if (run)
 	{
+		{
+		PS2_CYC_T0(t_ip);
 		R_UpdateMobjInterpolators();
+		PS2_CYC_ADD(10, t_ip);
+		}
 
 		if (demorecording)
 			G_WriteDemoTiccmd(&players[consoleplayer].cmd, 0);
@@ -839,11 +848,15 @@ void P_Ticker(boolean run)
 		LUA_HookPreThinkFrame();
 		PS_STOP_TIMING(ps_lua_prethinkframe_time);
 
+		{
+		PS2_CYC_T0(t_pt);
 		PS_START_TIMING(ps_playerthink_time);
 		for (i = 0; i < MAXPLAYERS; i++)
 			if (playeringame[i] && players[i].mo && !P_MobjWasRemoved(players[i].mo))
 				P_PlayerThink(&players[i]);
 		PS_STOP_TIMING(ps_playerthink_time);
+		PS2_CYC_ADD(9, t_pt);
+		}
 	}
 
 	// Keep track of how long they've been playing!
@@ -875,6 +888,8 @@ void P_Ticker(boolean run)
 		PS_STOP_TIMING(ps_lua_thinkframe_time);
 	}
 
+	{
+	PS2_CYC_T0(t_misc);
 	// Run shield positioning
 	P_RunShields();
 	P_RunOverlays();
@@ -884,6 +899,8 @@ void P_Ticker(boolean run)
 
 	// Lightning, rain sounds, etc.
 	P_PrecipitationEffects();
+	PS2_CYC_ADD(11, t_misc);
+	}
 
 	if (run)
 		leveltime++;
@@ -942,6 +959,7 @@ void P_Ticker(boolean run)
 
 	if (run)
 	{
+		PS2_CYC_T0(t_fin);
 		R_UpdateLevelInterpolators();
 		R_UpdateViewInterpolation();
 
@@ -974,6 +992,7 @@ void P_Ticker(boolean run)
 			}
 		}
 
+		PS2_CYC_ADD(12, t_fin);
 	}
 
 	P_MapEnd();

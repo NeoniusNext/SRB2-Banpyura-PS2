@@ -90,6 +90,9 @@ def gen_config():
 for _g in [g for g in os.environ.get('SRB2_PS2_NOOPT', '').lower().split(',') if g]:
     CFLAGS = CFLAGS + ['-DPS2_NOOPT' if _g in ('1', 'all') else '-DPS2_NOOPT_' + _g.upper()]
 
+# OPT12-CORE: extra preprocessor flags for experiments (diagnostic builds), e.g. SRB2_PS2_DEFS="-DPS2_CYCPROF -DPS2_QUICKCHECK"; part of the stamp (CFLAGS)
+CFLAGS = CFLAGS + [d for d in os.environ.get('SRB2_PS2_DEFS', '').split() if d]
+
 # PS2-40 release by default: NDEBUG like the PC release build (without it doomdef.h turns on ZDEBUG, PARANOIA, RANGECHECK and
 # PACKETDROP: 32-byte zone headers + red zones, bounds checks in every column drawer; the ZDEBUG numbers are 1.3-2x worse).
 # A diagnostic build is asked for explicitly: --debug or SRB2_PS2_RELEASE=0 (--zdebug adds only the zone tracking).

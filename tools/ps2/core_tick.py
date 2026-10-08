@@ -53,6 +53,24 @@ def one(path):
         out += ' | frame intervals in 1/60 s: <0.5: %d, ~1: %d, ~2: %d, >2.5: %d (mean %.2f ms, sd %.2f ms), over 5 tics %d' % (ex('p0'), ex('p1'), ex('p2'), ex('p3'),
                                                                                                        mean / CLOCK * 1000, sd / CLOCK * 1000, ex('over5tics'))
     print(out)
+    cnt = {}
+    for line in open(path, errors='replace'):
+        m = re.search(r'CNT win=(\d+) (.*)', line)
+        if m and int(m[1]) >= 1:
+            cnt[int(m[1])] = [int(x) for x in re.findall(r'c\d=(\d+)', m[2])]
+    ws = [w for w, _ in rows if w in cnt]
+    if ws and any(any(cnt[w]) for w in ws):
+        sums = [sum(cnt[w][i] for w in ws) for i in range(8)]
+        print('   CNT per tic: ' + ' '.join('c%d=%.1f' % (i, sums[i] / max(tics, 1)) for i in range(8) if sums[i]))
+    cyc = {}
+    for line in open(path, errors='replace'):
+        m = re.search(r'CYC win=(\d+) (.*)', line)
+        if m and int(m[1]) >= 1:
+            cyc[int(m[1])] = [int(x) for x in re.findall(r'c\d+=(\d+)', m[2])]
+    ws = [w for w, _ in rows if w in cyc]
+    if ws and any(any(cyc[w]) for w in ws):
+        sums = [sum(cyc[w][i] for w in ws) for i in range(16)]
+        print('   CYC (K cycles per tic): ' + ' '.join('c%d=%.0f' % (i, sums[i] / max(tics, 1) / 1e3) for i in range(16) if sums[i]))
 
 
 for p in sys.argv[1:]:
