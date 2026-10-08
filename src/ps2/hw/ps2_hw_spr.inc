@@ -60,16 +60,24 @@ static void spr_free(void)
 
 static void spr_alloc(void)
 {
+	u32 ne = SPR_MAXENT, ns = SPR_MAXSHD; // -hwsprent N / -hwsprshd N: the sizes of the lists (the zone is tight on 32 MB: 112 bytes an entry; measurement)
+
 	spr_free();
-	SPR.ent[0] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * SPR_MAXSHD, PU_STATIC, NULL, 6);
-	SPR.ent[1] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * SPR_MAXENT, PU_STATIC, NULL, 6);
+	if (M_CheckParm("-hwsprent") && M_IsNextParm())
+		ne = (u32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwsprshd") && M_IsNextParm())
+		ns = (u32)atoi(M_GetNextParm());
+	ne = ne < 16 ? 16 : ne > SPR_MAXENT ? SPR_MAXENT : ne;
+	ns = ns < 16 ? 16 : ns > SPR_MAXENT ? SPR_MAXENT : ns;
+	SPR.ent[0] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * ns, PU_STATIC, NULL, 6);
+	SPR.ent[1] = (spr_ent_t *)Z_TryMallocAlign(sizeof(spr_ent_t) * ne, PU_STATIC, NULL, 6);
 	if (!SPR.ent[0] || !SPR.ent[1])
 	{
 		spr_free(); // no room: the stream is off (the polygons go through the batch)
 		return;
 	}
-	SPR.cap[0] = SPR_MAXSHD;
-	SPR.cap[1] = SPR_MAXENT;
+	SPR.cap[0] = ns;
+	SPR.cap[1] = ne;
 }
 
 // the view and the shader state a plan of the VU1 programs depends on (the words of vu_key_make that are not about the surface or the texture)
