@@ -999,7 +999,15 @@ void PS2Mem_Checkpoint(const char *name)
 	if (M_CheckParm("-zmap") && (!strcmp(name, "precache") || !strcmp(name, "level-free-after")))
 		PS2Mem_Map(200);
 	if (M_CheckParm("-zmap") && !strcmp(name, "level-free-after"))
-		PS2Mem_FreeList(64u << 10); // OPT11-STAB: what stands next to the holes that are left after a level (the tags of the neighbours)
+	{
+		// OPT11-STAB: what stands next to the holes that are left after a level (the tags of the neighbours) and every block of 16 KB and more that is still there
+		size_t pos = 0;
+
+		PS2Mem_FreeList(64u << 10);
+		for (b = ZA_First(); b; pos += ZA_SIZE(b), b = ZA_Next(b))
+			if (!ZA_ISFREE(b) && ZA_SIZE(b) >= (16u << 10))
+				I_OutputMsg("[zblk] +%07lx %9lu B tag %d (%s)\n", (unsigned long)pos, (unsigned long)ZA_SIZE(b), (int)ZA_TAG(b), PS2Mem_TagName(ZA_TAG(b)));
+	}
 	{
 		struct mallinfo mi = mallinfo();
 		I_OutputMsg("[zlibc] %-22s libc in use outside the arena %ld B, free chunks %lu B, growth left %lu B\n", name,

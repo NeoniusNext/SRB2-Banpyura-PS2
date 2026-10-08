@@ -719,7 +719,10 @@ UINT8 *R_GenerateTexture(size_t texnum)
 			if (realpatch == NULL)
 			{
 #if defined(PS2)
-				pdata = R_TryReadLump(wadnum, lumpnum);
+				// PS2-178 (OPT11-STAB): the PNG probe above already read this lump into pdata; a second copy replaced the pointer and the first one stayed in the arena for
+				// good (tag PU_RENDERWORK, nothing frees it: 541 KB for one composite texture of MAPFB, in the middle of the arena after the level, MAPM3 did not load after 65 maps)
+				if (!pdata)
+					pdata = R_TryReadLump(wadnum, lumpnum);
 				if (!pdata)
 				{
 					Z_Free(temp_columns);
