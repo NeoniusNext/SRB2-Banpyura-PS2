@@ -323,6 +323,11 @@ boolean PS2HWD_Init(void)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	keep_off = 0;
+	if (M_CheckParm("-hwkeep") && M_IsNextParm())
+		keep_off = atoi(M_GetNextParm()); // PS2-HW-442: 0 = the data of the textures is an LRU cache (the default), 1 = as before (freed at the next allocation that does not fit), 2 = LRU cache without the keep list
+	Z_SetHWCacheLRU(keep_off != 1);
+	ps2hwt_dctag = keep_off == 1 ? PU_HWRCACHE_UNLOCKED : PU_CACHE; // PS2-HW-442: the data cache of the driver survives the start of the next frame (hw_cache.c)
 	if (M_CheckParm("-hwbench"))
 		PS2HWD_Bench();
 	if (M_CheckParm("-hwplan") && M_IsNextParm())
@@ -1678,6 +1683,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
 			H.cur_tex = NOREC;
 			H.cur_missing = 1;
+			skip_tex = TexInfo;
+			skip_why = "no polygon of the frame sees it";
 			TX.invisible++;
 			return;
 		}
@@ -1749,8 +1756,12 @@ static void settex_now(GLMipmap_t *TexInfo)
 	{
 		H.cur_tex = NOREC;
 		H.cur_missing = 1;
+		skip_tex = TexInfo;
+		skip_why = "selected while collecting";
 		return;
 	}
+	if (TexInfo->ps2_keep && TexInfo->data)
+		keep_hits++; // PS2-HW-442: the data is there because it was kept alive: no make-again
 	if (!TexInfo->data && !(TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= 2048
 		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want))
 			|| (want && TexInfo->regen_kind == 2) || (want > 1 && dc_find_finer(dc_key(TexInfo), TexInfo->width, TexInfo->height, want, &(u32){0}))))) // PS2-HW-38/39: a level of a flat needs no copy of the flat (tex_upload pins the engine's)
@@ -1766,6 +1777,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 			const u32 dc = cyc() - c0;
 
 			TexInfo->ps2_cost = (u8)(dc >> 18 > 255u ? 255u : dc >> 18);
+			keep_add(TexInfo, dc);
 		}
 		TX.regen_cyc += cyc() - c0;
 		TX.regen_n++;
@@ -1795,6 +1807,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 		hw_limit(HW_MISSING, "a texture could not be made resident in the GS pool (or its data was purged); its draws are skipped");
 		H.cur_tex = NOREC;
 		H.cur_missing = 1;
+		skip_tex = TexInfo;
+		skip_why = tex_fail_why ? tex_fail_why : "upload failed";
 		return;
 	}
 	H.cur_tex = ri;
@@ -1881,6 +1895,7 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		H.imm_tex = NULL;
 	if (H.up)
 		plan_forget(TexInfo);
+	keep_forget(TexInfo);
 	if (H.up && (r = rec_of(TexInfo)) != NULL)
 	{
 		ov_flush_all();
@@ -1907,6 +1922,7 @@ static void hw_ClearMipMapCache(void)
 	dma_fence();
 	H.imm_tex = NULL;
 	plan_reset();
+	keep_clear();
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)

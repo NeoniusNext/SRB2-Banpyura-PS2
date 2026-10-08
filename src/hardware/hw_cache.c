@@ -1418,9 +1418,15 @@ void HWR_PS2_LockData(void *data)
 	Z_ChangeTag(data, PU_HWRCACHE);
 }
 
+// OPT12 HWDRV (PS2-HW-442): the tag of the driver's data cache blocks (the full size texels of a map texture the driver took over, its coarser levels) between two uses.
+// PU_HWRCACHE_UNLOCKED is "purgable whenever needed": the zone frees every such block at the start of every 3D view (Z_EnsureFree) and whenever an allocation
+// does not fit at once, so the cache lived for the rest of one frame. PU_CACHE (with the owner pointer the driver passes) is evicted least recently used first, under pressure only.
+// ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old behaviour, A/B).
+INT32 ps2hwt_dctag = PU_CACHE;
+
 void HWR_PS2_UnlockData(void *data)
 {
-	Z_ChangeTag(data, PU_HWRCACHE_UNLOCKED);
+	Z_ChangeTag(data, ps2hwt_dctag);
 }
 
 void HWR_PS2_FreeData(void *data)
@@ -1431,7 +1437,7 @@ void HWR_PS2_FreeData(void *data)
 // a purgable zone block owned by *newuser (the driver's data cache: decimated levels of a texture); NULL when the zone has no room
 void *HWR_PS2_AllocData(size_t bytes, void **newuser)
 {
-	return Z_TryMallocAlign(bytes, PU_HWRCACHE_UNLOCKED, newuser, 6);
+	return Z_TryMallocAlign(bytes, ps2hwt_dctag, newuser, 6);
 }
 
 // The driver takes the texels of a mipmap over (its data cache): the block stays a purgable zone block, owned by *newuser from now on, and
@@ -1442,7 +1448,7 @@ void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser)
 
 	m->data = NULL;
 	Z_SetUser(p, newuser);
-	Z_ChangeTag(p, PU_HWRCACHE_UNLOCKED);
+	Z_ChangeTag(p, ps2hwt_dctag);
 	return p;
 }
 

@@ -234,6 +234,14 @@ static zablock_t *zreg[Z_REG_MAX];
 static UINT32 zreg_n;
 static boolean zreg_ok = true;
 static UINT32 zreg_overflows;
+// OPT12 HWDRV (PS2-HW-442): the data of the hardware renderer's textures (PU_HWRCACHE_UNLOCKED, "purgable whenever needed": freed at once by every allocation that
+// does not fit, and the 81 patches of one wall texture are then read from the pack again, 4 M cycles each) is a cache block of the least recently used kind while this is set
+// (the driver sets it; -hwkeep 1 clears it): evicted oldest first and only when the room is needed, like the patches and the sprites.
+static boolean zhwcache_lru;
+void Z_SetHWCacheLRU(boolean on)
+{
+	zhwcache_lru = on;
+}
 static boolean zpurge_maybe; // some block may carry a tag >= PU_PURGELEVEL (set when one is tagged; the purge walk clears it)
 
 static boolean Z_RegTag(INT32 tag)
@@ -2049,6 +2057,8 @@ void Z_ChangeTag(void *ptr, INT32 tag)
 		I_Error("Z_ChangeTag at %s:%d: wrong id", file, line);
 #endif
 
+	if (zhwcache_lru && tag == PU_HWRCACHE_UNLOCKED && block->user != NULL)
+		tag = PU_CACHE; // OPT12 HWDRV (PS2-HW-442)
 	if (tag >= PU_PURGELEVEL && block->user == NULL)
 		I_Error("Internal memory management error: "
 			"tried to make block purgable but it has no owner");

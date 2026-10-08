@@ -390,6 +390,8 @@ int ps2hwd_hash_on; // -hwhash (OPT10 HG): a 64 bit hash of every GIF packet buf
 static u64 hash_frame;
 
 // -hwdbg flags of the texture manager (OPT9, HT); bits below 0x100000 belong to the other HW agents and the host tests
+static const GLMipmap_t *skip_tex; // PS2-HW-443: the texture the last "missing" selection was for, and why (HWSKIP lines: the first draws a frame lost to a missing texture)
+static const char *skip_why;
 #define HWDBG_TEX 0x100000 // HWTEX lines every 105 frames (texture statistics, instrumentation of the working set)
 #define HWDBG_NOZC 0x200000 // no zero-copy uploads (DMA references): the texels are copied into the ring
 #define HWDBG_BATCHORDER 0x400000 // HWBO lines: the textures of one frame per window in the order the batches draw them (hit / upload)
