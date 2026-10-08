@@ -16,6 +16,7 @@
 #include "../v_video.h"
 
 #include "ps2_net.h"
+#include "ps2_menuhints.h"
 #include "ps2_netui.h"
 #include "ps2_uiicons.h"
 
@@ -306,15 +307,15 @@ UINT32 PS2Net_HeapUse(void)
 #include "../i_system.h"
 
 #define NETCMD_MAX 32
-static struct { UINT32 frame; char cmd[96]; boolean done; } netcmds[NETCMD_MAX];
-static INT32 numnetcmds;
+static struct { UINT32 frame; char cmd[96]; boolean done; } netcmdlist[NETCMD_MAX];
+static INT32 numnetcmdlist;
 static UINT32 netcmd_frames;
 
 static void NetCmd_Parse(const char *spec)
 {
 	const char *p = spec;
 
-	while (*p && numnetcmds < NETCMD_MAX)
+	while (*p && numnetcmdlist < NETCMD_MAX)
 	{
 		UINT32 n = 0;
 		size_t len = 0;
@@ -328,11 +329,11 @@ static void NetCmd_Parse(const char *spec)
 		if (*p != ':')
 			I_Error("-netcmd: expected N:command near '%.20s'", p);
 		p++;
-		while (*p && *p != '|' && *p != '\n' && *p != '\r' && len < sizeof netcmds[0].cmd - 2)
-			netcmds[numnetcmds].cmd[len++] = *p++;
-		netcmds[numnetcmds].cmd[len] = 0;
-		netcmds[numnetcmds].frame = n;
-		numnetcmds++;
+		while (*p && *p != '|' && *p != '\n' && *p != '\r' && len < sizeof netcmdlist[0].cmd - 2)
+			netcmdlist[numnetcmdlist].cmd[len++] = *p++;
+		netcmdlist[numnetcmdlist].cmd[len] = 0;
+		netcmdlist[numnetcmdlist].frame = n;
+		numnetcmdlist++;
 	}
 }
 
@@ -353,6 +354,7 @@ void PS2Net_Frame(void)
 		lasttx = ps2net_tx;
 	}
 
+	PS2MenuHints_Frame(); // PS2-339: the crawler's step (the command and the options are set up at the first call)
 	if (!parsed)
 	{
 		parsed = true;
@@ -380,15 +382,15 @@ void PS2Net_Frame(void)
 			NetCmd_Parse(arg);
 		}
 	}
-	if (!numnetcmds)
+	if (!numnetcmdlist)
 		return;
 	netcmd_frames++;
-	for (i = 0; i < numnetcmds; i++)
-		if (!netcmds[i].done && netcmds[i].frame <= netcmd_frames)
+	for (i = 0; i < numnetcmdlist; i++)
+		if (!netcmdlist[i].done && netcmdlist[i].frame <= netcmd_frames)
 		{
-			netcmds[i].done = true;
-			CONS_Printf("NETCMD frame %u: %s\n", (unsigned)netcmd_frames, netcmds[i].cmd);
-			COM_BufAddText(netcmds[i].cmd);
+			netcmdlist[i].done = true;
+			CONS_Printf("NETCMD frame %u: %s\n", (unsigned)netcmd_frames, netcmdlist[i].cmd);
+			COM_BufAddText(netcmdlist[i].cmd);
 			COM_BufAddText("\n");
 		}
 }

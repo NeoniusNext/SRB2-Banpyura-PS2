@@ -11,7 +11,7 @@ usage: python3 tools/ps2/netui_run.py --name N --elf SRB2.ELF [--emu netui1] [--
 * The emulator runs inside its own Xvfb (display :70..:79). --grab 'TEXT@DELAY=name' takes a picture of the whole X screen (the emulator window; `import -window root`)
   DELAY seconds after TEXT first appears in boot.txt; --periodic SEC takes one every SEC seconds (to show a frozen or a moving picture).
 * A lock file per emulator copy (run_pcsx2.py) keeps two runs of one copy apart.
-Exit: 0 the --until text appeared (or the process ended by itself), 2 timeout.
+Exit: 0 the --until text appeared (or the process ended by itself), 2 timeout, 3 --stall.
 """
 import argparse
 import os
@@ -70,6 +70,7 @@ def main():
     ap.add_argument('--periodic', type=float, default=0)
     ap.add_argument('--timeout', type=float, default=180)
     ap.add_argument('--until', default='')
+    ap.add_argument('--stall', default='', help='TEXT=SECONDS: stop (exit 3) when the number of times TEXT is in boot.txt has not grown for SECONDS after it first appeared')
     ap.add_argument('--cfg', action='append', default=[])
     ap.add_argument('--pak', default=str(ROOT / 'build/pak'))
     ap.add_argument('--out', default=str(ROOT / 'build/runs'))
@@ -130,6 +131,8 @@ def main():
             grabs.append({'text': text, 'delay': float(delay or 0), 'name': name, 'seen': None, 'done': False})
         start = time.time()
         last_periodic = start
+        stall_text, _, stall_secs = a.stall.rpartition('=')
+        stall_count, stall_time = 0, start
         seq = 0
         while time.time() - start < a.timeout:
             if p.poll() is not None:
@@ -158,6 +161,13 @@ def main():
             if a.until and a.until in boot and all(g['done'] for g in grabs):
                 code = 0
                 break
+            if stall_text:
+                n_now = boot.count(stall_text)
+                if n_now != stall_count:
+                    stall_count, stall_time = n_now, now
+                elif stall_count and now - stall_time > float(stall_secs):
+                    code = 3
+                    break
             time.sleep(0.25)
     finally:
         if p is not None and p.poll() is None:

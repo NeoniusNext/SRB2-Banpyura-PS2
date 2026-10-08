@@ -163,8 +163,9 @@ char *PS2UI_Message(const char *src)
 
 		if (!strncmp(s, "Press a key", 11))
 		{
-			memcpy(o, "Press any button", 16);
-			o += 16;
+			// the keys that close a message box are Enter, Escape, Space, N, Y and Delete: of the pad's buttons Cross and Circle (and Triangle = N)
+			memcpy(o, "Press " PS2I_CROSS " or " PS2I_CIRCLE, 6 + 1 + 4 + 1);
+			o += 6 + 1 + 4 + 1;
 			s += 11;
 			continue;
 		}

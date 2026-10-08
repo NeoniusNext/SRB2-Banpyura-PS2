@@ -124,6 +124,7 @@ static addfilelist_t startuppwads;
 #endif
 #ifdef PS2
 #include "ps2/ps2_hwfb.h" // PS2-170
+#include "ps2/ps2_menuhints.h" // PS2-339: PS2MenuHints_Begin
 #endif
 
 boolean devparm = false; // started game with -devparm
@@ -572,6 +573,9 @@ static void D_Display(void)
 
 			if (gamestate == GS_LEVEL)
 			{
+#ifdef PS2
+				PS2MenuHints_Begin(); // PS2-339: from the HUD on, the 2D drawing of this frame is noted (the menu button hints keep clear of the counters)
+#endif
 				ST_Drawer();
 				F_TextPromptDrawer();
 				HU_Drawer();

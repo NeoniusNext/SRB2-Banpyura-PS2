@@ -39,6 +39,7 @@
 #include "ps2_boot.h"
 #include "ps2_hwfb.h" // PS2-170
 #include "ps2_netui.h" // PS2-331: -vidshot nN
+#include "ps2_menuhints.h" // PS2-338: cvar menuhints
 
 #ifdef HWRENDER
 #include "../hardware/hw_main.h"
@@ -146,6 +147,7 @@ static void Vid_InitCvars(void)
 	CV_RegisterVar(&cv_vidoutput);
 	CV_RegisterVar(&cv_vidfit);
 	CV_RegisterVar(&cv_vidfilter);
+	PS2MenuHints_RegisterCvars(); // PS2-338: menuhints (before the config file is read)
 }
 
 #ifdef HWRENDER

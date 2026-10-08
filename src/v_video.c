@@ -31,6 +31,7 @@
 #include "doomstat.h"
 #ifdef PS2
 #include "ps2/ps2_uiicons.h" // PS2-334: pad button icons inside strings (control characters 0x01..0x15)
+#include "ps2/ps2_menuhints.h" // PS2-339: where the menu draws (the button hints keep clear of it)
 #endif
 
 #ifdef HWRENDER
@@ -547,6 +548,11 @@ void V_DrawStretchyFixedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vsca
 	if (rendermode == render_none)
 		return;
 
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NotePatch(x, y, pscale, vscale, scrn, patch)) // PS2-339
+		return;
+#endif
+
 #ifdef HWRENDER
 	//if (rendermode != render_soft && !con_startup)		// Why?
 	if (rendermode == render_opengl)
@@ -895,6 +901,11 @@ void V_DrawCroppedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vscale, IN
 	if (rendermode == render_none)
 		return;
 
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteCropped(x, y, pscale, vscale, scrn, patch, w, h)) // PS2-339
+		return;
+#endif
+
 #ifdef HWRENDER
 	//if (rendermode != render_soft && !con_startup)		// Not this again
 	if (rendermode == render_opengl)
@@ -1231,6 +1242,11 @@ void V_DrawFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c)
 
 	if (rendermode == render_none)
 		return;
+
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, c)) // PS2-339
+		return;
+#endif
 
 	v_translevel = NULL;
 	if (alphalevel || blendmode)
@@ -1658,6 +1674,11 @@ void V_DrawFadeFill(INT32 x, INT32 y, INT32 w, INT32 h, INT32 c, UINT16 color, U
 	if (rendermode == render_none)
 		return;
 
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, c)) // PS2-339
+		return;
+#endif
+
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
 	{
@@ -1817,6 +1838,11 @@ void V_DrawFlatFill(INT32 x, INT32 y, INT32 w, INT32 h, lumpnum_t flatnum)
 	const UINT8 *src, *deststop;
 	UINT8 *flat, *dest;
 	size_t lflatsize, flatshift;
+
+#ifdef PS2
+	if (ps2mh_recording && PS2MenuHints_NoteRect(x, y, w, h, 0)) // PS2-339
+		return;
+#endif
 
 #ifdef HWRENDER
 	if (rendermode == render_opengl)

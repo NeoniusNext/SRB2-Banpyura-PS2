@@ -72,6 +72,7 @@
 #ifdef PS2
 #include "ps2/ps2_osk.h" // PS2-135: on-screen keyboard
 #include "ps2/ps2_uiicons.h" // PS2-336: pad button icons in hints
+#include "ps2/ps2_menuhints.h" // PS2-338: button hints along the bottom edge of the menus
 #endif
 
 #include "p_saveg.h" // Only for NEWSKINSAVES
@@ -1642,6 +1643,10 @@ static menuitem_t OP_BanpyuraOptionsMenu[] =
 #ifdef HWRENDER
 	{IT_HEADER, 				NULL, "Rendering (" HWR_RENDERER_NAME ")", 			        NULL,		   113},
 	{IT_STRING|IT_CVAR,         NULL, "Light Dithering",     	   &cv_gllightdither,          119},
+#endif
+#ifdef PS2
+	{IT_HEADER, 				NULL, "Console", 			        			NULL,		   129},
+	{IT_STRING|IT_CVAR,         NULL, "Menu Button Hints",     	      &cv_menuhints,          135}, // PS2-338
 #endif
 };
 
@@ -3830,6 +3835,10 @@ void M_Drawer(void)
 {
 	boolean wipe = WipeInAction;
 
+#ifdef PS2
+	PS2MenuHints_MenuStart(); // PS2-339: the 2D draws of this frame are noted from here (unless the HUD did it)
+#endif
+
 	if (currentMenu == &MessageDef)
 		menuactive = true;
 
@@ -3875,6 +3884,7 @@ void M_Drawer(void)
 
 #ifdef PS2
 	PS2OSK_Draw(); // PS2-135 (also over the chat line: nothing is drawn while it is closed)
+	PS2MenuHints_Draw(); // PS2-338: the buttons of the highlighted item along the bottom edge (cvar menuhints)
 	PS2UI_Card(); // PS2-336: the test card of "ps2_icons" (nothing unless asked for)
 #endif
 }
@@ -13806,7 +13816,11 @@ static void M_Setup2PControlsMenu(INT32 choice)
 	M_SetupNextMenu(&OP_ChangeControlsDef);
 }
 
+#ifdef PS2
+#define controlheight 16 // PS2-339: two rows less, the button hints stand under the last one
+#else
 #define controlheight 18
+#endif
 
 // The name of a key in the controls list. PS2-336: a pad button (either pad) is its icon, the rest keeps its name
 static const char *M_ControlKeyName(INT32 key)
@@ -14706,6 +14720,198 @@ static void M_QuitSRB2(INT32 choice)
 }
 
 #ifdef PS2
+// PS2-338: what kind of item the cursor stands on, for the button hints (ps2_menuhints.c). The classes are those of the key handling in M_Responder.
+INT32 M_PS2MenuKind(void)
+{
+	const menuitem_t *it;
+	UINT16 st;
+
+	if (!currentMenu)
+		return PS2MH_SELECT;
+	if (currentMenu == &MessageDef)
+	{
+		switch (currentMenu->menuitems[0].alphaKey)
+		{
+			case MM_YESNO: return PS2MH_YESNO;
+			case MM_EVENTHANDLER: return PS2MH_CAPTURE; // Setup Controls waits for the new button: any button is taken
+			default: return PS2MH_MESSAGE;
+		}
+	}
+	if (currentMenu == &MainDef)
+		return PS2MH_MAIN;
+	if (currentMenu->drawroutine == M_DrawImageDef)
+		return PS2MH_NONE; // a picture over the whole screen: the hints would stand on it
+	if (itemOn < 0 || itemOn >= currentMenu->numitems)
+		return PS2MH_SELECT;
+	it = &currentMenu->menuitems[itemOn];
+	st = it->status;
+	if (currentMenu == &MP_ConnectDef && itemOn >= FIRSTSERVERLINE)
+		return PS2MH_SERVER;
+	if (st == IT_CONTROL)
+		return PS2MH_CONTROL;
+	switch (st & IT_TYPE)
+	{
+		case IT_CVAR:
+			return (st & IT_CVARTYPE) == IT_CV_STRING ? PS2MH_TEXT : PS2MH_ARROWS;
+		case IT_ARROWS:
+			return PS2MH_ARROWS;
+		case IT_KEYHANDLER:
+			if ((void *)it->itemaction == (void *)M_HandleConnectIP)
+				return PS2MH_ADDRESS;
+			if ((void *)it->itemaction == (void *)M_HandleSetupMultiPlayer && itemOn == 0)
+				return PS2MH_PLAYERNAME;
+			return PS2MH_SELECT;
+		default:
+			return PS2MH_SELECT;
+	}
+}
+
+// PS2-339: every menu definition (and four boxes of MessageDef), for the crawler of the button hints (ps2_menucrawl)
+INT32 M_PS2MenuList(INT32 i, menu_t **menu, const char **name)
+{
+#define E(x) {&x, #x}
+	static const struct { menu_t *menu; const char *name; } all[] =
+	{
+	E(MainDef),
+#ifdef HAS_ADDONS
+	E(MISC_AddonsDef),
+#endif
+	E(MAPauseDef),
+	E(SPauseDef),
+	E(MPauseDef),
+	E(MISC_ScrambleTeamDef),
+	E(MISC_ChangeTeamDef),
+	E(MISC_ChangeLevelDef),
+	E(MISC_HelpDef),
+	E(SR_PandoraDef),
+	E(SR_MainDef),
+	E(SR_LevelSelectDef),
+	E(SR_UnlockChecklistDef),
+	E(SR_SoundTestDef),
+	E(SR_EmblemHintDef),
+	E(SP_MainDef),
+	E(SP_LoadDef),
+	E(SP_LevelSelectDef),
+	E(SP_PauseLevelSelectDef),
+	E(SP_LevelStatsDef),
+	E(SP_TimeAttackLevelSelectDef),
+	E(SP_TimeAttackDef),
+	E(SP_ReplayDef),
+	E(SP_GuestReplayDef),
+	E(SP_GhostDef),
+	E(SP_NightsAttackLevelSelectDef),
+	E(SP_NightsAttackDef),
+	E(SP_NightsReplayDef),
+	E(SP_NightsGuestReplayDef),
+	E(SP_NightsGhostDef),
+	E(SP_MarathonDef),
+	E(SP_PlayerDef),
+	E(MP_SplitServerDef),
+	E(MP_MainDef),
+	E(MP_ServerDef),
+	E(MP_ConnectDef),
+	E(MP_RejoinDef),
+	E(MP_RoomDef),
+	E(MP_PlayerSetupDef),
+	E(OP_MainDef),
+	E(OP_ChangeControlsDef),
+	E(OP_P1ControlsDef),
+	E(OP_P2ControlsDef),
+	E(OP_MouseOptionsDef),
+	E(OP_Mouse2OptionsDef),
+	E(OP_Joystick1Def),
+	E(OP_Joystick2Def),
+	E(OP_JoystickSetDef),
+	E(OP_CameraOptionsDef),
+	E(OP_Camera2OptionsDef),
+	E(OP_PlaystyleDef),
+	E(OP_VideoOptionsDef),
+	E(OP_VideoModeDef),
+	E(OP_ColorOptionsDef),
+	E(OP_SoundOptionsDef),
+	E(OP_SoundAdvancedDef),
+	E(OP_ServerOptionsDef),
+	E(OP_MonitorToggleDef),
+#ifdef HWRENDER
+	E(OP_OpenGLOptionsDef),
+#ifdef ALAM_LIGHTING
+	E(OP_OpenGLLightingDef),
+#endif
+#endif
+	E(OP_DataOptionsDef),
+	E(OP_BanpyuraOptionsDef),
+	E(OP_P1BanpyuraOptionsDef),
+	E(OP_P2BanpyuraOptionsDef),
+	E(OP_ScreenshotOptionsDef),
+#ifdef HAS_ADDONS
+	E(OP_AddonsOptionsDef),
+#endif
+	E(OP_EraseDataDef),
+	{&MessageDef, "MessageDef short"}, {&MessageDef, "MessageDef long"}, {&MessageDef, "MessageDef yes/no"}, {&MessageDef, "MessageDef capture"}
+	};
+#undef E
+	const INT32 n = (INT32)(sizeof all / sizeof all[0]);
+
+	if (i >= 0 && i < n)
+	{
+		*menu = all[i].menu;
+		*name = all[i].name;
+	}
+	return n;
+}
+
+// PS2-339: the crawler brings a menu up the way the game does (the entry function of the item that leads to it, which sets up what the drawing needs: the list of
+// saves, the level platter, the player skins), then makes it the current one whatever the entry did. MessageDef has four variants.
+INT32 M_PS2MenuEnter(menu_t *m, INT32 index, INT32 total)
+{
+	static const struct { menu_t *menu; void (*entry)(INT32); } entries[] =
+	{
+		{&SR_PandoraDef, M_PandorasBox}, {&SR_MainDef, M_SecretsMenu}, {&SR_LevelSelectDef, M_CustomLevelSelect}, {&SR_SoundTestDef, M_SoundTest},
+		{&SR_EmblemHintDef, M_EmblemHints}, {&SP_MainDef, M_SinglePlayerMenu}, {&SP_LoadDef, M_LoadGame}, {&SP_LevelSelectDef, M_LoadGameLevelSelect},
+		{&SP_PauseLevelSelectDef, M_PauseLevelSelect}, {&SP_LevelStatsDef, M_Statistics}, {&SP_TimeAttackLevelSelectDef, M_TimeAttackLevelSelect},
+		{&SP_TimeAttackDef, M_TimeAttack}, {&SP_NightsAttackLevelSelectDef, M_NightsAttackLevelSelect}, {&SP_NightsAttackDef, M_NightsAttack},
+		{&SP_MarathonDef, M_Marathon}, {&SP_PlayerDef, M_SetupChoosePlayer}, {&MP_SplitServerDef, M_StartSplitServerMenu}, {&MP_ServerDef, M_StartServerMenu},
+		{&MP_PlayerSetupDef, M_SetupMultiPlayer}, {&OP_MainDef, M_Options}, {&OP_ChangeControlsDef, M_Setup1PControlsMenu}, {&OP_PlaystyleDef, M_Setup1PPlaystyleMenu},
+		{&OP_VideoOptionsDef, M_VideoOptions}, {&OP_VideoModeDef, M_VideoModeMenu}, {&OP_ScreenshotOptionsDef, M_ScreenshotOptions}, {&OP_ServerOptionsDef, M_ServerOptions},
+#ifdef HAS_ADDONS
+		{&MISC_AddonsDef, M_Addons}, {&OP_AddonsOptionsDef, M_AddonsOptions},
+#endif
+	};
+	size_t i;
+
+	if (m == &MessageDef)
+	{
+		static const char *const texts[4] =
+		{
+			"Short message.\n\n(Press a key)\n",
+			"A longer message that runs over\nseveral lines of the menu font,\nso that its box is tall and wide:\n\nthe box is centred on the screen,\nthe hints stand under it.\n\n(Press a key)\n",
+			"Do you really want to do it?\n\n(Y/N)\n",
+			"Press the new button for this control\n",
+		};
+		const INT32 v = index - (total - 4);
+
+		M_StartMessage(texts[v & 3], NULL, v == 2 ? MM_YESNO : v == 3 ? MM_EVENTHANDLER : MM_NOTHING); // (the kind of the box is kept in alphaKey)
+		return 1;
+	}
+	for (i = 0; i < sizeof entries / sizeof entries[0]; i++)
+		if (entries[i].menu == m)
+		{
+			entries[i].entry(0);
+			currentMenu = m;
+			return 1;
+		}
+	currentMenu = m;
+	return 0;
+}
+
+// the cursor of the menu (set >= 0: put it there), for the crawler
+INT32 M_PS2MenuCursor(INT32 set)
+{
+	if (set >= 0)
+		itemOn = (INT16)set;
+	return itemOn;
+}
+
 // PS2-135: the highlighted item takes typed text: the on-screen keyboard (src/ps2/ps2_osk.c) can be opened on it
 boolean M_PS2TextFieldActive(void)
 {
