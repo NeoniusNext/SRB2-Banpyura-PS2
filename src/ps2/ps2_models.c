@@ -261,6 +261,28 @@ void PS2Models_Free(model_t *model)
 	Z_Free(model); // the owner (md2_t.model) is cleared
 }
 
+// a model of more than SLICE_BYTES is read a slice per frame (the pack read of 1.5 MB was 18 M cycles, 60 ms, in one frame: a hitch of two ticks): the block waits here, unowned
+// (the owner is set when the last slice is in), and the model is a sprite meanwhile (PS2Models_Load answers why = 3 until then)
+#define SLICE_BYTES (256u * 1024u) // four LZ4 blocks of the pack
+static struct
+{
+	boolean active;
+	const lumpinfo_t *l;
+	UINT8 *base;
+	size_t need;
+	UINT32 got, stamp;
+} pend;
+
+static void Pend_Cancel(void)
+{
+	if (pend.active)
+	{
+		Z_Free(pend.base);
+		pend.active = false;
+		pend.base = NULL;
+	}
+}
+
 // the least recently used model not used in this frame; NULL if every one is in use
 static live_t *Live_Victim(UINT32 minage)
 {
@@ -280,6 +302,12 @@ static size_t Reclaim(size_t want)
 {
 	size_t got = PS2HWD_ModelWorkReclaim(); // the work areas of the drawing (cheap to make again) go first
 	live_t *v;
+
+	if (pend.active)
+	{
+		got += pend.need;
+		Pend_Cancel(); // a half read model goes next
+	}
 
 	while (got < want && (v = Live_Victim(0)) != NULL)
 	{
@@ -401,6 +429,7 @@ void PS2Models_FreeAll(void)
 {
 	int i;
 
+	Pend_Cancel();
 	for (i = 0; i < MAXLIVE; i++)
 		if (live[i].model)
 			PS2Models_Free(live[i].model);
@@ -586,10 +615,13 @@ model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 	material_t *mat;
 	size_t need;
 	int slot;
+	boolean resume;
 
 	const unsigned c0 = PS2Mem_Cycles();
 
 	*why = 0;
+	if (pend.active && (INT32)(Z_FrameCount() - pend.stamp) > 120)
+		Pend_Cancel(); // nobody asked for it any more (the object is gone, the level changed)
 	if (!PK_Open() || !(l = PK_Find(rel)))
 		return NULL;
 	{
@@ -637,31 +669,85 @@ model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 			break;
 		PS2Models_Free(v->model);
 	}
-	if (live_bytes + need > m_budget + m_budget / 2 || (slot = Slot()) < 0)
+	resume = pend.active && pend.l == l;
+	if (!resume && pend.active && total > SLICE_BYTES)
 	{
-		*why = 1;
-		st_fail_mem++;
+		*why = 3; // another big model is being read: one at a time
 		return NULL;
 	}
-	if (!hook_added)
+	if (resume)
 	{
-		Z_AddReclaimHook(Reclaim);
-		hook_added = true;
+		base = pend.base;
 	}
-	base = PS2Models_TryAlloc(need, PU_STATIC, owner, 4); // alignbits: log2 (16 bytes)
-	if (!base)
+	else
 	{
-		*why = 1;
-		st_fail_mem++;
-		return NULL;
+		if (live_bytes + need > m_budget + m_budget / 2 || Slot() < 0)
+		{
+			*why = 1;
+			st_fail_mem++;
+			return NULL;
+		}
+		if (!hook_added)
+		{
+			Z_AddReclaimHook(Reclaim);
+			hook_added = true;
+		}
+		base = PS2Models_TryAlloc(need, PU_STATIC, total > SLICE_BYTES ? NULL : owner, 4); // alignbits: log2 (16 bytes); a model read in slices has no owner until it is complete
+		if (!base)
+		{
+			*why = 1;
+			st_fail_mem++;
+			return NULL;
+		}
 	}
 	blob = base + ovh;
-	if (ReadLump(l, blob, total, 0) != total)
+	if (total > SLICE_BYTES)
 	{
-		Z_Free(base); // owner cleared
-		*why = 2;
-		st_fail_bad++;
-		return NULL;
+		const UINT32 got = resume ? pend.got : 0, n = total - got < SLICE_BYTES ? total - got : SLICE_BYTES;
+
+		if (ReadLump(l, blob + got, n, got) != n)
+		{
+			pend.active = false;
+			Z_Free(base);
+			*why = 2;
+			st_fail_bad++;
+			return NULL;
+		}
+		if (got + n < total)
+		{
+			pend.active = true;
+			pend.l = l;
+			pend.base = base;
+			pend.need = need;
+			pend.got = got + n;
+			pend.stamp = Z_FrameCount();
+			*why = 3; // the next slice in the next frame
+			return NULL;
+		}
+		pend.active = false;
+		pend.base = NULL;
+		Z_SetUser(base, owner); // complete: *owner = base
+		if (live_bytes + need > m_budget + m_budget / 2 || (slot = Slot()) < 0)
+		{
+			Z_Free(base);
+			*why = 1;
+			st_fail_mem++;
+			return NULL;
+		}
+	}
+	else
+	{
+		slot = Slot();
+		if (slot < 0 || ReadLump(l, blob, total, 0) != total)
+		{
+			Z_Free(base); // owner cleared
+			*why = slot < 0 ? 1 : 2;
+			if (slot < 0)
+				st_fail_mem++;
+			else
+				st_fail_bad++;
+			return NULL;
+		}
 	}
 	if (Z_ArenaFree() < m_reserve) // the frame needs working memory too: a model that would eat it is a sprite
 	{

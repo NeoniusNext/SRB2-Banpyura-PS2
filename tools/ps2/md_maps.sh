@@ -8,6 +8,7 @@ cd "$(dirname "$0")/../.."
 for m in $MAPS; do
 	python3 tools/ps2/hf_run.py "${TAG}_$m" --elf "$ELF" --pak build/pak-m --cfg 'gr_models "On";chasecam "On"' --timeout 900 \
 		-- -skipintro -warp $m -renderer Hardware -zreserve 1536 -zck -ps2prof -zquit 420 > build/runs/${TAG}_$m.log 2>&1
+	rm -f build/runs/${TAG}_$m/SRB2.ELF
 	f=build/runs/${TAG}_$m/boot.txt
 	err=$(grep -c "I_Error\|HEAP CHECK FAILED\|Out of memory" $f)
 	fb=$(grep -m1 "HARDWARE ->\|-> SOFTWARE\|falling back" $f | cut -c1-80)

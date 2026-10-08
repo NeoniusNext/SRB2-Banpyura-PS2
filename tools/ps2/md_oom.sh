@@ -15,6 +15,7 @@ for n in $POINTS; do
 	t=${n//,/_}
 	python3 tools/ps2/hf_run.py "${TAG}_$t" --elf "$ELF" --pak build/pak-m --cfg 'gr_models "On";chasecam "On"' --files "$SET,tools/ps2/mdlscene.lua" --timeout 700 \
 		-- -skipintro -warp 1 -renderer Hardware -zreserve 1536 -zck -ps2prof -zquit 420 -hwmodelfail $n > build/runs/${TAG}_$t.log 2>&1
+	rm -f build/runs/${TAG}_$t/SRB2.ELF
 	f=build/runs/${TAG}_$t/boot.txt
 	done_=$(grep -c "ZQUIT DONE" $f)
 	err=$(grep -c "I_Error\|HEAP CHECK FAILED" $f)
