@@ -516,7 +516,7 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		return; // no triangles; do not advance the fan writer past its allocation
 	if (currently_batching && !((UINT32)hwr_sprite_batch | (UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB)))
 	{
-		if (HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial))
+		if (HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, 0))
 			return;
 		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 		return;
@@ -571,7 +571,8 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		{
 			ps2hwp_cnt[HWC_PROC]--; // (counted when the batch is drawn)
 			ps2hwp_cnt[HWC_PROC_BATCH]--;
-			HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
+			if (!HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, (hwr_sprite_batch && !hwr_sprite_shadow) ? 1u : 0u))
+				HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
 #ifdef PS2_HWDETAIL
 			if (hwr_sprite_batch)
 				ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);

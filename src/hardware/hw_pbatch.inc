@@ -466,7 +466,7 @@ static void __attribute__((noinline)) HWR_PBAdd(const FSurfaceInfo *s, const FOu
 
 // The same for the common polygon (a state that the cache holds, room in the arrays, no sprite batch): inline in HWR_ProcessPolygon, which then needs no frame. Returns 0 when it
 // did not take the polygon.
-static inline __attribute__((always_inline)) int HWR_PBFast(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader_target, boolean horizon)
+static inline __attribute__((always_inline)) int HWR_PBFast(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader_target, boolean horizon, UINT32 spr)
 {
 	GLMipmap_t *const tex = current_texture;
 	const UINT32 need = 2u + 2u * (UINT32)n;
@@ -481,7 +481,7 @@ static inline __attribute__((always_inline)) int HWR_PBFast(const FSurfaceInfo *
 	{
 		hwr_pbk_t *const b = &pb_bk[e - 1];
 
-		if (!HWR_PBMatch(b, s, tex, flags, ((UINT32)shader_target & 0xFFu) | ((UINT32)horizon << 8)))
+		if (!HWR_PBMatch(b, s, tex, flags, ((UINT32)shader_target & 0xFFu) | ((UINT32)horizon << 8) | (spr << 9)))
 			return 0;
 		HWR_PBPut(b, e - 1, s, v, n, need);
 	}

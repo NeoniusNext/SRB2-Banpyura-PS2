@@ -1258,7 +1258,21 @@ void PS2HWD_DrawBlocks(void *surf, const void *pool, unsigned int nfans, unsigne
 	}
 	else
 	{
-		if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+		const u32 bt0 = cyc();
+		int bok;
+
+		if (V.on && V.ready) // (HWPROF51: why the plan of the last draw could not be used)
+		{
+			const u32 *a = k.w, *c = VK.w;
+
+			G.bb_diff[a[0] != c[0] ? 0 : a[1] != c[1] ? 1 : a[2] != c[2] ? 2 : a[3] != c[3] ? 3 : a[4] != c[4] ? 4 : a[5] != c[5] ? 5 : 6]++;
+			if (!vu_plan_valid || !VU.consts_ok || P.serial != H.serial)
+				G.bb_diff[7]++;
+		}
+		bok = begin_draw((u32)flags, (const FSurfaceInfo *)surf);
+		G.bb_n++;
+		G.bb_cyc += cyc() - bt0;
+		if (!bok)
 		{
 			drv_out();
 			return;
