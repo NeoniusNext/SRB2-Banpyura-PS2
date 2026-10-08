@@ -454,7 +454,7 @@ ps2spr_t *PS2HWD_SprSlot(int is_shadow)
 {
 	const int which = is_shadow ? 0 : 1;
 
-	if ((ps2hwd_fx2 & FX3_NOSPR) || !H.up || !V.on || !V.ready || !VU.spr_base || !SPR.ent[0])
+	if ((ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM)) || !H.up || !V.on || !V.ready || !VU.spr_base || !SPR.ent[0])
 		return NULL;
 	if (SPR.n[which] >= SPR.cap[which])
 	{

@@ -3554,7 +3554,7 @@ static boolean HWR_FX_ShadowFast(gl_vissprite_t *spr)
 	GLMipmap_t *m;
 	int r;
 
-	if (!(currently_batching && hwr_sprite_batch) || (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSHADOW2 | FX2_PRECHECK)))
+	if (!(currently_batching && hwr_sprite_batch) || (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX3_NOSHADOW2 | FX2_PRECHECK)))
 		return false;
 	e = PS2HWD_SprSlot(1);
 	if (!e)
@@ -3879,7 +3879,7 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		if (cs && (ps2hwd_fx2 & FX2_PRECHECK) && !(ps2hwd_fx2 & FX2_NOSHADOW) && !groundslope && cv_shadow.value != 2)
 			sph = HWR_FX_SphereHidden(cs, fx, shadowVerts[0].y, fy, offset * 1.4143f + shadowlift + 0.5f); // check mode: the exact test below must agree
 		// PS2-HW-257: a shadow that goes to the sprite stream (the common case) is not tested exactly: the VU1 program throws out what no pixel centre lies in
-		if (!(hwr_fx_cheap && cv_shadow.value != 2 && currently_batching && hwr_sprite_batch && !(ps2hwd_fx2 & (FX3_NOSPR | FX2_PRECHECK))) && HWR_FX_QuadHidden(shadowVerts))
+		if (!(hwr_fx_cheap && cv_shadow.value != 2 && currently_batching && hwr_sprite_batch && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX2_PRECHECK))) && HWR_FX_QuadHidden(shadowVerts))
 		{
 			HWD_ADD(HWC_FX_SHQHID);
 			if (hwr_fx_shchk == 1)
@@ -4547,7 +4547,7 @@ static boolean HWR_DrawSpriteStream(gl_vissprite_t *spr)
 	ps2spr_t *e;
 	GLMipmap_t *m;
 
-	if (!(currently_batching && hwr_sprite_batch) || (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPR2)))
+	if (!(currently_batching && hwr_sprite_batch) || (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX3_NOSPR2)))
 		return false;
 	e = PS2HWD_SprSlot(0);
 	if (!e || !HWR_FX_SpriteBuild(spr, e))
@@ -5731,7 +5731,7 @@ static void HWR_DrawSprites(void)
 #endif
 		HWP_SPAN_BEGIN(tsd);
 #ifdef PS2_PROFILE
-		if ((spr->ps2_skey & 4) && sprwas && hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPR2 | FX3_NOSHORT | FX2_PRECHECK)))
+		if ((spr->ps2_skey & 4) && sprwas && hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM | FX3_NOSPR2 | FX3_NOSHORT | FX2_PRECHECK)))
 		{
 			// PS2-HW-258 (OPT11 round 3, FX3): the plain sprite of the sprite batch (made by HWR_ProjectPlain: no link draw, no skin, no model, no hitbox) goes from the sorted list to its drop shadow and
 			// its record at once: what HWR_DrawSprites and HWR_DrawSprite do for it before they get there (the kind of the sprite, the link draw pair, the model table) is nothing for such a thing
