@@ -84,7 +84,6 @@ struct GLMipmap_s
 	UINT8                 ps2_vis; // some polygon of the frame is visible at all
 	UINT32                ps2_full_fr; // driver frame + 1 of the last draw that needed the full size without a plan (the next plans keep the full size)
 	UINT32                ps2_gcv; // OPT11 (PS2-HW-80): the view of the geometry cache whose replay last made this texture the current one (once per view is enough)
-	UINT32                ps2_uid; // OPT11 round 2 (PS2-HW-207): the stable key of a patch (and of the translated variants) for the sort key of the batches: numbered by the first use, 0 = not yet (the memory address of the texture is not a key: it depends on the memory layout)
 #endif
 };
 typedef struct GLMipmap_s GLMipmap_t;

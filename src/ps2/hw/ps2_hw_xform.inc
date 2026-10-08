@@ -236,11 +236,24 @@ static inline float plane_dist(const cv_t *v, int p, float gx, float gy)
 }
 
 // outcode of a clip space vertex: bit p set = outside plane p
+// PS2-HW-222 (OPT11 round 2): six compare-and-branch pairs cost 40 cycles on the EE (1.5 % of a DEMO_004 frame went through this line); a < -b is the sign of a + b
+// (equal operands give +0, and a rounded sum keeps the sign of the exact one), so the six tests are six adds and the sign bits: the same answer, no branch.
 static inline int outcode(const cv_t *v, float gx, float gy)
 {
-	float w = v->w;
+	const float w = v->w, gxw = gx * w, gyw = gy * w;
+	union
+	{
+		float f;
+		u32 u;
+	} a, b, c, d, e, f;
 
-	return (v->x < -gx * w ? 1 : 0) | (v->x > gx * w ? 2 : 0) | (v->y < -gy * w ? 4 : 0) | (v->y > gy * w ? 8 : 0) | (v->z < -w ? 16 : 0) | (v->z > w ? 32 : 0);
+	a.f = v->x + gxw;
+	b.f = gxw - v->x;
+	c.f = v->y + gyw;
+	d.f = gyw - v->y;
+	e.f = v->z + w;
+	f.f = w - v->z;
+	return (int)((a.u >> 31) | ((b.u >> 31) << 1) | ((c.u >> 31) << 2) | ((d.u >> 31) << 3) | ((e.u >> 31) << 4) | ((f.u >> 31) << 5));
 }
 
 // Sutherland-Hodgman against the planes in `mask`; returns the vertex count (0 = nothing left); the result is in *res

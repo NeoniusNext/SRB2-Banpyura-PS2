@@ -43,13 +43,11 @@ void HWR_RenderBatches(void);
 extern boolean hwr_grec_on;
 extern int polygonArraySize, polygonArrayAllocSize, unsortedVertexArraySize, unsortedVertexArrayAllocSize; // the batch arrays (the cache looks at the room before a replay)
 extern UINT32 hwr_geo_off; // -hwgo: OPT11 optimisations switched off (hw_gcache.inc)
-void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon, UINT32 hash); // hash: the sort key HWR_ProcessPolygon made of the polygon
+void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon);
 void HWR_GCRecTex(GLMipmap_t *texture);
-UINT32 HWR_GCTexId(const GLMipmap_t *tex); // the frame independent part of the texture order
-typedef struct { UINT8 op, n, hashed, pad; UINT16 size; INT16 target; UINT32 hash[2]; } gcphdr_t; // 16 bytes, followed by the PolygonArrayEntry of the polygon (15 words: what HWR_ProcessPolygon would have stored, the vertex index, the shader and the sort key are made at the replay) and n FOutVector. hash[]: the sort key for the two scan directions; target: the shader target
-void HWR_GCBatchReserve(int npoly, int nvert); // room in the batch arrays for that many more polygons and vertices (it may allocate: the cache asks before it replays)
-void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view); // HWR_ProcessPolygon of such a record (batching): the entry is copied, the texture of the entry is touched once per view
-void HWR_GCHashes(const GLMipmap_t *tex, UINT32 h16, UINT32 out[2]); // the sort keys of a polygon of this texture and state hash for the scan directions 0 and 1
+typedef struct { UINT8 op, n, horizon, pad; UINT16 size; INT16 target; FBITFIELD flags; GLMipmap_t *tex; } gcphdr_t; // 16 bytes, followed by an FSurfaceInfo and n FOutVector: what the cache keeps of one HWR_ProcessPolygon
+void HWR_GCBatchReserve(int npoly, int nvert); // room in the batch arrays of the old collection for that many more polygons and vertices (it may allocate: the cache asks before it replays)
+void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view); // HWR_ProcessPolygon of such a record (the texture is made current and touched once per view)
 extern GLMipmap_t *current_texture; // the texture of the next polygon (HWR_SetCurrentTexture)
 void HWR_GCacheAbandon(void); // a frame was abandoned half way (ps2_hwfb.c): no record is in progress any more
 void HWR_GCacheFlush(void); // everything cached is dropped (a new level, the texture records or the light tables go away, a setting changed)

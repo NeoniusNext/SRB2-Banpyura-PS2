@@ -2394,12 +2394,16 @@ static void poly_plane(const cv_t *un, int n, float sw, float sh)
 	}
 	if (third >= n)
 		return;
-	for (k = 0; k < 3; k++)
 	{
-		float c0 = k == 0 ? un[0].x : k == 1 ? un[0].y : un[0].w, c1 = k == 0 ? un[1].x : k == 1 ? un[1].y : un[1].w, cc = k == 0 ? un[third].x : k == 1 ? un[third].y : un[third].w;
+		const float rdet = 1.0f / det; // PS2-HW-229: one division instead of six
 
-		lodc[k][0] = ((c1 - c0) * v2 - (cc - c0) * v1) / det;
-		lodc[k][1] = ((cc - c0) * u1 - (c1 - c0) * u2) / det;
+		for (k = 0; k < 3; k++)
+		{
+			float c0 = k == 0 ? un[0].x : k == 1 ? un[0].y : un[0].w, c1 = k == 0 ? un[1].x : k == 1 ? un[1].y : un[1].w, cc = k == 0 ? un[third].x : k == 1 ? un[third].y : un[third].w;
+
+			lodc[k][0] = ((c1 - c0) * v2 - (cc - c0) * v1) * rdet;
+			lodc[k][1] = ((cc - c0) * u1 - (c1 - c0) * u2) * rdet;
+		}
 	}
 	lodc_ok = 1;
 	lodc_planar = 1;
@@ -2516,25 +2520,34 @@ static void lod_frame_end(void)
 
 // HWTEX line of the window just ended (per-frame averages of the block counts; counts of uploads are window totals)
 static unsigned spr_hid_test, spr_hid_yes; // PS2-HW-72 (ps2_hw_plan.inc)
+static int qh_mode; // PS2-HW-220
+static int plan_mode; // PS2-HW-229 (-hwplan)
+static unsigned pm_cmp, pm_dcnt, pm_dval; // PS2-HW-229: -hwplan 2: polygons compared, different number of parts, different values
+static unsigned qh_diff;
 
 static void tx_report(void)
 {
 	static int win;
 	u32 f = TX.frames ? TX.frames : 1;
 
-	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u plancyc=%u immcyc=%u mkpatch=%u/%u allocfail=%u/%u/%u thrash=%u/%u pct=%u lvlcyc=%u synccyc=%u planpoly=%u planmeas=%u\n",
+	CONS_Printf("HWTEX win=%d frames=%u need=%u/%u up_map=%u/%u up_flat=%u/%u up_t8o=%u/%u up_ct32=%u/%u reup=%u/%u shared=%u regen=%u/%u zc=%u/%u upcyc=%u pool=%u/%u free=%d lod=%u lvl=%u/%u/%u/%u/%u/%u lvlup=%u/%u/%u/%u/%u upg=%u/%u invis=%u plan=%u/%u unpl=%u res=%u inplan=%u outplan=%u plancyc=%u immcyc=%u mkpatch=%u/%u allocfail=%u/%u/%u thrash=%u/%u pct=%u lvlcyc=%u synccyc=%u planpoly=%u planmeas=%u planinv=%u\n",
 		win++, (unsigned)TX.frames, (unsigned)(TX.need_blk / f), (unsigned)(TX.need_n / f),
 		(unsigned)TX.up_n[0], (unsigned)(TX.up_blk[0] / f), (unsigned)TX.up_n[1], (unsigned)(TX.up_blk[1] / f), (unsigned)TX.up_n[2], (unsigned)(TX.up_blk[2] / f),
 		(unsigned)TX.up_n[3], (unsigned)(TX.up_blk[3] / f), (unsigned)TX.reup_n, (unsigned)(TX.reup_blk / f), (unsigned)TX.shared, (unsigned)TX.regen_n, (unsigned)(TX.regen_cyc / f),
 		(unsigned)TX.zc_n, (unsigned)(TX.zc_blk / f), (unsigned)(TX.up_cyc / f), (unsigned)H.used_blocks, (unsigned)H.pool_blocks, H.free_n,
 		(unsigned)(TX.lod_blk / f), (unsigned)(TX.lod_lvl[0] / f), (unsigned)(TX.lod_lvl[1] / f), (unsigned)(TX.lod_lvl[2] / f), (unsigned)(TX.lod_lvl[3] / f), (unsigned)(TX.lod_lvl[4] / f), (unsigned)(TX.lod_lvl[5] / f),
 		(unsigned)TX.lvl_up[1], (unsigned)TX.lvl_up[2], (unsigned)TX.lvl_up[3], (unsigned)TX.lvl_up[4], (unsigned)TX.lvl_up[5], (unsigned)TX.upgrades, (unsigned)TX.downgrades, (unsigned)TX.invisible,
-		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f, (unsigned)TX.alloc_fail, (unsigned)TX.alloc_frag, (unsigned)TX.alloc_frag_blk, (unsigned)(TX.thrash_n / f), (unsigned)(TX.thrash_blk / f), (unsigned)H.plan_pct, (unsigned)(TX.lvl_cyc / f), (unsigned)(TX.sync_cyc / f), (unsigned)(TX.plan_np / f), (unsigned)(TX.plan_mcyc / f));
+		(unsigned)(TX.plan_blk / f), (unsigned)(TX.plan_exact / f), (unsigned)(TX.unplanned / f), (unsigned)H.plan_reserve, (unsigned)(TX.need_in_plan / f), (unsigned)(TX.need_out_plan / f), (unsigned)(TX.plan_cyc / f), (unsigned)(TX.imm_cyc / f), ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc / f, (unsigned)TX.alloc_fail, (unsigned)TX.alloc_frag, (unsigned)TX.alloc_frag_blk, (unsigned)(TX.thrash_n / f), (unsigned)(TX.thrash_blk / f), (unsigned)H.plan_pct, (unsigned)(TX.lvl_cyc / f), (unsigned)(TX.sync_cyc / f), (unsigned)(TX.plan_np / f), (unsigned)(TX.plan_mcyc / f), (unsigned)(TX.plan_inv / f));
 	ps2hwt_mkpatch_n = ps2hwt_mkpatch_cyc = 0;
 	if (spr_hid_test)
 	{
-		CONS_Printf("HWSPRCULL win=%d tests=%u hidden=%u (per frame %u / %u)\n", win - 1, spr_hid_test, spr_hid_yes, spr_hid_test / f, spr_hid_yes / f);
+		CONS_Printf("HWSPRCULL win=%d tests=%u hidden=%u (per frame %u / %u) differ=%u\n", win - 1, spr_hid_test, spr_hid_yes, spr_hid_test / f, spr_hid_yes / f, qh_diff);
 		spr_hid_test = spr_hid_yes = 0;
+	}
+	if (pm_cmp)
+	{
+		CONS_Printf("HWPLANCMP win=%d compared=%u cntdiff=%u valdiff=%u\n", win - 1, pm_cmp, pm_dcnt, pm_dval);
+		pm_cmp = pm_dcnt = pm_dval = 0;
 	}
 	if (TX.split_up || TX.split_poly)
 		CONS_Printf("HWSPLIT win=%d uploads=%u polygons=%u parts=%u\n", win - 1, (unsigned)TX.split_up, (unsigned)TX.split_poly, (unsigned)TX.split_sub);

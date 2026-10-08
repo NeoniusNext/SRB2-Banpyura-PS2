@@ -708,7 +708,7 @@ static boolean HWR_GCacheFrame(void)
 	{
 		// An arena that was full three times or more in the window is too small for the views of the scene (the records of the views before are dropped before they are used again): it is
 		// doubled, when the zone has room (the textures need the memory more than the cache does: a big level is at the edge of it, a small one with many 3D floors is not)
-		if (!gc.kb_user && gc.kb < GC_MAX_AUTO_KB && gc.w_full >= 3u && !(hwr_geo_off & 65536))
+		if (!gc.kb_user && gc.kb < GC_MAX_AUTO_KB && gc.w_full >= 3u && !(hwr_geo_off & 8388608))
 		{
 			const UINT32 nkb = gc.kb * 2u > GC_MAX_AUTO_KB ? GC_MAX_AUTO_KB : gc.kb * 2u;
 			const size_t delta = (size_t)(nkb - gc.kb) * 1024u;
@@ -858,11 +858,10 @@ static void *gc_rec_alloc(UINT32 bytes)
 
 static size_t HWR_GCacheReclaim(size_t want);
 
-void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon, UINT32 hash)
+void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon)
 {
-	const UINT32 size = (UINT32)(sizeof(gcphdr_t) + sizeof(PolygonArrayEntry) + n * sizeof(FOutVector));
+	const UINT32 size = (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo) + n * sizeof(FOutVector));
 	gcphdr_t *h;
-	PolygonArrayEntry *pe;
 	UINT32 *d;
 	const UINT32 *sp;
 	UINT32 k;
@@ -878,28 +877,19 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 		return;
 	h->op = GCOP_POLY;
 	h->n = (UINT8)n;
+	h->horizon = horizon ? 1 : 0;
 	h->pad = 0;
 	h->size = (UINT16)size;
 	h->target = (INT16)shader;
-	h->hashed = (!(flags & PF_NoTexture) && !horizon) ? 1 : 0;
-	if (h->hashed)
-		HWR_GCHashes(current_texture, hash & 0xFFFFu, h->hash); // (the order of the texture depends on the scan direction of the frame: both are kept)
-	else
-		h->hash[0] = h->hash[1] = 0;
-	// the entry of the batch as HWR_ProcessPolygon makes it (word copies: memcpy of newlib takes a byte loop for what is not 8 byte aligned)
-	pe = (PolygonArrayEntry *)(h + 1);
-	d = (UINT32 *)pe;
-	for (k = 0; k < sizeof(PolygonArrayEntry) / 4u; k++)
-		d[k] = 0;
+	h->flags = flags;
+	h->tex = current_texture; // (the polygon takes it)
+	// (word copies: memcpy of newlib takes a byte loop for what is not 8 byte aligned)
+	d = (UINT32 *)(h + 1);
 	sp = (const UINT32 *)surf;
 	for (k = 0; k < sizeof(FSurfaceInfo) / 4u; k++)
 		d[k] = sp[k];
-	pe->surf.PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
-	pe->numVerts = n;
-	pe->polyFlags = flags;
-	pe->texture = current_texture;
-	pe->horizonSpecial = horizon;
-	d = (UINT32 *)((UINT8 *)(h + 1) + sizeof(PolygonArrayEntry));
+	((FSurfaceInfo *)(h + 1))->PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
+	d = (UINT32 *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo));
 	sp = (const UINT32 *)verts;
 	for (k = 0; k < n * 5u; k++)
 		d[k] = sp[k];
@@ -1028,13 +1018,13 @@ static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 
 			{
 				const UINT32 rel = i - o;
 
-				if (a[o] == GCOP_POLY && rel >= sizeof(gcphdr_t) + sizeof(PolygonArrayEntry))
+				if (a[o] == GCOP_POLY && rel >= sizeof(gcphdr_t) + sizeof(FSurfaceInfo))
 				{
-					const UINT32 vo = rel - (UINT32)(sizeof(gcphdr_t) + sizeof(PolygonArrayEntry));
-					const FOutVector *va = (const FOutVector *)(a + o + sizeof(gcphdr_t) + sizeof(PolygonArrayEntry)), *vb = (const FOutVector *)(b + o + sizeof(gcphdr_t) + sizeof(PolygonArrayEntry));
+					const UINT32 vo = rel - (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo));
+					const FOutVector *va = (const FOutVector *)(a + o + sizeof(gcphdr_t) + sizeof(FSurfaceInfo)), *vb = (const FOutVector *)(b + o + sizeof(gcphdr_t) + sizeof(FSurfaceInfo));
 					const UINT32 nv = ((const gcphdr_t *)(a + o))->n;
 
-					I_OutputMsg("  in op at %u (poly, %u vertices, flags %x): vertex %u field %u (x y z s t)\n", (unsigned)o, (unsigned)nv, (unsigned)((const PolygonArrayEntry *)(a + o + sizeof(gcphdr_t)))->polyFlags, (unsigned)(vo / 20), (unsigned)((vo % 20) / 4));
+					I_OutputMsg("  in op at %u (poly, %u vertices, flags %x): vertex %u field %u (x y z s t)\n", (unsigned)o, (unsigned)nv, (unsigned)((const gcphdr_t *)(a + o))->flags, (unsigned)(vo / 20), (unsigned)((vo % 20) / 4));
 					for (k = 0; k < nv; k++)
 						I_OutputMsg("    v%u cached %.4f %.4f %.4f %.6f %.6f | now %.4f %.4f %.4f %.6f %.6f\n", (unsigned)k, va[k].x, va[k].y, va[k].z, va[k].s, va[k].t, vb[k].x, vb[k].y, vb[k].z, vb[k].s, vb[k].t);
 				}

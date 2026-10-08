@@ -146,6 +146,12 @@ static void host_init(void)
 	for (i = 0; i < NSCR; i++)
 		free(H.scr_data[i]);
 	memset(&H, 0, sizeof H);
+	if (!blk_owner_p) /* PS2-171: the driver's big work arrays are zone memory in the engine (hwbig_alloc), here calloc */
+	{
+		blk_owner_p = calloc(1, sizeof *blk_owner_p);
+		ovq_p = calloc(1, sizeof *ovq_p);
+		cutbuf_p = calloc(1, sizeof *cutbuf_p);
+	}
 	memset(blk_owner, 0, sizeof blk_owner);
 	batch_phase = 0;
 	OV.n = 0;
