@@ -133,32 +133,6 @@ static int sky_fast_prepare(const gl_sky_t *sky)
 		if (tmx - SKY.ltb[l] > 1.0f + 1.0e-4f)
 			SKY.celly = 0;
 	}
-	{
-		float smn = 1e30f, smx = -1e30f, tmn = 1e30f, tmx = -1e30f;
-
-		for (i = 0; i < n; i++)
-		{
-			smn = SKY.v[i].s < smn ? SKY.v[i].s : smn;
-			smx = SKY.v[i].s > smx ? SKY.v[i].s : smx;
-			tmn = SKY.v[i].t < tmn ? SKY.v[i].t : tmn;
-			tmx = SKY.v[i].t > tmx ? SKY.v[i].t : tmx;
-		}
-		CONS_Printf("HWD sky: s [%.3f, %.3f] t [%.3f, %.3f]\n", smn, smx, tmn, tmx);
-		for (l = 0; l < sky->loopcount; l++)
-		{
-			const gl_skyloopdef_t *loop = &sky->loops[l];
-			float a = 1e30f, b = -1e30f;
-
-			for (i = 0; i < loop->vertexcount; i++)
-			{
-				const float t = SKY.v[loop->vertexindex + i].t;
-
-				a = t < a ? t : a;
-				b = t > b ? t : b;
-			}
-			CONS_Printf("HWD sky loop %d: first %d count %d mode %d tex %d t [%.3f, %.3f]\n", l, loop->vertexindex, loop->vertexcount, (int)loop->mode, (int)loop->use_texture, a, b);
-		}
-	}
 	CONS_Printf("HWD sky: %d vertices, %d loops, texture %dx%d, max |s,t| %.2f -> %s\n", n, sky->loopcount, sky->width, sky->height, lim, SKY.ok ? "strips" : "old path");
 	SKY.src = sky->data;
 	SKY.n = n;
