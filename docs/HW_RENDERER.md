@@ -117,6 +117,19 @@ Facts from runs in the emulator (details, pictures and numbers: `docs/GATES/g1/o
 * Measurement tools of OPT10-HF: `pcshot.py` (PC reference), `hf_run.py`, `hfpanel.py`, `hfbatch.py` (`--zreserve`, `--emu`), `hfscreens.py`, `hftt.py`, `hf_perfcmp.py` (HWPROF windows of two runs), `hf_zcaller.py` (`-zcaller` log by tag and
   caller), `hf_chaincmp.py` (every picture of a map change chain has a twin), `hf_hudaddon.py` (Lua HUD test add-on), console command `hf_split 1` (splitscreen in single player, PC and PS2).
 
+## OPT11-FX (2026-10-08): water, shadows, model light, effect matrix
+
+Facts from runs in the emulator against the PC OpenGL engine (details, numbers, commands: `docs/GATES/g1/opt11-FX.md`):
+
+* **Water (`PF_Ripple`) shader time** (PS2-HW-125): the PC driver hands the shader `(leveltime - 1 + rendertimefrac) / TICRATE` seconds and the shader turns 2 rad per second (2/35 rad per tic); the GS driver (OPT9 on) turned 2 rad **per tic**, 35 times too fast: the "glitching water". Now `a0 = 2 * (leveltime - 1 + frac) / 35` (`water_phase_rad`). Water blocks against the PC picture on a grid texture: 30-72 % at (0,0) -> 80-99 %.
+* **Water without seams** (PS2-HW-120): the shift of the texture coordinates is computed in the vertices by eye depth and interpolated by the GS (C0 at every depth plane and at polygon borders), one triangle strip per light class, reach by texture size (64: 320 units, 256: 1280, 512: 2560), fade between 1.5 and 0.8 pixel of amplitude; polygons over 4096 texels ripple too. Host test `ripple`: mean error 0.36 px against the GLSL (OPT10 bands: 1.4-3.7 px). A/B switch `-hwwater 1` (the OPT10 sweep); cost: DEMO_001 +5.0 % of the water branch (+0.4 % wall), DEMO_004 -39 % of the water branch (-1.0 % wall).
+* **Drop shadow lost the depth test on 1/3 of the maps** (PS2-HW-124): the GS interpolates the depth of a floor from vertices snapped to 1/16 pixel, a low camera sees hundreds of depth steps per pixel; the shadow 0.05 units over the floor lost. `HWR_DrawDropShadow` lifts the shadow by `d^2 / (640 h)` units (0.05 .. 6) under `PS2_PROFILE`.
+* **Models** (PS2-HW-126) were drawn at full brightness (`PF_ColorMapped` is not in the surface flags of `hw_md2.c`): sector light, colormaps and `RF_FULLDARK` now work. `gr_modellighting` (directional light, off by default) is not implemented.
+* **Stale light-table CLUTs** after a level restart (PS2-HW-123): `lt_clear` bumps `H.pal_gen`.
+* Known differences that stay (matrix in the report): the PC snaps every blended colour to the palette (a post process the GS cannot do: MAD 2-6 in scene pictures); UI colormap fade is a translucent black quad (menu MAD 17); `PF_Decal` bias is a constant 3 depth steps; `gr_lightdithering`, wireframe, corona, custom GLSL are not implemented.
+* Tools: `fx_pair.py` (one scene on both renderers), `fx_sweep.py`, `fx_shift.py` (block matching of the water), `fx_chain.py`, `fx_queue.sh`, `fx_water.sh`, `fx_watertab.py`, `fxscene.lua`/`fxflash.lua`, `make_fxmodel.py`, `-hwlt N`, `-hwwater N`.
+* Trap: the PC engine reads and **saves** `/opt/srb2-assets/reference.cfg`: a run that sets `gamma 4` or `gr_models On` leaves it for the next PC runs of everybody (`pcshot.py` now resets them at the start of every run).
+
 ## Complete callback matrix
 
 `P` = implementation exercised by standalone primitive/readback tests;
