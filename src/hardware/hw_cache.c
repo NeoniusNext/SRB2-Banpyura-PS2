@@ -891,6 +891,17 @@ static GLMapTexture_t *gl_textures; // For all textures
 static GLMapTexture_t *gl_flats; // For all (texture) flats, as normal flats don't need to be cached
 boolean gl_maptexturesloaded = false;
 
+#ifdef PS2_PROFILE
+// OPT11 (PS2-HW-80): ProcessSeg tests TF_TRANSPARENT of the (translated) texture's mipmap, which the driver sets when it makes the texture resident:
+// an input of the geometry cache key. tex is a translated texture number (R_GetTextureNum).
+UINT32 HWR_PS2_TexTransparent(INT32 tex)
+{
+	if (!gl_textures || tex < 0 || tex >= (signed)gl_numtextures)
+		return 0;
+	return (gl_textures[tex].mipmap.flags & TF_TRANSPARENT) ? 1u : 0u;
+}
+#endif
+
 void HWR_FreeTextureData(patch_t *patch)
 {
 	GLPatch_t *grPatch;
@@ -1002,6 +1013,9 @@ static void HWR_FreePatchCache(boolean freeall)
 // free all textures after each level
 void HWR_ClearAllTextures(void)
 {
+#ifdef PS2_PROFILE
+	HWR_GCacheFlush(); // OPT11 (PS2-HW-80): the cached polygons name texture records
+#endif
 	HWD.pfnClearMipMapCache(); // free references to the textures
 	HWR_FreePatchCache(true);
 #ifdef PS2_PROFILE
@@ -1044,6 +1058,10 @@ static void FreeMapTexture(GLMapTexture_t *tex, boolean delete_chromakeys)
 void HWR_FreeMapTextures(void)
 {
 	size_t i;
+
+#ifdef PS2_PROFILE
+	HWR_GCacheFlush(); // OPT11 (PS2-HW-80): the texture records the cached polygons point to are freed below
+#endif
 
 	for (i = 0; i < gl_numtextures; i++)
 	{
@@ -1920,6 +1938,9 @@ UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
 // call become invalid and must not be used.
 void HWR_ClearLightTables(void)
 {
+#ifdef PS2_PROFILE
+	HWR_GCacheFlush(); // OPT11 (PS2-HW-80): the cached surfaces hold light table ids
+#endif
 	Z_FreeTag(PU_HWRLIGHTTABLEDATA);
 
 	if (vid.glstate == VID_GL_LIBRARY_LOADED)

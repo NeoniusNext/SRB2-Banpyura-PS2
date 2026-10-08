@@ -10325,11 +10325,100 @@ static void PS2_TypeStat(int w, mobjtype_t type)
 #define PS2_TYPESTAT_N(w, mo) ((void)0)
 #endif
 
+#if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK) // (PTICK: lua_mobjhooks_any)
+// PS2-203 (OPT11-CORE): a decoration at rest (flowers, trees, spikes, kelp: 40..60 % of the thinker calls of a crowded level) goes through the thinker preamble
+// of P_MobjThinker, P_MobjSceneryThink (its type switch and the fuse test) and P_SceneryThinker and ends in P_CycleMobjState, with nothing changed on the way but
+// four fields and two globals. P_SceneryQuick tests every condition under which that is so and then does exactly that; whatever it cannot vouch for takes
+// the original path, which is untouched. The type list is the case list of P_MobjSceneryThink's switch (tools/ps2/core_scenery_types.py keeps it equal).
+#ifdef HAS_LUA
+#define PS2_MOBJHOOKS_ANY lua_mobjhooks_any // a script registered a mobj hook (lua_hooklib.c)
+#else
+#define PS2_MOBJHOOKS_ANY false // no Lua VM: no hook can exist
+#endif
+static UINT8 ps2_scenery_plain[NUMMOBJTYPES]; // 1: no case in P_MobjSceneryThink for this type
+static boolean ps2_scenery_ready;
+
+static void P_SceneryInitTypes(void)
+{
+	size_t t;
+
+	for (t = 0; t < NUMMOBJTYPES; t++)
+	{
+		boolean special = false;
+
+		switch ((mobjtype_t)t)
+		{
+	/* PS2-203 types begin */
+	case MT_ARMAGEDDON_ORB: case MT_ATTRACT_ORB: case MT_BOSSJUNK: case MT_BRICKDEBRIS: case MT_BROKENROBOT: case MT_BUBBLES: case MT_BUBBLEWRAP_ORB:
+	case MT_CDLHRT: case MT_CHAINMACEPOINT: case MT_CHAINPOINT: case MT_CUSTOMMACEPOINT: case MT_DROWNNUMBERS: case MT_ELEMENTAL_ORB:
+	case MT_EXTRALARGEBUBBLE: case MT_FINISHFLAG: case MT_FIREBARPOINT: case MT_FLAMEAURA_ORB: case MT_FLAMEJET: case MT_FLICKY_01_CENTER:
+	case MT_FLICKY_02_CENTER: case MT_FLICKY_03_CENTER: case MT_FLICKY_04_CENTER: case MT_FLICKY_05_CENTER: case MT_FLICKY_06_CENTER:
+	case MT_FLICKY_07_CENTER: case MT_FLICKY_08_CENTER: case MT_FLICKY_09_CENTER: case MT_FLICKY_10_CENTER: case MT_FLICKY_11_CENTER:
+	case MT_FLICKY_12_CENTER: case MT_FLICKY_13_CENTER: case MT_FLICKY_14_CENTER: case MT_FLICKY_15_CENTER: case MT_FLICKY_16_CENTER: case MT_FORCE_ORB:
+	case MT_FSGNA: case MT_GHOST: case MT_HIDDEN_SLING: case MT_HOOP: case MT_LOCKON: case MT_LOCKONINF: case MT_MACEPOINT: case MT_MEDIUMBUBBLE:
+	case MT_NIGHTSLOOPHELPER: case MT_NIGHTSPARKLE: case MT_OVERLAY: case MT_PARTICLEGEN: case MT_PITY_ORB: case MT_ROCKCRUMBLE1: case MT_ROCKCRUMBLE10:
+	case MT_ROCKCRUMBLE11: case MT_ROCKCRUMBLE12: case MT_ROCKCRUMBLE13: case MT_ROCKCRUMBLE14: case MT_ROCKCRUMBLE15: case MT_ROCKCRUMBLE16:
+	case MT_ROCKCRUMBLE2: case MT_ROCKCRUMBLE3: case MT_ROCKCRUMBLE4: case MT_ROCKCRUMBLE5: case MT_ROCKCRUMBLE6: case MT_ROCKCRUMBLE7:
+	case MT_ROCKCRUMBLE8: case MT_ROCKCRUMBLE9: case MT_ROSY: case MT_SECRETFLICKY_01_CENTER: case MT_SECRETFLICKY_02_CENTER: case MT_SEED:
+	case MT_SMALLBUBBLE: case MT_SPRINGBALLPOINT: case MT_THOK: case MT_THUNDERCOIN_ORB: case MT_TUTORIALFLOWER: case MT_VERTICALFLAMEJET:
+	case MT_VWREB: case MT_VWREF: case MT_WATERDROP: case MT_WHIRLWIND_ORB: case MT_WOODDEBRIS:
+	/* PS2-203 types end */
+			special = true;
+			break;
+		default:
+			break;
+		}
+		ps2_scenery_plain[t] = !special;
+	}
+	ps2_scenery_ready = true;
+}
+
+static boolean P_SceneryQuick(mobj_t *mobj)
+{
+	const subsector_t *ss;
+
+	if ((mobj->flags & (MF_NOTHINK|MF_BOSS|MF_SCENERY|MF_BOXICON)) != MF_SCENERY // thinks, scenery thinker, not a boss, not a monitor icon
+		|| (mobj->flags2 & MF2_SHIELD)
+		|| mobj->target || mobj->tracer || mobj->hnext || mobj->hprev || mobj->dontdrawforviewmobj // nothing to clean up
+		|| mobj->scale != mobj->destscale
+		|| mobj->momx || mobj->momy || mobj->momz
+		|| mobj->fuse
+		|| PS2_MOBJHOOKS_ANY
+		|| !(mobj->eflags & MFE_ONGROUND)
+		|| ((mobj->eflags & MFE_VERTICALFLIP) ? mobj->z + mobj->height != mobj->ceilingz : mobj->z != mobj->floorz))
+		return false;
+
+	if (!ps2_scenery_ready)
+		P_SceneryInitTypes();
+	if (!ps2_scenery_plain[mobj->type])
+		return false;
+
+	ss = mobj->subsector;
+	if ((ss && (ss->sector->flags & MSF_TRIGGERLINE_MOBJ)) || P_IsObjectInGoop(mobj))
+		return false;
+
+	mobj->eflags &= ~(MFE_PUSHED|MFE_SPRUNG|MFE_JUSTHITFLOOR);
+	tmfloorthing = tmhitthing = NULL;
+	mobj->pmomz = 0;
+#if defined(PS2_NEGCTL) && PS2_NEGCTL == 19 // negative control of the host A/B and of the map sweep (tools/ps2/core_mapsweep.sh): the animation of a decoration runs slower
+	if (mobj->tics > 1)
+		mobj->tics++;
+#endif
+	P_CycleMobjState(mobj);
+	return true;
+}
+#endif
+
 void P_MobjThinker(mobj_t *mobj)
 {
 	PS2_TYPESTAT_N(0, mobj);
 	I_Assert(mobj != NULL);
 	I_Assert(!P_MobjWasRemoved(mobj));
+
+#if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK)
+	if ((mobj->flags & (MF_NOTHINK|MF_BOSS|MF_SCENERY|MF_BOXICON)) == MF_SCENERY && P_SceneryQuick(mobj)) // (the flags test is P_SceneryQuick's first, here so that no call is made for the rest)
+		return;
+#endif
 
 	if (mobj->flags & MF_NOTHINK)
 		return;

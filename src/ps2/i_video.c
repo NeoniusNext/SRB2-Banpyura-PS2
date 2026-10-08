@@ -239,6 +239,10 @@ static boolean Impl_HWAcquire(void)
 				trace = atoi(M_GetNextParm());
 			if (M_CheckParm("-hwdbg") && M_IsNextParm())
 				dbg = atoi(M_GetNextParm());
+			if (M_CheckParm("-hwlt") && M_IsNextParm())
+				ps2hwd_force_lt = atoi(M_GetNextParm()); // OPT11 FX: the water ripple phase of level time N (a PS2 frame is not at the PC's tic)
+			if (M_CheckParm("-hwwater") && M_IsNextParm())
+				ps2hwd_water_ab = atoi(M_GetNextParm()); // OPT11 FX: A/B switches of the water (ps2_hwd_dbg.h)
 			if (M_CheckParm("-hwhash"))
 				ps2hwd_hash_on = 1; // OPT10 HG: HWHASH lines (see ps2_hw_priv.inc)
 			if (M_CheckParm("-hwvu1"))
@@ -990,6 +994,8 @@ static void Impl_HWStats(void)
 static void Impl_VidKeys(void);
 static void Impl_VidShot(void);
 
+extern void HWR_PolyHashFrame(INT32 frame); // hardware/hw_batching.c: -hwpolyhash
+
 static void Impl_FinishUpdateHW(void)
 {
 	if (!hwd_on || ps2gs_is_up())
@@ -999,6 +1005,7 @@ static void Impl_FinishUpdateHW(void)
 	HWD.pfnFinishUpdate(cv_vidwait.value);
 	HWD.pfnGClipRect(0, 0, vid.width, vid.height, NZCLIP_PLANE);
 	hwframes++;
+	HWR_PolyHashFrame(hwframes); // OPT11 GEOM: -hwpolyhash
 	if (hwprof)
 		Impl_HWProf();
 	if (gamestate == GS_TITLESCREEN && !WipeInAction)
@@ -1267,8 +1274,8 @@ static void Impl_VidShot(void)
 				I_Error("vidshot: write failed %s", path);
 			free(row);
 			free(hwrgb);
-			CONS_Printf("VIDSHOT %s %dx%d output=%s fit=%s gamestate=%d saved %s\n", tag, (int)vid.width, (int)vid.height,
-				ps2gs_is_up() ? ps2vm_output(ps2gs_mode())->name : "-", cv_vidfit.string ? cv_vidfit.string : "?", (int)gamestate, path);
+			CONS_Printf("VIDSHOT %s %dx%d output=%s fit=%s gamestate=%d saved %s lt=%d\n", tag, (int)vid.width, (int)vid.height,
+				ps2gs_is_up() ? ps2vm_output(ps2gs_mode())->name : "-", cv_vidfit.string ? cv_vidfit.string : "?", (int)gamestate, path, (int)leveltime);
 			if (cmd[0])
 				COM_BufAddText(cmd);
 			if (++done >= left)

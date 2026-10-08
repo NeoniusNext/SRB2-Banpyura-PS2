@@ -27,6 +27,10 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 	m_scale(H.mv, hscale * 0.5f, vscale * (flipped ? -0.5f : 0.5f), hscale * (hflipped ? -0.5f : 0.5f));
 	memcpy(object_mv, H.mv, sizeof object_mv);
 	flags = (u32)surf->PolyFlags | PF_Modulated;
+	// PS2-HW-126: the engine selects SHADER_MODEL (HWD.pfnSetShader) and the OpenGL driver always runs it, so hw_md2.c does not put PF_ColorMapped into the surface flags;
+	// begin_draw lights only PF_ColorMapped polygons: a model drew at full brightness whatever the sector light, colormap or RF_FULLDARK said.
+	if (H.shaders_on && H.shader >= 0 && H.shader <= 5)
+		flags |= PF_ColorMapped;
 	if (surf->PolyFlags & (PF_Additive | PF_Subtractive | PF_ReverseSubtract | PF_Multiplicative))
 		flags |= PF_Occlude;
 	else if (surf->PolyColor.s.alpha == 255)

@@ -78,6 +78,8 @@ enum
 
 enum { LM_NONE = 0, LM_BANDS, LM_RAMP };
 
+static int vu_plan_valid; // PS2-HW-103: P and the constants in the VU1 memory belong to the key of the last single draw (VK, ps2_hw_vu1.inc); begin_draw clears it
+
 // the plan of the polygon being drawn (set by begin_draw)
 static struct
 {
@@ -108,7 +110,8 @@ static struct
 	int oldpath; // -hwdbg 8192: the general path only (no lit fast path, doom_thresholds, the clip chain of clip_attr, fog_of_class): A/B of PS2-HW-43 / 62
 	int litfast; // as fast, but with the light staircase (LM_BANDS): polygons of one darkness class take lit_fast_poly (ps2_hw_fast.inc, PS2-HW-43)
 	int vuok, vu; // the plan can be drawn by the VU1 program (vuok); PS2HWD_DrawFans turns vu on for the polygons of a batch (ps2_hw_vu1.inc, PS2-HW-45)
-	int vu0; // the plan's constants are in VU0 (vu0_batch_load): emit_poly transforms on VU0
+	int vu0; // emit_poly transforms on VU0 (the plan's constants go into VU0 when the first polygon of the EE path needs them: vu0_need, PS2-HW-104)
+	int vu0_ld; // the plan's constants are in VU0
 	u32 serial; // H.serial when pass 0 was last set up for this plan
 } P;
 
@@ -550,6 +553,8 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf);
 static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 {
 	u32 blend;
+
+	vu_plan_valid = 0;
 	int textured, dbg = ps2hwd_dbg_flags, lit = 0, wall = 0, partial_tex = 0, i;
 	texrec_t *r = NULL;
 	int av = 255, cr = 255, cg = 255, cb = 255;
@@ -977,7 +982,9 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	if (P.lmode == LM_BANDS)
 		lit_fast_plan(); // PS2-HW-43 (PS2-HW-59: also for the plans that take cut_and_emit: the class memory, the fog and the step depths are per plan)
 	P.vu = 0;
-	P.vuok = V.on && V.ready && (P.fast || P.litfast) && P.pass[0].tex && textured && !P.vcol && !(flags & PF_Invisible) && !P.pal; // PS2-HW-71: the CLUT changes with the row of every polygon
+	// PS2-HW-100: the VU1 program takes the plans with one pass and no texture repeat cut: the common world polygon (fast), flat colours, and (palette lighting) the polygons lit by the colormap rows of a light table (P.pal:
+	// the program cuts them at the row steps and loads the CLUT of every piece); the lit plans of the GLSL equations (fog classes) take the general path
+	P.vuok = V.on && V.ready && (P.fast || (P.litfast && P.pal)) && !P.vcol && !(flags & PF_Invisible) && P.pass[0].tex == (u8)textured && !P.oldpath;
 	P.serial = H.serial - 1; // the first polygon sets the state up
 	xf_update();
 	P.zmax = PS2HWD_ZMAX;
@@ -989,8 +996,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	P.oy = (H.vpy + H.vph * 0.5f - 0.5f + 2048.0f) * 16.0f + 0.5f;
 #ifdef HW_VU0
 	P.vu0 = !(ps2hwd_dbg_flags & 128);
-	if (P.vu0)
-		vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+	P.vu0_ld = 0; // PS2-HW-104: loaded by the first polygon of the EE path (the VU1 path does not use VU0)
 #else
 	P.vu0 = 0;
 #endif
@@ -1378,8 +1384,10 @@ typedef struct
 {
 	float sb, tb; // whole repeats removed from s, t
 	int cls; // darkness class of a band piece, -1 = none
-	int ripple; // water: displace the texture coordinates by the vertex depth
+	int ripple; // PS2-HW-120: the vertices are a triangle STRIP (the water polygon between its depth planes), not a convex fan
 } piece_t;
+
+static qw_t *ws_pack(qw_t *o, const cv_t *v, int cnt, const pack_t *pk); // ps2_hw_water.inc (PS2-HW-120): the vertices of a water strip, put_vertex with the plan constants in registers
 
 static inline int ov_room(int cnt)
 {
@@ -1415,6 +1423,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 	qw_t *o;
 	u32 fogF = 255;
 	int fog_on = 0;
+	const u32 ptype = pc->ripple ? PRIM_TRISTRIP : PRIM_TRIFAN;
 
 	if (cnt < 3)
 		return;
@@ -1479,18 +1488,25 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		pk.nreg = pack_regs(pk.fmt);
 		if (pk.fmt != 4 && 1 + cnt * pk.nreg <= 16)
 		{
-			emit_reglist_fan(v, cnt, &pk, PRIM_TRIFAN | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)));
+			emit_reglist_fan(v, cnt, &pk, ptype | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)));
 			H.st.verts_out += (u32)cnt;
 			if (k)
 				H.st.passes++;
 			continue;
 		}
 		o = pk_alloc((u32)(1 + cnt * pk.nreg));
-		o[0].d[0] = HWGIF_TAG(cnt, 1, 1, PRIM_TRIFAN | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)), 0, pk.nreg);
+		o[0].d[0] = HWGIF_TAG(cnt, 1, 1, ptype | (pass_prim(ps) & ~(usefog ? 0u : (u32)PRIM_FGE)), 0, pk.nreg);
 		o[0].d[1] = pack_regdesc(pk.fmt);
 		o++;
-		for (i = 0; i < cnt; i++)
-			o = put_vertex(o, &v[i], &pk);
+		if (pc->ripple && (pk.fmt == 0 || pk.fmt == 1) && !pk.ramp && !(ps2hwd_water_ab & 4)) // -hwwater 4: put_vertex for the water strips too (A/B)
+		{
+			o = ws_pack(o, v, cnt, &pk);
+		}
+		else
+		{
+			for (i = 0; i < cnt; i++)
+				o = put_vertex(o, &v[i], &pk);
+		}
 		H.st.verts_out += (u32)cnt;
 		if (k)
 			H.st.passes++;
@@ -1917,100 +1933,39 @@ static inline float ripple_sinf(float a) // sin() of any angle from a 256 entry 
 	return ripple_sin[i] + (ripple_sin[i + 1] - ripple_sin[i]) * x;
 }
 
+// PS2-HW-125: the phase of the shader's time term. r_opengl.c SetShaderInfo hands the shader (leveltime - 1 + rendertimefrac) / TICRATE seconds and the shader
+// adds seconds * speed (2 rad): 2 / 35 rad per tic, one turn in 110 tics. The first versions of this driver (OPT9, OPT10, the first OPT11 one) turned the ripple 2 rad per
+// TIC: 35 times too fast, a water that flickered instead of rippling slowly. The phase is kept in 1/2^32 turns (WPH_K per tic: 2^32 / (35 pi), an error of 5e-6 turn after
+// 200000 tics), so the reduction modulo a turn is the wrap of an integer (a double fmod cost 12000 cycles per tic on the EE).
+#define WPH_K 39060873u
+static float wph_rad;
+static int wph_lt = 0x7FFFFFFF;
+static float wph_fr = -1.0f;
+
+static float water_phase_rad(void)
+{
+	if (wph_lt != H.leveltime || wph_fr != H.lt_frac)
+	{
+		const u32 ph = (u32)(H.leveltime - 1) * WPH_K + (u32)(H.lt_frac * (float)WPH_K);
+
+		wph_rad = (float)ph * (6.28318530718f / 4294967296.0f);
+		wph_lt = H.leveltime;
+		wph_fr = H.lt_frac;
+	}
+	return wph_rad;
+}
+
 static void ripple_offset(float zc, float *ds, float *dt)
 {
-	float a = -3.14159265f * (zc * 0.5f * 0.025f) + (float)H.leveltime * 2.0f;
+	float a = -3.14159265f * (zc * 0.5f * 0.025f) + water_phase_rad();
 
 	*ds = ripple_sinf(a) * RIPPLE_AMP;
 	*dt = ripple_sinf(a + 1.57079633f) * RIPPLE_AMP; // cos
 }
 
-#include "ps2_hw_water.inc" // PS2-HW-47: water_fast, the one sweep water polygon
+#include "ps2_hw_water.inc" // PS2-HW-47 / 120: emit_water_poly (continuous ripple), the OPT10 band sweep (A/B) and the old band by band path
 
-static cv_t wpiece[CUTBUF], wrem[2][CUTBUF];
-
-static void emit_water_poly(const cv_t *v, int cnt, piece_t pc, int na)
-{
-	if (water_fast(v, cnt, pc))
-		return;
-	float wlo = v[0].w, whi = v[0].w, z0, z1, ds, dt, step = RIPPLE_STEP;
-	const cv_t *rem = v;
-	int nrem = cnt, i, k, which = 0;
-	piece_t p2;
-
-	if (!ripple_ready)
-	{
-		for (i = 0; i <= 256; i++)
-			ripple_sin[i] = sinf((float)i * (6.28318530718f / 256.0f));
-		ripple_ready = 1;
-	}
-	for (i = 1; i < cnt; i++)
-	{
-		if (v[i].w < wlo)
-			wlo = v[i].w;
-		if (v[i].w > whi)
-			whi = v[i].w;
-	}
-	z0 = zfrag_of_w(wlo);
-	z1 = zfrag_of_w(whi);
-	if (z0 >= RIPPLE_ZMAX)
-	{
-		cut_and_emit(v, cnt, 0, pc, na);
-		return;
-	}
-	k = z0 > 0.0f ? (int)(z0 / step) : 0;
-	for (;; k++)
-	{
-		float cutz = (float)(k + 1) * step;
-
-		if (cutz >= z1 || cutz >= RIPPLE_ZMAX)
-		{
-			// the last piece: the rest of the polygon
-			p2 = pc;
-			if (cutz >= RIPPLE_ZMAX && (float)k * step >= RIPPLE_ZMAX)
-			{
-				ds = dt = 0.0f;
-			}
-			else
-			{
-				float lo = (float)k * step, hi = z1 < RIPPLE_ZMAX ? z1 : RIPPLE_ZMAX;
-
-				if (lo < z0)
-					lo = z0;
-				ripple_offset(0.5f * (lo + hi), &ds, &dt);
-			}
-			p2.sb += ds;
-			p2.tb += dt;
-			cut_and_emit(rem, nrem, 0, p2, na);
-			return;
-		}
-		{
-			float cutw = w_of_zfrag(cutz);
-			int np = clip_attr(rem, nrem, wpiece, 6, cutw, 0, na);
-			cv_t *rb = wrem[which];
-			int nn = clip_attr(rem, nrem, rb, 6, cutw, 1, na);
-
-			if (np >= 3)
-			{
-				float lo = (float)k * step;
-
-				if (lo < z0)
-					lo = z0;
-				ripple_offset(0.5f * (lo + cutz), &ds, &dt);
-				p2 = pc;
-				p2.sb += ds;
-				p2.tb += dt;
-				cut_and_emit(wpiece, np, 0, p2, na);
-				H.st.bands++;
-			}
-			if (nn < 3)
-				return;
-			rem = rb;
-			nrem = nn;
-			which ^= 1;
-		}
-	}
-}
+// emit_water_poly (the water polygon of the plan with P.water) lives in ps2_hw_water.inc (PS2-HW-120, OPT11 FX)
 
 #include "ps2_hw_fast.inc" // PS2-HW-43: lit_fast_poly / lit_fast_plan
 #include "ps2_hw_vu1.inc" // PS2-HW-45: vu_poly / vu_sync (the VU1 program draws the polygons of a batch)
@@ -2123,6 +2078,9 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	const texrec_t *r;
 	int ok;
 
+	vu_plan_valid = 0; // (the plan cache path below does not run begin_draw_inner)
+	if (V.chunk_open)
+		vu_chunk_flush(); // the open VU1 chunk changes the GS state (CLUT rows, RGBAQ): the GS state cache must be what it leaves before this plan decides what to write (PS2-HW-107)
 	if (planc_active) // the light classes the last plan collected stay with it
 		planc_active->lf = LF;
 	if (!(ps2hwd_dbg_flags & HWDBG_PLANC) || (flags & PF_Corona) || (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing) || H.frame_no % 300 == 299) // (the frame of the HWFX census makes every plan)
@@ -2165,8 +2123,7 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 		if (OV.n)
 			ov_flush(); // anything but a ramp plan sees the picture with the queued light applied
 #ifdef HW_VU0
-		if (P.vu0)
-			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		P.vu0_ld = 0;
 #endif
 		H.cur_flags = flags;
 		G.plan_hit++;
@@ -2195,6 +2152,17 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	return ok;
 }
 
+#ifdef HW_VU0
+static inline void vu0_need(void)
+{
+	if (!P.vu0_ld)
+	{
+		vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		P.vu0_ld = 1;
+	}
+}
+#endif
+
 // Transform, clip and pack one convex polygon.
 // Vertices: base[idx[i]] (or base[i] when idx is NULL); with `vcol` (4 floats per vertex index) they carry colours.
 static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float *vcol)
@@ -2212,7 +2180,7 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		return;
 	if (P.vu)
 	{
-		if (!idx && !vcol && vu_poly(base, n))
+		if (!idx && !vcol && vu_poly(base, n, P.rs.lp.light))
 		{
 			G.p_vu++;
 			HG_SKY(0, 0);
@@ -2222,6 +2190,8 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 	}
 	i = 0;
 #ifdef HW_VU0
+	if (vu0)
+		vu0_need();
 	if (vu0 && !P.oldpath)
 	{
 		// PS2-HW-59: two vertices per VU0 sequence (the divide of one hides behind the multiplies of the other)
@@ -2291,7 +2261,8 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		}
 		pc.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
 		pc.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
-		big = (P.wrapx && (smax - smin) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin) * (float)P.r->h > UV_EXTENT); // PS2-HW-64: too many texels for one primitive: cut at whole repeats (cut_and_emit)
+		// PS2-HW-120: the ripple moves the texture coordinates of a vertex by up to 0.0325 of a repeat each way (the validator saw spans of 4101 texels)
+		big = (P.wrapx && (smax - smin + (P.water ? 0.07f : 0.0f)) * (float)P.r->w > UV_EXTENT) || (P.wrapy && (tmax - tmin + (P.water ? 0.07f : 0.0f)) * (float)P.r->h > UV_EXTENT); // PS2-HW-64: too many texels for one primitive: cut at whole repeats (cut_and_emit)
 	}
 	else
 	{
@@ -2318,9 +2289,9 @@ static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float
 		G.c_lit += cyc() - gt1;
 		HG_SKY(2, cyc() - gt1);
 	}
-	else if (P.water && P.textured && !P.vcol && !vcol && !big)
+	else if (P.water && P.textured && !P.vcol && !vcol)
 	{
-		G.p_water++, emit_water_poly(v, cnt, pc, na);
+		G.p_water++, emit_water_poly(v, cnt, pc, na, big, LF_PV(vu0, or_));
 		G.c_water += cyc() - gt1;
 		HG_SKY(4, cyc() - gt1);
 	}
@@ -2434,6 +2405,8 @@ static inline xv_t *xv_get(const FOutVector *base, const float *vcol, u32 vi)
 		if (P.vu0 && !vcol)
 		{
 			pv_t unused;
+
+			vu0_need();
 
 			e->oc = vu0_xform(&base[vi], &e->v, &unused);
 		}

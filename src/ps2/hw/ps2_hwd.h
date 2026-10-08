@@ -35,7 +35,9 @@ boolean PS2HWD_CaptureScreen(INT32 slot);
 struct GLMipmap_s;
 // Fan batches of hw_batching.c: desc holds nfans pairs (index of the first vertex in base, vertex count); one plan for all of them.
 struct FSurfaceInfo_s;
-void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc);
+void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc); // desc: nfans triples (first vertex, vertex count, light level of the polygon's sector) since OPT11 (PS2-HW-106)
+// Is the polygon lit by the palette rows of the VU1 program (its light level then does not belong in the key of a batch)? vsurf FSurfaceInfo, vtex GLMipmap_t, shader = the base shader slot.
+int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int shader);
 // The frame plan (PS2-HW-34): every polygon of the frame goes through PlanPolygon before the first batch is drawn; the driver notes which mip level each big texture needs.
 void PS2HWD_PlanBegin(void);
 void PS2HWD_PlanPolygon(struct GLMipmap_s *mipmap, const void *verts, unsigned int n); // verts: n FOutVector

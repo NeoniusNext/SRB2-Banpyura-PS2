@@ -15,11 +15,12 @@
 #include <string.h>
 
 // Sorts the parallel arrays keys[] / idx[] by key (keys[i] belongs to idx[i]); both are permuted.
-// tk / ti are scratch of n entries. The sort is stable: equal keys keep their order. Three passes of 11 bits; a pass whose digit is
+// tk / ti are scratch of n entries. The sort is stable: equal keys keep their order. Four passes of 8 bits (PS2-HW-109, OPT11 VU: it was three passes of 11 bits,
+// whose 2048-entry histograms cost 35 000 cycles to clear and sum whatever n was: a sprite sort of 60 entries took as much as the sort of 3000); a pass whose digit is
 // the same for every key is skipped. Returns 1 when the result is in keys/idx, 0 when it is in tk/ti (an odd number of passes ran).
 static inline int HWR_RadixSort32(unsigned int *keys, unsigned int *idx, unsigned int *tk, unsigned int *ti, unsigned int n)
 {
-	unsigned int count[3][2048];
+	unsigned int count[4][256];
 	unsigned int i, pass;
 	unsigned int *sk = keys, *si = idx, *dk = tk, *di = ti;
 	int in_src = 1;
@@ -29,18 +30,19 @@ static inline int HWR_RadixSort32(unsigned int *keys, unsigned int *idx, unsigne
 	{
 		unsigned int k = keys[i];
 
-		count[0][k & 2047]++;
-		count[1][(k >> 11) & 2047]++;
-		count[2][k >> 22]++;
+		count[0][k & 255]++;
+		count[1][(k >> 8) & 255]++;
+		count[2][(k >> 16) & 255]++;
+		count[3][k >> 24]++;
 	}
-	for (pass = 0; pass < 3; pass++)
+	for (pass = 0; pass < 4; pass++)
 	{
-		unsigned int shift = pass * 11, sum = 0, d;
+		unsigned int shift = pass * 8, sum = 0, d;
 		unsigned int *c = count[pass];
 
-		if (n && c[(sk[0] >> shift) & 2047] == n)
+		if (n && c[(sk[0] >> shift) & 255] == n)
 			continue; // every key has the same digit
-		for (d = 0; d < 2048; d++)
+		for (d = 0; d < 256; d++)
 		{
 			unsigned int t = c[d];
 
@@ -49,7 +51,7 @@ static inline int HWR_RadixSort32(unsigned int *keys, unsigned int *idx, unsigne
 		}
 		for (i = 0; i < n; i++)
 		{
-			unsigned int pos = c[(sk[i] >> shift) & 2047]++;
+			unsigned int pos = c[(sk[i] >> shift) & 255]++;
 
 			dk[pos] = sk[i];
 			di[pos] = si[i];

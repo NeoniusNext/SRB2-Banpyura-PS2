@@ -666,11 +666,18 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 // never called hidden (it is clipped by the driver).
 #include "ps2_hw_quad.h" // quad_no_centre (host test tools/ps2/hw_quad_hosttest.py)
 
+extern unsigned int hwr_geo_off; // -hwgo (hardware/hw_gcache.inc): the OPT11 engine side optimisations that are switched off
+
 int PS2HWD_QuadHidden(const void *vp)
 {
 	const FOutVector *v = (const FOutVector *)vp;
 	float x0 = 1.0e30f, x1 = -1.0e30f, y0 = 1.0e30f, y1 = -1.0e30f, hx, hy, cx, cy;
-	int i, and_ = 0x3F;
+	float sx[4], sy[4];
+	int oc[4], k, and_ = 0x3F;
+	// OPT11 (PS2-HW-86): the corners 0 and 2 first. When they are 8 pixels apart in x or y and not both outside one plane, the answer of the four corner test is "not hidden"
+	// for sure (the box of all four is as big, the AND of the four outcodes is 0, and a corner that is too near the eye gives "not hidden" as well): the other two corners are
+	// not transformed. The order of the transforms is the only difference from the loop of PS2-HW-72; -hwgo 4: the four corners always.
+	static const unsigned char ord[4] = {0, 2, 1, 3};
 
 	if (!H.up || H.vpw < 1.0f || H.vph < 1.0f || (ps2hwd_dbg_flags & HWDBG_NOPLAN))
 		return 0;
@@ -680,26 +687,33 @@ int PS2HWD_QuadHidden(const void *vp)
 	cx = H.vpx + hx - 0.5f;
 	cy = H.vpy + hy - 0.5f;
 	spr_hid_test++;
-	for (i = 0; i < 4; i++)
+	for (k = 0; k < 4; k++)
 	{
 		cv_t c;
-		float iw, sx, sy;
+		float iw;
+		const int i = ord[k];
 
 		xform_vertex(&v[i], NULL, &c);
 		if (c.w < 2.0f * H.near_plane)
 			return 0; // near the eye (or behind it): the clipper decides
-		and_ &= outcode(&c, 1.0f, 1.0f);
+		oc[k] = outcode(&c, 1.0f, 1.0f);
+		and_ &= oc[k];
 		iw = 1.0f / c.w;
-		sx = cx + c.x * iw * hx;
-		sy = cy - c.y * iw * hy;
-		if (sx < x0)
-			x0 = sx;
-		if (sx > x1)
-			x1 = sx;
-		if (sy < y0)
-			y0 = sy;
-		if (sy > y1)
-			y1 = sy;
+		sx[k] = cx + c.x * iw * hx;
+		sy[k] = cy - c.y * iw * hy;
+		if (k == 1 && !(hwr_geo_off & 4) && !(oc[0] & oc[1]) && (fabsf(sx[1] - sx[0]) > 8.0f || fabsf(sy[1] - sy[0]) > 8.0f))
+			return 0;
+	}
+	for (k = 0; k < 4; k++)
+	{
+		if (sx[k] < x0)
+			x0 = sx[k];
+		if (sx[k] > x1)
+			x1 = sx[k];
+		if (sy[k] < y0)
+			y0 = sy[k];
+		if (sy[k] > y1)
+			y1 = sy[k];
 	}
 	if (and_)
 	{

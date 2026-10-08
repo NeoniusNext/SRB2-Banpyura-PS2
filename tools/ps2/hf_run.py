@@ -28,6 +28,7 @@ def main():
     ap.add_argument('--demo', default='', help='attract demo (DEMO_001..4): staged and played with -timedemo')
     ap.add_argument('--pak', default=str(PAK))
     ap.add_argument('--files', default='', help='add-ons (paths, comma separated): copied next to the ELF and loaded with -file')
+    ap.add_argument('--tree', default='', help='a directory copied into the run directory (host:/ of the PS2: models.dat, models/*.md3 ...)')
     ap.add_argument('--emu', default='', help='AppRun of another emulator copy (e.g. /opt/pcsx2/hwgl: PCSX2 with the OpenGL hardware renderer)')
     ap.add_argument('extra', nargs='*')
     a = ap.parse_args()
@@ -35,6 +36,8 @@ def main():
     cfg = ''.join(x.strip() + '\n' for x in a.cfg.split(';') if x.strip())
     opt_run.stage(run, Path(a.elf).resolve(), Path(a.pak).resolve(), a.demo or None, cfg)
     import shutil
+    if a.tree:
+        shutil.copytree(a.tree, run, dirs_exist_ok=True)
     fargs = []
     for f in [x for x in a.files.split(',') if x]:
         shutil.copy2(f, run / Path(f).name)

@@ -5122,7 +5122,13 @@ void G_InitNew(UINT8 pultmode, const char *mapname, boolean resetplayer, boolean
 		pultmode = false;
 
 	if (!demoplayback && !netgame) // Netgame sets random seed elsewhere, demo playback sets seed just before us!
+	{
+#ifdef PS2REF
+		if (M_CheckParm("-ps2ref-maptics")) P_SetRandSeed(0x1B2D3F5u); // OPT11-CORE: a fixed seed, so the map sweep is comparable between builds
+		else
+#endif
 		P_SetRandSeed(M_RandomizedSeed()); // Use a more "Random" random seed
+	}
 
 	if (resetplayer)
 	{
