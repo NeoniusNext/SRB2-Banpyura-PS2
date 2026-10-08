@@ -255,7 +255,7 @@ static void mdl_mesh_corners(const mesh_t *mesh, int fi, int ni, float lerp, int
 
 #ifdef HW_VU0
 // vu0_xform2 of ps2_hw_vu0.inc with the vertices as floats: in = x, y, z, 1, x, y, z, 1 (16 byte aligned, made by the caller); c0, c1 = 16 byte aligned scratch for the clip coordinates (only w is read back)
-static inline void mdl_xform2(const float *in, float *c0, float *c1, void *o0, void *o1, int *oc0, int *oc1)
+static inline void mdl_xform2(const float *in, float *c0, float *c1, void *o0, void *o1, void *f0, void *f1, int *oc0, int *oc1)
 {
 	u32 f, fa, fb;
 
@@ -286,6 +286,7 @@ static inline void mdl_xform2(const float *in, float *c0, float *c1, void *o0, v
 		"vmadd.xyz $vf10, $vf9, $vf11\n"
 		"vmax.z $vf10, $vf10, $vf0\n"
 		"vmini.z $vf10, $vf10, $vf13\n"
+		"sqc2 $vf10, 0(%6)\n"
 		"vftoi0.xyz $vf10, $vf10\n"
 		"sqc2 $vf10, 0(%4)\n"
 		"vwaitq\n"
@@ -295,9 +296,10 @@ static inline void mdl_xform2(const float *in, float *c0, float *c1, void *o0, v
 		"vmadd.xyz $vf18, $vf17, $vf11\n"
 		"vmax.z $vf18, $vf18, $vf0\n"
 		"vmini.z $vf18, $vf18, $vf13\n"
+		"sqc2 $vf18, 0(%7)\n"
 		"vftoi0.xyz $vf18, $vf18\n"
 		"sqc2 $vf18, 0(%5)\n"
-		: "=&r"(f) : "r"(in), "r"(c0), "r"(c1), "r"(o0), "r"(o1) : "memory");
+		: "=&r"(f) : "r"(in), "r"(c0), "r"(c1), "r"(o0), "r"(o1), "r"(f0), "r"(f1) : "memory");
 	fa = (f >> 6) & 0x3F;
 	fb = f & 0x3F;
 	fa = ((fa & 0x15u) << 1) | ((fa >> 1) & 0x15u);
@@ -414,6 +416,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	const u32 col = ps->col;
 	u32 fogtab[34];
 	int fogknown = 0, uni = 1, urow = 0, ucls = 0;
+	u32 orall = 0; // the outcodes of all vertices or'ed: 0 = the whole mesh is inside the guard band and the near plane
 	u32 nrej = 0, nclip = 0;
 	float wmin = 1e30f, wmax = -1e30f;
 	qw_t colqw;
@@ -425,51 +428,58 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	colqw.w[2] = (col >> 16) & 255;
 	colqw.w[3] = col >> 24;
 	vu0_need();
-	// 1. every vertex: interpolation, the VU0 transform, the GIF quadwords (ST + Q, the colour with the light factor, zi for the format)
-	for (k = 0; k < nv; k += 2)
+	// 1. every vertex: interpolation, the VU0 transform, the GIF quadwords (ST + Q, zi for the format); the colour with the light factor below
 	{
-		int o0, o1, lane;
-		mdl_v_t *m0 = &mv[k], *m1 = &mv[k + 1]; // (the spare entry takes the second lane of an odd last vertex)
+		const int zs = fmt != 0 ? 4 : 0;
+		const float *u = uv;
 
-		mdl_pos(pa + k * 3, pb + k * 3, lerp, in);
-		if (k + 1 < nv)
-			mdl_pos(pa + k * 3 + 3, pb + k * 3 + 3, lerp, in + 4);
-		else
-			memcpy(in + 4, in, 3 * sizeof(float));
-		mdl_xform2(in, clip0, clip1, m0, m1, &o0, &o1);
-		for (lane = 0; lane < 2; lane++)
+		for (k = 0; k < nv; k += 2, u += 4)
 		{
-			mdl_v_t *m = lane ? m1 : m0;
-			const int kk = k + lane;
-			const float w = lane ? clip1[3] : clip0[3];
-			const int oc = lane ? o1 : o0;
-			const float q = m->q;
+			int o0, o1;
+			mdl_v_t *m0 = &mv[k], *m1 = m0 + 1; // (the spare entry takes the second lane of an odd last vertex)
 
-			if (kk >= nv)
-				break;
-			m->w = w;
-			m->ocl = (u32)oc;
-			m->stq.f[0] = uv[kk * 2] * tsx * q;
-			m->stq.f[1] = uv[kk * 2 + 1] * tsy * q;
-			m->stq.f[2] = q;
-			m->stq.w[3] = 0;
-			if (fmt != 0)
-				m->zi <<= 4;
-			if (oc == 0)
+			mdl_pos(pa + k * 3, pb + k * 3, lerp, in);
+			if (k + 1 < nv)
+				mdl_pos(pa + k * 3 + 3, pb + k * 3 + 3, lerp, in + 4);
+			else
+				memcpy(in + 4, in, 3 * sizeof(float));
+			mdl_xform2(in, clip0, clip1, m0, m1, &m0->col4, &m1->col4, &o0, &o1); // (col4 holds the float screen coordinates until the triangles are classified)
 			{
-				if (w < wmin)
-					wmin = w;
-				if (w > wmax)
-					wmax = w;
+				const float q = m0->q, w = clip0[3];
+
+				m0->w = w;
+				m0->ocl = (u32)o0;
+				orall |= (u32)o0;
+				m0->stq.f[0] = u[0] * tsx * q;
+				m0->stq.f[1] = u[1] * tsy * q;
+				m0->stq.f[2] = q;
+				m0->zi <<= zs;
+				if (bands && o0 == 0)
+				{
+					if (w < wmin)
+						wmin = w;
+					if (w > wmax)
+						wmax = w;
+				}
 			}
-			if (light)
+			if (k + 1 < nv)
 			{
-				const float lf = mdl_lf[mdl_lidx(na, nb, kk, lerp)];
+				const float q = m1->q, w = clip1[3];
 
-				m->col4.w[0] = (u32)((float)(col & 255) * lf + 0.5f);
-				m->col4.w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
-				m->col4.w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
-				m->col4.w[3] = col >> 24;
+				m1->w = w;
+				m1->ocl = (u32)o1;
+				orall |= (u32)o1;
+				m1->stq.f[0] = u[2] * tsx * q;
+				m1->stq.f[1] = u[3] * tsy * q;
+				m1->stq.f[2] = q;
+				m1->zi <<= zs;
+				if (bands && o1 == 0)
+				{
+					if (w < wmin)
+						wmin = w;
+					if (w > wmax)
+						wmax = w;
+				}
 			}
 		}
 	}
@@ -485,7 +495,22 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 		urow = pal ? pal_row_of(ucls) : ucls;
 	}
 	// 3. the triangles: flags, cull, (class)
-	if (uni)
+	if (uni && orall == 0)
+	{
+		// the whole mesh is inside: only the cull test
+		for (t = 0; t < nt; t++)
+		{
+			const mdl_v_t *a = &mv[ix[t * 3]], *b = &mv[ix[t * 3 + 1]], *c = &mv[ix[t * 3 + 2]];
+			const float area = (b->col4.f[0] - a->col4.f[0]) * (c->col4.f[1] - a->col4.f[1]) - (c->col4.f[0] - a->col4.f[0]) * (b->col4.f[1] - a->col4.f[1]);
+
+			if (area * cull >= 0.0f)
+				nrej++;
+			else
+				ord[nord++] = (u16)t;
+		}
+		minrow = maxrow = urow;
+	}
+	else if (uni)
 	{
 		for (t = 0; t < nt; t++)
 		{
@@ -504,7 +529,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 				mdl_tri_general(mesh, fi, ni, lerp, light, ix[t * 3], ix[t * 3 + 1], ix[t * 3 + 2]);
 				continue;
 			}
-			area = (float)(b->xi - a->xi) * (float)(c->yi - a->yi) - (float)(c->xi - a->xi) * (float)(b->yi - a->yi); // screen space, y down: the opposite sign of the clip space test of emit_tris
+			area = (b->col4.f[0] - a->col4.f[0]) * (c->col4.f[1] - a->col4.f[1]) - (c->col4.f[0] - a->col4.f[0]) * (b->col4.f[1] - a->col4.f[1]); // screen space, y down: the opposite sign of the clip space test of emit_tris
 			if (area * cull >= 0.0f)
 			{
 				nrej++;
@@ -536,7 +561,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 				mdl_tri_general(mesh, fi, ni, lerp, light, ix[t * 3], ix[t * 3 + 1], ix[t * 3 + 2]);
 				continue;
 			}
-			area = (float)(b->xi - a->xi) * (float)(c->yi - a->yi) - (float)(c->xi - a->xi) * (float)(b->yi - a->yi);
+			area = (b->col4.f[0] - a->col4.f[0]) * (c->col4.f[1] - a->col4.f[1]) - (c->col4.f[0] - a->col4.f[0]) * (b->col4.f[1] - a->col4.f[1]);
 			if (area * cull >= 0.0f)
 			{
 				nrej++;
@@ -564,7 +589,17 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	if (!nord)
 		return 1;
 
-	// 4. the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
+	// 4. the colour with the light factor of every vertex (col4 held the screen coordinates until now), then the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
+	if (light)
+		for (k = 0; k < nv; k++)
+		{
+			const float lf = mdl_lf[mdl_lidx(na, nb, k, lerp)];
+
+			mv[k].col4.w[0] = (u32)((float)(col & 255) * lf + 0.5f);
+			mv[k].col4.w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
+			mv[k].col4.w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
+			mv[k].col4.w[3] = col >> 24;
+		}
 	ls_close();
 	if (uni)
 	{

@@ -1651,6 +1651,8 @@ boolean HWR_DrawModel(gl_vissprite_t *spr)
 				return false; // there was no room a moment ago: a sprite for now
 			md2->ps2_retry = 0;
 			md2->model = PS2Models_Load(md2->filename, (void **)&md2->model, &why);
+			if (!md2->model && why == 3)
+				return false; // the models of this frame were read already (PS2Models_Load): a sprite now, asked again in the next frame
 			if (!md2->model && why == 0)
 			{
 				sprintf(filename, "models/%s", md2->filename);

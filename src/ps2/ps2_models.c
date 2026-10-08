@@ -537,6 +537,9 @@ static int Slot(void)
 	return -1;
 }
 
+#define MAX_LOADS_PER_FRAME 2
+static UINT32 ld_frame = 0xFFFFFFFFu, ld_count;
+
 model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 {
 	const lumpinfo_t *l;
@@ -555,6 +558,23 @@ model_t *PS2Models_Load(const char *rel, void **owner, int *why)
 	*why = 0;
 	if (!PK_Open() || !(l = PK_Find(rel)))
 		return NULL;
+	{
+		// at most MAX_LOADS_PER_FRAME models are read in one frame (a load is up to 7 M cycles: a level start with ten new models in view would be a hitch of 70 ms):
+		// the others are sprites for a frame or two (why = 3: ask again next frame)
+		const UINT32 now = Z_FrameCount();
+
+		if (ld_frame != now)
+		{
+			ld_frame = now;
+			ld_count = 0;
+		}
+		if (ld_count >= MAX_LOADS_PER_FRAME)
+		{
+			*why = 3;
+			return NULL;
+		}
+		ld_count++;
+	}
 	if (l->size < SRMD_HDR || ReadLump(l, hdr, SRMD_HDR, 0) != SRMD_HDR || memcmp(hdr, "SRMD", 4) != 0 || U32At(hdr + 4) != SRMD_VERSION)
 	{
 		*why = 2;

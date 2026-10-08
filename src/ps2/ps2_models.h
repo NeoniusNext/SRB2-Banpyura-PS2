@@ -25,7 +25,7 @@ boolean PS2Models_PackPresent(void);
 char *PS2Models_Dat(size_t *size);
 
 // Reads the cooked model of models.dat's file name `rel` ("PLAY/SONIC.md3") into one zone block owned by *owner (= &md2->model).
-// NULL when there is no cooked model or no room (*why = 0 none, 1 no memory, 2 damaged): never an I_Error.
+// NULL when there is no cooked model or no room (*why = 0 none, 1 no memory, 2 damaged, 3 too many models were read in this frame: ask again in the next one): never an I_Error.
 model_t *PS2Models_Load(const char *rel, void **owner, int *why);
 
 // A model of the pack is in use this frame (not a candidate for the reclaim hook until the next frame)
