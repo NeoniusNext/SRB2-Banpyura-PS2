@@ -1924,9 +1924,32 @@ static inline float ripple_sinf(float a) // sin() of any angle from a 256 entry 
 	return ripple_sin[i] + (ripple_sin[i + 1] - ripple_sin[i]) * x;
 }
 
+// PS2-HW-125: the phase of the shader's time term. r_opengl.c SetShaderInfo hands the shader (leveltime - 1 + rendertimefrac) / TICRATE seconds and the shader
+// adds seconds * speed (2 rad): 2 / 35 rad per tic, one turn in 110 tics. The first versions of this driver (OPT9, OPT10, the first OPT11 one) turned the ripple 2 rad per
+// TIC: 35 times too fast, a water that flickered instead of rippling slowly. Reduced to [0, 2 pi) in double once per change of the time.
+static float wph_rad;
+static int wph_lt = 0x7FFFFFFF;
+static float wph_fr = -1.0f;
+
+static float water_phase_rad(void)
+{
+	if (wph_lt != H.leveltime || wph_fr != H.lt_frac)
+	{
+		double t = ((double)(H.leveltime - 1) + (double)H.lt_frac) * (2.0 / 35.0);
+
+		t = fmod(t, 6.283185307179586);
+		if (t < 0.0)
+			t += 6.283185307179586;
+		wph_rad = (float)t;
+		wph_lt = H.leveltime;
+		wph_fr = H.lt_frac;
+	}
+	return wph_rad;
+}
+
 static void ripple_offset(float zc, float *ds, float *dt)
 {
-	float a = -3.14159265f * (zc * 0.5f * 0.025f) + (float)H.leveltime * 2.0f;
+	float a = -3.14159265f * (zc * 0.5f * 0.025f) + water_phase_rad();
 
 	*ds = ripple_sinf(a) * RIPPLE_AMP;
 	*dt = ripple_sinf(a + 1.57079633f) * RIPPLE_AMP; // cos

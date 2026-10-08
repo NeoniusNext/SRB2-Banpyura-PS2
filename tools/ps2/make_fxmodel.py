@@ -81,7 +81,7 @@ def main():
             k = ((x // 8) + (y // 8)) % 2
             im.putpixel((x, y), (230, 90, 40, 255) if k else (40, 120, 230, 255))
     im.save(out / 'models' / 'FWR1.png')
-    (out / 'models.dat').write_text('FWR1 FWR1.md3 6.0 0.0\n')
+    (out / 'models.dat').write_text('FWR1 FWR1.md3 1.2 0.0\n')
     print('model:', out / 'models' / 'FWR1.md3', 'frames', nframes)
 
 

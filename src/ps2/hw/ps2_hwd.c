@@ -34,6 +34,7 @@
 #include "../../hardware/hw_drv.h"
 #include "../../hardware/hw_main.h"
 #include "../../m_argv.h" // -hwnosplit
+#include "../../r_main.h" // rendertimefrac (the shader time of the water, PS2-HW-125)
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
@@ -1411,7 +1412,10 @@ static void hw_UnSetShader(void)
 static void hw_SetShaderInfo(hwdshaderinfo_t info, INT32 value)
 {
 	if (info == HWD_SHADERINFO_LEVELTIME)
+	{
 		H.leveltime = ps2hwd_force_lt >= 0 ? ps2hwd_force_lt : value;
+		H.lt_frac = ps2hwd_force_lt >= 0 ? 1.0f : FIXED_TO_FLOAT(rendertimefrac); // as r_opengl.c SetShaderInfo: (value - 1 + rendertimefrac) / TICRATE (PS2-HW-125)
+	}
 }
 
 // PS2-HW-71: palette rendering (gr_paletterendering): the colour of a texel is lighttable[index][row]. The GS does it with CLUTs (ps2_hw_pal.inc): the

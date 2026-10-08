@@ -157,7 +157,7 @@ Every row remains **U for full engine/PC comparison**, including rows marked P.
 | CompileShader | warning, returns false | Missing |
 | SetShader | stores requested slot; custom slots warn | Explicit experimental built-in passes; capability refusal keeps engine fallback routing |
 | UnSetShader | fixed-function state already active | No shader allocation to release |
-| SetShaderInfo | stores LEVELTIME | Water/ripple/time-driven texture effects remain missing |
+| SetShaderInfo | stores LEVELTIME | The water ripple is made from it (OPT11-FX, PS2-HW-120, `ps2_hw_water.inc`) |
 | SetPaletteLookup | no-op (PS2-HW-71): the textures are indexed, no RGB-to-index lookup is needed | OPT10: palette rendering is done with CLUTs, see the OPT10-HF section |
 | CreateLightTable | keeps the 32 x 256 colours as palette indices (8 KB), returns an id (PS2-HW-71) | rows of the table are CLUT images (`CK_LIGHT`) |
 | UpdateLightTable | rebuilds the indices, new CLUT generation | as CreateLightTable |
@@ -184,8 +184,8 @@ implemented primitive path correctly.
 | Translucent/additive/reverse-subtract blending | Native GS equations | Tested independently, GS rounding differs from PC; textured/partial-alpha coverage needs expansion |
 | Subtractive/multiplicative/environment blending | Native source-minus-destination after polygon alpha scaling; palette channel multiply; two-pass environment | P flat/opaque palette within 2 RGB levels. Partial-alpha subtract, direct-colour multiply, keyed multiply/depth and lit combinations remain gaps |
 | Alpha/keyed holes | Keyed index 255, CT32 AP88, masked source-alpha scaling | GS alpha quantization/general partial-alpha threshold parity remain gaps; polygon alpha 128 correctly passes >0.5 |
-| Water shader/refraction/ripple | No water fragment shader; PF_Ripple carries no implemented shader | Built-in water effect and engine water scenarios |
-| Underwater/heat screen distortion | CPU grid redraw exists | Grid input/orientation/reference frames; not equivalent to missing fragment shaders |
+| Water shader/ripple | PF_Ripple: texture shift in the vertices by eye depth (C0, no seams, reach by texture size), one triangle strip per light class (OPT11-FX) | P/H: host test `ripple` mean error 0.37 px against the GLSL, PS2/PC scene pairs (`docs/GATES/g1/opt11-FX.md`); the shader has no refraction of what lies below |
+| Underwater/heat screen distortion | CPU grid redraw (`PostImgRedraw`) | Compared with the PC in water pits of GFZ1/GFZ2 (OPT11-FX): same wobble and colours (the wobble moves a column by at most 0.9 px); the underlay of the grid is black here, the PC code draws it with `white` and whatever texture state is current: edges only, not measured |
 | Built-in/custom shaders | Unsupported, Init/Compile false | Fixed-function or multipass equivalents for built-ins; custom programmable code has no interpreter |
 | Palette rendering/light LUT/colormap postprocessing | Unsupported shader callbacks warn | Complete colour lookup and light-table effects |
 | Near/far/frustum/scissor clipping | CPU homogeneous clip, GS guard band/scissor | H/P independent reference; full map occlusion and splitscreen not verified |

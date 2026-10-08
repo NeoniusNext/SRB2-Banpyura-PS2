@@ -354,6 +354,7 @@ static struct
 	int shaders_on; // SetSpecialState(HWD_SET_SHADERS)
 	int model_light; // SetSpecialState(HWD_SET_MODEL_LIGHTING)
 	int leveltime;
+	float lt_frac; // rendertimefrac of the frame (1.0 without frame interpolation): the shader time is (leveltime - 1 + lt_frac) / TICRATE seconds (PS2-HW-125)
 
 	gsregs_t gsr;
 	u32 serial; // bumped by everything that writes GS state or CLUT data (A+D packets, uploads): a polygon plan set up earlier is then stale

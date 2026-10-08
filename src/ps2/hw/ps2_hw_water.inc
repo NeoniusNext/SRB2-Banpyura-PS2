@@ -270,7 +270,7 @@ static int band_sweep(const cv_t *v, int cnt, piece_t pc, int ripple)
 // Deep Sea): a visible line along every band edge, and the bands stop at z = 320 (a 256 texel flat still moves 3 pixels there).
 //
 // Here the shift belongs to the VERTICES. The shader's offset is a function of the eye depth z of the fragment alone,
-//     (ds, dt) = amp * (sin a, cos a), a = a0 - K z, K = pi * 0.0125 (period 160 units of depth), a0 = 2 * leveltime,
+//     (ds, dt) = amp * (sin a, cos a), a = a0 - K z, K = pi * 0.0125 (period 160 units of depth), a0 = 2 * (leveltime - 1 + frac) / 35 (PS2-HW-125),
 // and z is an affine function of the position on a planar polygon, so the GS (S/Q, T/Q interpolated in screen space = linear in the polygon) draws
 // the exact offset if every vertex carries (s - ds(z_v), t - dt(z_v)) and the polygon has a vertex at every depth where the sine is sampled: between
 // two sample planes the offset is linear in z (the chord of the sine), at the plane it is exact, and a point shared by two pieces (or by two
@@ -388,19 +388,20 @@ static const rtab_t *ripple_table(int sw)
 	return t;
 }
 
-// phase of the level time: 2 * leveltime radians = leveltime * 256 / pi (1/256 turns), reduced in integers (a float loses the fraction after 10^5 tics);
+// phase of the level time in 1/256 turns: the shader's time is (leveltime - 1 + rendertimefrac) / 35 seconds, 2 rad per second (PS2-HW-125: water_phase_rad, reduced in double);
 // and the eye depth constants of the view
+static float rp_frac = -1.0f;
+
 static inline void ripple_time_set(void)
 {
-	const unsigned lt = (unsigned)H.leveltime;
-
 	rp_near = H.near_plane;
 	rp_zk = FAR_CLIPPING_PLANE / (FAR_CLIPPING_PLANE - H.near_plane);
-	if (rp_time == (int)lt)
+	if (rp_time == H.leveltime && rp_frac == H.lt_frac)
 		return;
-	rp_time = (int)lt;
+	rp_time = H.leveltime;
+	rp_frac = H.lt_frac;
 	rp_ver++;
-	rp_u0 = (float)((lt * 81u) & 255u) + fmodf((float)(lt & 0xFFFFFu) * 0.4873308631f, 256.0f) + 16384.0f;
+	rp_u0 = water_phase_rad() * (256.0f / 6.28318530718f) + 16384.0f;
 }
 
 // the shift (ds, dt) of the texture coordinates at eye depth z: amp * (sin a, cos a), a = a0 - K z

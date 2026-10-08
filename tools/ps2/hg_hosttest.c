@@ -410,7 +410,7 @@ static void test_water(void)
 		int lvl = (int)(rnd() % 256);
 
 		water_setup((float)rndf(0, 360));
-		H.leveltime = (int)(rnd() % 100000);
+		H.leveltime = (int)(rnd() % 100000); H.lt_frac = 1.0f;
 		water_poly(vv, n, dist, cz, rx, rz);
 		memset(&surf, 0, sizeof surf);
 		surf.PolyColor.rgba = 0x80FFFFFFu;
@@ -423,7 +423,7 @@ static void test_water(void)
 		{
 			ps2hwd_dbg_flags = pass == 0 ? HWDBG_OLDWATER | HWDBG_WATERPOL : HWDBG_WATERPOL; ps2hwd_water_ab = pass == 0 ? 0 : HWDBG_WATERBANDS; /* PS2-HW-120: the OPT10 sweep is the A/B switch now */
 			if (pass == 1 && neg == 1)
-				H.leveltime += 7; /* negative control 1: the sweep ripples with another time */
+				H.leveltime += 60; /* negative control 1: the sweep ripples with another time */
 			cap_reset();
 			H.gsr.valid = 0;
 			if (!begin_draw(flags, &surf))
@@ -492,7 +492,7 @@ static void test_water(void)
 
 
 /* ---- group: ripple (PS2-HW-120): the water polygon against the exact shader, GS interpolation included ---- */
-/* The GLSL water shader: texel = tex(s - sin(a) * 0.025, t - cos(a) * 0.025), a = -pi * (z / 2 * 0.025) + leveltime * 2, z = eye depth of the fragment
+/* The GLSL water shader: texel = tex(s - sin(a) * 0.025, t - cos(a) * 0.025), a = -pi * (z / 2 * 0.025) + (leveltime - 1 + rendertimefrac) / 35 * 2 (PS2-HW-125: seconds, not tics), z = eye depth of the fragment
  * (zfrag). The test draws random convex polygons with the driver (emit_fan with the water plan), reads the GIF fans back, and for random points
  * inside the polygon interpolates S, T, Q of the piece that contains the point the way the GS does (screen space, then S/Q) and compares the texture
  * coordinate with the shader's: the error in texels, and in pixels (texels * F / z, the size of a texel on the screen at the depth of the point). */
@@ -575,9 +575,9 @@ static void test_ripple(void)
 			int s, nf;
 
 			water_setup(yaw);
-			H.leveltime = lt;
+			H.leveltime = lt; H.lt_frac = 1.0f;
 			if (mode == 0 && neg == 7)
-				H.leveltime += 1; /* negative control 7: the ripple of another tic */
+				H.leveltime += 20; /* negative control 7: the ripple of another tic */
 			{
 				/* the polygon of water_poly, with the texture coordinates of this texture size */
 				int i;
@@ -710,7 +710,7 @@ static void test_ripple(void)
 				/* the shader's value (the amplitude fades out beyond the depth of RP_PX_FULL pixels: the same law as the driver's, so compare only to that depth) */
 				{
 					const rtab_t *rt = ripple_table(wt_w);
-					double a = -3.14159265358979 * (zeye / 2.0 * 0.025) + (double)lt * 2.0, g = zeye <= rt->zfull ? 1.0 : zeye >= rt->zend ? 0.0 : (rt->zend - zeye) / (rt->zend - rt->zfull);
+					double a = -3.14159265358979 * (zeye / 2.0 * 0.025) + ((double)(lt - 1) + 1.0) * (2.0 / 35.0), g = zeye <= rt->zfull ? 1.0 : zeye >= rt->zend ? 0.0 : (rt->zend - zeye) / (rt->zend - rt->zfull);
 
 					const double amp = neg == 8 ? 0.0 : 0.025; /* negative control 8 (a debugging aid): the plan without ripple against the picture without it */
 
@@ -912,7 +912,7 @@ static void test_bands(void)
 		int lvl = (int)(rnd() % 256), wall = rnd() % 2;
 
 		water_setup((float)rndf(-30, 30));
-		H.leveltime = 0;
+		H.leveltime = 0; H.lt_frac = 1.0f;
 		memset(&surf, 0, sizeof surf);
 		surf.PolyColor.rgba = 0xFFFFFFFFu;
 		surf.LightInfo.light_level = lvl;
@@ -1021,7 +1021,7 @@ static void test_litclip(void)
 		wt_w = trial % 3 == 0 ? 48 : 64; /* 48: not a power of two: the polygon is cut at the repeats (stage 0) */
 		wt_h = trial % 4 == 0 ? 40 : 64;
 		water_setup((float)rndf(-180, 180));
-		H.leveltime = 0;
+		H.leveltime = 0; H.lt_frac = 1.0f;
 		memset(&surf, 0, sizeof surf);
 		surf.PolyColor.rgba = 0xFFFFFFFFu;
 		surf.LightInfo.light_level = lvl;
