@@ -15,9 +15,9 @@
 #   interp   interpreter + EE data cache against the recompiler (needs build/pcsx2-int, opt10-S.md)
 #   split    split screen, two scripted pads, both renderers
 #   net      PS2 <-> PC, PS2 <-> PS2, local mock master only (needs build/pc-net, build/pcsx2-net1/2; see net_env.py)
-#   demos    the 4 demos to the end: software (PC tics + PS2 frames), hardware (PC tics), hardware with injection
-#   sweep    84 maps, one session chain per renderer (chain_sweep.py) and every map on a cold boot (map_sweep.py)
-#   soak     20 game minutes in one session per renderer (stab_soak.py)
+#   demos    the 4 demos to the end: software (PC tics + PS2 frames), hardware (PC tics), hardware with injection (demosw demohw demohi; need the PS2REF ELF, built here)
+#   sweep    84 maps, one session chain per renderer (chain_sweep.py) and every map on a cold boot (map_sweep.py) (chainsw chainhw coldsw coldhw)
+#   soak     20 game minutes in one session per renderer (stab_soak.py) (soaksw soakhw)
 # The log is build/logs/stab-TAG.txt (TAG defaults to the ELF's file name); the runs are build/runs/<TAG>-*.
 # Environment: SRB2_STAB_PAK = the cooked packs (default: the shared build/pak of the main tree, read only), SRB2_STAB_FRAMES = frames per map (35),
 # SRB2_STAB_MINUTES = soak game minutes (20), SRB2_STAB_ZDBG = a ZDEBUG ELF for the heap checks (build/out-zdbg2/SRB2.ELF).
@@ -189,7 +189,7 @@ demo_suite() { # demo_suite PREFIX sw|hw [extra engine args]
 
 # The demos need the PS2REF ELF (tic log and frame dump, -DPS2REF) of the SAME source tree as ELF: SRB2_STAB_REFELF names one, otherwise it is built here (build/out-ref, incremental,
 # the environment of the caller: SRB2_PS2_NO / SRB2_PS2_HW as for the ELF itself; the default is the full configuration with the hardware renderer).
-stage_demos() {
+ref_elf() { # prints the PS2REF ELF (SRB2_STAB_REFELF, or built here)
 	local REF=${SRB2_STAB_REFELF:-}
 	if [ -z "$REF" ]; then
 		say "-- building the PS2REF ELF from this tree (build/out-ref)"
@@ -198,35 +198,75 @@ stage_demos() {
 		SRB2_PS2_OUT=$ROOT/build/out-ref SRB2_PS2_NO=${SRB2_PS2_NO-} SRB2_PS2_HW=${SRB2_PS2_HW-1} python3 tools/ps2/build.py --ps2ref --jobs 2 >> "$L" 2>&1
 		REF=$ROOT/build/out-ref/SRB2.ELF
 	fi
+	echo "$REF"
+}
+stage_demosw() {
+	local REF
+	REF=$(ref_elf)
 	[ -f "$REF" ] || { say "demos: no PS2REF ELF ($REF), skipped"; return; }
-	say "-- demos on $REF ($(stat -c %s "$REF") bytes)"
-	say "-- demos, software"
+	say "-- demos, software, on $REF ($(stat -c %s "$REF") bytes)"
 	ELF=$REF demo_suite dsw sw
-	say "-- demos, hardware"
+}
+stage_demohw() {
+	local REF
+	REF=$(ref_elf)
+	[ -f "$REF" ] || { say "demos: no PS2REF ELF ($REF), skipped"; return; }
+	say "-- demos, hardware, on $REF"
 	ELF=$REF demo_suite dhw hw
-	say "-- demos, hardware with an out-of-memory injection every 200 frames"
+}
+stage_demohi() {
+	local REF
+	REF=$(ref_elf)
+	[ -f "$REF" ] || { say "demos: no PS2REF ELF ($REF), skipped"; return; }
+	say "-- demos, hardware with an out-of-memory injection every 200 frames, on $REF"
 	ELF=$REF demo_suite dhi hw -zoomevery 200
 }
 
-stage_sweep() {
+stage_chainsw() {
 	say "-- chain sweep, software (all maps in session chains)"
 	run python3 tools/ps2/chain_sweep.py --elf "$ELF" --tag "$TAG-sw" --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -zstack
+}
+stage_chainhw() {
 	say "-- chain sweep, hardware"
 	run python3 tools/ps2/chain_sweep.py --elf "$ELF" --tag "$TAG-hw" --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -renderer Hardware -zstack
+}
+stage_coldsw() {
 	say "-- cold per-map sweep (one boot per map), software"
 	run python3 tools/ps2/map_sweep.py --elf "$ELF" --tag "$TAG-cold-sw" --out build/runs/msweep --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -zstack
+}
+stage_coldhw() {
 	say "-- cold per-map sweep, hardware"
 	run python3 tools/ps2/map_sweep.py --elf "$ELF" --tag "$TAG-cold-hw" --out build/runs/msweep --pak "$PAK" --kinds SP,MP-special,Match,CTF --frames "$FRAMES" -- -renderer Hardware -zstack
 }
 
-stage_soak() {
+stage_soaksw() {
 	run python3 tools/ps2/stab_soak.py --elf "$ELF" --tag "$TAG-soak" --renderer Software --minutes "$MINUTES"
+}
+stage_soakhw() {
 	run python3 tools/ps2/stab_soak.py --elf "$ELF" --tag "$TAG-soak" --renderer Hardware --minutes "$MINUTES"
 }
 
 echo "stab_run: ELF $ELF TAG $TAG stages: $STAGES -> $L"
 say "# stab_run $(date -u +%FT%TZ) ELF $ELF ($(stat -c %s "$ELF") bytes) stages: $STAGES"
+expand() { # aliases of the long stages (each part is resumable)
+	local x
+	for x in $STAGES; do
+		case $x in
+			demos) echo -n "demosw demohw demohi " ;;
+			sweep) echo -n "chainsw chainhw coldsw coldhw " ;;
+			soak) echo -n "soaksw soakhw " ;;
+			*) echo -n "$x " ;;
+		esac
+	done
+}
+STAGES=$(expand)
+# Resumable: a stage that finished in an earlier run with this TAG (STAGE-DONE in the log) is not run again (SRB2_STAB_RERUN=1 runs everything), so a restart of the
+# machine or of the session costs only the stage that was running.
 for s in $STAGES; do
+	if [ -z "$SRB2_STAB_RERUN" ] && grep -q "^STAGE-DONE $s\$" "$L" 2>/dev/null; then
+		echo "stab_run: stage $s is done (log), skipped"
+		continue
+	fi
 	say "== $s"
 	"stage_$s"
 	say "STAGE-DONE $s"
