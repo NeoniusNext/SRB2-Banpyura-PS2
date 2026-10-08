@@ -962,27 +962,24 @@ int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int s
 	static struct
 	{
 		const void *tex;
-		u32 flags, shader_lt, frame, ver, pal;
-		int res;
-	} memo[64];
+		u32 flags, shader_lt, epoch; // epoch: the frame, the texture version and the palette generation folded into one word (bit 0 = the answer)
+	} memo[1024];
 	const FSurfaceInfo *surf = (const FSurfaceInfo *)vsurf;
-	u32 h, k2;
+	u32 h, k2, ep;
 	int r;
 
 	if (!surf || pallit_memo_off)
 		return pallit_eval(vsurf, flags, vtex, shader);
 	k2 = ((u32)shader & 0xFFu) | (surf->LightTableId << 8) | ((u32)H.shaders_on << 31);
-	h = (((u32)(uintptr_t)vtex >> 4) ^ (flags * 0x9E3779B1u >> 20) ^ (k2 * 0x85EBCA6Bu >> 24)) & 63u;
-	if (memo[h].tex == vtex && memo[h].flags == flags && memo[h].shader_lt == k2 && memo[h].frame == H.frame_no && memo[h].ver == H.tex_ver && memo[h].pal == H.pal_gen)
-		return memo[h].res;
+	ep = (H.frame_no * 0x9E3779B1u + H.tex_ver * 0x85EBCA6Bu + H.pal_gen * 0xC2B2AE35u) & ~1u;
+	h = ((((u32)(uintptr_t)vtex >> 4) * 0x9E3779B1u) ^ (flags * 0x85EBCA6Bu) ^ (k2 * 0xC2B2AE35u)) >> 22;
+	if (memo[h].tex == vtex && memo[h].flags == flags && memo[h].shader_lt == k2 && (memo[h].epoch & ~1u) == ep)
+		return (int)(memo[h].epoch & 1u);
 	r = pallit_eval(vsurf, flags, vtex, shader);
 	memo[h].tex = vtex;
 	memo[h].flags = flags;
 	memo[h].shader_lt = k2;
-	memo[h].frame = H.frame_no;
-	memo[h].ver = H.tex_ver;
-	memo[h].pal = H.pal_gen;
-	memo[h].res = r;
+	memo[h].epoch = ep | (u32)(r != 0);
 	return r;
 }
 

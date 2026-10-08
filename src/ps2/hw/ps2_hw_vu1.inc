@@ -618,7 +618,8 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 	const texrec_t *r = (!(flags & PF_NoTexture) && H.cur_tex != NOREC) ? &H.rec[H.cur_tex] : NULL;
 	u32 *w = k->w;
 
-	xf_update();
+	if (H.mat_dirty)
+		xf_update();
 	w[0] = flags;
 	if (surf)
 	{
@@ -668,7 +669,17 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 	w[27] = H.pal_gen;
 	w[28] = H.sciss_x0 | (H.sciss_y0 << 16);
 	w[29] = H.sciss_x1 | (H.sciss_y1 << 16);
-	w[30] = (u32)H.target | (H.frame_no << 4) | ((u32)palette_mode() << 3);
+	{
+		static u32 pm_frame = ~0u; // the palette rendering switch is read once a frame here (begin_draw_inner reads it for every plan)
+		static u32 pm_val;
+
+		if (pm_frame != H.frame_no)
+		{
+			pm_frame = H.frame_no;
+			pm_val = (u32)palette_mode();
+		}
+		w[30] = (u32)H.target | (H.frame_no << 4) | (pm_val << 3);
+	}
 	w[31] = 0;
 }
 
@@ -946,25 +957,45 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 	const int wx = P.wrapx, wy = P.wrapy;
 	const float tsx = P.tsx, tsy = P.tsy;
 	const float rw = wrap ? (float)P.r->w : 0.0f, rh = wrap ? (float)P.r->h : 0.0f;
+	// PS2-HW-223: the chunk position in locals (the stores into the ring may alias any global as far as the compiler knows: every polygon reloaded and stored six of them), the
+	// counters of the frame added once at the end
+	qw_t *ring = NULL;
+	u32 wr = 0, cn = 0, np = 0, nv = 0, ready = 0;
 
 	while (i < nfans)
 	{
 		const u32 n = desc[3 * i + 1];
 		const FOutVector *fv = base + desc[3 * i];
-		const float light = (float)(int)desc[3 * i + 2];
 		const u32 need = 2 + 2 * n;
 		qw_t *o, *v;
 		float sb = 0.0f, tb = 0.0f;
 		u32 k;
 
-		if (!VU.open || !VU.consts_ok || P.serial != H.serial || n - 3 > VU_MAXVERT - 3 || VU.chunk_n + need > VU_CHUNK_QW || H.wr + need + 3 > BUF_QW)
+		if (!ready || n - 3 > VU_MAXVERT - 3 || cn + need > VU_CHUNK_QW || wr + need + 3 > BUF_QW)
 		{
-			if (!vu_poly(fv, (int)n, light))
+			if (ready)
+			{
+				H.wr = wr;
+				VU.chunk_n = cn;
+				VU.npoly += np;
+				H.st.polys += np;
+				H.st.verts_in += nv;
+				np = nv = 0;
+				ready = 0;
+			}
+			if (!vu_poly(fv, (int)n, (float)(int)desc[3 * i + 2]))
 				break;
 			i++;
+			if (VU.open && VU.consts_ok && P.serial == H.serial)
+			{
+				ring = H.ring[H.cur];
+				wr = H.wr;
+				cn = VU.chunk_n;
+				ready = 1;
+			}
 			continue;
 		}
-		o = H.ring[H.cur] + H.wr;
+		o = ring + wr;
 		v = o + 2;
 		if (wrap)
 		{
@@ -1001,17 +1032,24 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 			}
 		}
 		o[0].w[0] = n;
-		o[0].f[1] = light;
+		o[0].f[1] = (float)(int)desc[3 * i + 2];
 		o[1].f[0] = sb;
 		o[1].f[1] = tb;
 		o[1].f[2] = tsx;
 		o[1].f[3] = tsy;
-		H.st.polys++;
-		H.st.verts_in += n;
-		H.wr += need;
-		VU.chunk_n += need;
-		VU.npoly++;
+		np++;
+		nv += n;
+		wr += need;
+		cn += need;
 		i++;
+	}
+	if (ready)
+	{
+		H.wr = wr;
+		VU.chunk_n = cn;
+		VU.npoly += np;
+		H.st.polys += np;
+		H.st.verts_in += nv;
 	}
 	return i;
 }
