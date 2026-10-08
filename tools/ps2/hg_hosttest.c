@@ -21,6 +21,7 @@ typedef int16_t s16;
 #include "ps2_hw_priv.inc"
 #include "ps2_hw_hg.inc"
 int ps2hwp_skyview;
+int ps2hwd_fx2; /* OPT11 round 2 (FX2): -hwfx bits (ps2_hw_fx2.h) */
 #include "ps2_hw_vif.inc"
 #include "ps2_hw_regs.inc"
 

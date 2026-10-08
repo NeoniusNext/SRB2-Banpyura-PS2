@@ -382,6 +382,9 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 #endif
     if (currently_batching)
 	{
+#ifdef PS2_HWDETAIL
+		const unsigned int sf_t0 = ps2hwp_now();
+#endif
 		if (!pSurf)
 			I_Error("Got a null FSurfaceInfo in batching");// nulls should not come in the stuff that batching currently applies to
 		if (iNumPts > (FUINT)(INT_MAX - unsortedVertexArraySize) || polygonArraySize == INT_MAX)
@@ -468,6 +471,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 #endif
 		memcpy(&unsortedVertexArray[unsortedVertexArraySize], pOutVerts, iNumPts * sizeof(FOutVector));
 		unsortedVertexArraySize += iNumPts;
+#ifdef PS2_HWDETAIL
+		if (hwr_sprite_batch)
+			ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);
+#endif
 	}
 	else
 	{
@@ -669,6 +676,10 @@ void HWR_RenderBatches(void)
 	PS_STOP_TIMING(ps_hw_batchsorttime);
 #ifdef PS2_PROFILE
 	HWP_SPAN_END2(tb_sort, HWP_BATCHSORT, HWP_KB_SORT);
+#ifdef PS2_HWDETAIL
+	if (hwr_sprite_batch)
+		ps2hwp_cyc[HWP_SF_SORT] += (unsigned int)(ps2hwp_now() - tb_sort);
+#endif
 #endif
 	// sort order
 	// 1. shader
@@ -692,6 +703,10 @@ void HWR_RenderBatches(void)
 	PS2HWD_PlanEnd();
 #ifdef PS2_PROFILE
 	HWP_SPAN_END2(tb_plan, HWP_B_PLAN, HWP_KB_PLAN);
+#ifdef PS2_HWDETAIL
+	if (hwr_sprite_batch)
+		ps2hwp_cyc[HWP_SF_PLAN] += (unsigned int)(ps2hwp_now() - tb_plan);
+#endif
 #endif
 #endif
 
@@ -926,6 +941,10 @@ void HWR_RenderBatches(void)
 	unsortedVertexArraySize = 0;
 #ifdef PS2_PROFILE
 	HWP_SPAN_END2(tb_draw, HWP_BATCHDRAW, HWP_KB_DRAW);
+#ifdef PS2_HWDETAIL
+	if (hwr_sprite_batch)
+		ps2hwp_cyc[HWP_SF_DRAW] += (unsigned int)(ps2hwp_now() - tb_draw);
+#endif
 	{
 		HWP_SPAN_BEGIN(tb_end);
 #endif

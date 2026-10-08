@@ -77,6 +77,8 @@ enum
 	HWP_SH_A, HWP_SH_B, HWP_SH_C, HWP_SH_D, HWP_SH_E, HWP_SH_F, HWP_SH_G, HWP_SH_H,
 	// HWR_RenderPlane by parts (HWPROF37): set-up and slope, buffer and flat size, vertex loop, slope light, lighting, polygon (HWR_ProcessPolygon)
 	HWP_PL_A, HWP_PL_B, HWP_PL_C, HWP_PL_D, HWP_PL_E, HWP_PL_F,
+	// OPT11 round 2 (FX2, --hwdetail): the flush of the sprite batch by parts (HWPROF41): collect (HWR_ProcessPolygon of a batched sprite), sort, plan, draw, the rest
+	HWP_SF_COLLECT, HWP_SF_SORT, HWP_SF_PLAN, HWP_SF_DRAW, HWP_SF_ALL,
 	HWP_NUM
 };
 
@@ -86,7 +88,9 @@ extern unsigned long long ps2hwp_cyc[HWP_NUM];
 enum { HWC_SEGS, HWC_SUBSECS, HWC_PLANES, HWC_SPRITES, HWC_PROC, HWC_PROC_BATCH, HWC_SPR_ON, HWC_SPR_FLUSH, HWC_SPR_SOLO, HWC_SPR_SHADOW, HWC_PLANE_HIT, HWC_PLANE_MISS, HWC_PLANE_KEYMISS, HWC_PLANE_BYPASS, HWC_PLANE_BAD, HWC_SEG_SIMPLE1, HWC_SEG_SIMPLE2, HWC_SEG_COMPLEX, HWC_PKM_H, HWC_PKM_L, HWC_PKM_F, HWC_PKM_T, HWC_PKM_O, HWC_PKM_E, HWC_PKM_P,
 	// OPT11 (GEOM): why a seg is not simple (first reason that applies), HWPROF30
 	HWC_SR_POLY, HWC_SR_FFLOORS, HWC_SR_SLOPE, HWC_SR_HEIGHTSEC, HWC_SR_LIGHTS, HWC_SR_MID, HWC_SR_BACK,
-	HWC_AL_CALLS, HWC_AL_BACK, HWC_AL_CLIP, HWC_AL_EMPTY, HWC_AL_BOX, HWC_AL_BOXREJ, HWC_AL_VHIT, HWC_NUM };
+	HWC_AL_CALLS, HWC_AL_BACK, HWC_AL_CLIP, HWC_AL_EMPTY, HWC_AL_BOX, HWC_AL_BOXREJ, HWC_AL_VHIT,
+	// OPT11 round 2 (FX2): the sprites of a frame (HWPROF40, --hwdetail): things of the sectors, ProjectSprite calls, behind the view, quad hidden, vissprites, shadows, shadows hidden
+	HWC_FX_THINGS, HWC_FX_PROJ, HWC_FX_BEHIND, HWC_FX_QHID, HWC_FX_VIS, HWC_FX_SHADOW, HWC_FX_SHQHID, HWC_FX_PRE, HWC_FX_SPRHID, HWC_FX_SPRSH, HWC_FX_ROLL, HWC_FX_NOEXT, HWC_NUM };
 extern unsigned int ps2hwp_cnt[HWC_NUM];
 extern int ps2hwp_skyview; // 1 while HWR_RenderSkyboxView runs (the counters of the driver are split by view)
 #define HWC_ADD(i) (ps2hwp_cnt[i]++)

@@ -23,7 +23,7 @@
 // -hwgc N: 0 off, 1 on with the planes, 5 (default) on, walls only, 2 every hit is calculated again and the two records are compared (HWGC lines: the number of differences must be
 // 0), 3 on, and one hit in 16 is checked that way (on a difference the entry is dropped). +4 no planes, +8 no walls, +16 report the sectors that change. -hwgcmem KB: both halves of the arena
 // (default GC_DEFAULT_KB), -hwgcsets N: the number of sets of the table (2 ways), -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th reserve (a test).
-// HWPROF32 (counts and cycles of the window), HWPROF39 (misses of segs never seen / seen with another key, cycles of the replay), HWPROF40 (which word of the key differed).
+// HWPROF32 (counts and cycles of the window), HWPROF39 (misses of segs never seen / seen with another key, cycles of the replay), HWPROF50 (which word of the key differed), HWPROF51 (misses of segs by the cycles they took).
 
 #define GC_WAYS 2u
 #define GC_WINDOW 24u // views of the window in which the hit rate is looked at
@@ -1045,7 +1045,7 @@ void HWR_GCacheProf(unsigned int frames)
 	{
 		unsigned i;
 
-		I_OutputMsg("HWPROF40 stale keys by the first word that differs (seg:");
+		I_OutputMsg("HWPROF50 stale keys by the first word that differs (seg:");
 		for (i = 0; i < 34; i++)
 			if (gc.mm[i])
 				I_OutputMsg(" %u=%u", i, gc.mm[i] / frames);
@@ -1056,7 +1056,7 @@ void HWR_GCacheProf(unsigned int frames)
 		I_OutputMsg(")\n");
 		memset(gc.mm, 0, sizeof gc.mm);
 		memset(gc.mmp, 0, sizeof gc.mmp);
-		I_OutputMsg("HWPROF41 seg misses by calculation cycles (n bytes per 512-cycle bucket):");
+		I_OutputMsg("HWPROF51 seg misses by calculation cycles (n bytes per 512-cycle bucket):");
 		for (i = 0; i < 10; i++)
 			I_OutputMsg(" %u:%u/%u", i * 512, gc.ch[i] / frames, gc.cl[i] / frames);
 		I_OutputMsg("\n");
