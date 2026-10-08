@@ -2126,6 +2126,9 @@ static int begin_draw(u32 flags, const FSurfaceInfo *surf)
 	const texrec_t *r;
 	int ok;
 
+	vu_plan_valid = 0; // (the plan cache path below does not run begin_draw_inner)
+	if (V.chunk_open)
+		vu_chunk_flush(); // the open VU1 chunk changes the GS state (CLUT rows, RGBAQ): the GS state cache must be what it leaves before this plan decides what to write (PS2-HW-107)
 	if (planc_active) // the light classes the last plan collected stay with it
 		planc_active->lf = LF;
 	if (!(ps2hwd_dbg_flags & HWDBG_PLANC) || (flags & PF_Corona) || (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing) || H.frame_no % 300 == 299) // (the frame of the HWFX census makes every plan)

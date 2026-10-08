@@ -420,8 +420,62 @@ static void vu_consts_send(int send_rows, int what)
 	VU.consts_ok = 1;
 }
 
+// The GS state of a retargeted plan (PS2-HW-107): only what depends on the texture (TEX0 with the CLUT of the first row, TEX1, CLAMP) is written; the other registers are
+// the plan's: H.serial has not moved since pass_setup made them (every write of GS state goes through ad_alloc, which counts). Same registers, same values and same cache
+// updates as pass_setup / state_flush make for the texture part.
+static void vu_retex(void)
+{
+	const pass_t *ps = &P.pass[0];
+	const texrec_t *r = P.r;
+	const u64 cld_mask = 7ull << 61;
+	u64 t0, t1, cl, vals[3];
+	u32 regs[3], cbp = 0;
+	int n = 0, i;
+
+	if (!ps->tex || !r)
+		return;
+	if (r->psm == PSM_T8)
+	{
+		if (ps->clut_kind)
+			cbp = clut_get(ps->clut_kind, ps->clut_param, ps->clut_keyed);
+		else
+			cbp = clut_get(r->clut == 3 ? CK_ALPHA : (r->clut == 2 ? CK_KEYED : CK_OPAQUE), 0, 0);
+	}
+	tex_regs(r, 0, 0, P.linear, cbp, ps->decal, &t0, &t1, &cl);
+	cl = P.clamp;
+	if (!(H.gsr.valid & RV_CLAMP) || H.gsr.clamp != cl)
+	{
+		vals[n] = cl;
+		regs[n++] = GSR_CLAMP_1;
+		H.gsr.clamp = cl;
+		H.gsr.valid |= RV_CLAMP;
+	}
+	if (!(H.gsr.valid & RV_TEX1) || H.gsr.tex1 != t1)
+	{
+		vals[n] = t1;
+		regs[n++] = GSR_TEX1_1;
+		H.gsr.tex1 = t1;
+		H.gsr.valid |= RV_TEX1;
+	}
+	if (!(H.gsr.valid & RV_TEX0) || (H.gsr.tex0 & ~cld_mask) != (t0 & ~cld_mask) || (t0 & cld_mask))
+	{
+		vals[n] = t0;
+		regs[n++] = GSR_TEX0_1;
+		H.gsr.tex0 = t0;
+		H.gsr.valid |= RV_TEX0;
+	}
+	if (n)
+	{
+		qw_t *p = ad_alloc((u32)n);
+
+		for (i = 0; i < n; i++)
+			ad_set(&p[i], vals[i], regs[i]);
+		H.st.state_writes += (u32)n;
+	}
+}
+
 // The plan of the batch for the VU1 program: rows in VRAM, GS state, constants. 0 = the VU1 path cannot take it (the general path draws it).
-static int vu_plan_setup(void)
+static __attribute__((noinline)) int vu_plan_setup(void)
 {
 	vlight_t vl;
 	const texrec_t *r = P.r;
@@ -494,7 +548,10 @@ static int vu_plan_setup(void)
 		H.gsr.rgbaq = rgbaq_of(P.pass[0].col);
 		H.gsr.valid |= RV_RGBAQ;
 	}
-	pass_setup(0, 0);
+	if (reuse && (H.gsr.valid & (RV_FRAME | RV_ZBUF | RV_SCISSOR | RV_TEST | RV_ALPHA | RV_RGBAQ)) == (RV_FRAME | RV_ZBUF | RV_SCISSOR | RV_TEST | RV_ALPHA | RV_RGBAQ))
+		vu_retex(); // (the other registers are the plan's)
+	else
+		pass_setup(0, 0);
 	P.serial = H.serial;
 	c2 = cyc();
 	G.vs_pass += c2 - c1;
@@ -636,6 +693,8 @@ static inline int vu_key_cmp(const vukey_t *a, const vukey_t *b)
 	dt = vk_d(a, b, 5) | vk_d(a, b, 6) | vk_d(a, b, 7) | vk_d(a, b, 8);
 	if (!(dl | dt))
 		return 2;
+	if (vu_noretarget)
+		return 0;
 	if (dl && !P.pal)
 		return 0; // the light level is a part of the plan unless the program lights by rows
 	return 1;
@@ -810,6 +869,85 @@ static int vu_poly(const FOutVector *base, int n, float light)
 	return 1;
 }
 
+// The polygons of one batch (PS2HWD_DrawFans) from index i on, in one loop with the values of the plan in locals (PS2-HW-108): the same chunk contents as vu_poly makes.
+// What is not the common case (the first polygon of the plan, a full chunk or buffer, a polygon of an unusual size) goes through vu_poly. Returns the index of the first
+// polygon that was not taken (nfans: all taken): the caller draws it by the general path (a polygon of too wide a texture extent, a plan the program cannot take).
+static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
+{
+	const int wrap = P.textured && (P.wrapx || P.wrapy);
+	const int wx = P.wrapx, wy = P.wrapy;
+	const float tsx = P.tsx, tsy = P.tsy;
+	const float rw = wrap ? (float)P.r->w : 0.0f, rh = wrap ? (float)P.r->h : 0.0f;
+
+	while (i < nfans)
+	{
+		const u32 n = desc[3 * i + 1];
+		const FOutVector *fv = base + desc[3 * i];
+		const float light = (float)(int)desc[3 * i + 2];
+		const u32 need = 2 + 2 * n;
+		qw_t *o, *v;
+		float sb = 0.0f, tb = 0.0f;
+		u32 k;
+
+		if (!VU.open || !VU.consts_ok || P.serial != H.serial || n - 3 > VU_MAXVERT - 3 || VU.chunk_n + need > VU_CHUNK_QW || H.wr + need + 3 > BUF_QW)
+		{
+			if (!vu_poly(fv, (int)n, light))
+				break;
+			i++;
+			continue;
+		}
+		o = H.ring[H.cur] + H.wr;
+		v = o + 2;
+		if (wrap)
+		{
+			float smin = fv[0].s, smax = smin, tmin = fv[0].t, tmax = tmin;
+
+			for (k = 0; k < n; k++, v += 2)
+			{
+				const float s = fv[k].s, t = fv[k].t;
+
+				v[0].f[0] = fv[k].x;
+				v[0].f[1] = fv[k].y;
+				v[0].f[2] = fv[k].z;
+				v[1].f[0] = s;
+				v[1].f[1] = t;
+				smin = hw_minf(smin, s);
+				smax = hw_maxf(smax, s);
+				tmin = hw_minf(tmin, t);
+				tmax = hw_maxf(tmax, t);
+			}
+			if ((wx && (smax - smin) * rw > UV_EXTENT) || (wy && (tmax - tmin) * rh > UV_EXTENT))
+				break; // cut at whole repeats: cut_and_emit (nothing of this polygon was committed)
+			sb = (wx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
+			tb = (wy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
+		}
+		else
+		{
+			for (k = 0; k < n; k++, v += 2)
+			{
+				v[0].f[0] = fv[k].x;
+				v[0].f[1] = fv[k].y;
+				v[0].f[2] = fv[k].z;
+				v[1].f[0] = fv[k].s;
+				v[1].f[1] = fv[k].t;
+			}
+		}
+		o[0].w[0] = n;
+		o[0].f[1] = light;
+		o[1].f[0] = sb;
+		o[1].f[1] = tb;
+		o[1].f[2] = tsx;
+		o[1].f[3] = tsy;
+		H.st.polys++;
+		H.st.verts_in += n;
+		H.wr += need;
+		VU.chunk_n += need;
+		VU.npoly++;
+		i++;
+	}
+	return i;
+}
+
 #else // host test build: no VU1
 static int vu1_boot(void)
 {
@@ -834,5 +972,13 @@ static inline int vu_poly(const FOutVector *base, int n, float light)
 	(void)n;
 	(void)light;
 	return 0;
+}
+
+static inline u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
+{
+	(void)base;
+	(void)desc;
+	(void)nfans;
+	return i;
 }
 #endif

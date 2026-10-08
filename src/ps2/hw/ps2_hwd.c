@@ -253,6 +253,10 @@ boolean PS2HWD_Init(void)
 	if (H.up)
 		return true;
 	memset(&H, 0, sizeof H);
+	vu_noretarget = M_CheckParm("-hwnoretarget") != 0; // PS2-HW-107 off (A/B)
+	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	if (M_CheckParm("-hwbretmask") && M_IsNextParm())
+		vu_bretmask = atoi(M_GetNextParm());
 	tex_nosplit = M_CheckParm("-hwnosplit") != 0; // PS2-HW-70 off: images over 1024 rows are decimated
 	tex_split_rows = 1024;
 	if (M_CheckParm("-hwsplitrows") && M_IsNextParm())
@@ -947,6 +951,8 @@ int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int s
 void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int flags, const unsigned int *desc)
 {
 	unsigned int i;
+	vukey_t k;
+	int how = 0;
 
 	if (!H.up)
 		return;
@@ -970,31 +976,58 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 		drv_out();
 		return;
 	}
-	if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+	if (V.on && V.ready)
 	{
-		drv_out();
-		return;
+		// PS2-HW-107: a batch of the plan of the last VU1 draw (single or batch) with another texture of the same kind only retargets the plan
+		vu_key_make(&k, (u32)flags, (const FSurfaceInfo *)surf);
+		if (vu_plan_valid && VU.consts_ok && P.serial == H.serial)
+			how = vu_key_cmp(&k, &VK);
+		if (how == 1 && vu_nobretarget)
+			how = 0;
+		if ((how == 1 && !(vu_bretmask & (P.pal ? 1 : 2))) || (how == 2 && !(vu_bretmask & 4)))
+			how = 0;
 	}
-	if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
+	if (how)
 	{
-		P.vu = 1;
-		VU.consts_ok = 0;
+		if (how == 1)
+		{
+			vu_retarget((const FSurfaceInfo *)surf);
+			G.b_retarget++;
+		}
+		P.vu = 1; // (vu_plan_valid is set only for plans the program takes: P.vuok)
+	}
+	else
+	{
+		if (!begin_draw((u32)flags, (const FSurfaceInfo *)surf))
+		{
+			drv_out();
+			return;
+		}
+		if (P.vuok && nfans >= VU_MIN_FANS) // PS2-HW-45
+		{
+			P.vu = 1;
+			VU.consts_ok = 0;
+		}
 	}
 	for (i = 0; i < nfans; i++)
 	{
-		const FOutVector *fv = (const FOutVector *)base + desc[3 * i];
-		const int fn = (int)desc[3 * i + 1];
-		const float fl = (float)(int)desc[3 * i + 2]; // the light level of the sector of the polygon (the batch's key leaves it out when the VU1 program lights by rows)
+		const FOutVector *fv;
+		int fn;
+		float fl; // the light level of the sector of the polygon (the batch's key leaves it out when the VU1 program lights by rows)
 
-		if (P.vu) // PS2-HW-100: the VU1 program takes the polygon (or it goes the general way below, in order)
+		if (P.vu) // PS2-HW-100: the VU1 program takes the polygons (PS2-HW-108: all it can in one loop); the one it leaves goes the general way below, in order
 		{
-			if (vu_poly(fv, fn, fl))
-			{
-				G.p_vu++;
-				continue;
-			}
+			const unsigned int i0 = i;
+
+			i = vu_fans((const FOutVector *)base, desc, i, nfans);
+			G.p_vu += i - i0;
+			if (i >= nfans)
+				break;
 			vu_sync();
 		}
+		fv = (const FOutVector *)base + desc[3 * i];
+		fn = (int)desc[3 * i + 1];
+		fl = (float)(int)desc[3 * i + 2];
 		if (fl != P.rs.lp.light)
 		{
 			P.rs.lp.light = fl; // the plan took the level of the first polygon of the batch: the general path lights this one with its own
@@ -1005,13 +1038,19 @@ void PS2HWD_DrawFans(void *surf, void *base, unsigned int nfans, unsigned int fl
 			P.vu = 0; // (emit_poly would try the VU1 path again)
 			emit_fan(fv, NULL, fn, NULL);
 			P.vu = P.vuok;
+			P.serial = H.serial - 1; // the general path may have loaded another CLUT row: the plan's GS state and the program's row again
 			continue;
 		}
 		emit_fan(fv, NULL, fn, NULL);
 	}
 	if (P.vu)
 	{
-		vu_sync();
+		// the chunk stays open (PS2-HW-103): the next draw of this plan joins it, anything else that writes to the ring closes it
+		if (VU.consts_ok && P.serial == H.serial)
+		{
+			VK = k;
+			vu_plan_valid = 1;
+		}
 		P.vu = 0;
 	}
 	drv_out();
