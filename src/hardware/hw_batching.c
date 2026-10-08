@@ -181,6 +181,8 @@ static int hwr_ph_on = -1;
 static UINT32 hwr_ph_a, hwr_ph_b, hwr_ph_n;
 static UINT32 hwr_ph_wa = 0x811c9dc5u, hwr_ph_wb = 0x9e3779b9u, hwr_ph_wn; // the same for the polygons with a map texture or flat only (-hwpolyhash: w=, nw=)
 extern int hwr_ph_spr; // hw_main.c
+extern unsigned int hwr_fr_off; // hw_front.inc (-hwfr)
+static UINT32 hwr_ph_ia, hwr_ph_ib; // -hwpolyhash 3: the sum of the hashes of the polygons drawn at once (the draw nodes)
 static int hwr_ph_vis; // -hwpolyhash 3: the polygons wholly outside the view volume are not hashed (OPT12 PS2-HW-400: HWR_FrPolyOutside)
 static UINT32 hwr_ph_calls, hwr_ph_lo, hwr_ph_hi; // -hwpolyhash 2 LO HI: every polygon of the frames LO..HI is printed with its parts (HWPP lines), to find what differs between two runs
 
@@ -261,6 +263,21 @@ static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n,
 			s ? (int)s->LightTableId : 0, s ? (int)s->LightInfo.light_level : 0, s ? (int)s->LightInfo.fade_start : 0, s ? (int)s->LightInfo.fade_end : 0, vh);
 	}
 	hwr_ph_n++;
+	if (hwr_ph_vis && !currently_batching)
+	{
+		// -hwpolyhash 3: the polygons of the draw nodes (translucent planes and walls, drawn at once) are summed, not chained: the planes of a run that have the same height come out of qsort in an order
+		// that depends on how many nodes there are (coplanar water pieces that do not overlap); everything else of the stream is chained in order
+		const UINT32 sa = hwr_ph_a, sb = hwr_ph_b;
+
+		hwr_ph_a = 0x811c9dc5u;
+		hwr_ph_b = 0x9e3779b9u;
+		HWR_PolyHashBody(s, v, n, flags, shader, horizon);
+		hwr_ph_ia += hwr_ph_a;
+		hwr_ph_ib += hwr_ph_b;
+		hwr_ph_a = sa;
+		hwr_ph_b = sb;
+		return;
+	}
 	HWR_PolyHashBody(s, v, n, flags, shader, horizon);
 	if (current_texture && !(flags & PF_NoTexture) && current_texture->regen_kind && !(hwr_ph_vis && !currently_batching)) // the world: textures of the map and flats (the sprites of a static view are not the same in two runs: random particles)
 	{
@@ -317,11 +334,14 @@ void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_v
 			sh = (sh ^ (UINT32)sectors[k].ceilingheight) * 16777619u;
 			sh = (sh ^ ((UINT32)(UINT16)sectors[k].lightlevel | ((UINT32)(UINT16)sectors[k].floorpic << 16))) * 16777619u;
 		}
+		hwr_ph_a ^= hwr_ph_ia;
+		hwr_ph_b ^= hwr_ph_ib;
 		I_OutputMsg("HWPH f=%d n=%u h=%08x%08x o=00000000 w=%u:%08x%08x s=%08x v=%d,%d,%d,%u\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b, hwr_ph_wn, hwr_ph_wa, hwr_ph_wb, sh, (int)viewx, (int)viewy, (int)viewz, (unsigned)viewangle);
 	}
 	hwr_ph_wa = 0x811c9dc5u;
 	hwr_ph_wb = 0x9e3779b9u;
 	hwr_ph_wn = 0;
+	hwr_ph_ia = hwr_ph_ib = 0;
 	hwr_ph_a = 0x811c9dc5u;
 	hwr_ph_b = 0x9e3779b9u;
 	hwr_ph_n = 0;
@@ -596,6 +616,22 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 		return;
 	}
+#ifdef PS2_PROFILE
+	// OPT12 PS2-HW-403: an opaque sprite or a shadow of the sprite batch (the sprite stream is off, the default): what HWR_ProcessPolygonSlow does for it before it gets to the collection
+	// (the test of the blend mode, the stream, the counters) is nothing; -hwfr 64 switches this off
+	if (currently_batching && hwr_sprite_batch && !((UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB) | (hwr_fr_off & 64u)) && (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM)) && pSurf && !horizonSpecial)
+	{
+		const FBITFIELD blending = PolyFlags & PF_Blending;
+
+		if (hwr_sprite_shadow || ((blending == PF_Masked || (blending == PF_Translucent && pSurf->PolyColor.s.alpha == 0xFF)) && (PolyFlags & PF_Occlude)
+			&& !(PolyFlags & (PF_Invisible | PF_NoDepthTest | PF_Corona | PF_Ripple | PF_WireFrame | PF_NoTexture | PF_Decal))))
+		{
+			if (!HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, hwr_sprite_shadow ? 0u : 1u))
+				HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+			return;
+		}
+	}
+#endif
 	HWR_ProcessPolygonSlow(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 }
 

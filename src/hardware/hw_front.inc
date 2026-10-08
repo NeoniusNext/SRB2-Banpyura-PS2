@@ -13,8 +13,9 @@
 
 // -hwfr N: a set bit switches one OPT12 front path OFF (A/B on one ELF)
 #define HWFR_NOCULL 0x1 // PS2-HW-400: every cull before building (walls, planes, translucent planes) off
-#define HWFR_NOSEGCULL 0x2 // PS2-HW-400: walls not culled
+#define HWFR_NOSEGCULL 0x2 // PS2-HW-402: walls not culled (the azimuth arc of the seg against the arc of the view)
 #define HWFR_NOPLANECULL 0x4 // PS2-HW-400: planes (floors, ceilings, 3D floors) not culled
+#define HWFR_NOLEAFCULL 0x8 // PS2-HW-401: no test of the whole subsector (the box of its planes) before the planes are looked at one by one
 
 unsigned int hwr_fr_off; // -hwfr: OPT12 front paths switched off (see the HWFR_NO* bits)
 static UINT32 hwr_fr_dbg_lo = 1, hwr_fr_dbg_hi; // -hwfrdbg LO HI: the segs and planes the culls leave out in the frames LO..HI (the numbers of the HWPH lines) are printed (HWFRC lines)
@@ -47,7 +48,9 @@ static struct
 #define FR_MARGIN 1.0f
 #define FR_GATE() (frv.on && !(hwr_fr_off & HWFR_NOCULL))
 
-static struct { unsigned int ptest, phit, stest, shit; } frs; // planes and segs looked at / not built (per window, HWPROF62)
+static struct { unsigned int ptest, phit, stest, shit, ltest, lhit, aout, aexempt; } frs; // planes and segs looked at / not built (per window, HWPROF62)
+
+static void HWR_FrArc(void);
 
 // the volume of the view the driver has now (HWR_FrViewSetup is called before the BSP walk of every view, after the transform was handed to the driver)
 static void HWR_FrViewSetup(void)
@@ -79,32 +82,134 @@ static void HWR_FrViewSetup(void)
 		frv.p[k].d = n[3] * len;
 	}
 	frv.on = 1;
+	HWR_FrArc();
 }
 
 // -hwpolyhash 3 (hw_batching.c): the polygons wholly outside the view volume (strictly, no margin) are left out of the hash: two runs of the same frames whose polygons differ only by what the
 // culls above do not build give the same hash (the test of PS2-HW-400)
 int HWR_FrPolyOutside(const FOutVector *v, unsigned int n)
 {
-	int k;
+	// exact: the polygon is clipped by the five planes (Sutherland-Hodgman) and nothing is left of it. (A polygon with some corners behind the near plane and some beside the side planes is wholly
+	// outside the volume but no single plane has all its corners: the outcode test of the driver draws it, clips it away.)
+	float a[32][3], b[32][3];
+	unsigned int cnt = n, k, i;
+	float (*in)[3] = a, (*out)[3] = b;
 
 	if (!frv.on)
 		return 0;
-	for (k = 0; k < 5; k++)
+	if (n > 24)
+		return 0;
+	for (i = 0; i < n; i++)
+	{
+		a[i][0] = v[i].x;
+		a[i][1] = v[i].y;
+		a[i][2] = v[i].z;
+	}
+	for (k = 0; k < 5 && cnt; k++)
 	{
 		const fr_plane_t *pl = &frv.p[k];
-		unsigned int i;
+		unsigned int m = 0;
 
-		for (i = 0; i < n; i++)
-			if (pl->a * v[i].x + pl->b * v[i].y + pl->c * v[i].z + pl->d <= 0.0f)
-				goto inside;
-		return 1;
-inside:;
+		for (i = 0; i < cnt; i++)
+		{
+			const float *p = in[i], *q = in[(i + 1) % cnt];
+			const float dp = pl->a * p[0] + pl->b * p[1] + pl->c * p[2] + pl->d, dq = pl->a * q[0] + pl->b * q[1] + pl->c * q[2] + pl->d;
+
+			if (dp <= 0.0f)
+			{
+				out[m][0] = p[0]; out[m][1] = p[1]; out[m][2] = p[2];
+				m++;
+			}
+			if ((dp <= 0.0f) != (dq <= 0.0f))
+			{
+				const float t = dp / (dp - dq);
+
+				out[m][0] = p[0] + (q[0] - p[0]) * t;
+				out[m][1] = p[1] + (q[1] - p[1]) * t;
+				out[m][2] = p[2] + (q[2] - p[2]) * t;
+				m++;
+			}
+			if (m > 28)
+				return 0;
+		}
+		{
+			float (*t)[3] = in;
+
+			in = out;
+			out = t;
+		}
+		cnt = m;
 	}
-	return 0;
+	return cnt == 0;
 }
 
 extern UINT32 HWR_PHFrameNo(void);
 #define FR_DBG() (hwr_fr_dbg_hi && HWR_PHFrameNo() >= hwr_fr_dbg_lo && HWR_PHFrameNo() <= hwr_fr_dbg_hi)
+
+// ---- the azimuth arc of the view volume (PS2-HW-402) ---------------------------------------------------------------------------------------------------------------------
+// A wall stands over its seg: every point of it has the azimuth of the point of the seg below it, so a seg whose azimuth arc (the angles AddLine has already made for the clipper) does not touch the arc of
+// the view volume has no wall on the screen, whatever the heights are. The arc is that of the four edges of the pyramid (the cross products of the neighbouring side planes, with the pitch and the roll of the
+// view in them), widened by 2 degrees; a view that looks along the vertical axis (up or down is inside the volume) has all azimuths. A few integer operations, the angles are known.
+static struct { angle_t fl, fspan; int on; } fra;
+
+static void HWR_FrArc(void)
+{
+	static const signed char pr[4][4] = {{0, 2, 1, 3}, {2, 1, 0, 3}, {1, 3, 0, 2}, {3, 0, 1, 2}}; // the two planes of an edge (right/top, top/left, left/bottom, bottom/right), the other two side planes
+	float az[4], cf, lo = 1e9f, hi = -1e9f;
+	int k;
+	const float K = 683565275.5764f; // 2^32 / (2 pi)
+
+	fra.on = 0;
+	if ((frv.p[0].b <= 0.0f && frv.p[1].b <= 0.0f && frv.p[2].b <= 0.0f && frv.p[3].b <= 0.0f) || (frv.p[0].b >= 0.0f && frv.p[1].b >= 0.0f && frv.p[2].b >= 0.0f && frv.p[3].b >= 0.0f))
+		return; // up or down is inside the volume
+	for (k = 0; k < 4; k++)
+	{
+		const fr_plane_t *a = &frv.p[pr[k][0]], *b = &frv.p[pr[k][1]], *c = &frv.p[pr[k][2]], *d = &frv.p[pr[k][3]], *nn = &frv.p[4];
+		float rx = a->b * b->c - a->c * b->b, rh = a->c * b->a - a->a * b->c, ry = a->a * b->b - a->b * b->a;
+		float dc = rx * c->a + rh * c->b + ry * c->c, dd = rx * d->a + rh * d->b + ry * d->c;
+
+		if (dc > 0.0f && dd > 0.0f)
+		{
+			rx = -rx; rh = -rh; ry = -ry; dc = -dc; dd = -dd;
+		}
+		if (dc > 1.0e-6f || dd > 1.0e-6f || rx * nn->a + rh * nn->b + ry * nn->c > 0.0f)
+			return; // not an edge ray of the pyramid (degenerate view)
+		if (rx * rx + ry * ry < 1.0e-12f)
+			return;
+		az[k] = atan2f(ry, rx);
+	}
+	{
+		const fr_plane_t *nn = &frv.p[4];
+
+		if (nn->a * nn->a + nn->c * nn->c < 1.0e-6f)
+			return;
+		cf = atan2f(-nn->c, -nn->a); // the direction of the view (minus the normal of the near plane that points back)
+	}
+	for (k = 0; k < 4; k++)
+	{
+		float dl = az[k] - cf;
+
+		while (dl > 3.14159265f)
+			dl -= 6.28318531f;
+		while (dl < -3.14159265f)
+			dl += 6.28318531f;
+		if (dl < lo) lo = dl;
+		if (dl > hi) hi = dl;
+	}
+	if (hi - lo > 3.0f)
+		return; // wider than a half circle: no use
+	lo -= 0.035f;
+	hi += 0.035f;
+	fra.fl = (angle_t)(INT32)(INT64)((double)(cf + lo) * (double)K);
+	fra.fspan = (angle_t)(UINT32)((double)(hi - lo) * (double)K);
+	fra.on = 1;
+}
+
+// the arc of a seg (from a2 counter clockwise to a1, less than a half circle) does not touch the arc of the view
+static inline int HWR_FrArcOut(angle_t a2, angle_t a1)
+{
+	return fra.on && (angle_t)(a2 - fra.fl) > fra.fspan && (angle_t)(fra.fl - a2) > (angle_t)(a1 - a2);
+}
 
 static inline void HWR_FrViewEnd(void)
 {
@@ -125,6 +230,30 @@ static inline int HWR_FrPlaneHidden(const polyvertex_t *pts, int n, float h)
 		for (i = 0; i < n; i++)
 			if (pl->a * pts[i].x + pl->c * pts[i].y + d0 <= FR_MARGIN)
 				goto inside;
+		return 1;
+inside:;
+	}
+	return 0;
+}
+
+// The prism over the points pts[0..n) between the heights lo and hi (all the planes of a subsector lie in it) is outside one side of the volume
+static inline int HWR_FrPrismHidden(const polyvertex_t *pts, int n, float lo, float hi)
+{
+	int k;
+
+	for (k = 0; k < 5; k++)
+	{
+		const fr_plane_t *pl = &frv.p[k];
+		const float dl = pl->b * lo + pl->d, dh = pl->b * hi + pl->d;
+		int i;
+
+		for (i = 0; i < n; i++)
+		{
+			const float q = pl->a * pts[i].x + pl->c * pts[i].y;
+
+			if (q + dl <= FR_MARGIN || q + dh <= FR_MARGIN)
+				goto inside;
+		}
 		return 1;
 inside:;
 	}
@@ -258,7 +387,7 @@ void HWR_FrProf(unsigned int frames)
 
 	if (!frames)
 		frames = 1;
-	I_OutputMsg("HWPROF62 cull: planes tested=%u culled=%u | segs tested=%u culled=%u\n", frs.ptest / frames, frs.phit / frames, frs.stest / frames, frs.shit / frames);
+	I_OutputMsg("HWPROF62 cull: planes tested=%u culled=%u | segs tested=%u culled=%u | subsectors tested=%u culled=%u | arc out=%u exempt=%u\n", frs.ptest / frames, frs.phit / frames, frs.stest / frames, frs.shit / frames, frs.ltest / frames, frs.lhit / frames, frs.aout / frames, frs.aexempt / frames);
 	memset(&frs, 0, sizeof frs);
 	for (i = 0; i < FRC_NSRC; i++)
 		I_OutputMsg("HWPROF60 %s: polys=%u verts=%u out=%u (x=%u y=%u near=%u far=%u)\n", nm[i], frc.poly[i] / frames, frc.verts[i] / frames, frc.out[i] / frames, frc.outx[i] / frames, frc.outy[i] / frames, frc.outn[i] / frames, frc.outfar[i] / frames);
@@ -273,7 +402,7 @@ void HWR_FrProf(unsigned int frames)
 {
 	if (!frames)
 		frames = 1;
-	I_OutputMsg("HWPROF62 cull: planes tested=%u culled=%u | segs tested=%u culled=%u\n", frs.ptest / frames, frs.phit / frames, frs.stest / frames, frs.shit / frames);
+	I_OutputMsg("HWPROF62 cull: planes tested=%u culled=%u | segs tested=%u culled=%u | subsectors tested=%u culled=%u | arc out=%u exempt=%u\n", frs.ptest / frames, frs.phit / frames, frs.stest / frames, frs.shit / frames, frs.ltest / frames, frs.lhit / frames, frs.aout / frames, frs.aexempt / frames);
 	memset(&frs, 0, sizeof frs);
 }
 #endif // PS2_HWDETAIL

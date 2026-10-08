@@ -2299,105 +2299,29 @@ static void HWR_ProcessSeg(void)
 }
 
 #ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the wall builder (HWPROF2 "seg"); OPT11 PS2-HW-80: it is served from the geometry cache when it can be
-// OPT12 PS2-HW-400 (hw_front.inc): the polygons of this seg all lie in the slab between its end points and the heights of the sectors on its two sides (and of their 3D floors; the sky walls reach
-// the top and the bottom of the map): when the slab is outside one side of the view volume no wall of the seg has a pixel on the screen. A seg with a slope, a height sector or a polyobject is built as before.
-static boolean HWR_FrSegHidden(void)
+// OPT12 PS2-HW-402 (hw_front.inc): a seg whose azimuth arc does not touch the arc of the view volume has no wall on the screen. It is not left out when it can put a wall into the list of translucent nodes
+// (HWR_AddTransparentWall: the draw nodes, whose runs of planes are sorted by height): the list, and with it the order of the translucent planes between two such walls, stays what it was. Those segs
+// are: a translucent / fog / blended 3D floor on either side, a middle texture on a two sided line, a top, middle or bottom texture with holes (TF_TRANSPARENT, known once the driver made the texture resident).
+static boolean HWR_FrSegExempt(const seg_t *sg)
 {
-	const seg_t *sg = gl_curline;
-	const sector_t *f = gl_frontsector, *b = gl_backsector, *both[2];
+	const side_t *sd = sg->sidedef;
 	const line_t *ld = sg->linedef;
-	fixed_t zlo, zhi;
-	boolean skylo, skyhi;
-	float x1, y1, x2, y2, lo, hi;
 	int i;
 
-	if (sg->polyseg || f->f_slope || f->c_slope || ld->frontsector->heightsec != -1 || (ld->backsector && ld->backsector->heightsec != -1))
-		return false;
-	// A seg that can put a wall into the list of translucent nodes (HWR_AddTransparentWall: the draw nodes, whose runs of planes are sorted by height) is never left out: the list, and with it the
-	// order of the translucent planes between two such walls, stays what it was. Those are: a translucent / fog / blended 3D floor on either side, a middle texture on a two sided line, a
-	// top, middle or bottom texture with holes (TF_TRANSPARENT, known once the driver made the texture resident).
-	{
-		const side_t *sd = sg->sidedef;
-
-		if ((b && sd->midtexture) || ((HWR_PS2_SideTexWord(sd->toptexture) | HWR_PS2_SideTexWord(sd->midtexture) | HWR_PS2_SideTexWord(sd->bottomtexture)) & 0x80000000u))
-			return false;
-		for (i = 0; i < 2; i++)
-		{
-			const ffloor_t *r;
-			const sector_t *x = i ? ld->backsector : ld->frontsector;
-
-			if (!x)
-				continue;
-			for (r = x->ffloors; r; r = r->next)
-				if ((r->fofflags & FOF_EXISTS) && ((r->fofflags & (FOF_FOG | FOF_TRANSLUCENT)) || r->blend))
-					return false;
-		}
-	}
-	zlo = f->floorheight;
-	zhi = f->ceilingheight;
-	skylo = f->floorpic == skyflatnum;
-	skyhi = f->ceilingpic == skyflatnum;
-	both[0] = f;
-	both[1] = NULL;
-	if (b)
-	{
-		if (b->f_slope || b->c_slope)
-			return false;
-		if (b->floorheight < zlo)
-			zlo = b->floorheight;
-		if (b->ceilingheight > zhi)
-			zhi = b->ceilingheight;
-		skylo |= b->floorpic == skyflatnum;
-		skyhi |= b->ceilingpic == skyflatnum;
-		both[1] = b;
-	}
+	if ((ld->backsector && sd->midtexture) || ((HWR_PS2_SideTexWord(sd->toptexture) | HWR_PS2_SideTexWord(sd->midtexture) | HWR_PS2_SideTexWord(sd->bottomtexture)) & 0x80000000u))
+		return true;
 	for (i = 0; i < 2; i++)
 	{
 		const ffloor_t *r;
+		const sector_t *x = i ? ld->backsector : ld->frontsector;
 
-		if (!both[i])
+		if (!x)
 			continue;
-		for (r = both[i]->ffloors; r; r = r->next)
-		{
-			if (!(r->fofflags & FOF_EXISTS))
-				continue;
-			if ((r->t_slope && *r->t_slope) || (r->b_slope && *r->b_slope))
-				return false;
-			if (*r->bottomheight < zlo)
-				zlo = *r->bottomheight;
-			if (*r->topheight > zhi)
-				zhi = *r->topheight;
-		}
+		for (r = x->ffloors; r; r = r->next)
+			if ((r->fofflags & FOF_EXISTS) && ((r->fofflags & (FOF_FOG | FOF_TRANSLUCENT)) || r->blend))
+				return true;
 	}
-	lo = skylo ? -32768.0f : FixedToFloat(zlo);
-	hi = skyhi ? 32768.0f : FixedToFloat(zhi);
-	if (sg->pv1)
-	{
-		x1 = ((const polyvertex_t *)sg->pv1)->x;
-		y1 = ((const polyvertex_t *)sg->pv1)->y;
-	}
-	else
-	{
-		x1 = FixedToFloat(sg->v1->x);
-		y1 = FixedToFloat(sg->v1->y);
-	}
-	if (sg->pv2)
-	{
-		x2 = ((const polyvertex_t *)sg->pv2)->x;
-		y2 = ((const polyvertex_t *)sg->pv2)->y;
-	}
-	else
-	{
-		x2 = FixedToFloat(sg->v2->x);
-		y2 = FixedToFloat(sg->v2->y);
-	}
-	frs.stest++;
-	if (!HWR_FrSlabHidden(x1, y1, x2, y2, lo, hi))
-		return false;
-	frs.shit++;
-	if (FR_DBG())
-		I_OutputMsg("HWFRC seg=%d line=%d f=%d b=%d x=%.1f,%.1f..%.1f,%.1f z=%.1f..%.1f sky=%d%d\n", (int)(sg - segs), (int)(ld - lines), (int)(f - sectors), b ? (int)(b - sectors) : -1, x1, y1, x2, y2, lo, hi, (int)skylo, (int)skyhi);
-	return true;
+	return false;
 }
 
 #ifdef PS2_HWDETAIL
@@ -2406,8 +2330,6 @@ static void HWR_ProcessSegC(void)
 {
 	const unsigned int t0 = ps2hwp_now();
 
-	if (FR_GATE() && !(hwr_fr_off & HWFR_NOSEGCULL) && HWR_FrSegHidden())
-		return;
 	HWR_FrCensusBegin();
 	hwr_fr_src = FRC_WALL;
 	HWR_ProcessSegC0();
@@ -2422,10 +2344,6 @@ static void HWR_ProcessSegC(void)
 	HWP_SPAN_BEGIN(t);
 	seg_t *sg = gl_curline;
 
-#ifndef PS2_HWDETAIL
-	if (FR_GATE() && !(hwr_fr_off & HWFR_NOSEGCULL) && HWR_FrSegHidden())
-		return;
-#endif
 
 	HWC_ADD(HWC_SEGS);
 	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
@@ -2525,6 +2443,28 @@ static void HWR_ProcessSegC(void)
 	HWP_SPAN_END(t, HWP_SEG);
 }
 #define HWR_ProcessSeg HWR_ProcessSegC
+#endif
+
+#ifdef PS2_PROFILE
+// the call of HWR_ProcessSeg from HWR_AddLine, with the cull by the azimuth arc
+static inline void HWR_FrProcessSeg(seg_t *line, angle_t angle2, angle_t angle1)
+{
+	if (HWR_FrArcOut(angle2, angle1) && FR_GATE() && !(hwr_fr_off & HWFR_NOSEGCULL))
+	{
+		frs.aout++;
+		if (!HWR_FrSegExempt(line))
+		{
+			frs.shit++;
+			if (FR_DBG())
+				I_OutputMsg("HWFRC seg=%d line=%d f=%d b=%d x=%.1f,%.1f..%.1f,%.1f ang=%08x..%08x arc=%08x+%08x\n", (int)(line - segs), (int)(line->linedef - lines), (int)(gl_frontsector - sectors), gl_backsector ? (int)(gl_backsector - sectors) : -1,
+					line->pv1 ? ((polyvertex_t *)line->pv1)->x : 0.0f, line->pv1 ? ((polyvertex_t *)line->pv1)->y : 0.0f, line->pv2 ? ((polyvertex_t *)line->pv2)->x : 0.0f, line->pv2 ? ((polyvertex_t *)line->pv2)->y : 0.0f,
+					(unsigned)angle2, (unsigned)angle1, (unsigned)fra.fl, (unsigned)fra.fspan);
+			return;
+		}
+		frs.aexempt++;
+	}
+	HWR_ProcessSeg();
+}
 #endif
 
 #ifdef PS2_PROFILE
@@ -2801,7 +2741,11 @@ static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle
 					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
 				return; // line is empty, don't even bother
 			// treat like wide open window instead
+#ifdef PS2_PROFILE
+			HWR_FrProcessSeg(line, angle2, angle1);
+#else
 			HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+#endif
 			return;
 		}
 
@@ -2821,7 +2765,11 @@ static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle
 		}
     }
 
+#ifdef PS2_PROFILE
+	HWR_FrProcessSeg(line, angle2, angle1);
+#else
 	HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+#endif
 }
 
 // HWR_CheckBBox
@@ -3153,14 +3101,38 @@ static inline boolean HWR_FrPlaneCulled(subsector_t *sub, size_t num, fixed_t he
 	if (!FR_GATE() || sloped || (hwr_fr_off & HWFR_NOPLANECULL))
 		return false;
 	xs = &extrasubsectors[num];
-	if (!xs->planepoly || xs->planepoly->numpts < 3 || HWR_PlaneHasHorizon(sub))
+	if (!xs->planepoly || xs->planepoly->numpts < 3)
 		return false;
 	frs.ptest++;
 	if (!HWR_FrPlaneHidden(xs->planepoly->pts, xs->planepoly->numpts, FixedToFloat(height)))
 		return false;
+	if (HWR_PlaneHasHorizon(sub))
+		return false;
 	frs.phit++;
 	if (FR_DBG())
 		I_OutputMsg("HWFRC plane sub=%d n=%d h=%.1f p0=%.1f,%.1f\n", (int)num, (int)xs->planepoly->numpts, FixedToFloat(height), xs->planepoly->pts[0].x, xs->planepoly->pts[0].y);
+	return true;
+}
+
+// OPT12 PS2-HW-401: none of the planes of the subsector (floor, ceiling, 3D floors: all between the floor and the ceiling of the sector, over the polygon of the subsector) can put a pixel on the
+// screen: the loop over its 3D floors (heights, light, the translucent list) and the plane tests are not made. Not for a sloped sector or 3D floor, a horizon line, a height sector.
+static boolean HWR_FrLeafPlanesCulled(subsector_t *sub, size_t num)
+{
+	const extrasubsector_t *xs = &extrasubsectors[num];
+	const sector_t *f = gl_frontsector;
+	const ffloor_t *r;
+
+	if (!f->ffloors || !FR_GATE() || (hwr_fr_off & HWFR_NOLEAFCULL) || !xs->planepoly || xs->planepoly->numpts < 3) // (only a sector with 3D floors: the test replaces the loop over them; for the others the two plane tests are cheaper)
+		return false;
+	frs.ltest++;
+	if (!HWR_FrPrismHidden(xs->planepoly->pts, xs->planepoly->numpts, FixedToFloat(f->floorheight), FixedToFloat(f->ceilingheight)))
+		return false;
+	if (f->f_slope || f->c_slope || sub->sector->heightsec != -1 || HWR_PlaneHasHorizon(sub))
+		return false;
+	for (r = f->ffloors; r; r = r->next)
+		if ((r->t_slope && *r->t_slope) || (r->b_slope && *r->b_slope) || r->master->frontsector->f_slope || r->master->frontsector->c_slope)
+			return false;
+	frs.lhit++;
 	return true;
 }
 #endif
@@ -3180,6 +3152,7 @@ static void HWR_Subsector(size_t num)
 	extracolormap_t *floorcolormap;
 	extracolormap_t *ceilingcolormap;
 	ffloor_t *rover;
+	boolean fr_planes_out = false; // OPT12 PS2-HW-401
 
 #ifdef PARANOIA //no risk while developing, enough debugging nights!
 	if (num >= addsubsector)
@@ -3229,9 +3202,12 @@ static void HWR_Subsector(size_t num)
 
 	sub->sector->extra_colormap = gl_frontsector->extra_colormap;
 
+#ifdef PS2_PROFILE
+	fr_planes_out = sub->validcount != validcount && HWR_FrLeafPlanesCulled(sub, num); // OPT12 PS2-HW-401
+#endif
 	// render floor ?
 	// yeah, easy backface cull! :)
-	if (cullFloorHeight < viewz)
+	if (cullFloorHeight < viewz && !fr_planes_out)
 	{
 		if (gl_frontsector->floorpic != skyflatnum)
 		{
@@ -3251,7 +3227,7 @@ static void HWR_Subsector(size_t num)
 		}
 	}
 
-	if (cullCeilingHeight > viewz)
+	if (cullCeilingHeight > viewz && !fr_planes_out)
 	{
 		if (gl_frontsector->ceilingpic != skyflatnum)
 		{
@@ -3275,7 +3251,7 @@ static void HWR_Subsector(size_t num)
 	if (gl_frontsector->ceilingpic == skyflatnum || gl_frontsector->floorpic == skyflatnum)
 		drawsky = true;
 
-	if (gl_frontsector->ffloors)
+	if (gl_frontsector->ffloors && !fr_planes_out)
 	{
 		/// \todo fix light, xoffs, yoffs, extracolormap ?
 		for (rover = gl_frontsector->ffloors;
