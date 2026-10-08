@@ -45,12 +45,7 @@ extern int polygonArraySize, polygonArrayAllocSize, unsortedVertexArraySize, uns
 extern UINT32 hwr_geo_off; // -hwgo: OPT11 optimisations switched off (hw_gcache.inc)
 void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon);
 void HWR_GCRecTex(GLMipmap_t *texture);
-#define GC_POLY_HDR 64u // the block of a polygon record starts here (16 byte aligned: the record is, the header and the surface are padded)
-typedef struct { UINT8 op, n, horizon, needext; UINT16 size; INT16 target; FBITFIELD flags; GLMipmap_t *tex; INT32 src, tnum; } gcphdr_t; // 24 bytes (src: 0, or the number + 1 of the side whose animated texture tnum the polygon takes: 3D floors), then an FSurfaceInfo (32), padding to GC_POLY_HDR, and the block of the polygon (2 + 2 n quadwords: what the block collection made of it; needext: whether the block holds the extent of s, t)
-void HWR_GCRecBlockDone(void); // hw_gcache.inc: the polygon just collected is complete, its block goes into the record
-void HWR_PBCopyLast(void *dst, UINT32 need); // hw_batching.c: the block of the last polygon collected
-UINT32 HWR_GCNeedExt(const GLMipmap_t *tex, FBITFIELD flags);
-boolean HWR_GCBlocksOn(void); // the polygons of a batch are collected as blocks (the cache needs it)
+typedef struct { UINT8 op, n, horizon, pad; UINT16 size; INT16 target; FBITFIELD flags; GLMipmap_t *tex; INT32 src, tnum; } gcphdr_t; // 24 bytes (src: 0, or the number + 1 of the side whose animated texture tnum the polygon takes: 3D floors), followed by an FSurfaceInfo and n FOutVector: what the cache keeps of one HWR_ProcessPolygon
 void HWR_GCBatchReserve(int npoly, int nvert); // room in the batch arrays of the old collection for that many more polygons and vertices (it may allocate: the cache asks before it replays)
 void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view); // HWR_ProcessPolygon of such a record (the texture is made current and touched once per view)
 extern GLMipmap_t *current_texture; // the texture of the next polygon (HWR_SetCurrentTexture)
