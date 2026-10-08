@@ -527,6 +527,24 @@ static void HWR_GCReplayGrow(FUINT iNumPts)
 	}
 }
 
+// Room for a replay or a record (the cache calls it before it starts, so that nothing of it can run out of memory half way): npoly more polygons, nvert more vertices
+void HWR_GCBatchReserve(int npoly, int nvert)
+{
+	if (!currently_batching)
+		return;
+	if (polygonArraySize + npoly > polygonArrayAllocSize)
+	{
+		polygonArrayAllocSize = HWR_BatchCapacity(polygonArrayAllocSize, polygonArraySize + npoly, sizeof(PolygonArrayEntry));
+		polygonArray = HWR_BatchResize(polygonArray, (size_t)polygonArrayAllocSize * sizeof(PolygonArrayEntry));
+		polygonIndexArray = HWR_BatchResize(polygonIndexArray, (size_t)polygonArrayAllocSize * sizeof(UINT32));
+	}
+	if (unsortedVertexArraySize + nvert > unsortedVertexArrayAllocSize)
+	{
+		unsortedVertexArrayAllocSize = HWR_BatchCapacity(unsortedVertexArrayAllocSize, unsortedVertexArraySize + nvert, sizeof(FOutVector));
+		unsortedVertexArray = HWR_BatchResize(unsortedVertexArray, (size_t)unsortedVertexArrayAllocSize * sizeof(FOutVector));
+	}
+}
+
 // HWR_ProcessPolygon of a polygon the geometry cache made before (batching, not sprites): what the digest and the sort key need is in the record
 void HWR_GCReplayPoly(const gcphdr_t *h)
 {

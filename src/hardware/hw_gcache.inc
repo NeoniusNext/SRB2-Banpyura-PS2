@@ -19,7 +19,7 @@
 // The memory is one block of the zone (PU_HWRPLANE), asked with Z_TryMallocAlign: when the zone has no room the cache stays off, nothing else fails.
 
 #define GC_WAYS 2u
-#define GC_DEFAULT_KB 384u
+#define GC_DEFAULT_KB 1280u // both halves of the arena
 #define GC_SCRATCH (24u << 10) // the record of a hit that is checked (mode 2, 3)
 #define GC_MAXREC (12u << 10) // longest record that is kept
 
@@ -39,7 +39,7 @@ typedef struct
 } gcent_t;
 
 // a record in the arena: this header, keyw words of key (the inputs the result was made from; compared word by word with the live ones), then the ops
-typedef struct { UINT16 keyw, opsoff; } gcrh_t;
+typedef struct { UINT16 keyw, opsoff, npoly, nvert, nwall, pad; } gcrh_t; // (npoly, nvert, nwall: what the replay adds to the batch arrays and the list of transparent walls)
 #define GC_KEYMAX 80u
 
 static struct
@@ -48,6 +48,7 @@ static struct
 	boolean mode_set, on, dead;
 	UINT32 kb;
 	void *blk; // the zone block that holds everything below
+	size_t blk_bytes;
 	gcent_t *tab;
 	gcfp_t *bfp, *ffp; // per sector: the fingerprint of the sector alone / with its 3D floors and light list
 	UINT32 *bst, *fst; // ... and the view they were made in
@@ -55,15 +56,16 @@ static struct
 	UINT32 vctr;
 	UINT32 nsec, view, scan;
 	UINT8 *ar;
-	UINT32 ar_size, ar_used;
+	UINT32 ar_size, ar_used; // ar_size: both halves; ar_used: the next free byte of the current half (an offset from ar)
+	UINT32 hsize, hbase; // the arena is two halves: the current one is written, the one before is still read (and what is read there is copied to the current one: gc_promote)
 	UINT16 gen;
 	UINT32 epoch;
-	UINT32 rec_start, rec_pos, rec_limit;
+	UINT32 rec_start, rec_pos, rec_limit, rec_np, rec_nv, rec_nw;
 	boolean rec_fail, rec_full;
 	// statistics of the window (HWPROF32)
 	UINT32 s_seg_hit, s_seg_miss, s_seg_skip, s_pl_hit, s_pl_miss, s_pl_skip, s_flush, s_full, s_chk, s_bad, s_rep_ops, s_rec_ops;
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
-	UINT32 sdbg, nsets, nsets_user;
+	UINT32 sdbg, nsets, nsets_user, s_reclaim, s_promo, test_rec, test_res, test_n1, test_n2; // -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th HWR_GCReserve (tests of the reclaim)
 	UINT32 mmpos, mm[34], mmp[34]; // the position of the first word of a key that differed (1 = the first), histograms of the segs and of the planes
 	UINT32 s_new, s_stale, c_rpoly, c_rtex, n_rpoly, n_rtex; // misses of a seg or plane never seen / seen with another key; cycles and number of the polygon and texture ops of the replays
 	UINT32 reports;
@@ -412,15 +414,39 @@ static inline __attribute__((always_inline)) int gc_plane_words(const pslope_t *
 // ---------------------------------------------------------------------------------------------------------------------------------------------
 // tables
 
-static void gc_flush_arena(void)
+// A record is live when it was made in the current half (gen) or in the one before (gen - 1); 0 is a free entry. A swap makes the half that is full the old one and drops the old one:
+// what was used in the last half survives it (gc_promote), what was not goes. A flush (the texture records or the lights changed) drops both.
+static inline boolean gc_live(UINT16 g)
 {
-	gc.ar_used = 0;
-	if (++gc.gen == 0) // wrapped: the entries of 65535 generations ago would match again
+	return g == gc.gen || (g && g == (UINT16)(gc.gen - 1));
+}
+
+static void gc_advance(UINT32 n)
+{
+	UINT32 g = (UINT32)gc.gen + n;
+
+	if (g > 65000u) // the numbers are used up: the table is emptied
 	{
 		if (gc.tab)
 			memset(gc.tab, 0, (size_t)gc.nsets * GC_WAYS * sizeof(gcent_t));
-		gc.gen = 1;
+		g = 2;
+		gc.hbase = 0;
 	}
+	gc.gen = (UINT16)g;
+}
+
+static void gc_flush_arena(void)
+{
+	gc_advance(2);
+	gc.ar_used = gc.hbase;
+}
+
+static void gc_swap_arena(void)
+{
+	gc_advance(1);
+	if (gc.gen != 2) // (not after a wrap)
+		gc.hbase = gc.hbase ? 0 : gc.hsize;
+	gc.ar_used = gc.hbase;
 }
 
 void HWR_GCacheFlush(void)
@@ -447,7 +473,7 @@ static void HWR_GCacheParse(void)
 	if (M_CheckParm("-hwgo") && M_IsNextParm())
 		hwr_geo_off = (UINT32)atoi(M_GetNextParm());
 	gc.mode_set = true;
-	gc.mode = 0; // OFF by default: the cache of a hit costs about what the calculation does (measured, docs/GATES/g1/opt11-GEOM.md)
+	gc.mode = 1; // ON by default since the round 2 (v2: a hit is a key of plain words and a lean replay, -0.4 .. -0.6 M cycles on DEMO_001/002, docs/GATES/g1/opt11-GEOM.md); -hwgc 0: off
 	gc.kb = GC_DEFAULT_KB;
 	if (M_CheckParm("-hwgc") && M_IsNextParm())
 		gc.mode = atoi(M_GetNextParm());
@@ -461,6 +487,15 @@ static void HWR_GCacheParse(void)
 			p2 <<= 1;
 		gc.nsets_user = p2;
 	}
+	if (M_CheckParm("-hwgctest") && M_IsNextParm())
+	{
+		const char *a = M_GetNextParm();
+
+		gc.test_rec = (UINT32)atoi(a);
+		while (*a && *a != ',')
+			a++;
+		gc.test_res = *a == ',' ? (UINT32)atoi(a + 1) : 0;
+	}
 	if (M_CheckParm("-hwgcmem") && M_IsNextParm())
 	{
 		INT32 kb = atoi(M_GetNextParm());
@@ -469,12 +504,58 @@ static void HWR_GCacheParse(void)
 	}
 }
 
+// The zone asks for memory back (z_zone.h, Z_AddReclaimHook: an allocation does not fit and no cache block is left): the whole cache goes and stays off for the level.
+// A record that is being made notices (gc.blk is NULL: gc_rec_end writes nothing); a replay cannot be running, HWR_GCReserve made the room for it first.
+static size_t HWR_GCacheReclaim(size_t want)
+{
+	size_t got = gc.blk_bytes;
+
+	(void)want;
+	if (!gc.blk)
+		return 0;
+	gc.dead = true;
+	gc.on = false;
+	gc.rec_fail = true;
+	hwr_grec_on = false;
+	gc.s_reclaim++;
+	Z_Free(gc.blk); // (sets gc.blk to NULL)
+	gc.blk = NULL;
+	return got;
+}
+
+// After an abandoned frame (ps2_hwfb.c): the state the jump left behind
+void HWR_GCacheAbandon(void)
+{
+	hwr_grec_on = false;
+	gc.on = false;
+	gc.rec_fail = true;
+}
+
+// A hit in the old half: the record is copied to the current one (if it has room), so that it survives the next swap. Returns the record to replay.
+static const gcrh_t *gc_promote(gcent_t *e, const gcrh_t *rh)
+{
+	const UINT32 len = e->len;
+
+	if (e->gen == gc.gen)
+		return rh;
+	if (gc.ar_used + len <= gc.hbase + gc.hsize)
+	{
+		memcpy(gc.ar + gc.ar_used, rh, len);
+		e->off = gc.ar_used;
+		e->gen = gc.gen;
+		gc.ar_used += (len + 3u) & ~3u;
+		gc.s_promo++;
+		return (const gcrh_t *)(gc.ar + e->off);
+	}
+	return rh;
+}
+
 static boolean gc_alloc_block(void)
 {
 	UINT32 want = 2048u;
 	size_t tab_b;
 	size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32));
-	size_t ar_b = (size_t)gc.kb * 1024u + GC_SCRATCH;
+	size_t ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
 	size_t total;
 
 	// the table: a set for every subsector (a seg of it, its floor, its ceiling ...), 2 ways, at least 2048 and at most 8192 sets: 16 bytes an entry. A table that is smaller than what
@@ -498,6 +579,10 @@ static boolean gc_alloc_block(void)
 		gc.blk = NULL;
 		return false;
 	}
+	gc.blk_bytes = total;
+#ifdef PS2
+	Z_AddReclaimHook(HWR_GCacheReclaim); // (a second call is ignored)
+#endif
 	gc.nsets = want;
 	gc.tab = (gcent_t *)p;
 	p += tab_b;
@@ -514,7 +599,9 @@ static boolean gc_alloc_block(void)
 	gc.fver = (UINT32 *)p;
 	p += (size_t)numsectors * sizeof(UINT32);
 	gc.ar = p;
-	gc.ar_size = gc.kb * 1024u;
+	gc.hsize = gc.kb * 512u & ~15u;
+	gc.hbase = 0;
+	gc.ar_size = gc.hsize * 2u;
 	gc.ar_used = 0;
 	gc.nsec = (UINT32)numsectors;
 	memset(gc.tab, 0, tab_b);
@@ -525,7 +612,7 @@ static boolean gc_alloc_block(void)
 	memset(gc.bfp, 0, (size_t)numsectors * sizeof(gcfp_t));
 	memset(gc.ffp, 0, (size_t)numsectors * sizeof(gcfp_t));
 	gc.vctr = 0;
-	gc.gen = 1;
+	gc.gen = 2;
 	gc.view = 0;
 	gc.epoch = 0;
 	return true;
@@ -589,7 +676,7 @@ static gcent_t *gc_find(UINT32 id, UINT32 id2, boolean *hit)
 	h = (h ^ (h >> 15)) * 2246822519u;
 	set = &gc.tab[((h >> 8) & (gc.nsets - 1)) * GC_WAYS];
 	for (w = 0; w < GC_WAYS; w++)
-		if (set[w].gen == gc.gen && set[w].id == id && set[w].id2 == id2)
+		if (set[w].id == id && set[w].id2 == id2 && gc_live(set[w].gen))
 		{
 			*hit = true;
 			return &set[w];
@@ -598,10 +685,10 @@ static gcent_t *gc_find(UINT32 id, UINT32 id2, boolean *hit)
 	victim = &set[0];
 	for (w = 0; w < GC_WAYS; w++)
 	{
-		if (set[w].gen != gc.gen)
+		if (!gc_live(set[w].gen))
 			return &set[w];
-		if (set[w].off < victim->off)
-			victim = &set[w]; // the older record (the arena is written in order)
+		if (set[w].gen != gc.gen)
+			victim = &set[w]; // (one of the old half before one of the current)
 	}
 	return victim;
 }
@@ -627,11 +714,15 @@ static void *gc_rec_alloc(UINT32 bytes)
 	return p;
 }
 
+static size_t HWR_GCacheReclaim(size_t want);
+
 void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon)
 {
 	const UINT32 size = (UINT32)(sizeof(gcphdr_t) + sizeof(FSurfaceInfo) + n * sizeof(FOutVector));
 	gcphdr_t *h;
 
+	if (gc.test_rec && ++gc.test_n1 == gc.test_rec)
+		HWR_GCacheReclaim(0); // (test: the zone takes the cache back in the middle of a record)
 	if (n > 250)
 	{
 		gc.rec_fail = true;
@@ -652,6 +743,8 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 	memcpy(h + 1, surf, sizeof(FSurfaceInfo));
 	((FSurfaceInfo *)(h + 1))->PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
 	memcpy((UINT8 *)(h + 1) + sizeof(FSurfaceInfo), verts, n * sizeof(FOutVector));
+	gc.rec_np++;
+	gc.rec_nv += n;
 	gc.s_rec_ops++;
 }
 
@@ -684,6 +777,7 @@ static void HWR_GCRecTWall(const FOutVector *wallVerts, const FSurfaceInfo *pSur
 	// the surface of a translucent wall is not lit yet (HWR_RenderWall does it after the sort): only the alpha means something, the rest is stack garbage
 	memset(&w->surf, 0, sizeof w->surf);
 	w->surf.PolyColor.s.alpha = pSurf->PolyColor.s.alpha;
+	gc.rec_nw++;
 	gc.s_rec_ops++;
 }
 
@@ -693,13 +787,15 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	gcrh_t *rh;
 
 	gc.rec_start = gc.rec_pos = scratch ? gc.ar_size : gc.ar_used;
-	gc.rec_limit = scratch ? gc.ar_size + GC_SCRATCH : gc.ar_size;
+	gc.rec_limit = scratch ? gc.ar_size + GC_SCRATCH : gc.hbase + gc.hsize;
 	gc.rec_fail = gc.rec_full = false;
+	gc.rec_np = gc.rec_nv = gc.rec_nw = 0;
 	hwr_grec_on = true;
 	if ((rh = gc_rec_alloc((UINT32)(sizeof(gcrh_t) + 4u * (UINT32)keyw))) != NULL)
 	{
 		rh->keyw = (UINT16)keyw;
 		rh->opsoff = (UINT16)(sizeof(gcrh_t) + 4u * (UINT32)keyw);
+		rh->npoly = rh->nvert = rh->nwall = rh->pad = 0;
 		memcpy(rh + 1, key, 4u * (UINT32)keyw);
 	}
 }
@@ -819,6 +915,8 @@ static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 
 static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const char *kind, UINT32 idx)
 {
 	hwr_grec_on = false;
+	if (!gc.blk)
+		return; // (the zone took the memory back while the function ran: HWR_GCacheReclaim)
 	if (gc.rec_fail)
 	{
 		if (!check)
@@ -826,11 +924,18 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const c
 			if (gc.rec_full)
 			{
 				gc.s_full++;
-				gc_flush_arena(); // the arena is full: what it holds goes (one pass of misses); a record that is too long is just not kept
+				gc_swap_arena(); // the half is full: the old half goes, this one becomes the old one; a record that is too long is just not kept
 			}
 			e->gen = 0; // (not kept)
 		}
 		return;
+	}
+	{
+		gcrh_t *rh = (gcrh_t *)(gc.ar + gc.rec_start);
+
+		rh->npoly = (UINT16)gc.rec_np;
+		rh->nvert = (UINT16)gc.rec_nv;
+		rh->nwall = (UINT16)gc.rec_nw;
 	}
 	if (check)
 	{
@@ -884,9 +989,9 @@ void HWR_GCacheProf(unsigned int frames)
 		memset(gc.mmp, 0, sizeof gc.mmp);
 	}
 	gc.s_new = gc.s_stale = gc.c_rpoly = gc.c_rtex = gc.n_rpoly = gc.n_rtex = 0;
-	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | arena=%u/%u\n",
+	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | reclaim=%u promote=%u | arena=%u/%u\n",
 		gc.mode, gc.blk ? 1 : 0, gc.s_seg_hit / frames, gc.s_seg_miss / frames, gc.s_seg_skip / frames, gc.s_pl_hit / frames, gc.s_pl_miss / frames, gc.s_pl_skip / frames, gc.s_rep_ops / frames, gc.s_rec_ops / frames,
-		gc.s_flush, gc.s_full, gc.s_chk, gc.s_bad, gc.c_key / frames, gc.c_fp / frames, gc.n_fpb / frames, gc.n_fpf / frames, gc.c_hit / frames, gc.c_miss / frames, (unsigned)(gc.ar_used >> 10), (unsigned)(gc.ar_size >> 10));
+		gc.s_flush, gc.s_full, gc.s_chk, gc.s_bad, gc.c_key / frames, gc.c_fp / frames, gc.n_fpb / frames, gc.n_fpf / frames, gc.c_hit / frames, gc.c_miss / frames, gc.s_reclaim, gc.s_promo / frames, (unsigned)((gc.ar_used - gc.hbase) >> 10), (unsigned)(gc.hsize >> 10));
 	gc.s_seg_hit = gc.s_seg_miss = gc.s_seg_skip = gc.s_pl_hit = gc.s_pl_miss = gc.s_pl_skip = gc.s_flush = gc.s_full = gc.s_chk = gc.s_bad = gc.s_rep_ops = gc.s_rec_ops = 0;
-	gc.c_hit = gc.c_miss = gc.c_key = gc.c_fp = gc.n_fpb = gc.n_fpf = 0;
+	gc.c_hit = gc.c_miss = gc.c_key = gc.c_fp = gc.n_fpb = gc.n_fpf = gc.s_promo = 0;
 }

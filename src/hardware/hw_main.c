@@ -58,6 +58,7 @@ extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 extern boolean Cubeapply; // v_video.c (the colour cube): HWR_Lighting
 extern float Cubepal[2][2][2][3];
 static boolean HWR_PS2_NoCull(void);
+static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 #else
 #define HWP_LOCAL ((void)0)
@@ -628,10 +629,16 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 				{
 					const UINT32 t1 = ps2hwp_now();
 
-					gc_replay(gc.ar + gce->off + rh->opsoff, (UINT32)gce->len - rh->opsoff);
-					gc.s_pl_hit++;
-					gc.c_hit += ps2hwp_now() - t1;
-					return;
+					if (HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+					{
+						rh = gc_promote(gce, rh);
+						gc_replay((const UINT8 *)rh + rh->opsoff, (UINT32)gce->len - rh->opsoff);
+						gc.s_pl_hit++;
+						gc.c_hit += ps2hwp_now() - t1;
+						return;
+					}
+					gce = NULL; // (the allocation took the cache's memory: this plane is made the long way, nothing is recorded)
+					goto gc_plane_nocache;
 				}
 			}
 			if (!gccheck) // (a valid entry that is being checked is not a miss)
@@ -643,7 +650,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		else
 			gc.s_new++;
 		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, planecolormap, gckey, true);
-		if (gckn >= 0)
+		if (gckn >= 0 && HWR_GCReserve(1, (UINT32)nrPlaneVerts + 8u, 0))
 			gc_rec_begin(gccheck, gckey, gckn);
 		else
 		{
@@ -656,6 +663,8 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		gce = NULL;
 		gc.s_pl_skip++;
 	}
+gc_plane_nocache:
+	;
 #endif
 
 	HWD_LAP(HWP_PL_A);
@@ -2247,9 +2256,16 @@ static void HWR_ProcessSegC(void)
 			{
 				const UINT32 t1 = ps2hwp_now();
 
+				if (!HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+				{
+					HWR_ProcessSeg(); // (the allocation took the cache's memory: this seg is made the long way)
+					HWP_SPAN_END(t, HWP_SEG);
+					return;
+				}
+				rh = gc_promote(e, rh);
 				gl_sidedef = sg->sidedef;
 				gl_linedef = sg->linedef;
-				gc_replay(gc.ar + e->off + rh->opsoff, (UINT32)e->len - rh->opsoff);
+				gc_replay((const UINT8 *)rh + rh->opsoff, (UINT32)e->len - rh->opsoff);
 				gc.s_seg_hit++;
 				gc.c_hit += ps2hwp_now() - t1;
 				HWP_SPAN_END(t, HWP_SEG);
@@ -2269,6 +2285,10 @@ static void HWR_ProcessSegC(void)
 		{
 			gc.s_seg_skip++;
 			HWR_ProcessSeg();
+		}
+		else if (!HWR_GCReserve(48, 512, 16))
+		{
+			HWR_ProcessSeg(); // (the cache went)
 		}
 		else
 		{
@@ -7081,10 +7101,33 @@ void transform(float *cx, float *cy, float *cz)
 	*cx *= gl_fovlud;
 }
 
+static size_t allocedwalls = 0; // (was a static of HWR_AddTransparentWall; the cache's HWR_GCReserve grows the list too)
+
+#ifdef PS2_PROFILE
+// OPT11 round 2: before the geometry cache replays a record (or starts one) the room it can need is made, because an allocation is where the zone may take the cache's memory back
+// (HWR_GCacheReclaim): nothing of the cache may be in use then. False: the memory went, the caller does it the long way.
+static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw)
+{
+	if (gc.test_res && ++gc.test_n2 == gc.test_res)
+		HWR_GCacheReclaim(0); // (test: the zone takes the cache back where the allocation of the reserve could)
+	HWR_GCBatchReserve((int)np, (int)nv);
+	if (nw)
+	{
+		if (!wallinfo)
+			allocedwalls = 0;
+		if (allocedwalls < numwalls + nw)
+		{
+			while (allocedwalls < numwalls + nw)
+				allocedwalls += MAX_TRANSPARENTWALL;
+			Z_Realloc(wallinfo, allocedwalls * sizeof (*wallinfo), PU_LEVEL, &wallinfo);
+		}
+	}
+	return gc.blk != NULL;
+}
+#endif
+
 void HWR_AddTransparentWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, INT32 texnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap)
 {
-	static size_t allocedwalls = 0;
-
 	if (!r_renderwalls)
 		return;
 

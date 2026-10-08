@@ -135,6 +135,7 @@ static void ForceSoftware(const char *why, boolean mark)
 	I_OutputMsg("ps2_hwfb: HARDWARE -> SOFTWARE (%s) map %d frame %lu\n", why, (int)gamemap, (unsigned long)hwfb_frame);
 	PS2HWD_Abort();
 #ifdef PS2_PROFILE
+	HWR_GCacheAbandon(); // OPT11 round 2: a record of the geometry cache that was being made
 	currently_batching = false; // HWR_StartBatching stops with an error when the last frame never reached HWR_RenderBatches
 	HWR_ReleaseBatching();
 #endif
