@@ -148,6 +148,17 @@ int LUA_GetErrorMessage(lua_State *L)
 	return 1;
 }
 
+#ifdef PS2
+// PS2-170 (OPT11-STAB): is a Lua function running right now (the engine was called from a script, or a script from the engine)? The zone then does not
+// jump out of a failed allocation (z_zone.c, Z_GuardTRY): the Lua state cannot be abandoned half way.
+boolean PS2Lua_InCall(void)
+{
+	lua_Debug ar;
+
+	return gL && lua_getstack(gL, 0, &ar);
+}
+#endif
+
 int LUA_Call(lua_State *L, int nargs, int nresults, int errorhandlerindex)
 {
 	int err = lua_pcall(L, nargs, nresults, errorhandlerindex);

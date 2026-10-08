@@ -122,6 +122,9 @@ static addfilelist_t startuppwads;
 #if defined (PS2) && defined (HAS_ADDONS)
 #include "ps2/ps2_addons.h"
 #endif
+#ifdef PS2
+#include "ps2/ps2_hwfb.h" // PS2-170
+#endif
 
 boolean devparm = false; // started game with -devparm
 
@@ -973,9 +976,11 @@ static void D_RunFrame(void)
 #ifdef PS2_PROF_DIRECT
 			{
 				const UINT32 pc0 = PS2Prof_Cyc();
-				D_Display();
+				PS2HWFB_Display(D_Display); // PS2-170 (also in the profile build)
 				ps2prof_c_disp += PS2Prof_Cyc() - pc0;
 			}
+#elif defined(PS2)
+			PS2HWFB_Display(D_Display); // PS2-170: running out of memory in the frame leaves the hardware renderer / draws the frame again, it does not end the game
 #else
 			D_Display();
 #endif

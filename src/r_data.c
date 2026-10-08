@@ -411,6 +411,9 @@ void R_ReInitColormaps(UINT16 num)
 	W_ReadLumpHeader(lump, colormaps, W_LumpLength(basecolormaplump), 0U);
 	if (fadecolormap)
 		Z_Free(fadecolormap);
+#ifdef PS2
+	fadecolormap = NULL; // PS2-173: the allocation below can jump out (z_zone.h Z_GUARD_TRY): not a pointer to freed memory
+#endif
 	R_CreateFadeColormaps();
 
 	// Init Boom colormaps.

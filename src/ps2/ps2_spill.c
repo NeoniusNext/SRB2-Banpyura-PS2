@@ -179,6 +179,13 @@ void *__wrap__memalign_r(void *r, size_t align, size_t n)
 	return Spill_Alloc(n, bits);
 }
 
+// PS2-170: the game thread jumped out of an allocation (Z_GuardLanded): the "inside the zone" markers must not stay set
+void PS2Spill_Reset(void)
+{
+	spill_busy = 0;
+	spill_inhibit = 0;
+}
+
 void PS2Spill_Stats(size_t *now, size_t *peak, size_t *blocks, size_t *total, size_t *fail, size_t *foreign)
 {
 	*now = spill_now;
@@ -190,6 +197,7 @@ void PS2Spill_Stats(size_t *now, size_t *peak, size_t *blocks, size_t *total, si
 }
 #else
 void PS2Spill_Init(void) {}
+void PS2Spill_Reset(void) {}
 void PS2Spill_Stats(size_t *now, size_t *peak, size_t *blocks, size_t *total, size_t *fail, size_t *foreign)
 {
 	*now = *peak = *blocks = *total = *fail = *foreign = 0;
