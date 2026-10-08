@@ -111,6 +111,11 @@ static boolean diag_reloaded, diag_restarted, diag_parsed, diag_hash_flag, diag_
 static UINT32 diag_restart_at = 0xffffffffu;
 static int16_t *dump_buf;
 static size_t dump_frames, dump_max;
+// -atrace <records>: a journal of every audsrv write and every read of the IOP ring (tools/ps2/audio_ring_sim.py replays it)
+typedef struct { UINT32 t_us; UINT16 kind, off; INT32 a, b; } trace_rec;
+enum { TR_WRITE = 1, TR_OBS = 2, TR_MARK = 3 };
+static trace_rec *trace_buf;
+static UINT32 trace_n, trace_max, trace_block;
 #endif
 static UINT32 stat_last_print_ms;
 static UINT32 stat_last_underruns, stat_last_blocks;
@@ -215,6 +220,28 @@ static void UpdateGain(void)
 	eng.music_gain = (unsigned)music_volume * internal_volume * 32768 / (31 * 100);
 }
 
+#ifdef _EE
+static void Trace(UINT16 kind, UINT16 off, INT32 a, INT32 b)
+{
+	if (trace_buf && trace_n < trace_max)
+	{
+		trace_rec *r = &trace_buf[trace_n++];
+		r->t_us = (UINT32)((A_NOW() - stat_t0) * 1000000 / A_HZ); r->kind = kind; r->off = off; r->a = a; r->b = b;
+	}
+}
+// Diagnostic read of the IOP ring (extra RPCs, only with -atrace): available and queued as the IOP reports them.
+static void TraceObserve(void)
+{
+	int av, q;
+	if (!trace_buf) return;
+	av = audsrv_available(); q = audsrv_queued();
+	Trace(TR_OBS, 0, av, q);
+}
+#else
+#define Trace(k, o, a, b) ((void)0)
+#define TraceObserve() ((void)0)
+#endif
+
 // One refill of the audsrv queue: executes commands, renders blocks, sends them. Mixer thread, or the game thread in
 // single-thread mode. Never waits for playback space.
 static void AudioPump(unsigned maxblocks)
@@ -226,8 +253,15 @@ static void AudioPump(unsigned maxblocks)
 	if (!output_pending && !PS2E_Active(&eng))
 	{
 		acct.active_prev = 0; // idle: the empty queue that follows is not an underrun
+#ifdef _EE
+		{
+			static UINT32 idle_pumps;
+			if (trace_buf && (idle_pumps++ & 3) == 0) TraceObserve(); // idle: sample the ring every 4th wake-up
+		}
+#endif
 		return;
 	}
+	TraceObserve();
 	queued = audsrv_queued();
 	if (queued < 0) { Fail("queue query", queued); return; }
 	PS2E_AcctBegin(&acct, &eng, A_NOW(), A_HZ, queued);
@@ -253,6 +287,7 @@ static void AudioPump(unsigned maxblocks)
 #ifdef _EE
 			if (dump_buf && dump_frames + PS2_AUDIO_BLOCK <= dump_max)
 			{ memcpy(dump_buf + dump_frames * 2, output, sizeof output); dump_frames += PS2_AUDIO_BLOCK; }
+			trace_block = (UINT32)(eng.st.blocks - 1);
 #endif
 			output_pending = sizeof output; output_offset = 0;
 		}
@@ -260,6 +295,7 @@ static void AudioPump(unsigned maxblocks)
 		if (request <= 0) break;
 		written = audsrv_play_audio((const char *)output + output_offset, request);
 		status = audsrv_get_error();
+		Trace(TR_WRITE, (UINT16)output_offset, written, (INT32)trace_block);
 		if (written < 0 || written > request || (written & 3) || status != AUDSRV_ERR_NOERROR)
 		{ Fail("PCM transfer", status ? status : written); return; }
 		// A short or zero write is backpressure, not an RPC failure: keep the unsent suffix, do not render again.
@@ -642,6 +678,12 @@ void I_StartupSound(void)
 			dump_max = (size_t)atoi(M_GetNextParm());
 			dump_buf = dump_max ? malloc(dump_max * 4) : NULL; dump_frames = 0;
 		}
+		if (M_CheckParm("-atrace") && M_IsNextParm())
+		{
+			trace_max = (UINT32)atoi(M_GetNextParm());
+			trace_buf = trace_max ? malloc((size_t)trace_max * sizeof(trace_rec)) : NULL; trace_n = 0;
+			if (!trace_buf) trace_max = 0;
+		}
 	}
 	if (diag_nothread) want_thread = false;
 	eng.diag_hash = diag_hash_flag;
@@ -682,6 +724,15 @@ void I_ShutdownSound(void)
 		f = fopen(path, "wb");
 		if (f) { fwrite(dump_buf, 4, dump_frames, f); fclose(f); I_OutputMsg("ASTAT dump %u frames -> %s\n", (unsigned)dump_frames, path); }
 		free(dump_buf); dump_buf = NULL; dump_frames = dump_max = 0;
+	}
+	if (trace_buf)
+	{
+		char path[300];
+		FILE *f;
+		snprintf(path, sizeof path, "%s/atrace.bin", srb2home);
+		f = fopen(path, "wb");
+		if (f) { fwrite(trace_buf, sizeof(trace_rec), trace_n, f); fclose(f); I_OutputMsg("ASTAT trace %u records -> %s\n", (unsigned)trace_n, path); }
+		free(trace_buf); trace_buf = NULL; trace_n = trace_max = 0;
 	}
 #endif
 	Z_SetReclaimHook(NULL);
