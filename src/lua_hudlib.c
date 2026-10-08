@@ -466,10 +466,23 @@ static int libd_patchExists(lua_State *L)
 	return 1;
 }
 
+#ifdef PS2_PROFILE
+// PS2-176 (OPT11-STAB): a sprite patch the game loaded as an evictable zone block (PU_SPRITE, Patch_IsEvictable) cannot go while a script keeps the pointer: the engine fetches
+// its patches again with W_CachePatchNum every time, a Lua variable does not (under memory pressure the script got "patch_t doesn't exist anymore" and the picture was gone)
+static patch_t *LuaKeepPatch(patch_t *patch)
+{
+	if (patch && (patch->embedded & 1))
+		patch->embedded |= 2;
+	return patch;
+}
+#else
+#define LuaKeepPatch(p) (p)
+#endif
+
 static int libd_cachePatch(lua_State *L)
 {
 	HUDONLY
-	LUA_PushUserdata(L, W_CachePatchLongName(luaL_checkstring(L, 1), PU_PATCH), META_PATCH);
+	LUA_PushUserdata(L, LuaKeepPatch(W_CachePatchLongName(luaL_checkstring(L, 1), PU_PATCH)), META_PATCH);
 	return 1;
 }
 
@@ -540,7 +553,7 @@ static int libd_getSpritePatch(lua_State *L)
 #endif
 
 	// push both the patch and it's "flip" value
-	LUA_PushUserdata(L, W_CachePatchNum(sprframe->lumppat[angle], PU_SPRITE), META_PATCH);
+	LUA_PushUserdata(L, LuaKeepPatch(W_CachePatchNum(sprframe->lumppat[angle], PU_SPRITE)), META_PATCH);
 	lua_pushboolean(L, (sprframe->flip & (1<<angle)) != 0);
 	return 2;
 }
@@ -655,7 +668,7 @@ static int libd_getSprite2Patch(lua_State *L)
 #endif
 
 	// push both the patch and it's "flip" value
-	LUA_PushUserdata(L, W_CachePatchNum(sprframe->lumppat[angle], PU_SPRITE), META_PATCH);
+	LUA_PushUserdata(L, LuaKeepPatch(W_CachePatchNum(sprframe->lumppat[angle], PU_SPRITE)), META_PATCH);
 	lua_pushboolean(L, (sprframe->flip & (1<<angle)) != 0);
 	return 2;
 }

@@ -11,6 +11,12 @@
 #include "../lua_script.h"
 #include "../lua_libs.h"
 #include "../info.h"
+#include "../z_zone.h"
+
+boolean PS2Lua_InCall(void) // PS2-170: no Lua VM, nothing can be running (z_zone.h)
+{
+	return false;
+}
 
 INT32 lua_lumploading = 0; // is LUA_LoadLump being called?
 INT32 lua_locallyloading = 0; // is this wad file being loaded locally?

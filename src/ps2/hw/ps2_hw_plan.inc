@@ -41,7 +41,8 @@ typedef struct
 	float hist[PLAN_BINS]; // area by texel size
 } planinfo_t;
 
-static planinfo_t plan_info[PLAN_MAX];
+static planinfo_t (*plan_info_p)[PLAN_MAX]; // PS2-171: see ovq (ps2_hw_draw.inc)
+#define plan_info (*plan_info_p)
 static int plan_n;
 static u32 plan_frame; // frame_no + 1 the table belongs to (a frame can plan twice: the skybox view and the main view)
 

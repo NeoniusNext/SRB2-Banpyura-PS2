@@ -54,6 +54,9 @@
 
 #include "lua_hud.h"
 #include "lua_libs.h"
+#ifdef PS2
+#include "ps2/ps2_hwfb.h" // PS2-170
+#endif
 
 gameaction_t gameaction;
 gamestate_t gamestate = GS_NULL;
@@ -1914,7 +1917,11 @@ void G_DoLoadLevel(boolean resetplayer)
 	}
 
 	// Setup the level.
+#ifdef PS2
+	if (!PS2HWFB_LoadLevel()) // PS2-170: a local game whose map does not fit in memory goes back to the title screen with a message, it does not end in an error
+#else
 	if (!P_LoadLevel(false, false)) // this never returns false?
+#endif
 	{
 		// fail so reset game stuff
 		Command_ExitGame_f();
@@ -4429,6 +4436,21 @@ void G_LoadGameSettings(void)
 
 // G_LoadGameData
 // Loads the main data file, which stores information such as emblems found, etc.
+#ifdef PS2
+// PS2-175 (OPT11-STAB): a console has no file manager to "delete gamedata.dat and try again": a damaged or foreign file (a memory card pulled in the middle
+// of a write, a file of another version) must not lock the game out for good. The file is kept as gamedata.bad, the game goes on with new game data.
+static void G_GameDataDamaged(gamedata_t *data, UINT8 *buf, size_t size, const char *what)
+{
+	FIL_WriteFile(va(pandf, srb2home, "gamedata.bad"), buf, size);
+	Z_Free(buf);
+	CONS_Alert(CONS_ERROR, "%s The file is kept as gamedata.bad, the game starts with new game data.\n", what);
+	G_ClearRecords(data);
+	M_ClearSecrets(data);
+	data->totalplaytime = 0;
+	data->loaded = true;
+}
+#endif
+
 void G_LoadGameData(gamedata_t *data)
 {
 	save_t savebuffer;
@@ -4491,12 +4513,17 @@ void G_LoadGameData(gamedata_t *data)
 #endif
 		)
 	{
+#ifdef PS2
+		G_GameDataDamaged(data, savebuffer.buf, savebuffer.size, "Game data is from another version of SRB2.");
+		return;
+#else
 		const char *gdfolder = "the SRB2 folder";
 		if (strcmp(srb2home,"."))
 			gdfolder = srb2home;
 
 		Z_Free(savebuffer.buf);
 		I_Error("Game data is from another version of SRB2.\nDelete %s(maybe in %s) and try again.", gamedatafilename, gdfolder);
+#endif
 	}
 
 #ifdef COMPAT_GAMEDATA_ID // Account for lower MAXUNLOCKABLES and MAXEXTRAEMBLEMS from older versions
@@ -4650,6 +4677,9 @@ void G_LoadGameData(gamedata_t *data)
 	// Landing point for corrupt gamedata
 	datacorrupt:
 	{
+#ifdef PS2
+		G_GameDataDamaged(data, savebuffer.buf, savebuffer.size, "Corrupt game data file.");
+#else
 		const char *gdfolder = "the SRB2 folder";
 		if (strcmp(srb2home,"."))
 			gdfolder = srb2home;
@@ -4657,6 +4687,7 @@ void G_LoadGameData(gamedata_t *data)
 		Z_Free(savebuffer.buf);
 
 		I_Error("Corrupt game data file.\nDelete %s(maybe in %s) and try again.", gamedatafilename, gdfolder);
+#endif
 	}
 }
 

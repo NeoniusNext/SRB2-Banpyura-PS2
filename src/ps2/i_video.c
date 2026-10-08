@@ -37,6 +37,7 @@
 #include "ps2_gs.h"
 #include "ps2_vmodes.h"
 #include "ps2_boot.h"
+#include "ps2_hwfb.h" // PS2-170
 
 #ifdef HWRENDER
 #include "../hardware/hw_main.h"
@@ -199,6 +200,8 @@ static INT32 totalframes;
 
 static void Impl_HWFailure(const char *message)
 {
+	if (Z_GuardThrow(message)) // PS2-170: the frame (or the level's hardware part) is abandoned and the game goes on in software; no return from here
+		return;
 	I_Error("PS2 HW resource failure: %s", message);
 }
 
@@ -250,9 +253,16 @@ static boolean Impl_HWAcquire(void)
 	ps2gs_shutdown();
 	if (!HWD.pfnInit())
 	{
+#ifdef PS2
+		// PS2-170 (OPT11-STAB): the driver could not start (no memory for its work arrays, a GS mode it cannot set up): the caller goes on in software
+		PS2HWD_SetFatalHandler(NULL);
+		CONS_Alert(CONS_ERROR, "PS2 GS hardware renderer failed to start: using the Software renderer\n");
+		return false;
+#else
 		vid.glstate = VID_GL_LIBRARY_ERROR;
 		I_Error("PS2 GS hardware renderer failed to start; Hardware request was not rendered");
 		return false;
+#endif
 	}
 	hwd_on = true;
 	PS2HWD_SetScreenSize(vid.width > 0 ? vid.width : BASEVIDWIDTH, vid.height > 0 ? vid.height : BASEVIDHEIGHT);
@@ -281,6 +291,12 @@ static boolean Impl_HWAcquire(void)
 	}
 #endif
 	return true;
+}
+
+// PS2-170: the driver is up but the engine does not own it yet (a jump out of its start): the ordinary release does nothing then
+boolean PS2Video_HWOwned(void)
+{
+	return hwd_on;
 }
 
 static void Impl_HWRelease(void)
@@ -588,7 +604,13 @@ void VID_StartupOpenGL(void)
 	vid.glstate = Impl_HWAcquire() ? VID_GL_LIBRARY_LOADED : VID_GL_LIBRARY_ERROR;
 	if (vid.glstate == VID_GL_LIBRARY_ERROR)
 	{
+#ifdef PS2
+		// PS2-170: no Hardware renderer in this session: the game starts (or goes on) in software
+		rendermode = render_soft;
+		Impl_SoftwareAcquire(gsmode);
+#else
 		I_Error("GS hardware bootstrap failed");
+#endif
 	}
 #endif
 }
@@ -753,11 +775,19 @@ boolean VID_CheckRenderer(void)
 				rendererchanged = false;
 			else if (!hwd_on && !Impl_HWAcquire()) // back from software: the GS goes to the driver again
 			{
+#ifdef PS2
+				// PS2-170: the driver does not start now (memory, GS): software, and the failure counts towards giving the hardware renderer up
+				PS2HWFB_NoteStartFailure();
+				rendermode = render_soft;
+				Impl_SoftwareAcquire(gsmode);
+				rendererchanged = false;
+#else
 				vid.glstate = VID_GL_LIBRARY_ERROR;
 				VID_CheckGLLoaded(oldrenderer);
 				rendermode = render_soft;
 				CV_StealthSetValue(&cv_renderer, render_soft);
 				rendererchanged = false;
+#endif
 			}
 		}
 		else
