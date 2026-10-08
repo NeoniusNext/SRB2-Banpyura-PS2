@@ -672,7 +672,7 @@ static int _01inverse(vorbis_block *vb,vorbis_look_residue *vl,
         if(s==0){
           /* fetch the partition word for each channel */
           for(j=0;j<ch;j++){
-            int temp=vorbis_book_decode(look->phrasebook,&vb->opb);
+            int temp=ps2_book_decode(vb->vd,look->phrasebook,&vb->opb);
 
             if(temp==-1 || temp>=info->partvals)goto eopbreak;
             partword[j][l]=look->decodemap[temp];
@@ -827,7 +827,7 @@ int res2_inverse(vorbis_block *vb,vorbis_look_residue *vl,
 
         if(s==0){
           /* fetch the partition word */
-          int temp=vorbis_book_decode(look->phrasebook,&vb->opb);
+          int temp=ps2_book_decode(vb->vd,look->phrasebook,&vb->opb);
           if(temp==-1 || temp>=info->partvals)goto eopbreak;
           partword[l]=look->decodemap[temp];
           if(partword[l]==NULL)goto errout;
@@ -840,20 +840,7 @@ int res2_inverse(vorbis_block *vb,vorbis_look_residue *vl,
 
             if(stagebook){
               /* PS2-313: two interleaved channels with an even dimension: the fast table */
-              ps2_fastbook *fb=NULL;
-              if(ch==2 && !(stagebook->dim&1)){
-                private_state *ps=vb->vd->backend_state;
-                codec_setup_info *pci=vb->vd->vi->codec_setup;
-                long bi=stagebook-pci->fullbooks;
-                if(ps->ps2fast && bi>=0 && bi<ps->ps2books){
-                  fb=ps->ps2fast[bi];
-                  if(!fb){
-                    fb=stagebook->valuelist?ps2_fastbook_build(stagebook):NULL;
-                    ps->ps2fast[bi]=fb?(void *)fb:(void *)1;   /* 1: no fast table for this book */
-                  }
-                  if(fb==(ps2_fastbook *)1)fb=NULL;
-                }
-              }
+              ps2_fastbook *fb=(ch==2 && !(stagebook->dim&1) && stagebook->valuelist)?ps2_fastbook_get(vb->vd,stagebook):NULL;
               if(fb){
                 if(ps2_book_decodevv2_add(fb,stagebook,in,
                                           i*samples_per_partition+info->begin,

@@ -22,6 +22,11 @@
 #include "codec_internal.h"
 #include "registry.h"
 #include "codebook.h"
+#ifdef PS2_VORBIS_VU0
+#include <stdint.h>
+#include "ps2_vu0a.h"
+extern volatile int ps2a_vu0_disable;
+#endif
 #include "misc.h"
 #include "scales.h"
 
@@ -372,6 +377,38 @@ static void render_line(int n, int x0,int x1,int y0,int y1,float *d){
     d[x]*=FLOOR1_fromdB_LOOKUP[y];
   }
 }
+
+#ifdef PS2_VORBIS_VU0
+/* PS2-315: render_line that stores the multiplier instead of applying it (the multiplication of the whole spectrum is one vector pass afterwards) */
+static void render_line_m(int n, int x0,int x1,int y0,int y1,float *d){
+  int dy=y1-y0;
+  int adx=x1-x0;
+  int ady=abs(dy);
+  int base=dy/adx;
+  int sy=(dy<0?base-1:base+1);
+  int x=x0;
+  int y=y0;
+  int err=0;
+
+  ady-=abs(base*adx);
+
+  if(n>x1)n=x1;
+
+  if(x<n)
+    d[x]=FLOOR1_fromdB_LOOKUP[y];
+
+  while(++x<n){
+    err=err+ady;
+    if(err>=adx){
+      err-=adx;
+      y+=sy;
+    }else{
+      y+=base;
+    }
+    d[x]=FLOOR1_fromdB_LOOKUP[y];
+  }
+}
+#endif
 
 static void render_line0(int n, int x0,int x1,int y0,int y1,int *d){
   int dy=y1-y0;
@@ -977,7 +1014,7 @@ static void *floor1_inverse1(vorbis_block *vb,vorbis_look_floor *in){
 
       /* decode the partition's first stage cascade value */
       if(csubbits){
-        cval=vorbis_book_decode(books+info->class_book[class],&vb->opb);
+        cval=ps2_book_decode(vb->vd,books+info->class_book[class],&vb->opb);
 
         if(cval==-1)goto eop;
       }
@@ -986,7 +1023,7 @@ static void *floor1_inverse1(vorbis_block *vb,vorbis_look_floor *in){
         int book=info->class_subbook[class][cval&(csub-1)];
         cval>>=csubbits;
         if(book>=0){
-          if((fit_value[j+k]=vorbis_book_decode(books+book,&vb->opb))==-1)
+          if((fit_value[j+k]=ps2_book_decode(vb->vd,books+book,&vb->opb))==-1)
             goto eop;
         }else{
           fit_value[j+k]=0;
@@ -1049,6 +1086,44 @@ static int floor1_inverse2(vorbis_block *vb,vorbis_look_floor *in,void *memo,
 
   /* PS2-312: half-rate decoding transforms the lower half of the bins only; the upper half of the envelope is never read */
   n>>=ci->halfrate_flag;
+
+#ifdef PS2_VORBIS_VU0
+  if(memo && n>=8 && !(n&7) && !(((uintptr_t)out)&15)){
+    ps2a_vu0_saved sv;
+    int vu=0;
+#ifdef PS2A_MODEL
+    vu=1;
+#else
+    if(!ps2a_vu0_disable && ps2a_vu0_enter(&sv))vu=2;
+#endif
+    if(vu){
+      /* PS2-315: the lines cover [0, n) without a gap (each starts where the previous ended, the tail after the last): m[x] = the multiplier of bin x,
+         then one vector multiplication */
+      int *fit_value=(int *)memo;
+      int hx=0;
+      int lx=0;
+      int ly=fit_value[0]*info->mult;
+      float *m=(float *)(((uintptr_t)_vorbis_block_alloc(vb,n*sizeof(float)+12)+15)&~(uintptr_t)15);
+      ly=(ly<0?0:ly>255?255:ly);
+      for(j=1;j<look->posts;j++){
+        int current=look->forward_index[j];
+        int hy=fit_value[current]&0x7fff;
+        if(hy==fit_value[current]){
+          hx=info->postlist[current];
+          hy*=info->mult;
+          hy=(hy<0?0:hy>255?255:hy);
+          render_line_m(n,lx,hx,ly,hy,m);
+          lx=hx;
+          ly=hy;
+        }
+      }
+      for(j=hx;j<n;j++)m[j]=FLOOR1_fromdB_LOOKUP[ly];
+      ps2a_mulv_dispatch(vu,out,m,n);
+      if(vu==2)ps2a_vu0_leave(&sv);
+      return(1);
+    }
+  }
+#endif
 
   if(memo){
     /* render the lines */

@@ -32,6 +32,8 @@ SCEN = {
     'd4_mus_hw': ('DEMO_004', [], ['-renderer', 'Hardware']),
     'd1_off_hw': ('DEMO_001', OFF, ['-renderer', 'Hardware']),
     # no demo: the player stands still in MAP01 (a pause, then a track change; no SFX of its own)
+    'm1_ref': ('MAP:MAP01', [], []),
+    'm1_mute': ('MAP:MAP01', [], ['-acmd', '200', 'digmusicvolume 0', '-acmd', '500', 'digmusicvolume 31']),
     'm1_pause': ('MAP:MAP01', [], ['-acmd', '300', 'pause', '-acmd', '600', 'pause']),
     'm1_none': ('MAP:MAP01', [], ['-acmd', '300', 'tunes -none']),
 }

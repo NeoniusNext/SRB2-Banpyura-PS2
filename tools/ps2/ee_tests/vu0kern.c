@@ -169,6 +169,29 @@ int main(void)
 		h = fnv(h, O, 16 * ng);
 	}
 	printf("EETEST KERN conv %016llx\n", (unsigned long long)h);
+	// K7: channel coupling and floor multiplication
+	h = NEWHASH;
+	for (it = 0; it < 300; it++)
+	{
+		int n = 8 * (1 + it % 16);
+		static float PM[256] __attribute__((aligned(16))), PA[256] __attribute__((aligned(16))), MM[256] __attribute__((aligned(16)));
+		for (i = 0; i < n; i++)
+		{
+			uint32_t m = rnd();
+			PM[i] = (m & 15) == 0 ? 0.0f : ((m & 31) == 1 ? -0.0f : rf());
+			PA[i] = (m & 0xf0) == 0 ? 0.0f : ((m & 0x1f0) == 0x10 ? -0.0f : rf());
+			MM[i] = rf();
+		}
+#if PS2A_VU0
+		ps2a_couple(PM, PA, n);
+		ps2a_mulv(PM, MM, n);
+#else
+		ps2a_couple_c(PM, PA, n);
+		ps2a_mulv_c(PM, MM, n);
+#endif
+		h = fnv(h, PM, 4 * n); h = fnv(h, PA, 4 * n);
+	}
+	printf("EETEST KERN couple_mulv %016llx\n", (unsigned long long)h);
 #if PS2A_VU0
 	ps2a_vu0_leave(&sv);
 #endif

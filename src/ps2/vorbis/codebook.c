@@ -19,6 +19,7 @@
 #include <math.h>
 #include <ogg/ogg.h>
 #include "vorbis/codec.h"
+#include "codec_internal.h"
 #include "codebook.h"
 #include "scales.h"
 #include "misc.h"
@@ -841,4 +842,38 @@ long ps2_book_decodevv2_add(const ps2_fastbook *fb,codebook *book,float **a,long
   }
   b->endbyte=(long)(bp>>3); b->endbit=(int)(bp&7); b->ptr=b->buffer+b->endbyte;
   return(0);
+}
+
+/* PS2-313: the fast table of a book of the decoder `vd` (built at the first use, kept in private_state.ps2fast); NULL if the book has none */
+ps2_fastbook *ps2_fastbook_get(vorbis_dsp_state *vd,codebook *book){
+  private_state *ps=vd->backend_state;
+  codec_setup_info *ci=vd->vi->codec_setup;
+  long bi=book-ci->fullbooks;
+  ps2_fastbook *fb;
+  if(!ps->ps2fast || bi<0 || bi>=ps->ps2books)return(NULL);
+  fb=ps->ps2fast[bi];
+  if(!fb){
+    fb=ps2_fastbook_build(book);
+    ps->ps2fast[bi]=fb?(void *)fb:(void *)1;   /* 1: no fast table for this book */
+  }
+  return(fb==(ps2_fastbook *)1?NULL:fb);
+}
+
+/* vorbis_book_decode with the fast table (valueless books: the table holds dec_index) */
+long ps2_book_decode(vorbis_dsp_state *vd,codebook *book,oggpack_buffer *b){
+  const ps2_fastbook *fb=ps2_fastbook_get(vd,book);
+  if(fb && !book->valuelist && b->ptr && b->storage-b->endbyte>=8){
+    ogg_uint64_t w;
+    ogg_uint32_t e;
+    __builtin_memcpy(&w,b->ptr,8);
+    e=fb->ft[(unsigned)(w>>b->endbit)&fb->mask];
+    if(e){
+      int bits=b->endbit+(int)(e&15);
+      b->ptr+=bits>>3;
+      b->endbyte+=bits>>3;
+      b->endbit=bits&7;
+      return((long)(e>>5));
+    }
+  }
+  return(vorbis_book_decode(book,b));
 }

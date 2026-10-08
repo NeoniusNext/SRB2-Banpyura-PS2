@@ -125,6 +125,9 @@ typedef struct ps2_fastbook{
   ogg_uint32_t ft[1];
 } ps2_fastbook;
 extern ps2_fastbook *ps2_fastbook_build(const codebook *book);
+struct vorbis_dsp_state;
+extern ps2_fastbook *ps2_fastbook_get(struct vorbis_dsp_state *vd,codebook *book);
+extern long ps2_book_decode(struct vorbis_dsp_state *vd,codebook *book,oggpack_buffer *b);   /* = vorbis_book_decode, faster for valueless books */
 /* the two-channel interleaved residue decode (res2_inverse) with the fast table; same result as vorbis_book_decodevv_add_lim */
 extern long ps2_book_decodevv2_add(const ps2_fastbook *fb,codebook *book,float **a,long offset,
                                    oggpack_buffer *b,int n,long lim);

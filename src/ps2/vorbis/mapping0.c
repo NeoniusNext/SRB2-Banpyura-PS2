@@ -151,6 +151,11 @@ static vorbis_info_mapping *mapping0_unpack(vorbis_info *vi,oggpack_buffer *opb)
 #include "lsp.h"
 #include "envelope.h"
 #include "mdct.h"
+#ifdef PS2_VORBIS_VU0
+#include <stdint.h>
+#include "ps2_vu0a.h"
+extern volatile int ps2a_vu0_disable;
+#endif
 #include "psy.h"
 #include "scales.h"
 
@@ -754,6 +759,29 @@ static int mapping0_inverse(vorbis_block *vb,vorbis_info_mapping *l){
   }
 
   /* channel coupling */
+#ifdef PS2_VORBIS_VU0
+  /* PS2-315: VU0 (or its C twin) when the vectors are 16-byte aligned (the block store of synthesis.c) and lim is a multiple of 4 */
+  if(info->coupling_steps>0 && !(lim&3)){
+    ps2a_vu0_saved sv;
+    int vu=0;
+#ifdef PS2A_MODEL
+    vu=1;
+#else
+    if(!ps2a_vu0_disable && ps2a_vu0_enter(&sv))vu=2;
+#endif
+    if(vu){
+      int aligned=1;
+      for(i=0;i<info->coupling_steps;i++)
+        if(((uintptr_t)vb->pcm[info->coupling_mag[i]]|(uintptr_t)vb->pcm[info->coupling_ang[i]])&15)aligned=0;
+      if(aligned){
+        for(i=info->coupling_steps-1;i>=0;i--)
+          ps2a_couple_dispatch(vu,vb->pcm[info->coupling_mag[i]],vb->pcm[info->coupling_ang[i]],(int)lim);
+      }
+      if(vu==2)ps2a_vu0_leave(&sv);
+      if(aligned)goto coupled;
+    }
+  }
+#endif
   for(i=info->coupling_steps-1;i>=0;i--){
     float *pcmM=vb->pcm[info->coupling_mag[i]];
     float *pcmA=vb->pcm[info->coupling_ang[i]];
@@ -781,6 +809,9 @@ static int mapping0_inverse(vorbis_block *vb,vorbis_info_mapping *l){
     }
   }
 
+#ifdef PS2_VORBIS_VU0
+ coupled:
+#endif
   /* compute and apply spectral envelope */
   for(i=0;i<vi->channels;i++){
     float *pcm=vb->pcm[i];

@@ -663,4 +663,110 @@ static inline void ps2a_conv(const float *l, const float *r, int16_t *out, int n
 }
 #endif
 
+// ---- kernel COUPLE: the inverse channel coupling of mapping0_inverse (square polar, one coupling step) -------------------------------------------
+// for every bin:  mag > 0:  ang > 0: (M, A) = (mag, mag - ang)   ang <= 0: (mag + ang, mag)
+//                 mag <= 0: ang > 0: (mag, mag + ang)            ang <= 0: (mag - ang, mag)
+// as  ap = max(ang, 0), an = min(ang, 0):  mag > 0: M = mag + an, A = mag - ap;  mag <= 0: M = mag - an, A = mag + ap  (adding or subtracting a
+// zero leaves the value; at most the sign of a zero can differ).  The selection is made on the bits of mag as a signed integer (> 0 exactly when mag > 0).
+// n a multiple of 4, M and A 16-byte aligned.
+static inline void ps2a_couple_c(float *pm, float *pa, int n)
+{
+	int j;
+	for (j = 0; j < n; j++)
+	{
+		float mag = pm[j], ang = pa[j];
+		float ap = ang > 0.f ? ang : 0.f, an = ang < 0.f ? ang : 0.f;
+		if (mag > 0.f) { pm[j] = mag + an; pa[j] = mag - ap; }
+		else { pm[j] = mag - an; pa[j] = mag + ap; }
+	}
+}
+#if PS2A_VU0
+static const float ps2a_k_zero[4] __attribute__((aligned(16))) = {0.0f, 0.0f, 0.0f, 0.0f};
+static inline void ps2a_couple(float *pm, float *pa, int n)
+{
+	int cnt = n >> 2;
+	long t0, t1, t2, t3, t4, t5;
+	__asm__ volatile(
+		"lqc2 $vf30, 0(%[z])\n"
+		".set push\n.set noreorder\n"
+		"1:\n"
+		"lqc2 $vf1, 0x00(%[pm])\n"
+		"lqc2 $vf2, 0x00(%[pa])\n"
+		"lq %[t0], 0x00(%[pm])\n"
+		"vmax $vf3, $vf2, $vf30\n"
+		"vmini $vf4, $vf2, $vf30\n"
+		"vadd $vf5, $vf1, $vf4\n"
+		"vsub $vf6, $vf1, $vf4\n"
+		"vsub $vf7, $vf1, $vf3\n"
+		"vadd $vf8, $vf1, $vf3\n"
+		"pcgtw %[t1], %[t0], $0\n"
+		"qmfc2 %[t2], $vf5\n"
+		"qmfc2 %[t3], $vf6\n"
+		"qmfc2 %[t4], $vf7\n"
+		"qmfc2 %[t5], $vf8\n"
+		"pxor %[t2], %[t2], %[t3]\n"
+		"pand %[t2], %[t2], %[t1]\n"
+		"pxor %[t2], %[t2], %[t3]\n"
+		"pxor %[t4], %[t4], %[t5]\n"
+		"pand %[t4], %[t4], %[t1]\n"
+		"pxor %[t4], %[t4], %[t5]\n"
+		"addiu %[n], %[n], -1\n"
+		"sq %[t2], 0x00(%[pm])\n"
+		"sq %[t4], 0x00(%[pa])\n"
+		"addiu %[pm], %[pm], 0x10\n"
+		"bgtz %[n], 1b\n"
+		"addiu %[pa], %[pa], 0x10\n"
+		".set pop\n"
+		: [pm] "+&r"(pm), [pa] "+&r"(pa), [n] "+&r"(cnt),
+		  [t0] "=&r"(t0), [t1] "=&r"(t1), [t2] "=&r"(t2), [t3] "=&r"(t3), [t4] "=&r"(t4), [t5] "=&r"(t5)
+		: [z] "r"(ps2a_k_zero) : "memory");
+}
+#endif
+static inline void ps2a_couple_dispatch(int vu, float *pm, float *pa, int n)
+{
+#if PS2A_VU0
+	if (vu == 2) { ps2a_couple(pm, pa, n); return; }
+#endif
+	(void)vu;
+	ps2a_couple_c(pm, pa, n);
+}
+
+// ---- kernel MULV: d[i] *= m[i] (the floor curve applied to the spectrum; m holds FLOOR1_fromdB_LOOKUP[y(i)]); n a multiple of 8, 16-byte aligned ----
+static inline void ps2a_mulv_c(float *d, const float *m, int n)
+{
+	int i;
+	for (i = 0; i < n; i++) d[i] = d[i] * m[i];
+}
+#if PS2A_VU0
+static inline void ps2a_mulv(float *d, const float *m, int n)
+{
+	int cnt = n >> 3;
+	__asm__ volatile(
+		".set push\n.set noreorder\n"
+		"1:\n"
+		"lqc2 $vf1, 0x00(%[d])\n"
+		"lqc2 $vf2, 0x00(%[m])\n"
+		"lqc2 $vf3, 0x10(%[d])\n"
+		"lqc2 $vf4, 0x10(%[m])\n"
+		"vmul $vf5, $vf1, $vf2\n"
+		"vmul $vf6, $vf3, $vf4\n"
+		"addiu %[n], %[n], -1\n"
+		"sqc2 $vf5, 0x00(%[d])\n"
+		"sqc2 $vf6, 0x10(%[d])\n"
+		"addiu %[m], %[m], 0x20\n"
+		"bgtz %[n], 1b\n"
+		"addiu %[d], %[d], 0x20\n"
+		".set pop\n"
+		: [d] "+&r"(d), [m] "+&r"(m), [n] "+&r"(cnt) : : "memory");
+}
+#endif
+static inline void ps2a_mulv_dispatch(int vu, float *d, const float *m, int n)
+{
+#if PS2A_VU0
+	if (vu == 2) { ps2a_mulv(d, m, n); return; }
+#endif
+	(void)vu;
+	ps2a_mulv_c(d, m, n);
+}
+
 #endif
