@@ -153,3 +153,18 @@ MAPMD: `direct runs=8860 flushes=19415 errors=0`; MAP01: 10318 / 22195 / 0; MAP2
 
 ### 9.2 `flats` — самопроверка маршрута плоской копии из патчей (PS2-180), software, цепочка по всем картам с `-flatcheck`
 **814 сравнений 370 различных текстур, используемых как пол (размеры от 64×64 до 1024×1024): 0 расхождений** (`equal 0 texels differ`; среди них `PLHD5` 1024×1024, `GFS_CLD6` 1024×1024, `PLHD3/4` 512×512, `ACZWAL1` 512×512, `CESTONE*` 256×256). Цепочка: 83 из 84 (в режиме `-flatcheck` маршрут из патчей не используется для самой текстуры, поэтому MAPMG здесь, как раньше, возвращается на титул с сообщением; с обычными ключами карта открывается, 8.4). `build/runs/sweep/m10-flats`.
+
+### 9.3 `ui` (m10): титул, меню, интро, переключения рендерера, финалы, special stage, NiGHTS — оба рендерера
+Все 28 прогонов `ok` (ни одного `I_Error`/OOM/`HEAP CHECK`/`WATCHDOG`): `menus` 2310 кадров ×2, `intro` 2600 ×2, `title-long` 3000 ×2, `toggle-level/title/menu` (Software↔Hardware туда-обратно по четыре-пять раз за сценарий) 1900/1500/1700, `ending`, `credits` 1400 ×2, `evaluation`, `continue`, `gameend` 900 ×2, `intro-cmd` 1800 ×2, `special` 2300 ×2, `nights` 2300 ×2.
+
+### 9.4 `video` (m10): NTSC / PAL / 480p × внутренние режимы 320x200, 320x224, 320x256, 640x400, 640x512 × Software / Hardware
+**30 из 30**: уровень стартует, рисует кадр, выходит; размер снимка равен размеру режима (`video grid: all ok`).
+
+### 9.5 `split` (m10): сплитскрин, два скриптовых пада, MAP01
+Software и Hardware: `PS2 pad: joystick 1 is port 1 / joystick 2 is port 2`, `-padscript with 78 steps`, прогон до `VIDSHOT COMPLETE`, ошибок нет. Снимки (`build/runs/m10-split-{Software,Hardware}/vidshot-320x200-l500.ppm`): два вида (Sonic сверху, Tails снизу), у каждого свой HUD, обе картинки правильные.
+
+### 9.6 `addons` (m10): Lua, лимиты, скин/звук/музыка, UDMF, Lua HUD (PS2 ↔ ПК)
+Базовый набор — `FTLUA 17 lines on PS2, 17 on PC, 0 different`; ZL (Lua) 37/37, 0 различий; ZF (лимиты) 41/41, 0 различий, 130 предупреждений у обоих (одинаковые); ZS (скин/звук/музыка/Lua) 28/28, 0 различий; UM (UDMF-карта) 17/17, 0 различий; Lua HUD software: `FTLUA hud calls 40`; Lua HUD hardware: `calls 40`; Lua HUD hardware с отказами выделения каждые 8 кадров (`-zoomevery 8 -zoomany`): `calls 40`, 24 `OOM (recoverable)`, страж не прыгал внутри хука Lua, `ps2_hwfb: fallbacks 1 ... soft-retries 23`, картинка идёт.
+
+### 9.7 `net` (начало, m10): список сценариев исправлен, ПК-сервер → PS2-клиент
+Два первых сценария `stab_run.sh net` (`ps2srv-pccli`, `pcsrv-ps2cli`) падали за 0 с: их спеки пишет `net_specs.py`, а этап вызывал только `net_specs9.py` (`FileNotFoundError`). Этап исправлен (оба генератора, актуальный список: режимы, аддоны, меню, обрывы, выход хоста, соак, HW). До остановки сессии прошли режимы ПК-сервер → PS2-клиент: Match, CTF, Race, Tag, Co-op: по 98–106 с, 63 общих отсчёта `NETSYNC` (gametic 35..2205), **0 отличий** у всех пяти.
