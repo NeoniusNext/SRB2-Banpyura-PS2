@@ -521,6 +521,7 @@ static UINT8 HWR_CeilingLightLevel(sector_t *sector, INT16 base_lightlevel)
 
 #ifdef PS2_PROFILE
 // OPT11 (GEOM, PS2-HW-80): the geometry cache of the BSP walk replaces the plane cache of PS2-HW-55 (hw_gcache.inc)
+static INT32 hwr_gc_src, hwr_gc_tnum; // the side (number + 1) whose midtexture the polygons being made take (3D floors), and the translated texture number: set by HWR_ProcessSeg, read by the records of the cache
 #include "hw_gcache.inc"
 
 static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
@@ -2006,6 +2007,10 @@ static void HWR_ProcessSeg(void)
 				}
 
 				texnum = R_GetTextureNum(side->midtexture);
+#ifdef PS2_PROFILE
+				hwr_gc_src = (INT32)(side - sides) + 1; // OPT11 (PS2-HW-213): everything this floor puts out until the next one is made with the animated texture of this side (the cache patches it)
+				hwr_gc_tnum = texnum;
+#endif
 
 				h  = P_GetFFloorTopZAt   (rover, v1x, v1y);
 				hS = P_GetFFloorTopZAt   (rover, v2x, v2y);
@@ -2162,6 +2167,10 @@ static void HWR_ProcessSeg(void)
 				}
 
 				texnum = R_GetTextureNum(side->midtexture);
+#ifdef PS2_PROFILE
+				hwr_gc_src = (INT32)(side - sides) + 1; // OPT11 (PS2-HW-213): everything this floor puts out until the next one is made with the animated texture of this side (the cache patches it)
+				hwr_gc_tnum = texnum;
+#endif
 
 				h  = P_GetFFloorTopZAt   (rover, v1x, v1y);
 				hS = P_GetFFloorTopZAt   (rover, v2x, v2y);
@@ -2308,7 +2317,7 @@ static void HWR_ProcessSegC(void)
 
 			kn = gc_seg_words(sg, gl_frontsector, gl_backsector, (UINT32 *)(rh + 1), false);
 			gc.c_key += ps2hwp_now() - t0;
-			if (kn == (int)rh->keyw && !(check = gc_check_this()))
+			if (kn == (int)rh->keyw && !(check = gc_check_this()) && (!(rh->flags & 2) || gc_src_ok(rh, e->len)))
 			{
 				const UINT32 t1 = ps2hwp_now();
 
@@ -2320,6 +2329,8 @@ static void HWR_ProcessSegC(void)
 					return;
 				}
 				rh = gc_promote(e, rh);
+				if (rh->flags & 2)
+					gc_src_patch((gcrh_t *)rh, (UINT32)e->len);
 				gl_sidedef = sg->sidedef;
 				gl_linedef = sg->linedef;
 				gc_replay(rh, (UINT32)e->len);
@@ -5296,10 +5307,19 @@ static void HWR_CreateDrawNodes(void)
 			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
 			gl_frontsector = NULL;
 
+#ifdef PS2_PROFILE
+			const UINT32 nt0 = ps2hwp_now();
+#endif
 			if (!(sortnode[sortindex[i]].plane->blend & PF_NoTexture))
 				HWR_GetLevelFlat(sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->chromakeyed);
 			HWR_RenderPlane(NULL, sortnode[sortindex[i]].plane->xsub, sortnode[sortindex[i]].plane->isceiling, sortnode[sortindex[i]].plane->fixedheight, sortnode[sortindex[i]].plane->blend, sortnode[sortindex[i]].plane->lightlevel,
 				sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->FOFSector, sortnode[sortindex[i]].plane->alpha, sortnode[sortindex[i]].plane->planecolormap);
+#ifdef PS2_PROFILE
+			gc.nd_pl++;
+			gc.nd_plc += ps2hwp_now() - nt0;
+			if (sortnode[sortindex[i]].plane->blend & PF_Ripple)
+				gc.nd_rip++;
+#endif
 		}
 		else if (sortnode[sortindex[i]].polyplane)
 		{
@@ -5315,10 +5335,17 @@ static void HWR_CreateDrawNodes(void)
 		}
 		else if (sortnode[sortindex[i]].wall)
 		{
+#ifdef PS2_PROFILE
+			const UINT32 nt1 = ps2hwp_now();
+#endif
 			if (!(sortnode[sortindex[i]].wall->blend & PF_NoTexture))
 				HWR_GetTexture(sortnode[sortindex[i]].wall->texnum, true);
 			HWR_RenderWall(sortnode[sortindex[i]].wall->wallVerts, &sortnode[sortindex[i]].wall->Surf, sortnode[sortindex[i]].wall->blend, sortnode[sortindex[i]].wall->fogwall,
 				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
+#ifdef PS2_PROFILE
+			gc.nd_wl++;
+			gc.nd_wlc += ps2hwp_now() - nt1;
+#endif
 		}
 	}
 

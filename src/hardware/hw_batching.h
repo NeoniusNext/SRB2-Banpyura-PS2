@@ -45,7 +45,7 @@ extern int polygonArraySize, polygonArrayAllocSize, unsortedVertexArraySize, uns
 extern UINT32 hwr_geo_off; // -hwgo: OPT11 optimisations switched off (hw_gcache.inc)
 void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, FBITFIELD flags, int shader, boolean horizon);
 void HWR_GCRecTex(GLMipmap_t *texture);
-typedef struct { UINT8 op, n, horizon, pad; UINT16 size; INT16 target; FBITFIELD flags; GLMipmap_t *tex; } gcphdr_t; // 16 bytes, followed by an FSurfaceInfo and n FOutVector: what the cache keeps of one HWR_ProcessPolygon
+typedef struct { UINT8 op, n, horizon, pad; UINT16 size; INT16 target; FBITFIELD flags; GLMipmap_t *tex; INT32 src, tnum; } gcphdr_t; // 24 bytes (src: 0, or the number + 1 of the side whose animated texture tnum the polygon takes: 3D floors), followed by an FSurfaceInfo and n FOutVector: what the cache keeps of one HWR_ProcessPolygon
 void HWR_GCBatchReserve(int npoly, int nvert); // room in the batch arrays of the old collection for that many more polygons and vertices (it may allocate: the cache asks before it replays)
 void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view); // HWR_ProcessPolygon of such a record (the texture is made current and touched once per view)
 extern GLMipmap_t *current_texture; // the texture of the next polygon (HWR_SetCurrentTexture)
