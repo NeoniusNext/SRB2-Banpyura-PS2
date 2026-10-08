@@ -89,10 +89,16 @@ def simulate(tr, dump, t0, k0, wav=None):
     cur = None
     steps = []
     unknown = 0
+    onsets = []                   # [t_write, first ring byte, heard step time or None]: the first audible write after silence (an SFX onset)
+    last_audible_t = -1e18
     for n in range(n_first, n_last + 1):
         t = t0 + n * STEP_US
         while wi < len(writes) and writes[wi][0] <= t:
-            _, cnt, b, off = writes[wi]
+            tw, cnt, b, off = writes[wi]
+            if b >= 0:
+                if tw - last_audible_t > 150000.0:       # more than 150 ms since the last audible write: a new sound
+                    onsets.append([tw, wpos, None])
+                last_audible_t = tw
             if b >= 0 and (b * BLOCK_BYTES + off + cnt) <= len(dump):
                 data = dump[b * BLOCK_BYTES + off:b * BLOCK_BYTES + off + cnt]
             elif b >= 0:
@@ -106,6 +112,9 @@ def simulate(tr, dump, t0, k0, wav=None):
             wpos = (wpos + cnt) % RING
             wi += 1
         rpos = ((k_first + (n - n_first)) % 10) * STEP
+        for o in onsets:
+            if o[2] is None and rpos <= o[1] < rpos + STEP:
+                o[2] = t
         sl = np.arange(rpos, rpos + STEP) % RING
         chunk = ring[sl].copy()
         st = ~fresh[sl]
@@ -131,7 +140,10 @@ def simulate(tr, dump, t0, k0, wav=None):
         with wave.open(str(wav), 'wb') as w:
             w.setnchannels(2); w.setsampwidth(2); w.setframerate(22050); w.writeframes(pcm.tobytes())
     total_steps = len(steps)
+    lat = sorted((o[2] - o[0]) / 1000.0 for o in onsets if o[2] is not None)
     res = {
+        'onsets': len(onsets), 'onset_latency_ms_min': round(lat[0], 1) if lat else None, 'onset_latency_ms_median': round(lat[len(lat) // 2], 1) if lat else None,
+        'onset_latency_ms_max': round(lat[-1], 1) if lat else None,
         'steps': total_steps, 'heard_s': round(total_steps * STEP_US / 1e6, 3),
         'stale_bytes': stale_bytes, 'stale_ms': round(stale_bytes / 88.2, 1),
         'stale_nonsilent_ms': round(stale_nonzero / 88.2, 1),
