@@ -3974,7 +3974,7 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	shadowVerts[1].z = shadowVerts[2].z = fy - offset;
 	shadowVerts[0].z = shadowVerts[3].z = fy + offset;
 
-#ifdef PS2_PROFILE // PS2-HW: no Lua, so the shadow always follows the camera (the default of Banpyura_SpriteShadow_SnapToCamera)
+#if defined(PS2_PROFILE) && !defined(HAS_LUA) // PS2-HW: without the Lua VM (SRB2_PS2_NO=lua) the shadow always follows the camera (the default of Banpyura_SpriteShadow_SnapToCamera); PS2-LUA: with Lua Banpyura.SpriteShadow_SetAngle works as on the PC
 	angle_t shadowangle = 0;
 #else
 	angle_t shadowangle = Banpyura_SpriteShadow_SnapToCamera ? 0 : (Banpyura_SpriteShadow_Angle - viewangle);

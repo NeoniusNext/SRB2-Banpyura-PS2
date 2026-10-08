@@ -1619,7 +1619,11 @@ static void Setvalue(consvar_t *var, const char *valstr, boolean stealth)
 			if (fpclassify(d) == FP_ZERO && valstr[0] != '0')
 				v = INT32_MIN;
 			else
+#ifdef PS2
+				v = PS2_DoubleToI32(d * FRACUNIT); // PS2-LUA: the PC result for an out of range number (m_fixed.h)
+#else
 				v = (INT32)(d * FRACUNIT);
+#endif
 		}
 		else
 		{
@@ -1754,7 +1758,11 @@ found:
 	else if (var->flags & CV_FLOAT)
 	{
 		double d = atof(var->string);
+#ifdef PS2
+		var->value = PS2_DoubleToI32(d * FRACUNIT); // PS2-LUA: see above
+#else
 		var->value = (INT32)(d * FRACUNIT);
+#endif
 	}
 	else
 	{

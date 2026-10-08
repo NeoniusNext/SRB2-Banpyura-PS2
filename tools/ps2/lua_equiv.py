@@ -59,7 +59,7 @@ def run_pc(name, scripts, a, out):
         args += ['-warp', a.warp]
     if a.demo:
         shutil.copy2(ROOT / 'golden/phase0-v2' / f'{a.demo}.lmp', o / 'home' / '.srb2' / f'{a.demo}.lmp')
-        args += ['-playdemo', a.demo + '.lmp']
+        args += ['-timedemo' if a.timedemo else '-playdemo', a.demo + '.lmp']
     for s in scripts:
         args += ['-file', str(s)]
     args += a.pc_args
@@ -99,7 +99,7 @@ def run_ps2(name, scripts, a, out):
     cmd = [sys.executable, str(ROOT / 'tools/ps2/ftest_run.py'), '--name', 'ps2', '--out', str(out), '--elf', a.elf, '--pak', a.pak, '--files', ','.join(str(s) for s in scripts),
            '--until', a.until, '--timeout', str(a.ps2_timeout), '--show', 'LQ '] + (['--demo', a.demo] if a.demo else []) + ['--'] + extra
     if a.demo:
-        cmd += ['-playdemo', a.demo + '.lmp']
+        cmd += ['-timedemo' if a.timedemo else '-playdemo', a.demo + '.lmp']
     p = subprocess.run(cmd, capture_output=True, text=True)
     (out / 'ps2-run.log').write_text(p.stdout + p.stderr)
     boot = run / 'boot.txt'
@@ -116,6 +116,7 @@ def main():
     ap.add_argument('--pc', default=DEFAULT_PC)
     ap.add_argument('--warp', default='')
     ap.add_argument('--demo', default='')
+    ap.add_argument('--timedemo', action='store_true', help='-timedemo (as fast as possible) instead of -playdemo')
     ap.add_argument('--until', default='LQ DONE')
     ap.add_argument('--pc-timeout', type=float, default=120)
     ap.add_argument('--ps2-timeout', type=float, default=900)
