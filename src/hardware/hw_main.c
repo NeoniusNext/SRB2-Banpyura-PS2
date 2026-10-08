@@ -3677,7 +3677,8 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 			cs = NULL;
 		if (cs && (ps2hwd_fx2 & FX2_PRECHECK) && !(ps2hwd_fx2 & FX2_NOSHADOW) && !groundslope && cv_shadow.value != 2)
 			sph = HWR_FX_SphereHidden(cs, fx, shadowVerts[0].y, fy, offset * 1.4143f + shadowlift + 0.5f); // check mode: the exact test below must agree
-		if (HWR_FX_QuadHidden(shadowVerts))
+		// PS2-HW-257: a shadow that goes to the sprite stream (the common case) is not tested exactly: the VU1 program throws out what no pixel centre lies in
+		if (!(hwr_fx_cheap && cv_shadow.value != 2 && currently_batching && hwr_sprite_batch && !(ps2hwd_fx2 & (FX3_NOSPR | FX2_PRECHECK))) && HWR_FX_QuadHidden(shadowVerts))
 		{
 			HWD_ADD(HWC_FX_SHQHID);
 			return;
@@ -5951,6 +5952,20 @@ static inline boolean HWR_FX_SpriteHiddenCheap(float x1, float x2, float z1, flo
 	return HWR_FX_SphereHidden(hwr_fx_cs, 0.5f * (x1 + x2), 0.5f * (gz + gzt), 0.5f * (z1 + z2), R * 1.002f + 1.0f);
 }
 
+// PS2-HW-257c: the sphere test lets through a sprite whose quad holds no pixel centre; the VU1 program throws it out, which costs the EE one record. It costs more when the
+// picture of the sprite is not in the GS pool yet: the old path then makes the data of the patch and uploads it for a sprite that is not drawn (D2 from the window 7: 52
+// such sprites a frame, the GS pool and the zone thrashed, the frames 1.55 times longer). Those take the exact test, as before: the set of pictures made resident is the old one.
+static inline boolean HWR_FX_SpriteResident(lumpnum_t ln)
+{
+	const patch_t *p = (const patch_t *)W_PeekPatchNum(ln);
+	const GLPatch_t *gp;
+
+	if (!p || !p->hardware)
+		return false;
+	gp = (const GLPatch_t *)p->hardware;
+	return gp->mipmap && gp->mipmap->downloaded;
+}
+
 static inline patch_t *HWR_FX_SpritePatch(lumpnum_t ln)
 {
 	const UINT32 h = (UINT32)(ln ^ (ln >> 8)) & 255u;
@@ -6169,7 +6184,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 			const boolean aim = cv_glspritebillboarding.value && fabsf(gl_viewludcos) > 1.0e-6f;
 			const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-			if ((hwr_fx_cheap && !(ps2hwd_fx2 & FX3_NOSPR)) ? HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+			if ((hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE))) ? (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) || (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
 			{
 				HWD_ADD(HWC_FX_QHID);
 				if (!(ps2hwd_dbg_flags & 0x1000000))
@@ -6208,7 +6223,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 	vis->spritexoffset = FIXED_TO_FLOAT(spr_offset);
 	vis->spriteyoffset = FIXED_TO_FLOAT(spr_topoffset);
 	vis->rotated = false;
-	vis->gpatch = hwr_fx_cheap ? HWR_FX_SpritePatch(sprframe->lumppat[rot]) : (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
+	vis->gpatch = (hwr_fx_cheap && !(ps2hwd_fx2 & FX3_NOPCACHE)) ? HWR_FX_SpritePatch(sprframe->lumppat[rot]) : (patch_t *)W_CachePatchNum(sprframe->lumppat[rot], PU_SPRITE);
 	vis->mobj = thing;
 	vis->colormap = hwr_fx_cheap ? HWR_FX_ThingTranslation(thing) : R_GetTranslationForThing(thing, thing->color, thing->translation);
 	vis->gzt = gzt;
@@ -6744,7 +6759,7 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		const boolean aim = cv_glspritebillboarding.value && !papersprite && fabsf(gl_viewludcos) > 1.0e-6f; // as HWR_RotateSpritePolyToAim: not for a view that looks level
 		const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-		if ((hwr_fx_cheap && !(ps2hwd_fx2 & FX3_NOSPR)) ? HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+		if ((hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE))) ? (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) || (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
 		{
 			HWD_ADD(HWC_FX_QHID);
 			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds
