@@ -64,6 +64,8 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
+static void settex_now(GLMipmap_t *TexInfo); // (below)
+#include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
 #include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
@@ -393,6 +395,7 @@ void PS2HWD_Shutdown(void)
 		V.dmac_set = 0;
 	}
 	val_shutdown();
+	spr_free(); // PS2-HW-255
 	vu1_shutdown();
 	V.on = 0;
 	if (H.sema_vbl >= 0)
@@ -458,6 +461,7 @@ void PS2HWD_Abort(void)
 	H.imm_tex = NULL;
 	V.chunk_open = 0;
 	OV.n = 0;
+	PS2HWD_SprReset(); // PS2-HW-255
 	if (H.pend)
 		H.pend_done = 1; // show what there is
 	*GS_CSR = 2;

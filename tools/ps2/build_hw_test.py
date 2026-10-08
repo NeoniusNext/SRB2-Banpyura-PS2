@@ -33,14 +33,15 @@ def main():
         if p.returncode or out:
             bad = True
         objs.append(str(obj))
-    vsm = B.ROOT / 'src/ps2/hw/vu1/ps2_hw_vu1.vsm'  # the VU1 microcode of the polygon program (the driver refers to its symbols)
-    if vsm.is_file():
-        vobj = OUTDIR / 'ps2_hw_vu1_vsm.o'
-        pv = subprocess.run([str(B.DEV / ('dvp/bin/dvp-as' + B.EXE)), str(vsm), '-o', str(vobj)], env=B.ENV, capture_output=True, text=True, cwd=B.ROOT)
-        if pv.returncode:
-            print('FAIL dvp-as', (pv.stdout + pv.stderr)[-3000:])
-            return 1
-        objs.append(str(vobj))
+    for vname in ('ps2_hw_vu1', 'ps2_hw_vu1_spr'):  # the VU1 microcode of the polygon program and of the sprite program (the driver refers to their symbols)
+        vsm = B.ROOT / ('src/ps2/hw/vu1/%s.vsm' % vname)
+        if vsm.is_file():
+            vobj = OUTDIR / ('%s_vsm.o' % vname)
+            pv = subprocess.run([str(B.DEV / ('dvp/bin/dvp-as' + B.EXE)), str(vsm), '-o', str(vobj)], env=B.ENV, capture_output=True, text=True, cwd=B.ROOT)
+            if pv.returncode:
+                print('FAIL dvp-as', (pv.stdout + pv.stderr)[-3000:])
+                return 1
+            objs.append(str(vobj))
     (OUTDIR / 'build.log').write_text('\n'.join(log), encoding='utf-8')
     if bad:
         print('\n'.join(log))

@@ -21,6 +21,9 @@ extern const u8 VU1Draw_CodeStart[] __attribute__((aligned(16)));
 extern const u8 VU1Draw_CodeEnd[];
 extern const u8 VU1Draw_EntryInit[];
 extern const u8 VU1Draw_EntryDraw[];
+extern const u8 VU1Spr_CodeStart[] __attribute__((aligned(16))); // OPT11 round 3 (FX3, PS2-HW-255): the sprite program (vu1/ps2_hw_vu1_spr.vsm), behind the polygon program in the micro memory
+extern const u8 VU1Spr_CodeEnd[];
+extern const u8 VU1Spr_EntryDraw[];
 
 #define VU_MAXVERT 12 // vertices of a polygon the program takes (20 per list, 6 planes add up to 6)
 #define VU_CHUNK_QW 255 // UNPACK count is 8 bits; the VU1 input buffers hold 256
@@ -37,6 +40,9 @@ static struct
 	u32 chunk_n; // quadwords of the chunk so far (the header included)
 	u32 npoly;
 	int open;
+	int kind; // OPT11 round 3 (PS2-HW-255): the open chunk is read by the polygon program (0) or by the sprite program (1)
+	u32 cgen; // bumped by every send of the plan constants: a plan (the sprite stream's) made earlier is stale when it moved
+	u32 spr_base; // micro memory address (instruction) of the sprite program; 0 = it is not there (the sprite stream is off)
 	int consts_ok; // the constants of the current plan are in the VU1 memory
 	int reuse; // the next vu_plan_setup is a retarget of the plan (another texture): the constants stay (PS2-HW-107)
 	int rowmode; // the plan is lit by the colormap rows of a light table (P.pal)
@@ -47,7 +53,7 @@ static struct
 	u32 tab_epoch, tab_ltgen, tab_palgen; // ... as made for this CLUT epoch / table generation / palette
 	float mp[16] __attribute__((aligned(16))); // M' = diag(1/gx, 1/gy, 1, 1) * mvp
 	u32 mp_gx, mp_gy, mp_ver;
-	u32 stat_polys, stat_chunks, stat_fallback, stat_plans, stat_rowfail;
+	u32 stat_polys, stat_chunks, stat_fallback, stat_plans, stat_rowfail, stat_sprchunks;
 } VU;
 
 #define PR_TBL 64 // light tables the VU path knows (the others take the general path)
@@ -95,6 +101,11 @@ static int vu1_boot(void)
 	qw_t *pk;
 	const u8 *src = VU1Draw_CodeStart;
 	u32 at = 0;
+	// OPT11 round 3 (PS2-HW-255): the sprite program goes behind the polygon program (on a boundary of 8 instructions); both are found by their size, whichever way the polygon program grows
+	const u32 sinstr = (u32)(VU1Spr_CodeEnd - VU1Spr_CodeStart) / 8u;
+	const u32 sbase = (ninstr + 7u) & ~7u;
+	const int spr_ok = sinstr != 0 && !(sinstr & 1) && sbase + sinstr <= 2048;
+	const u32 nmpg2 = spr_ok ? (sinstr + per - 1) / per : 0;
 
 	if (ninstr == 0 || ninstr > 2048 || (ninstr & 1))
 		return 0;
@@ -104,7 +115,7 @@ static int vu1_boot(void)
 	VU.tab_hi = -1;
 	*VIF1_FBRST = 1; // reset the VIF
 	__asm__ volatile("sync.l");
-	qwc = 1 + nmpg + ninstr / 2 + 13 + 1 + 1;
+	qwc = 1 + nmpg + ninstr / 2 + (spr_ok ? nmpg2 + sinstr / 2 : 0) + 13 + 1 + 1;
 	pk = memalign(64, (size_t)qwc * sizeof(qw_t));
 	if (!pk)
 		return 0;
@@ -124,6 +135,27 @@ static int vu1_boot(void)
 		at += num / 2;
 		src += (size_t)num * 8;
 		left -= num;
+	}
+	if (spr_ok)
+	{
+		const u8 *ssrc = VU1Spr_CodeStart;
+
+		for (i = 0, left = sinstr; i < nmpg2; i++)
+		{
+			const u32 num = left < per ? left : per;
+
+			pk[at].w[3] = VIF_MPG(num, sbase + i * per);
+			at++;
+			memcpy(&pk[at], ssrc, (size_t)num * 8);
+			at += num / 2;
+			ssrc += (size_t)num * 8;
+			left -= num;
+		}
+		VU.spr_base = sbase;
+	}
+	else
+	{
+		VU.spr_base = 0;
 	}
 	{
 		// the six planes of the view volume as the clipper of the program takes them (inside: dot product >= 0), in the order they are clipped (near, far, x-, x+, y-, y+),
@@ -151,7 +183,8 @@ static int vu1_boot(void)
 	}
 	free(pk);
 	V.ready = 1;
-	CONS_Printf("HWD VU1: program of %u instructions uploaded, entries init %u draw %u\n", (unsigned)ninstr, (unsigned)vu_entry(VU1Draw_EntryInit), (unsigned)vu_entry(VU1Draw_EntryDraw));
+	CONS_Printf("HWD VU1: program of %u instructions uploaded, entries init %u draw %u; sprite program %u instructions at %u, entry %u\n", (unsigned)ninstr, (unsigned)vu_entry(VU1Draw_EntryInit), (unsigned)vu_entry(VU1Draw_EntryDraw),
+		(unsigned)(spr_ok ? sinstr : 0), (unsigned)VU.spr_base, (unsigned)(spr_ok ? VU.spr_base + (u32)(VU1Spr_EntryDraw - VU1Spr_CodeStart) / 8u : 0));
 	return 1;
 }
 
@@ -418,6 +451,7 @@ static void vu_consts_send(int send_rows, int what)
 	}
 	vu_next_run();
 	VU.consts_ok = 1;
+	VU.cgen++;
 }
 
 // The GS state of a retargeted plan (PS2-HW-107): only what depends on the texture (TEX0 with the CLUT of the first row, TEX1, CLAMP) is written; the other registers are
@@ -713,7 +747,7 @@ static int vu_state_rec(void)
 	int n = 0, i;
 	qw_t *o;
 
-	if (!VU.open || P.pal || !ps->tex || !r || vu_norecord)
+	if (!VU.open || VU.kind || P.pal || !ps->tex || !r || vu_norecord)
 		return 0;
 	if ((H.gsr.valid & (RV_CLAMP | RV_TEX1 | RV_TEX0)) != (RV_CLAMP | RV_TEX1 | RV_TEX0))
 		return 0;
@@ -794,7 +828,8 @@ static void vu_retarget(const FSurfaceInfo *surf)
 	P.serial = H.serial - 1; // the GS state of the pass again (the texture registers)
 }
 
-static void vu_chunk_begin(void)
+// kind 0: polygons for the polygon program; kind 1 (PS2-HW-255): sprites for the sprite program (its chunk header holds 0.5 in lane y)
+static void vu_chunk_open(int kind)
 {
 	qw_t *b, *t;
 
@@ -805,10 +840,18 @@ static void vu_chunk_begin(void)
 	H.wr = (u32)(t - b) + 1;
 	VU.chunk_n = 1; // the chunk header: the number of polygons
 	b[H.wr].d[0] = b[H.wr].d[1] = 0;
+	if (kind)
+		b[H.wr].f[1] = 0.5f;
 	H.wr++;
 	VU.npoly = 0;
 	VU.open = 1;
+	VU.kind = kind;
 	V.chunk_open = 1;
+}
+
+static void vu_chunk_begin(void)
+{
+	vu_chunk_open(0);
 }
 
 static void vu_chunk_end(void)
@@ -823,13 +866,22 @@ static void vu_chunk_end(void)
 	b[VU.chunk_tag + 1].w[0] = VU.npoly;
 	m = b + H.wr++;
 	m->d[0] = dma_tag(0, DMAT_CNT, 0);
-	m->d[1] = (u64)VIF_FLUSH | ((u64)VIF_MSCAL(vu_entry(VU1Draw_EntryDraw)) << 32);
+	m->d[1] = (u64)VIF_FLUSH | ((u64)VIF_MSCAL(VU.kind ? VU.spr_base + (u32)(VU1Spr_EntryDraw - VU1Spr_CodeStart) / 8u : vu_entry(VU1Draw_EntryDraw)) << 32);
 	vu_next_run();
 	VU.open = 0;
 	V.chunk_open = 0;
 	VU.stat_chunks++;
 	G.vu_chunks++;
 	H.gsr.valid &= ~(u32)RV_RGBAQ; // the packets of the program change Q (and the colour) behind the A+D state cache
+	if (VU.kind)
+	{
+		// the sprite program writes TEX0 and CLAMP of every sprite and loads the CLUT of the rows (TEX2): what the GS holds of them is unknown now
+		H.gsr.valid &= ~(u32)(RV_TEX0 | RV_CLAMP);
+		H.clut_loaded = 0;
+		P.pal_row = -1;
+		VU.kind = 0;
+		VU.stat_sprchunks++;
+	}
 	if (VU.rowmode)
 	{
 		// the program loaded CLUTs: what the GS holds as TEX0 / CLUT is unknown now
@@ -865,6 +917,8 @@ static int vu_poly(const FOutVector *base, int n, float light)
 
 	if (n < 3 || n > VU_MAXVERT)
 		return 0;
+	if (VU.open && VU.kind)
+		vu_chunk_end(); // PS2-HW-255: the open chunk is a sprite chunk
 	if (!VU.consts_ok || P.serial != H.serial)
 	{
 		// first polygon of the plan, or the general path wrote GS state in between: the state of pass 0 and the constants again
@@ -957,7 +1011,7 @@ static u32 vu_fans(const FOutVector *base, const u32 *desc, u32 i, u32 nfans)
 		float sb = 0.0f, tb = 0.0f;
 		u32 k;
 
-		if (!VU.open || !VU.consts_ok || P.serial != H.serial || n - 3 > VU_MAXVERT - 3 || VU.chunk_n + need > VU_CHUNK_QW || H.wr + need + 3 > BUF_QW)
+		if (!VU.open || VU.kind || !VU.consts_ok || P.serial != H.serial || n - 3 > VU_MAXVERT - 3 || VU.chunk_n + need > VU_CHUNK_QW || H.wr + need + 3 > BUF_QW)
 		{
 			if (!vu_poly(fv, (int)n, light))
 				break;

@@ -34,6 +34,8 @@ const ps2cull_t *PS2HWD_CullSetup(void)
 		cs.nzp = FX_GRAD(2, 3, +);
 #undef FX_GRAD
 		cs.nw = sqrtf(cs.r[3][0] * cs.r[3][0] + cs.r[3][1] * cs.r[3][1] + cs.r[3][2] * cs.r[3][2]);
+		cs.nx = sqrtf(cs.r[0][0] * cs.r[0][0] + cs.r[0][1] * cs.r[0][1] + cs.r[0][2] * cs.r[0][2]);
+		cs.ny = sqrtf(cs.r[1][0] * cs.r[1][0] + cs.r[1][1] * cs.r[1][1] + cs.r[1][2] * cs.r[1][2]);
 		cs.w2 = 2.0f * H.near_plane;
 		cs_ver = xf_ver;
 		cs_near = H.near_plane;

@@ -17,6 +17,7 @@
 #define FX2_NOVIS 0x400 // PS2-HW-248: R_ThingVisible for every thing (as before)
 // OPT11 round 3 (FX3), measurement only: bit 13 (0x2000) draws no sprites and no shadows (HWR_DrawSprites does nothing): the difference of two runs is what the drawing costs
 #define FX3_NODRAW 0x2000
+#define FX3_NOSPR 0x40000 // PS2-HW-255 (FX3): the sprite stream (VU1 sprite program) is off: sprites and shadows go through the batch as before
 #define FX3_NOPLAIN 0x20000 // PS2-HW-254 (FX3): HWR_ProjectSprite for every thing (the plain sprite path is off)
 #define FX3_NOLEAN 0x10000 // PS2-HW-253 (FX3): the lean paths of the sprite batch (planner call, collect, sort) are off, as before
 #define FX3_NOFILL 0x8000 // PS2-HW-252 (FX3): the texels of a patch are stored by the fast loop only when the width is a multiple of 4 (as before)
@@ -38,6 +39,7 @@ typedef struct
 	float nym; // |grad(y - w)|   top
 	float nyp; // |grad(y + w)|   bottom
 	float nw; // |grad(w)|
+	float nx, ny; // |grad(x)|, |grad(y)| (PS2-HW-255: the bounding sphere of a sprite against the guard band volume)
 	float nzp; // |grad(z + w)|   near plane: z < -w (what the sky dome tests as well: a sphere wholly behind it draws nothing)
 	float w2;
 	int valid; // 0: the driver is not up (or the plan is switched off): nothing is rejected

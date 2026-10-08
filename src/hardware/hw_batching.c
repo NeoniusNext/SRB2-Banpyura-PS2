@@ -391,6 +391,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 				HWD.pfnSetTexture(current_texture); // what the polygon selected while batching only noted it
 		}
 	}
+	// PS2-HW-255 (OPT11 round 3, FX3): a sprite or a drop shadow of the sprite batch is kept by the driver for its VU1 sprite program (drawn by the flush of the batch, below)
+	if (currently_batching && hwr_sprite_batch && iNumPts == 4 && pSurf && current_texture && !horizonSpecial
+		&& PS2HWD_SprPoly(pSurf, pOutVerts, (unsigned int)PolyFlags, HWR_ShaderOfTarget(shader_target), current_texture, hwr_sprite_shadow))
+		return;
 	HWC_ADD(HWC_PROC); // OPT10 HG: calls (HWC_PROC_BATCH: the batched ones)
 	if (currently_batching)
 		HWC_ADD(HWC_PROC_BATCH);
@@ -614,6 +618,9 @@ void HWR_RenderBatches(void)
 #endif
 #ifdef PS2
 	PS2HWD_BatchDraw(); // the textures are made resident now, as each batch is drawn
+#ifdef PS2_PROFILE
+	PS2HWD_SprFlush(0); // PS2-HW-255: the drop shadows of the sprite stream come first, as in the batch (they are drawn before the sprites)
+#endif
 #endif
 	if (!polygonArraySize)
 	{
@@ -621,6 +628,9 @@ void HWR_RenderBatches(void)
 			= ps_hw_numtextures.value.i = ps_hw_numpolyflags.value.i
 			= ps_hw_numcolors.value.i = 0;
 #ifdef PS2
+#ifdef PS2_PROFILE
+		PS2HWD_SprFlush(1); // PS2-HW-255: the sprites of the stream
+#endif
 		PS2HWD_BatchEnd();
 #endif
 		return;// nothing to draw
@@ -963,6 +973,9 @@ void HWR_RenderBatches(void)
 		HWP_SPAN_BEGIN(tb_end);
 #endif
 #ifdef PS2
+#ifdef PS2_PROFILE
+	PS2HWD_SprFlush(1); // PS2-HW-255: the sprites of the stream come after the polygons of the batch
+#endif
 	PS2HWD_BatchEnd();
 #endif
 #ifdef PS2_PROFILE

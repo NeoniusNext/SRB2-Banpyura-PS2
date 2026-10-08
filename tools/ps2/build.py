@@ -319,15 +319,16 @@ def main():
     elf = OUT / a.target
     objs = [str(obj_for(s)) for s in srcs]
     if HW_BUILD:  # PS2-HW-45: the VU1 microcode of the polygon program (dvp-as; its symbols are used by ps2_hw_vu1.inc)
-        vsm = ROOT/'src/ps2/hw/vu1/ps2_hw_vu1.vsm'
-        if vsm.is_file():
-            vobj = OBJ/'ps2_hw_vu1_vsm.o'
-            if not vobj.exists() or vobj.stat().st_mtime < vsm.stat().st_mtime:
-                pv = subprocess.run([str(DEV/('dvp/bin/dvp-as' + EXE)), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
-                if pv.returncode or pv.stdout.strip() or pv.stderr.strip():
-                    print('FAIL dvp-as', vsm, (pv.stdout + pv.stderr)[-3000:])
-                    return 1
-            objs.append(str(vobj))
+        for vname in ('ps2_hw_vu1', 'ps2_hw_vu1_spr'):  # OPT11 round 3 (PS2-HW-255): the sprite program next to the polygon program
+            vsm = ROOT/('src/ps2/hw/vu1/%s.vsm' % vname)
+            if vsm.is_file():
+                vobj = OBJ/('%s_vsm.o' % vname)
+                if not vobj.exists() or vobj.stat().st_mtime < vsm.stat().st_mtime:
+                    pv = subprocess.run([str(DEV/('dvp/bin/dvp-as' + EXE)), str(vsm), '-o', str(vobj)], env=ENV, capture_output=True, text=True, cwd=ROOT)
+                    if pv.returncode or pv.stdout.strip() or pv.stderr.strip():
+                        print('FAIL dvp-as', vsm, (pv.stdout + pv.stderr)[-3000:])
+                        return 1
+                objs.append(str(vobj))
     if LTO:
         merged = OBJ / 'engine_lto.o'
         rcmd = [str(CC), '-r', '-nostdlib', '-flto=%d' % a.jobs, '-flinker-output=nolto-rel', '-O2', '-ffunction-sections', '-fdata-sections'] + [f for f in CFLAGS if f.startswith('-G') or f == '-mno-abicalls'] + objs + ['-o', str(merged)]
