@@ -175,21 +175,32 @@ PYEOF
 	done
 }
 
-stage_net() {
+net_prepare() { # the scenario files, the add-ons the scenarios serve, the local environment
 	export SRB2_PCSX2_ROOT=$ROOT/build/pcsx2-roots
-	mkdir -p build/stab-net/run
+	mkdir -p build/stab-net/run build/stab-net/addons
 	python3 tools/ps2/net_env.py > /dev/null 2>&1
+	# the add-ons that the servers load and serve (ZT.pk3: containers and pictures, NSK.pk3: skin + Lua + SOC), made here when they are missing
+	[ -f build/stab-net/addons/NSK.pk3 ] && [ -f build/stab-net/addons/ZT.pk3 ] || python3 tools/ps2/make_addons.py --out build/stab-net/addons zip nsk >> "$L" 2>&1
 	# two generators: net_specs.py (ps2srv-pccli, pcsrv-ps2cli, ps2srv-ps2cli) and net_specs9.py (modes, add-ons, menus, kills, quit, soak, HW)
 	SRB2_NET_BASE=build/stab-net python3 tools/ps2/net_specs.py "$ELF" > /dev/null 2>&1
 	python3 tools/ps2/net_specs9.py --elf "$ELF" --base build/stab-net > /dev/null 2>&1
-	# NEVER the real master server (ds.ms.srb2.org): every scenario uses a local mock / dead port, net_session.py audits the logs after each session (code 4)
-	run python3 tools/ps2/net_batch.py --specs build/stab-net/specs --out build/stab-net/run --retries 2 \
-		ps2srv-pccli pcsrv-ps2cli mode-match-pcsrv-ps2cli mode-ctf-pcsrv-ps2cli mode-race-pcsrv-ps2cli mode-tag-pcsrv-ps2cli mode-coop-pcsrv-ps2cli mode-teammatch-pcsrv-ps2cli \
-		mode-match-ps2srv-ps2cli mode-coop-ps2srv-ps2cli \
-		addons-udp addons-http addons-http-404 addons-http-chunked addons-ps2srv-pccli \
-		ps2host-menu menu-browse osk-connect server-kill client-kill ms-blackhole ms-refused quit-coop-2p quit-match-2p \
-		sw-net-coop hw-net-coop hw-net-match reconnect \
-		soak-pcsrv-ps2cli soak-ps2srv-pccli soak-ps2srv-ps2cli
+}
+net_batch() { # NEVER the real master server (ds.ms.srb2.org): every scenario uses a local mock / dead port, net_session.py audits the logs after each session (code 4)
+	net_prepare
+	run python3 tools/ps2/net_batch.py --specs build/stab-net/specs --out build/stab-net/run --retries 2 "$@"
+}
+stage_neta() { # PS2 <-> PC and PS2 <-> PS2, every game type
+	net_batch ps2srv-pccli pcsrv-ps2cli mode-match-pcsrv-ps2cli mode-ctf-pcsrv-ps2cli mode-race-pcsrv-ps2cli mode-tag-pcsrv-ps2cli mode-coop-pcsrv-ps2cli mode-teammatch-pcsrv-ps2cli \
+		mode-match-ps2srv-ps2cli mode-coop-ps2srv-ps2cli
+}
+stage_netb() { # add-on download (UDP, HTTP, HTTP 404, chunked HTTP, from a PS2 host)
+	net_batch addons-udp addons-http addons-http-404 addons-http-chunked addons-ps2srv-pccli
+}
+stage_netc() { # menus, master server (mock), on-screen keyboard, broken connections, quit, hardware renderer in a network game
+	net_batch ps2host-menu menu-browse osk-connect server-kill client-kill ms-blackhole ms-refused quit-coop-2p quit-match-2p sw-net-coop hw-net-coop hw-net-match reconnect
+}
+stage_netd() { # long sessions
+	net_batch soak-pcsrv-ps2cli soak-ps2srv-pccli soak-ps2srv-ps2cli
 }
 
 demo_suite() { # demo_suite PREFIX sw|hw [extra engine args]
@@ -279,6 +290,7 @@ expand() { # aliases of the long stages (each part is resumable)
 			demos) echo -n "demosw demohw demohi " ;;
 			sweep) echo -n "chainsw chainhw coldsw coldhw " ;;
 			soak) echo -n "soaksw soakhw " ;;
+			net) echo -n "neta netb netc netd " ;;
 			*) echo -n "$x " ;;
 		esac
 	done
