@@ -101,6 +101,10 @@ src/ps2/ps2_audio.c
 src/ps2/ps2_athread.c
 src/ps2/ps2_music.c
 src/ps2/ps2_midi.c
+src/ps2/vorbis/codebook.c  # PS2-311..313: libvorbis 1.3.7 decode files (entropy fast path, half-rate limits), replace the members of libvorbis.a
+src/ps2/vorbis/floor1.c
+src/ps2/vorbis/mapping0.c
+src/ps2/vorbis/res0.c
 src/ps2/i_joy.c
 src/ps2/lua_stub.c  # unless:lua
 src/ps2/soc_numbers.c

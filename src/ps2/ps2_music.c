@@ -255,15 +255,7 @@ static size_t Decode(ps2_music *m)
 		long got = ov_read_float(&m->ogg, &pcm, DECODE_FRAMES, &section);
 		if (got < 0 || section != 0) { m->error = 1; return 0; }
 		n = (size_t)got;
-		if (m->channels == 2)
-			for (i = 0; i < n; i++)
-			{
-				m->buffer[i*2] = PS2_FloatToS16(pcm[0][i]);
-				m->buffer[i*2+1] = PS2_FloatToS16(pcm[1][i]);
-			}
-		else
-			for (i = 0; i < n; i++)
-				m->buffer[i*2] = m->buffer[i*2+1] = PS2_FloatToS16(pcm[0][i]);
+		PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
 	}
 #endif
 #ifdef PS2_AUDIO_MP3

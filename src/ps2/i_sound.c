@@ -12,6 +12,7 @@
 #include "ps2_boot.h"
 #include "ps2_audio.h"
 #include "ps2_music.h"
+#include "ps2_pcmconv.h"
 #include "ps2_athread.h"
 #include <audsrv.h>
 #include <stdlib.h>
@@ -248,6 +249,27 @@ static void TraceObserve(void)
 #define TraceObserve() ((void)0)
 #endif
 
+#ifdef _EE
+// cycles spent in the audsrv RPCs and in the whole pump, for ASTAT (rpc=, pump=): the cost of the sound thread that is not mixing
+static int RpcAvailable(void)
+{
+	UINT32 c0 = CopCount();
+	int r = audsrv_available();
+	eng.st.rpc_cycles += (UINT32)(CopCount() - c0); eng.st.rpc_calls++;
+	return r;
+}
+static int RpcPlay(const char *p, int n)
+{
+	UINT32 c0 = CopCount();
+	int r = audsrv_play_audio(p, n);
+	eng.st.rpc_cycles += (UINT32)(CopCount() - c0); eng.st.rpc_calls++;
+	return r;
+}
+#else
+#define RpcAvailable() audsrv_available()
+#define RpcPlay(p, n) audsrv_play_audio(p, n)
+#endif
+
 // One refill of the audsrv queue: executes commands, renders blocks, sends them. Mixer thread, or the game thread in
 // single-thread mode. Never waits for playback space.
 //
@@ -261,7 +283,7 @@ static void TraceObserve(void)
 // PS2-301: the size of the ring is measured once at start (queue_cap used to be re-estimated after short writes; readpos == writepos
 // is reported as "available 0, queued 0", the estimate collapsed to 0 or 940 and the stream never wrote again). The free space is read
 // from the IOP at every wake-up, and the ring is never filled completely (a full ring is indistinguishable from an empty one).
-static void AudioPump(unsigned maxblocks)
+static void AudioPumpBody(unsigned maxblocks)
 {
 	unsigned blocks;
 	int avail, queued, sent = 0;
@@ -279,7 +301,7 @@ static void AudioPump(unsigned maxblocks)
 		return;
 	}
 	TraceObserve();
-	avail = audsrv_available();
+	avail = RpcAvailable();
 	if (avail < 0) { Fail("queue query", avail); return; }
 	if (avail > (int)ring_bytes) avail = (int)ring_bytes;
 	queued = (int)ring_bytes - avail;
@@ -327,7 +349,7 @@ static void AudioPump(unsigned maxblocks)
 		}
 		request = (int)min(output_pending, (size_t)(space & ~3));
 		if (request <= 0) break;
-		written = audsrv_play_audio((const char *)output + output_offset, request);
+		written = RpcPlay((const char *)output + output_offset, request);
 		status = audsrv_get_error();
 		Trace(TR_WRITE, (UINT16)output_offset, written, (INT32)trace_block);
 		if (written < 0 || written > request || (written & 3) || status != AUDSRV_ERR_NOERROR)
@@ -340,6 +362,17 @@ static void AudioPump(unsigned maxblocks)
 	}
 	PS2E_AcctEnd(&acct, A_NOW(), A_HZ, sent, (output_pending != 0 && pending_audible) || PS2E_Active(&eng));
 	if (sent) stream_reported = true;
+}
+
+static void AudioPump(unsigned maxblocks)
+{
+#ifdef _EE
+	UINT32 c0 = CopCount();
+	AudioPumpBody(maxblocks);
+	eng.st.pump_cycles += (UINT32)(CopCount() - c0); eng.st.pump_calls++;
+#else
+	AudioPumpBody(maxblocks);
+#endif
 }
 
 #ifdef _EE
@@ -460,13 +493,13 @@ static void StatLine(const char *tag)
 	const ps2e_stats *s = &eng.st;
 	I_OutputMsg("ASTAT %s mode=%s cap=%u target=%u underruns=%u emptyobs=%u gapmax_ms=%u gaptotal_ms=%u pumps=%u "
 		"maxint_ms=%u minq_ms=%d blocks=%u sent=%u mstarve=%u hmis=%u decslots=%u decmax_us=%u cmdfull=%u dcmdfull=%u "
-		"fdec=%u fcons=%u hdec=%08x hcons=%08x herr=%u maingap_ms=%u gaps100=%u mixavg_cyc=%u mixmax_cyc=%u flushblk=%u shortw=%u\n",
+		"fdec=%u fcons=%u hdec=%08x hcons=%08x herr=%u maingap_ms=%u gaps100=%u mixavg_cyc=%u mixmax_cyc=%u flushblk=%u shortw=%u rpcs=%u rpckcyc=%u pumps_all=%u pumpkcyc=%u\n",
 		tag, threaded ? "thread" : "single", (unsigned)ring_bytes, (unsigned)queue_target, s->underruns, s->empty_obs,
 		s->gap_max_ms, s->gap_total_ms, s->pumps, s->max_interval_ms, s->min_queue_ms == 0xffffffffu ? -1 : (int)s->min_queue_ms,
 		s->blocks, s->bytes_sent, s->music_starved, s->handle_mismatch, s->dec_slots, s->dec_max_us, s->cmd_full,
 		s->dcmd_full, s->music_frames_dec, s->music_frames_cons, s->music_hash_dec, s->music_hash_cons, s->hash_errors, s->main_gap_max_ms,
 		s->main_gaps_over_100ms, s->mix_cycles_blocks ? (unsigned)(s->mix_cycles_total / s->mix_cycles_blocks) : 0u, s->mix_cycles_max,
-		s->flush_blocks, s->short_writes);
+		s->flush_blocks, s->short_writes, s->rpc_calls, (unsigned)(s->rpc_cycles / 1000), s->pump_calls, (unsigned)(s->pump_cycles / 1000));
 #ifdef _EE
 	if (threaded)
 		I_OutputMsg("ASTAT %s threads prio main=%d (was %d) mixer=%d decoder=%d stack_used mixer=%u/%u decoder=%u/%u\n", tag,
@@ -861,10 +894,57 @@ static void DiagFrame(void)
 // -abench O_GFZ1,O_ACZ1,... [-abenchsec N]: each named music lump is opened exactly like I_LoadSong does (private pack reader), N seconds of
 // output are decoded in 512-frame blocks on the game thread with the same PS2_MusicRender the decoder thread uses, and the COP0 cycles spent
 // in it are summed. The PCM is hashed (FNV-1a 64) outside the timed section, so two ELFs can be compared bit for bit on the real EE FPU.
+// PS2_FloatToS16 (EE branch-free form) against the reference over every exponent, random mantissas, all k+0.5 boundaries and the extremes.
+static void ConvSelfTest(void)
+{
+	UINT32 rng = 0x12345678u, mism = 0, first_bits = 0;
+	UINT64 n = 0;
+	int e;
+	long k;
+	union { float f; UINT32 u; } v;
+	for (e = 0; e < 256; e++)
+		for (int i = 0; i < 40000; i++)
+		{
+			rng = rng * 1664525u + 1013904223u;
+			v.u = ((UINT32)e << 23) | (rng >> 9) | ((rng & 0x100u) ? 0x80000000u : 0);
+			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			n++;
+		}
+	for (k = -32800; k <= 32800; k++)
+		for (int d = -2; d <= 2; d++)
+		{
+			v.f = ((float)k + 0.5f) / 32768.0f;
+			v.u += (UINT32)d;
+			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			n++;
+			v.f = (float)k / 32768.0f;
+			v.u += (UINT32)d;
+			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			n++;
+		}
+	{
+		static const UINT32 special[] = { 0, 0x80000000u, 1, 0x80000001u, 0x007fffffu, 0x807fffffu, 0x3f800000u, 0xbf800000u, 0x3f7fffffu, 0xbf7fffffu,
+			0x3f800001u, 0xbf800001u, 0x47800000u, 0xc7800000u, 0x7f7fffffu, 0xff7fffffu, 0x4e800000u, 0xce800000u, 0x3fffffffu, 0x40000000u };
+		for (k = 0; k < (long)(sizeof special / sizeof *special); k++)
+		{
+			v.u = special[k];
+			if (PS2_FloatToS16(v.f) != PS2_FloatToS16_ref(v.f)) { if (!mism) first_bits = v.u; mism++; }
+			n++;
+		}
+	}
+	I_OutputMsg("ABENCH selftest PS2_FloatToS16 vs reference: %u values, %u mismatches%s\n", (unsigned)n, mism, mism ? " FIRST=" : "");
+	if (mism) I_OutputMsg("ABENCH selftest first mismatch bits %08x\n", first_bits);
+}
+
+#ifdef PS2_SAMPLE
+void PS2Prof_SampleBegin(void);
+void PS2Prof_SampleEnd(void);
+#endif
 static void BenchTracks(void)
 {
 	char names[256], *tok, *save = NULL;
 	if (!diag_bench) return;
+	if (strstr(diag_bench, "selftest")) ConvSelfTest();
 	strncpy(names, diag_bench, sizeof names - 1); names[sizeof names - 1] = 0;
 	diag_bench = NULL;
 	for (tok = strtok_r(names, ",", &save); tok; tok = strtok_r(NULL, ",", &save))
@@ -885,6 +965,9 @@ static void BenchTracks(void)
 		src.rd = rd; in.user = &src; in.size = len; in.read_at = ReadSource;
 		m = PS2_MusicOpen(&in);
 		if (!m || !PS2_MusicPlay(m, 0)) { I_OutputMsg("ABENCH %s: cannot open/play\n", tok); if (m) PS2_MusicClose(m); PackClose(rd); continue; }
+#ifdef PS2_SAMPLE
+		PS2Prof_SampleBegin();
+#endif
 		while (frames < target)
 		{
 			UINT32 c0 = CopCount();
@@ -897,6 +980,9 @@ static void BenchTracks(void)
 			}
 			frames += n;
 		}
+#ifdef PS2_SAMPLE
+		PS2Prof_SampleEnd();
+#endif
 		I_OutputMsg("ABENCH %s type=%d rate=%u frames=%u cycles=%u cyc_per_frame=%u fnv=%08x%08x\n", tok, (int)PS2_MusicType(m),
 			(unsigned)PS2_AUDIO_RATE, (unsigned)frames, (unsigned)cycles, frames ? (unsigned)(cycles / frames) : 0u,
 			(unsigned)(hash >> 32), (unsigned)hash);

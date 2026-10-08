@@ -36,14 +36,14 @@ SCEN = {
 }
 
 
-def run(elf, tag, name, out, timeout, frames, dump):
+def run(elf, tag, name, out, timeout, frames, dump, notrace=False):
     demo, cfg, extra = SCEN[name]
     run_name = '%s_%s' % (tag, name)
     cmd = [sys.executable, str(ROOT / 'tools/ps2/opt_run.py'), '--name', run_name, '--elf', str(elf), '--pak', PAK, '--out', str(out),
-           *(['--map', demo[4:]] if demo.startswith('MAP:') else ['--demo', demo]), '--no-ref', '--timeout', str(timeout), '--until', 'ASTAT trace']
+           *(['--map', demo[4:]] if demo.startswith('MAP:') else ['--demo', demo]), '--no-ref', '--timeout', str(timeout), '--until', 'ASTAT final threads' if notrace else 'ASTAT trace']
     for c in cfg:
         cmd += ['--cfg', c]
-    cmd += ['--', '-adump', str(dump), '-atrace', '60000', '-aquit', str(frames)] + extra
+    cmd += ['--'] + ([] if notrace else ['-adump', str(dump), '-atrace', '60000']) + ['-aquit', str(frames)] + extra
     subprocess.run(cmd, capture_output=True, text=True)
     return Path(out) / run_name
 
@@ -66,11 +66,12 @@ def main():
     ap.add_argument('--frames', type=int, default=1000)
     ap.add_argument('--dump', type=int, default=700000)
     ap.add_argument('--no-run', action='store_true', help='only analyse existing run dirs')
+    ap.add_argument('--notrace', action='store_true', help='no -adump/-atrace (the journal itself costs two RPCs per wake-up): ASTAT counters only, no ring model')
     ap.add_argument('scen', nargs='+')
     a = ap.parse_args()
     rows = []
     for name in a.scen:
-        d = Path(a.out) / ('%s_%s' % (a.tag, name)) if a.no_run else run(a.elf, a.tag, name, a.out, a.timeout, a.frames, a.dump)
+        d = Path(a.out) / ('%s_%s' % (a.tag, name)) if a.no_run else run(a.elf, a.tag, name, a.out, a.timeout, a.frames, a.dump, a.notrace)
         st, text = astat(d)
         sim = {}
         r = subprocess.run([sys.executable, str(ROOT / 'tools/ps2/audio_ring_sim.py'), str(d), '--wav', str(d / 'heard.wav'),

@@ -81,6 +81,8 @@ typedef struct
 	volatile ps2e_u32 blocks, bytes_sent, music_starved, handle_mismatch, dec_slots, dec_max_us;
 	volatile ps2e_u32 music_frames_dec, music_frames_cons, ring_full_stalls;
 	volatile ps2e_u32 min_queue_ms, queue_cap, cmd_full, dcmd_full;
+	volatile ps2e_u32 rpc_calls, pump_calls;                   // audsrv RPCs and wake-ups of the pump (EE diagnostics)
+	volatile ps2e_u64 rpc_cycles, pump_cycles;                 // COP0 cycles inside the RPCs / the whole pump (mixer thread)
 	volatile ps2e_u32 flush_blocks, short_writes;               // silence blocks that overwrite the IOP ring after the last sound (PS2-300); refused/short audsrv writes
 	volatile ps2e_u32 music_hash_dec, music_hash_cons, hash_errors;   // per-block check of the decoder -> mixer transport
 	volatile ps2e_u32 mix_cycles_max, mix_cycles_blocks;       // COP0 cycles of one PS2E_Render (EE only)
