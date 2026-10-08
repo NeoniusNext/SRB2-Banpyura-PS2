@@ -96,12 +96,15 @@ static void scan_map(void)
 }
 void PS2Ref_Tic(void)
 {
-    thinker_t *th; UINT32 h=2166136261u, n=0; INT32 i;
+    thinker_t *th; UINT32 h=2166136261u, n=0; INT32 i, mq;
     mobj_t *mo; player_t *p;
     if(tics && gamestate==GS_LEVEL && M_CheckParm("-ps2ref-scan")) { scan_map(); PS2Ref_End(); }
-    if(!tics || !demoplayback || gamestate!=GS_LEVEL) return;
+    /* -ps2ref-maptics N (OPT11-CORE): the same per-tic state hash for a level entered with -warp (no demo, nobody presses a key) for its first N tics,
+     * then quit: equivalence of the tic logic over every map (tools/ps2/core_mapsweep.sh) */
+    mq=(tics && !demoplayback) ? M_CheckParm("-ps2ref-maptics") : 0;
+    if(!tics || (!demoplayback && !mq) || gamestate!=GS_LEVEL) return;
     p=&players[consoleplayer]; mo=p->mo;
-    if(!mo) I_Error("PS2Ref: demo has no player mobj");
+    if(!mo) { if(mq) return; I_Error("PS2Ref: demo has no player mobj"); }
     h=hash_u32(h,P_GetRandSeed());
     for(i=0;i<MAXPLAYERS;i++) if(playeringame[i]) {
         player_t *q=&players[i]; mobj_t *m=q->mo;
@@ -138,6 +141,7 @@ void PS2Ref_Tic(void)
         seq,leveltime,gamemap,P_GetRandSeed(),mo->x,mo->y,mo->z,mo->momx,mo->momy,mo->momz,
         mo->health,p->rings,mo->state?(INT32)(mo->state-states):-1,n,h);
     if(seq==1) memory("memory-level.csv");
+    if(mq && mq+1<myargc && (INT32)seq>=atoi(myargv[mq+1])) PS2Ref_End();
 }
 /* -ps2ref-lumps: after W_InitMultipleFiles write the lump table of every loaded file (lumps.tsv) and quit.
  * Tab separated: wadnum lumpnum name longname fullname size - the PC build (pk3) and the PS2 build (packs) must agree. */

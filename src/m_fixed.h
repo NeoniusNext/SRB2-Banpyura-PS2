@@ -49,6 +49,9 @@
 #if !defined(PS2_NOOPT_NODES) && !defined(PS2_OPT_NODES)
 #define PS2_OPT_NODES // PS2-161: R_SortVisSprites O(n log n) and the draw node scan of R_CreateDrawNodes on compact rectangles, bit-identical
 #endif
+#if !defined(PS2_NOOPT_CORE) && !defined(PS2_OPT_CORE)
+#define PS2_OPT_CORE // PS2-200..229 (OPT11-CORE): tic logic / frame pacing fast paths, bit-identical (SRB2_PS2_NOOPT=core builds the previous code for A/B)
+#endif
 #if !defined(PS2_NOOPT_SLOPE) && !defined(PS2_OPT_SLOPE)
 #define PS2_OPT_SLOPE // PS2-81: slope planes/spans without soft-double (single precision + 64-bit integers), <= 1-2 px per frame
 #endif
@@ -58,6 +61,9 @@
 #endif
 #if defined(PS2_NOOPT) || defined(PS2_NOOPT_MATH)
 #undef PS2_OPT_MATH
+#endif
+#if defined(PS2_NOOPT) || defined(PS2_NOOPT_CORE)
+#undef PS2_OPT_CORE
 #endif
 #if defined(PS2_NOOPT) || defined(PS2_NOOPT_SLOPE)
 #undef PS2_OPT_SLOPE
@@ -87,6 +93,7 @@
 #undef PS2_OPT_REND
 #endif
 #else
+#undef PS2_OPT_CORE
 #undef PS2_OPT_MATH
 #undef PS2_OPT_SLOPE
 #undef PS2_OPT_SEGS
