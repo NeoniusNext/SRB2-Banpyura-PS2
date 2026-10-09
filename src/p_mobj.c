@@ -47,6 +47,23 @@ static mobj_t *overlaycap = NULL;
 
 mobj_t *mobjcache = NULL;
 
+#ifdef PS2
+// PS2-511 (OPT12-CORE): mobjs are carved from chunks of 32 (13 KB) instead of being one zone block each: a block costs a 16-byte header and a round-up to 16 on top of the 408
+// bytes, 24 bytes of the 432 of every one of the 6 768 mobjs of MAP11 (the stride is 416 so that a mobj stays 16-byte aligned: memset/memcpy of one use the 128-bit path), and
+// 6 768 blocks are 210. Mobjs are never freed one by one (P_RemoveThinkerDelayed puts them on mobjcache); the chunks go with the level (PU_LEVEL).
+static zlevelpool_t ps2_mobjpool;
+
+mobj_t *P_AllocMobjBlock(void)
+{
+	return Z_LevelPoolAlloc(&ps2_mobjpool, sizeof (mobj_t), 32);
+}
+#else
+mobj_t *P_AllocMobjBlock(void)
+{
+	return Z_Calloc(sizeof (mobj_t), PU_LEVEL, NULL);
+}
+#endif
+
 void P_InitCachedActions(void)
 {
 	actioncachehead.prev = actioncachehead.next = &actioncachehead;
@@ -10928,7 +10945,7 @@ mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type, ...)
 	}
 	else
 	{
-		mobj = Z_Calloc(sizeof (*mobj), PU_LEVEL, NULL);
+		mobj = P_AllocMobjBlock();
 	}
 
 	// this is officially a mobj, declared as soon as possible.
@@ -11618,7 +11635,12 @@ void P_RemoveSavegameMobj(mobj_t *mobj)
 		thinker_t *thinker = (thinker_t *)mobj;
 		thinker_t *next = thinker->next;
 		(next->prev = thinker->prev)->next = next;
+#ifdef PS2
+		((mobj_t *)thinker)->hnext = mobjcache; // PS2-511: a slice of a chunk (P_AllocMobjBlock), it cannot be freed alone
+		mobjcache = (mobj_t *)thinker;
+#else
 		Z_Free(thinker);
+#endif
 	}
 }
 

@@ -5522,7 +5522,14 @@ static ffloor_t *P_AddFakeFloor(sector_t *sec, sector_t *sec2, line_t *master, I
 	}
 
 	// Add the floor
+#ifdef PS2
+	{
+		static zlevelpool_t ps2_ffloorpool; // PS2-511: 3 919 of them on MAP11
+		fflr = Z_LevelPoolAlloc(&ps2_ffloorpool, sizeof (*fflr), 64);
+	}
+#else
 	fflr = Z_Calloc(sizeof (*fflr), PU_LEVEL, NULL);
+#endif
 	fflr->secnum = sec2 - sectors;
 	fflr->target = sec;
 	fflr->bottomheight = &sec2->floorheight;
