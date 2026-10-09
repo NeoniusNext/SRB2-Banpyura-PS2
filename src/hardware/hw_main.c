@@ -3572,6 +3572,68 @@ static const FSurfaceInfo *HWR_FX_LightSurf(UINT8 level, extracolormap_t *cm)
 	return &hwr_fx_lc[h].surf;
 }
 static boolean hwr_fx_useshader; // HWR_UseShader() of this view
+// OPT13 IS (RF-2, PS2-HW-700/701): the plain opaque sprite and the drop shadow of the sprite batch built in one function and handed to the collection (HWR_PBSprQuad), without the vissprite
+// to HWR_DrawSprite to HWR_ProcessPolygon chain (the surface copy, the four vertices written and read back, the patch lookup, the blend and light decisions made again for each sprite).
+extern INT32 ps2hwt_patchtag; // hw_cache.c (PS2-HW-442): the tag a patch's data takes after its upload (HWR_PATCH_UNLOCKED)
+static boolean hwr_fx_fuse; // PS2-HW-700 on for this view (the stream is off, no -hwfx bit)
+typedef struct
+{
+	FOutVector v[4];
+	const FSurfaceInfo *surf; // the sprite's: the light surface of this view (hwr_fx_lc); the shadow's: sh_surf
+	GLMipmap_t *tex;
+	FBITFIELD flags;
+	int shader;
+	FSurfaceInfo sh_surf; // the shadow's own surface (its alpha is its own)
+} hwr_fz_t;
+static hwr_fz_t hwr_fz; // check mode (-hwfx 268435456): what the fused builder made of the sprite or shadow that HWR_DrawSprite / HWR_DrawDropShadowGen draw the old way
+static boolean hwr_fz_pending; // ... and that polygon has not been compared yet
+static boolean hwr_fz_none; // ... the fused builder said "no shadow" (2): the old function must draw none
+static int hwr_fz_why; // ... and why (1 floor too far, 2 sphere, 3 quad)
+
+// check mode: the polygon the old function hands to HWR_ProcessPolygon against the fused builder's, bit for bit (the vertices, the flags, the shader, the surface, the current texture)
+static void HWR_FZ_Check(const char *what, const FSurfaceInfo *surf, const FOutVector *v, FBITFIELD flags, int shader)
+{
+	static unsigned chk, bad;
+	boolean same;
+
+	if (hwr_fz_none)
+	{
+		static unsigned flake;
+
+		hwr_fz_none = false;
+		if (hwr_fz_why == 3 && v[0].x == hwr_fz.v[0].x && v[0].y == hwr_fz.v[0].y && v[0].z == hwr_fz.v[0].z && v[1].x == hwr_fz.v[1].x && v[1].y == hwr_fz.v[1].y && v[1].z == hwr_fz.v[1].z
+			&& v[2].x == hwr_fz.v[2].x && v[2].y == hwr_fz.v[2].y && v[2].z == hwr_fz.v[2].z && v[3].x == hwr_fz.v[3].x && v[3].y == hwr_fz.v[3].y && v[3].z == hwr_fz.v[3].z)
+		{
+			// (the corners are the same, only the answer of PS2HWD_QuadHidden differs: its VU0 test answers differently for the same quad now and then, see HWR_DrawDropShadow)
+			if (++flake <= 3)
+				CONS_Printf("HWC fuse note %u: PS2HWD_QuadHidden answered differently for the same shadow quad\n", flake);
+			return;
+		}
+		bad++;
+		CONS_Printf("HWC fuse MISMATCH %u (%s): the builder said nothing to draw (reason %d), the old function drew one\n", bad, what, hwr_fz_why);
+		return;
+	}
+	if (!hwr_fz_pending)
+		return;
+	hwr_fz_pending = false;
+	chk++;
+	same = !memcmp(v, hwr_fz.v, sizeof hwr_fz.v) && flags == hwr_fz.flags && shader == hwr_fz.shader && current_texture == hwr_fz.tex
+		&& surf->PolyColor.rgba == hwr_fz.surf->PolyColor.rgba && surf->TintColor.rgba == hwr_fz.surf->TintColor.rgba && surf->FadeColor.rgba == hwr_fz.surf->FadeColor.rgba
+		&& surf->LightTableId == hwr_fz.surf->LightTableId && surf->LightInfo.light_level == hwr_fz.surf->LightInfo.light_level && surf->LightInfo.fade_start == hwr_fz.surf->LightInfo.fade_start
+		&& surf->LightInfo.fade_end == hwr_fz.surf->LightInfo.fade_end;
+	if (!same)
+	{
+		bad++;
+		if (bad <= 20)
+			CONS_Printf("HWC fuse MISMATCH %u of %u (%s): v0 %.4f %.4f %.4f / %.4f %.4f %.4f v2 %.4f %.4f %.4f / %.4f %.4f %.4f fl %x/%x sh %d/%d tex %d light %d/%d color %08x/%08x\n", bad, chk, what,
+				v[0].x, v[0].y, v[0].z, hwr_fz.v[0].x, hwr_fz.v[0].y, hwr_fz.v[0].z, v[2].x, v[2].y, v[2].z, hwr_fz.v[2].x, hwr_fz.v[2].y, hwr_fz.v[2].z, (unsigned)flags, (unsigned)hwr_fz.flags, shader, hwr_fz.shader,
+				(int)(current_texture == hwr_fz.tex), (int)surf->LightInfo.light_level, (int)hwr_fz.surf->LightInfo.light_level, (unsigned)surf->PolyColor.rgba, (unsigned)hwr_fz.surf->PolyColor.rgba);
+	}
+	else if (!(chk & 4095))
+	{
+		CONS_Printf("HWC fuse check: %u polygons, %u differ\n", chk, bad);
+	}
+}
 static int hwr_fx_shchk; // check mode: what the shadow builder said of the shadow being drawn the old way (1 built, 2 nothing to draw)
 static void HWR_FX_SpriteCheck(const FSurfaceInfo *surf, const FOutVector *v, FBITFIELD flags, int shader_target);
 static boolean hwr_fx_cheap; // PS2-HW-257 on for this view
@@ -3667,6 +3729,7 @@ static void HWR_ClearSprites(void)
 	hwr_fx_plain = !cv_glmodels.value && r_renderthings && !(ps2hwd_fx2 & FX3_NOPLAIN); // PS2-HW-254
 	hwr_fx_useshader = HWR_UseShader();
 	hwr_fx_cheap = !(ps2hwd_fx2 & FX3_NOLEAN2);
+	hwr_fx_fuse = hwr_fx_cheap && (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM)) && !(ps2hwd_fx2 & (FX4_NOFUSE | FX2_PRECHECK)); // PS2-HW-700
 	hwr_fx_view++;
 	hwr_fx_spr_shader = HWR_GetShaderFromTarget(SHADER_SPRITE);
 	hwr_fx_rsin = FIXED_TO_FLOAT(FINESINE((viewangle + ANGLE_90) >> ANGLETOFINESHIFT));
@@ -3928,6 +3991,152 @@ static boolean HWR_FX_ShadowFast(gl_vissprite_t *spr)
 	return PS2HWD_SprCommit(1) != 0;
 }
 
+// --------------------------------------------------------------------------
+// PS2-HW-701 (OPT13 IS, RF-2): the drop shadow of a plain sprite of the sprite batch, made in one function from the numbers of HWR_DrawDropShadowGen (the same operations in the same order,
+// the interpolated state of the vissprite, the cached light surface of the view) and handed to the collection with HWR_PBSprQuad: no shadow polygon through HWR_ProcessPolygon. Returns
+// 0: not this shadow (nothing was done, HWR_DrawDropShadowGen makes it), 1: *q holds the polygon, 2: no shadow is drawn (a floor too far away, a quad that shows no pixel).
+// -hwfx 134217728 (FX4_NOSHFUSE) switches it off, -hwfx 268435456 (FX4_FUSECHK) compares it with the old function for every shadow (HWC fuse MISMATCH).
+// --------------------------------------------------------------------------
+static int HWR_FX_ShadowFuseBuild(gl_vissprite_t *spr, mobj_t *thing, fixed_t scale, hwr_fz_t *q)
+{
+	patch_t *gpatch = hwr_fx_dshadow;
+	const GLPatch_t *gp;
+	GLMipmap_t *m;
+	sector_t *sector;
+	extracolormap_t *colormap = NULL;
+	interpmobjstate_t interp = {0};
+	fixed_t groundz, floordiff, scalemul;
+	pslope_t *groundslope;
+	INT32 phs;
+	UINT16 alpha;
+	float fscale, fx, fy, offset, shadowlift;
+	const SINT8 flip = P_MobjFlip(thing);
+	FOutVector *v = q->v;
+	int i;
+
+	if (cv_shadow.value != 1 || !spr || spr->mobj != thing || !spr->ps2_iok || !gpatch || !hwr_fx_useshader || (ps2hwd_fx2 & FX2_NOSHADOW) || HWR_PS2_NoCull())
+		return 0;
+	gp = (const GLPatch_t *)gpatch->hardware;
+	if (!gp || !gp->mipmap || !gp->mipmap->format || !gp->mipmap->downloaded)
+		return 0;
+	m = gp->mipmap;
+	sector = thing->subsector->sector;
+	if (!(thing->renderflags & RF_NOCOLORMAPS))
+	{
+		if (sector->numlights)
+			return 0; // (the colormap of the light at the floor: the old function)
+		colormap = sector->extra_colormap;
+	}
+	phs = (viewplayer->mo && viewplayer->mo->subsector) ? viewplayer->mo->subsector->sector->heightsec : -1;
+	if (sector->heightsec != -1 && phs != -1)
+		return 0;
+
+	interp.x = spr->ps2_ix;
+	interp.y = spr->ps2_iy;
+	interp.z = spr->ps2_iz;
+	interp.radius = spr->ps2_ir;
+	interp.height = spr->ps2_ih;
+	interp.subsector = spr->ps2_isub ? spr->ps2_isub : R_PointInSubsector(interp.x, interp.y);
+	groundz = R_GetShadowZInterp(thing, &interp, &groundslope);
+
+	floordiff = abs((flip < 0 ? interp.height : 0) + interp.z - groundz);
+	alpha = floordiff / (4*FRACUNIT) + 75;
+	if (alpha >= 255)
+		return hwr_fz_why = 1, 2;
+	alpha = 255 - alpha;
+
+	scalemul = FixedMul(FRACUNIT - floordiff/640, scale);
+	scalemul = FixedMul(scalemul, (interp.radius*2) / gpatch->height);
+	fscale = FIXED_TO_FLOAT(scalemul);
+	fx = FIXED_TO_FLOAT(interp.x);
+	fy = FIXED_TO_FLOAT(interp.y);
+	if (fabsf(fscale - 1.0f) > 1.0E-36f)
+		offset = ((gpatch->height)/2) * fscale;
+	else
+		offset = (float)((gpatch->height)/2);
+	{
+		const float sdx = fx - gl_viewx, sdy = fy - gl_viewy, sdz = gl_viewz - FIXED_TO_FLOAT(groundz);
+		float sh = fabsf(sdz), lift;
+
+		sh = sh < 16.0f ? 16.0f : sh;
+		lift = (sdx * sdx + sdy * sdy + sdz * sdz) * (1.0f / 640.0f) / sh;
+		shadowlift = lift < 0.05f ? 0.05f : lift > 6.0f ? 6.0f : lift;
+	}
+	if (!groundslope)
+	{
+		const ps2cull_t *cs = PS2HWD_CullSetup();
+
+		if (cs->valid && HWR_FX_SphereHidden(cs, fx, FIXED_TO_FLOAT(groundz) + flip * shadowlift, fy, offset * 1.4143f + shadowlift + 0.5f))
+			return hwr_fz_why = 2, 2;
+	}
+
+	// the corners as HWR_DrawDropShadowGen makes them: x, z of a corner rounded as fx + (x - fx), the height of the floor (or of the slope at the corner) plus the lift
+	v[2].x = v[3].x = fx + offset;
+	v[1].x = v[0].x = fx - offset;
+	v[1].z = v[2].z = fy - offset;
+	v[0].z = v[3].z = fy + offset;
+	for (i = 0; i < 4; i++)
+	{
+		v[i].x = fx + (v[i].x - fx);
+		v[i].z = fy + (v[i].z - fy);
+	}
+	if (groundslope)
+	{
+		for (i = 0; i < 4; i++)
+		{
+			const fixed_t slopez = P_GetSlopeZAt(groundslope, FLOAT_TO_FIXED(v[i].x), FLOAT_TO_FIXED(v[i].z));
+
+			v[i].y = FIXED_TO_FLOAT(slopez) + flip * shadowlift;
+		}
+	}
+	else
+	{
+		for (i = 0; i < 4; i++)
+			v[i].y = FIXED_TO_FLOAT(groundz) + flip * shadowlift;
+	}
+	v[0].s = v[3].s = 0;
+	v[2].s = v[1].s = gp->max_s;
+	v[3].t = v[2].t = 0;
+	v[0].t = v[1].t = gp->max_t;
+	if (HWR_FX_QuadHidden(v)) // (the exact test of the old function: a shadow with no pixel centre in it is not made)
+		return hwr_fz_why = 3, 2;
+
+	q->sh_surf = *HWR_FX_LightSurf(0, colormap);
+	q->sh_surf.PolyColor.s.alpha = FixedMul(thing->alpha, alpha);
+	q->sh_surf.LightInfo.light_level = 0;
+	q->surf = &q->sh_surf;
+	q->flags = (FBITFIELD)(PF_Translucent | PF_Modulated | PF_ColorMapped);
+	q->shader = SHADER_SPRITE;
+	q->tex = m;
+	return 1;
+}
+
+// the texture of a fused polygon is made current once per view: the driver stamps it with the frame (what must stay in the GS pool until the batch is drawn), the zone the block of its data
+static inline void HWR_FX_FuseTouch(GLMipmap_t *m)
+{
+	if (m->ps2_spv != hwr_fx_view)
+	{
+		m->ps2_spv = hwr_fx_view;
+		PS2HWD_TouchTexture(m);
+		if (m->data)
+			Z_ChangeTag(m->data, ps2hwt_patchtag);
+	}
+}
+
+// the shadow goes to the collection (true), or nothing is drawn for it (true), or HWR_DrawDropShadowGen makes it (false)
+static boolean HWR_FX_ShadowFuse(gl_vissprite_t *spr, mobj_t *thing, fixed_t scale)
+{
+	hwr_fz_t q;
+	const int r = HWR_FX_ShadowFuseBuild(spr, thing, scale, &q);
+
+	if (r == 2)
+		return true;
+	if (r != 1)
+		return false;
+	HWR_FX_FuseTouch(q.tex);
+	return HWR_PBSprQuad(q.tex, q.surf, q.v, q.flags, q.shader) != 0;
+}
+
 static void HWR_DrawDropShadowGen(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale);
 
 static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale)
@@ -3951,6 +4160,35 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 	}
 	if (HWR_FX_ShadowFast(spr))
 		return;
+	if (hwr_fx_fuse && currently_batching && hwr_sprite_batch && !(ps2hwd_fx2 & FX4_NOSHFUSE))
+	{
+		if (ps2hwd_fx2 & FX4_FUSECHK)
+		{
+			// check mode: the fused polygon is kept, the old function draws and compares it at its HWR_ProcessPolygon (HWR_FZ_Check)
+			const int r = HWR_FX_ShadowFuseBuild(spr, thing, scale, &hwr_fz);
+
+			hwr_fz_pending = r == 1;
+			hwr_fz_none = r == 2;
+			HWR_DrawDropShadowGen(thing, spr, scale);
+			if (hwr_fz_pending)
+			{
+				static unsigned bad, flake;
+
+				if (HWR_FX_QuadHidden(hwr_fz.v))
+				{
+					// (the same quad is hidden now: PS2HWD_QuadHidden answers differently for the same quad now and then)
+					if (++flake <= 3)
+						CONS_Printf("HWC fuse note %u: PS2HWD_QuadHidden answered differently for the same shadow quad\n", flake);
+				}
+				else
+					CONS_Printf("HWC fuse MISMATCH %u (shadow): built, the old function drew none\n", ++bad);
+			}
+			hwr_fz_pending = hwr_fz_none = false;
+			return;
+		}
+		if (HWR_FX_ShadowFuse(spr, thing, scale))
+			return;
+	}
 	HWR_DrawDropShadowGen(thing, spr, scale);
 }
 
@@ -4325,6 +4563,8 @@ static void HWR_DrawDropShadow(mobj_t *thing, gl_vissprite_t *spr, fixed_t scale
 		hwr_fx_shchk = 0;
 		hwr_fx_chk_ok = false;
 	}
+	if (hwr_fz_pending | hwr_fz_none)
+		HWR_FZ_Check("shadow", &sSurf, shadowVerts, blendmode, shader);
 #endif
 	HWR_ProcessPolygon(&sSurf, shadowVerts, 4, blendmode, shader, false);
 	HWD_LAP(HWP_SH_H);
@@ -4916,6 +5156,126 @@ static boolean HWR_DrawSpriteStream(gl_vissprite_t *spr)
 	return PS2HWD_SprCommit(0) != 0;
 }
 
+// --------------------------------------------------------------------------
+// PS2-HW-700 (OPT13 IS, RF-2): the plain opaque sprite of the sprite batch (HWR_ProjectPlain made it: no skin, overlay, link draw, floor or paper sprite, roll, no translucency; ps2_skey
+// bit 3) built in one function from its vissprite and handed to the collection (HWR_PBSprQuad). The same numbers as HWR_DrawSprite and HWR_RotateSpritePolyToAim make, in the same
+// operations: the four vertices (the aim rotation of a view that looks up or down, the s, t of the flips), the light surface of the sector (cached per view), the blend flags; what
+// HWR_GetMappedPatch and HWR_ProcessPolygon do around them (the patch resident and current, the tag of its data, the sprite branch of the polygon) is done once per texture and view or
+// by HWR_PBSprQuad. Returns false, having done nothing, for a sprite that is not the common one (a display offset, a sector with 3D floor lights, a translated or not yet resident
+// picture, a blend that is not opaque): HWR_DrawSprite draws it. -hwfx 67108864 (FX4_NOFUSE) switches it off, -hwfx 268435456 (FX4_FUSECHK) compares it with HWR_DrawSprite for every sprite.
+// --------------------------------------------------------------------------
+static boolean HWR_FX_SprFuseBuild(gl_vissprite_t *spr, hwr_fz_t *q)
+{
+	mobj_t *const mo = spr->mobj;
+	const sector_t *sector;
+	const GLPatch_t *gp;
+	GLMipmap_t *m;
+	FOutVector *v = q->v;
+	INT32 blendmode;
+	FBITFIELD blend;
+	UINT8 lightlevel;
+	extracolormap_t *colormap;
+
+	if (!(spr->ps2_skey & 8) || spr->dispoffset || !mo->subsector || !cv_translucency.value || !hwr_fx_useshader)
+		return false;
+	if (spr->colormap && spr->colormap != colormaps)
+		return false;
+	sector = mo->subsector->sector;
+	if (sector->numlights)
+		return false;
+	if (cv_glspritebillboarding.value && !spr->ps2_iok)
+		return false; // (the aim rotation needs the state of the projection)
+	gp = (const GLPatch_t *)spr->gpatch->hardware;
+	if (!gp)
+		return false;
+	m = gp->mipmap;
+	if (!m->downloaded)
+		return false; // not resident: the old way makes the data and the upload
+
+	if (mo->frame & FF_BLENDMASK)
+		blendmode = ((mo->frame & FF_BLENDMASK) >> FF_BLENDSHIFT) + 1;
+	else
+		blendmode = mo->blendmode;
+	blend = HWR_GetBlendModeFlag(blendmode);
+	if (blend != PF_Translucent && blend != PF_Masked)
+		return false;
+
+	// the quad (HWR_DrawSprite), then the aim rotation (HWR_RotateSpritePolyToAim)
+	v[0].x = v[3].x = spr->x1;
+	v[2].x = v[1].x = spr->x2;
+	v[2].y = v[3].y = spr->gzt;
+	v[0].y = v[1].y = spr->gz;
+	v[0].z = v[3].z = spr->z1;
+	v[1].z = v[2].z = spr->z2;
+	if (cv_glspritebillboarding.value)
+	{
+		float basey, lowy;
+
+		if (P_MobjFlip(mo) == -1)
+			basey = FIXED_TO_FLOAT(spr->ps2_iz + spr->ps2_ih);
+		else
+			basey = FIXED_TO_FLOAT(spr->ps2_iz);
+		lowy = v[0].y;
+		v[2].y = v[3].y = (spr->gzt - basey) * gl_viewludsin + basey;
+		v[0].y = v[1].y = (lowy - basey) * gl_viewludsin + basey;
+		v[3].x += ((spr->gzt - basey) * gl_viewludcos) * gl_viewcos;
+		v[2].x += ((spr->gzt - basey) * gl_viewludcos) * gl_viewcos;
+		v[0].x += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		v[1].x += ((lowy - basey) * gl_viewludcos) * gl_viewcos;
+		v[3].z += ((spr->gzt - basey) * gl_viewludcos) * gl_viewsin;
+		v[2].z += ((spr->gzt - basey) * gl_viewludcos) * gl_viewsin;
+		v[0].z += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+		v[1].z += ((lowy - basey) * gl_viewludcos) * gl_viewsin;
+	}
+	if (spr->flip)
+	{
+		v[0].s = v[3].s = gp->max_s;
+		v[2].s = v[1].s = 0;
+	}
+	else
+	{
+		v[0].s = v[3].s = 0;
+		v[2].s = v[1].s = gp->max_s;
+	}
+	if (spr->vflip)
+	{
+		v[3].t = v[2].t = gp->max_t;
+		v[0].t = v[1].t = 0;
+	}
+	else
+	{
+		v[3].t = v[2].t = 0;
+		v[0].t = v[1].t = gp->max_t;
+	}
+
+	// the light of the sector (the colormap test of HWR_DrawSprite)
+	if (R_ThingIsFullBright(mo))
+		lightlevel = 255;
+	else if (R_ThingIsFullDark(mo))
+		lightlevel = 0;
+	else
+		lightlevel = sector->lightlevel > 255 ? 255 : sector->lightlevel;
+	if (R_ThingIsSemiBright(mo))
+		lightlevel = 128 + (lightlevel >> 1);
+	colormap = (mo->renderflags & RF_NOCOLORMAPS) ? NULL : sector->extra_colormap;
+	q->surf = HWR_FX_LightSurf(lightlevel, colormap); // (PolyColor is 0xFFFFFFFF: alpha 0xFF, as HWR_DrawSprite sets it)
+	q->flags = (FBITFIELD)(blend | PF_Occlude | PF_ColorMapped | PF_Modulated);
+	q->shader = SHADER_SPRITE;
+	q->tex = m;
+	return true;
+}
+
+// the sprite goes to the collection (true) or takes the old way (false)
+static boolean HWR_FX_SprFuse(gl_vissprite_t *spr)
+{
+	hwr_fz_t q;
+
+	if (!HWR_FX_SprFuseBuild(spr, &q))
+		return false;
+	HWR_FX_FuseTouch(q.tex);
+	return HWR_PBSprQuad(q.tex, q.surf, q.v, q.flags, q.shader) != 0;
+}
+
 // check mode: the polygon the old way made of the sprite against the record of the builder
 static void HWR_FX_SpriteCheck(const FSurfaceInfo *surf, const FOutVector *v, FBITFIELD flags, int shader_target)
 {
@@ -5313,6 +5673,8 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 			hwr_fx_chk_ok = false;
 			HWR_FX_SpriteCheck(&Surf, wallVerts, blend|PF_Modulated, shader);
 		}
+		if (hwr_fz_pending)
+			HWR_FZ_Check("sprite", &Surf, wallVerts, blend|PF_Modulated, shader);
 #endif
 		HWR_ProcessPolygon(&Surf, wallVerts, 4, blend|PF_Modulated, shader, false);
 		HWD_LAP(HWP_DS_F);
@@ -6170,6 +6532,37 @@ static void HWR_DrawSprites(void)
 			if (!HWR_DrawSpriteStream(spr))
 				HWR_DrawSprite(spr);
 		}
+		else if (sprwas && hwr_fx_fuse && (spr->ps2_skey & 12) == 12)
+		{
+			// PS2-HW-700/701 (OPT13 IS): the plain opaque sprite of the sprite batch and its shadow (the drop shadow function tries the fused builder first)
+			if (spr->mobj->shadowscale && cv_shadow.value && !skipshadow)
+			{
+				hwr_sprite_shadow = true;
+				HWC_ADD(HWC_SPR_SHADOW);
+				{
+				HWP_SPAN_BEGIN(tsh);
+				HWR_DrawDropShadow(spr->mobj, spr, spr->mobj->shadowscale);
+				HWP_SPAN_END(tsh, HWP_SP_SHADOW);
+				}
+				hwr_sprite_shadow = false;
+			}
+			skipshadow = false;
+			if (ps2hwd_fx2 & FX4_FUSECHK)
+			{
+				// check mode: the fused polygon is kept, HWR_DrawSprite draws and compares it at its HWR_ProcessPolygon (HWR_FZ_Check)
+				hwr_fz_pending = HWR_FX_SprFuseBuild(spr, &hwr_fz);
+				HWR_DrawSprite(spr);
+				if (hwr_fz_pending)
+				{
+					static unsigned bad;
+
+					CONS_Printf("HWC fuse MISMATCH %u (sprite): built, the old function drew none\n", ++bad);
+					hwr_fz_pending = false;
+				}
+			}
+			else if (!HWR_FX_SprFuse(spr))
+				HWR_DrawSprite(spr);
+		}
 		else
 #endif
 		if (spr->bbox)
@@ -6897,7 +7290,7 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 		vis = HWR_NewVisSprite();
 		vis->ps2_hid = ps2_hidden;
 	}
-	vis->ps2_skey = (UINT8)((((thing->flags2 & MF2_SHADOW) || (frame & FF_TRANSMASK)) ? 1 : 0) | 4); // (bit 2: made by HWR_ProjectPlain: no skin, no link draw, no model, no floor or paper sprite)
+	vis->ps2_skey = (UINT8)((((thing->flags2 & MF2_SHADOW) || (frame & FF_TRANSMASK)) ? 1 : 0) | 4 | ((!(thing->flags2 & MF2_SHADOW) && !(frame & FF_TRANSMASK) && thing->alpha == FRACUNIT) ? 8 : 0)); // (bit 2: made by HWR_ProjectPlain: no skin, no link draw, no model, no floor or paper sprite; bit 3 (OPT13 IS): and opaque: no translucency, full alpha)
 	vis->ps2_iok = !(ps2hwd_fx2 & FX2_NOINTERP);
 	vis->ps2_ix = interp.x;
 	vis->ps2_iy = interp.y;

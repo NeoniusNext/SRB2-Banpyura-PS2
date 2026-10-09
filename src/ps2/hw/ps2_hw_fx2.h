@@ -29,6 +29,11 @@
 #define FX3_NOLEAN 0x10000 // PS2-HW-253 (FX3): the lean paths of the sprite batch (planner call, collect, sort) are off, as before
 #define FX3_NOFILL 0x8000 // PS2-HW-252 (FX3): the texels of a patch are stored by the fast loop only when the width is a multiple of 4 (as before)
 #define FX3_NOPARA 0x4000 // PS2-HW-251 (FX3): PS2HWD_QuadHidden (four transforms) for the quads of the sprites and the shadows, as before
+// OPT13 IS (RF-2, sprites v2): a set bit switches one path OFF; the check mode runs the old path next to the new one and reports every difference (HWC fuse ...)
+#define FX4_NOFUSE 0x4000000 // PS2-HW-700: the plain opaque sprite of the sprite batch goes through HWR_DrawSprite as before (the fused builder of hw_main.c is off)
+#define FX4_NOSHFUSE 0x8000000 // PS2-HW-701: the drop shadow of a plain sprite goes through HWR_DrawDropShadowGen as before
+#define FX4_FUSECHK 0x10000000 // PS2-HW-700/701 check mode: the fused builders run, the old paths draw, the polygon of the old path is compared with the fused one (HWC fuse MISMATCH)
+#define FX4_NOPROJ2 0x20000000 // PS2-HW-702: the projection of the plain sprite as before OPT13
 #define FX2_PTRORDER 0x1000 // PS2-HW-250 (FX3): the order of the patches in the batches by the hash of their address, as before (A/B)
 
 extern int ps2hwd_fx2;
