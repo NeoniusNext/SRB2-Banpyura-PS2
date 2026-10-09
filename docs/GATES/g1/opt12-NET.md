@@ -211,7 +211,7 @@
 | `compat-refsrv-ps2cli` | оригинальный dedicated-сервер, PS2-клиент Software (ранние подтверждения, запросы повтора включены) | rc 0, 2100 тиков, пинг на экране 28.9 (max 41) мс, 8 запросов `NODEKEEPALIVEMIS`, сервер никого не снимал |
 | `compat-refsrv-ps2cli-hw` | то же, Hardware | rc 0, 1400 тиков, пинг 32.6 (max 66) мс |
 | `compat-refsrv-loss15` | то же через `udp_netem` (потеря 15 %, 30 ± 10 мс) | rc 0, 1400 тиков, пинг 109.8 (max 152) мс, 133 дыры закрыты 130 запросами повтора, без выброса клиента |
-| `compat-ps2srv-refcli` | PS2-**сервер**, оригинальный ПК-**клиент** (Enter на экранах входа шлёт `tools/ps2/x_enter.py` через XTEST) | rc 0, `players=2` в 51 отсчёте `NETSYNC` сервера до тика 2170, «Soni has joined the game», без `Connection timeout`; пинг клиента на сервере 29.0 (max 37) мс |
+| `compat-ps2srv-refcli` | PS2-**сервер**, оригинальный ПК-**клиент** (Enter на экранах входа шлёт `tools/ps2/x_enter.py` через XTEST) | rc 0, `players=2` в 51 отсчёте `NETSYNC` сервера до тика 2170, «Soni has joined the game», без `Connection timeout`; круг тика у PS2-сервера 34.8 (p95 76.6) мс |
 
 Первая версия сценария `compat-ps2srv-refcli` засчитала бы запуск без клиента (условие было только «сервер дошёл до тика 2100»): оригинальный клиент стоял на «Contacting the server...» (нужен Enter), `players=1`. Теперь условие — `players=2`.
 
