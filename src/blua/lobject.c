@@ -89,11 +89,22 @@ int luaO_rawequalObj (const TValue *t1, const TValue *t2) {
 
 int luaO_str2d (const char *s, lua_Number *result) {
   char *endptr;
+#ifdef PS2
+  /* PS2-LUA: the PC builds read the digits with a 64-bit long (strtol) and convert to the 32-bit lua_Number: 2147483648 and anything above or below the 32-bit
+     range gives 0x80000000 there (x86 conversion of an out-of-range double). The 32-bit long of the EE would saturate at 2147483647 instead, so -2147483648
+     (read as the unary minus of 2147483648) and 4294967295 would print differently. Hex constants wrap modulo 2^32 on both (64-bit strtoul vs. strtoull). */
+  long long ll = strtoll(s, &endptr, 10);
+  *result = (ll >= -2147483648LL && ll <= 2147483647LL) ? (lua_Number)ll : (lua_Number)0x80000000u;
+  if (endptr == s) return 0;  /* conversion failed */
+  if (*endptr == 'x' || *endptr == 'X')  /* maybe an hexadecimal constant? */
+    *result = cast_num((unsigned long long)strtoull(s, &endptr, 16));
+#else
   double r = lua_str2number(s, &endptr);
    *result = (lua_Number)r;
   if (endptr == s) return 0;  /* conversion failed */
   if (*endptr == 'x' || *endptr == 'X')  /* maybe an hexadecimal constant? */
     *result = cast_num(strtoul(s, &endptr, 16));
+#endif
   if (*endptr == '\0') return 1;  /* most common case */
   while (isspace(cast(unsigned char, *endptr))) endptr++;
   if (*endptr != '\0') return 0;  /* invalid trailing characters? */

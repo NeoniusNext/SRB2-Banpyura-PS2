@@ -32,6 +32,7 @@ for _, n in ipairs(fns) do
 	local row = {}
 	for i = 1, #edge do for j = 1, #edge do
 		local skip = (n == "FixedRem") and (edge[j] == 0 or (edge[j] == -1 and edge[i] == -2147483647-1)) -- C: SIGFPE on x86 (and a break on the EE)
+		if n == "FixedHypot" and (edge[i] == -2147483647-1 or edge[j] == -2147483647-1) then skip = true end -- upstream: R_PointToDist2 reads tantoangle[] at a negative index for 0x80000000 (what is in front of the table differs per build)
 		local ok, r = false, nil
 		if not skip then ok, r = pcall(f, edge[i], edge[j]) end
 		row[#row+1] = ok and r or "E"
@@ -93,4 +94,29 @@ P("coloropp", ColorOpposite and select("#", ColorOpposite(5)) or "none", ColorOp
 -- string helpers of the engine
 P("All7", All7Emeralds(0), All7Emeralds(127), All7Emeralds(63))
 P("secspecial", GetSecSpecial(0, 1), GetSecSpecial(0x1234, 1), GetSecSpecial(0x1234, 2), GetSecSpecial(0x1234, 3), GetSecSpecial(0x1234, 4))
+-- bulk: pseudo random operands (xorshift on 32-bit integers), results folded into hashes
+local seed = 123456789
+local function rnd() seed = seed ^^ (seed << 13) seed = seed ^^ ((seed >> 17) & 0x7FFF) seed = seed ^^ (seed << 5) return seed end
+local hm, hd, hs2, hh, ht2, hr = 0, 0, 0, 0, 0, 0
+for i = 1, 3000 do
+	local a, b = rnd(), rnd()
+	if i % 3 == 0 then a = a >> 10 b = b >> 12 elseif i % 3 == 1 then a = a >> 4 b = (b >> 20) + 1 end
+	hm = (hm * 31 + FixedMul(a, b)) % 1000000007
+	if b ~= 0 then hd = (hd * 31 + FixedDiv(a, b)) % 1000000007 end
+	hh = (hh * 31 + FixedHypot(a >> 2, b >> 2)) % 1000000007
+	if a >= 0 then hs2 = (hs2 * 31 + FixedSqrt(a)) % 1000000007 end
+	ht2 = (ht2 * 31 + R_PointToAngle2(0, 0, a, b)) % 1000000007
+	hr = (hr * 31 + FixedAngle(a) % 65521 + AngleFixed(b) % 65519) % 1000000007
+end
+P("bulk", hm, hd, hh, hs2, ht2, hr)
+local ht = 0
+for i = 1, 400 do
+	local ip = (rnd() >> 8) % 40000 - 8000
+	local fr = (rnd() >> 8) % 1000000
+	local str = ip .. "." .. string.format("%06d", fr)
+	if i % 7 == 0 then str = "-" .. str end
+	if i % 11 == 0 then str = str:sub(1, #str - 3) end
+	ht = (ht * 31 + (tofixed(str) or 7)) % 1000000007
+end
+P("tofixed_bulk", ht)
 P("DONE_MATH")
