@@ -1883,7 +1883,13 @@ UINT16 W_CheckNumForFolderStartPK3(const char *name, UINT16 wad, UINT16 startlum
 	lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
 	name_length = strlen(name);
 
+#ifdef PS2_PROFILE
+	// PS2-LOAD-20: the lookup of a name that is already in the tree needs no copy of it (and no Z_Free of the copy): the TEXTURES parser asks
+	// for the folder of Patches/ and Textures/ once or twice per patch of every texture (57 000 Z_StrDup + Z_Free at the start-up)
+	void *val = M_AATreeGet(wadfiles[wad]->startfolders, (void *)name, W_CheckFolderKeys, NULL);
+#else
 	void *val = M_AATreeGet(wadfiles[wad]->startfolders, Z_StrDup(name), W_CheckFolderKeys, W_DeallocFolderKey);
+#endif
 	if (val != NULL)
 		return (uintptr_t)val;
 
@@ -1911,7 +1917,11 @@ UINT16 W_CheckNumForFolderEndPK3(const char *name, UINT16 wad, UINT16 startlump)
 	lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
 	size_t name_length = strlen(name);
 	
+#ifdef PS2_PROFILE
+	void *val = M_AATreeGet(wadfiles[wad]->endfolders, (void *)name, W_CheckFolderKeys, NULL);
+#else
 	void *val = M_AATreeGet(wadfiles[wad]->endfolders, Z_StrDup(name), W_CheckFolderKeys, W_DeallocFolderKey);
+#endif
 	if (val != NULL)
 		return (uintptr_t)val;
 	

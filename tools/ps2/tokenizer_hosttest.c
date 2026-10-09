@@ -181,11 +181,50 @@ done:
 	return 0;
 }
 
+/* PS2-LOAD-21: Tokenizer_Open's copy and length (eight bytes at a time) against the original (memcpy + strlen), for every length 0..130, a NUL at every
+ * position or none, and sources that start at every offset 0..7 */
+static int CompareOpen(void)
+{
+	static char src[512];
+	long checked = 0;
+	size_t len, off;
+	int nulpos;
+
+	for (len = 0; len <= 130; len++)
+		for (off = 0; off < 8; off++)
+			for (nulpos = -1; nulpos < (int)len; nulpos++)
+			{
+				tokenizer_t *a, *b;
+				size_t i;
+
+				for (i = 0; i < sizeof src; i++)
+					src[i] = (char)('a' + (i * 7 + len) % 26);
+				if (nulpos >= 0)
+					src[off + nulpos] = 0;
+				if (len && (len + off) % 3 == 0)
+					src[off + len - 1] = (char)0x80; /* (high bytes: the zero test must not flag them) */
+				a = Orig_Tokenizer_Open(src + off, len, 2);
+				b = Fast_Tokenizer_Open(src + off, len, 2);
+				checked++;
+				if (a->inputLength != b->inputLength || memcmp(a->zdup, b->zdup, len + 2))
+				{
+					printf("open: len %zu off %zu nul %d: length orig %u fast %u (or the copy differs)\n", len, off, nulpos, a->inputLength, b->inputLength);
+					return 1;
+				}
+				Orig_Tokenizer_Close(a);
+				Fast_Tokenizer_Close(b);
+			}
+	printf("open: %ld copies and lengths equal\n", checked);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	static const char alpha[] = "abcxyz019.-+_ \t\r\n\n{}={};;,,\"\"//**/ /*\\ "; /* (no NUL inside: the first NUL ends the text for both, and what follows is read past the end) */
 	long n, fail = 0;
 	int i;
+
+	fail += CompareOpen();
 
 	for (i = 1; i < argc; i++)
 	{

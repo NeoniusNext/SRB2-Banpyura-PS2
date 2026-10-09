@@ -1365,7 +1365,9 @@ void R_InitData(void)
 
 	CONS_Printf("R_LoadTextures()...\n");
 	LP_RESTART(lp0);
+	LP_SAMPLE(22);
 	R_LoadTextures();
+	LP_SAMPLE(23);
 	LP_END(R_TEXTURES, lp0);
 
 	CONS_Printf("P_InitPicAnims()...\n");
@@ -1375,8 +1377,10 @@ void R_InitData(void)
 
 	CONS_Printf("R_InitSprites()...\n");
 	LP_RESTART(lp0);
+	LP_SAMPLE(24);
 	R_InitSpriteLumps();
 	R_InitSprites();
+	LP_SAMPLE(25);
 	LP_END(R_SPRITES, lp0);
 
 	CONS_Printf("R_InitColormaps()...\n");

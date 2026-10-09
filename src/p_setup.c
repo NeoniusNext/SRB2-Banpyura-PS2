@@ -3486,15 +3486,19 @@ static boolean P_LoadMapData(const virtres_t *virt)
 			return false;
 		}
 		LP_BEGIN(lpu);
+		LP_SAMPLE(20);
 		M_TokenizerOpen((char *)VRES_DATA(virt, textmap), textmap->size);
+		LP_SAMPLE(21);
 		VRES_DROP(textmap); // the tokenizer has its own copy
 		LP_END(U_OPEN, lpu);
 		LP_RESTART(lpu);
+		LP_SAMPLE(18);
 		if (!TextmapCount(textmap->size))
 		{
 			M_TokenizerClose();
 			return false;
 		}
+		LP_SAMPLE(19);
 		LP_END(U_COUNT, lpu);
 	}
 	else

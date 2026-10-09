@@ -12,6 +12,33 @@
 #include "m_tokenizer.h"
 #include "z_zone.h"
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-21: the copy of the text and the strlen of the copy in one pass, eight bytes at a time (the copy was a byte loop of the libc memcpy
+// for an unaligned source and the strlen a memchr that cost three times as much as the copy: 5 M cycles for a 1 MB TEXTMAP). Returns the
+// index of the first NUL of the text, or len where there is none: what strlen of the copy gave.
+static UINT32 Tokenizer_CopyLen(char *dst, const char *src, size_t len)
+{
+	size_t i = 0;
+
+	while (i + 8 <= len)
+	{
+		UINT64 w;
+
+		memcpy(&w, src + i, 8);
+		if (((w - 0x0101010101010101ull) & ~w & 0x8080808080808080ull) != 0) // a zero byte in the word
+			break;
+		memcpy(dst + i, &w, 8);
+		i += 8;
+	}
+	if (i < len)
+		memcpy(dst + i, src + i, len - i);
+	for (; i < len; i++)
+		if (!dst[i])
+			return (UINT32)i;
+	return (UINT32)len;
+}
+#endif
+
 tokenizer_t *Tokenizer_Open(const char *inputString, size_t len, unsigned numTokens)
 {
 	tokenizer_t *tokenizer = Z_Malloc(sizeof(tokenizer_t), PU_STATIC, NULL);
@@ -27,10 +54,15 @@ tokenizer_t *Tokenizer_Open(const char *inputString, size_t len, unsigned numTok
 		tokenizer->zdup[len+i] = 0x00;
 	}
 
+#ifdef PS2_PROFILE
+	tokenizer->input = tokenizer->zdup;
+	tokenizer->inputLength = Tokenizer_CopyLen(tokenizer->zdup, inputString, len);
+#else
 	tokenizer->input = M_Memcpy(tokenizer->zdup, inputString, len);
+	tokenizer->inputLength = 0;
+#endif
 	tokenizer->startPos = 0;
 	tokenizer->endPos = 0;
-	tokenizer->inputLength = 0;
 	tokenizer->inComment = 0;
 	tokenizer->inString = 0;
 	tokenizer->get = Tokenizer_Read;
@@ -48,13 +80,7 @@ tokenizer_t *Tokenizer_Open(const char *inputString, size_t len, unsigned numTok
 		tokenizer->token[i] = (char*)Z_Malloc(tokenizer->capacity[i] * sizeof(char), PU_STATIC, NULL);
 	}
 
-#ifdef PS2_PROFILE
-	{ // PS2-LOAD-15: the first NUL of the copy (what strlen found), looked for in the source bytes by the word-wise memchr
-		const char *nul = memchr(tokenizer->input, 0, len);
-
-		tokenizer->inputLength = nul ? (UINT32)(nul - tokenizer->input) : (UINT32)len;
-	}
-#else
+#ifndef PS2_PROFILE
 	tokenizer->inputLength = strlen(tokenizer->input);
 #endif
 

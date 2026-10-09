@@ -573,6 +573,13 @@ void *M_Memcpy(void* dest, const void* src, size_t n);
 char *va(const char *format, ...) FUNCPRINTF;
 char *M_GetToken(const char *inputString);
 void M_UnGetToken(void);
+#ifdef PS2_PROFILE
+char *M_GetTokenPooled(const char *inputString); // PS2-LOAD-20: the same tokens from a table of small buckets; M_FreeToken instead of Z_Free
+void M_FreeToken(char *token);
+#else
+#define M_GetTokenPooled M_GetToken
+#define M_FreeToken(t) Z_Free(t)
+#endif
 void M_TokenizerOpen(const char *inputString, size_t len);
 void M_TokenizerClose(void);
 const char *M_TokenizerRead(UINT32 i);

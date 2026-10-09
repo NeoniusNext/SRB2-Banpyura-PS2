@@ -2016,7 +2016,62 @@ static UINT32 endPos = 0; // now external to M_GetToken, but still static
   * The pointer to the last string supplied is stored as a static variable, so be careful not to free it while this function is still using it!
   * \return A pointer to a string, containing the fetched token. This is in freshly allocated memory, so be sure to Z_Free() it as appropriate.
 */
+#ifdef PS2_PROFILE
+// PS2-LOAD-20: the TEXTURES parser asks for 130 000 tokens at the start-up (two passes over the lumps, every token a Z_Malloc + Z_Free: more than half of
+// R_LoadTextures). M_GetTokenPooled gives the same strings from a table of small buckets outside the zone; M_FreeToken takes a token back
+// (a bucket, or a Z_Free of the rare long one). The text of every token is the same as M_GetToken's.
+#define TOKPOOL_N 64
+#define TOKPOOL_SIZE 64
+static char tokpool[TOKPOOL_N][TOKPOOL_SIZE];
+static UINT8 tokpool_free[TOKPOOL_N];
+static int tokpool_top = -1; // -1: not filled yet
+
+static char *TokenAlloc(size_t size, boolean pooled)
+{
+	if (pooled)
+	{
+		if (tokpool_top < 0)
+		{
+			int i;
+
+			for (i = 0; i < TOKPOOL_N; i++)
+				tokpool_free[i] = (UINT8)(TOKPOOL_N - 1 - i);
+			tokpool_top = TOKPOOL_N;
+		}
+		if (size <= TOKPOOL_SIZE && tokpool_top > 0)
+			return tokpool[tokpool_free[--tokpool_top]];
+	}
+	return (char *)Z_Malloc(size * sizeof(char), PU_STATIC, NULL);
+}
+
+void M_FreeToken(char *token)
+{
+	if (token >= &tokpool[0][0] && token < &tokpool[0][0] + sizeof tokpool)
+		tokpool_free[tokpool_top++] = (UINT8)((token - &tokpool[0][0]) / TOKPOOL_SIZE);
+	else
+		Z_Free(token);
+}
+#define TOKALLOC(size) TokenAlloc((size), pooled)
+#else
+#define TOKALLOC(size) (char *)Z_Malloc((size)*sizeof(char),PU_STATIC,NULL)
+#endif
+
+#ifdef PS2_PROFILE
+static char *M_GetTokenImpl(const char *inputString, boolean pooled);
 char *M_GetToken(const char *inputString)
+{
+	return M_GetTokenImpl(inputString, false);
+}
+
+char *M_GetTokenPooled(const char *inputString)
+{
+	return M_GetTokenImpl(inputString, true);
+}
+
+static char *M_GetTokenImpl(const char *inputString, boolean pooled)
+#else
+char *M_GetToken(const char *inputString)
+#endif
 {
 	static const char *stringToUse = NULL; // Populated if inputString != NULL; used otherwise
 	static UINT32 startPos = 0;
@@ -2117,7 +2172,7 @@ char *M_GetToken(const char *inputString)
 			|| stringToUse[startPos] == '}')
 	{
 		endPos = startPos + 1;
-		texturesToken = (char *)Z_Malloc(2*sizeof(char),PU_STATIC,NULL);
+		texturesToken = TOKALLOC(2);
 		texturesToken[0] = stringToUse[startPos];
 		texturesToken[1] = '\0';
 		return texturesToken;
@@ -2131,7 +2186,7 @@ char *M_GetToken(const char *inputString)
 
 		texturesTokenLength = endPos++ - startPos;
 		// Assign the memory. Don't forget an extra byte for the end of the string!
-		texturesToken = (char *)Z_Malloc((texturesTokenLength+1)*sizeof(char),PU_STATIC,NULL);
+		texturesToken = TOKALLOC(texturesTokenLength+1);
 		// Copy the string.
 		M_Memcpy(texturesToken, stringToUse+startPos, (size_t)texturesTokenLength);
 		// Make the final character NUL.
@@ -2175,7 +2230,7 @@ char *M_GetToken(const char *inputString)
 	texturesTokenLength = endPos - startPos;
 
 	// Assign the memory. Don't forget an extra byte for the end of the string!
-	texturesToken = (char *)Z_Malloc((texturesTokenLength+1)*sizeof(char),PU_STATIC,NULL);
+	texturesToken = TOKALLOC(texturesTokenLength+1);
 	// Copy the string.
 	M_Memcpy(texturesToken, stringToUse+startPos, (size_t)texturesTokenLength);
 	// Make the final character NUL.
