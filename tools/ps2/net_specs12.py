@@ -172,6 +172,16 @@ def compat_refcli(name, tics=2100):
 compat_refcli('compat-ps2srv-refcli')
 
 
+# PS2-NET-8 on the emulator (it always has a link): -netfakedown makes the first reconnect take the link as gone, so the network is brought up again (screen, DHCP) before "connect" goes out
+import copy  # noqa: E402
+_rc = copy.deepcopy(S.SPECS['reconnect'])
+for _n in _rc['nodes']:
+    if _n['kind'] == 'ps2':
+        _n['args'] = _n['args'] + ['-netfakedown']
+_rc['until'] = [{'node': 'srv', 'text': 'rejoined the game'}]
+mine('reconnect-fakedown', _rc)
+
+
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]
     for n, s in MINE.items():

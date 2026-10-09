@@ -357,6 +357,8 @@ static netui_fail_t FailReason(nb_t rc)
 	}
 }
 
+static boolean fakedown_done;
+
 boolean PS2Net_Up(void)
 {
 	struct ip4_addr ip, nm, gw;
@@ -365,7 +367,8 @@ boolean PS2Net_Up(void)
 	boolean ui;
 
 	if (netstate > 0 && modules_up && !M_CheckParm("-netnolinkcheck")
-		&& NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0) != NETMAN_NETIF_ETH_LINK_STATE_UP)
+		&& (NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0) != NETMAN_NETIF_ETH_LINK_STATE_UP
+			|| (M_CheckParm("-netfakedown") && !fakedown_done && (fakedown_done = true)))) // -netfakedown (a test: the emulator always has a link): the first reconnect takes the link as gone
 	{
 		// PS2-NET-8 (OPT12): the network was up at the last connect, and the cable has been pulled since (the game gave up on the server after 10 s and went back to the title):
 		// the next "connect" waits for the link and the lease again, with the network screen, instead of sending into nothing
