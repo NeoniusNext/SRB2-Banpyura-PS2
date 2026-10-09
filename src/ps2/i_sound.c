@@ -27,6 +27,7 @@
 #include <delaythread.h>
 #include <malloc.h>
 #include <stdio.h>
+#include "ps2_sys.h" // PS2_SleepUs
 #endif
 
 #define SFX_BUDGET (2u * 1024 * 1024)
@@ -93,6 +94,7 @@ typedef struct
 	void *fp;
 	uint8_t *buf;
 	size_t base, size, win_start, win_len;
+	char path[192]; // for the new open of a retry (RS-07)
 } pack_reader;
 typedef struct { const uint8_t *memory; lumpnum_t lump; pack_reader *rd; } audio_source;
 static audio_source song_source;
@@ -156,6 +158,7 @@ static pack_reader *PackOpen(lumpnum_t lump, const lumpinfo_t *info)
 	}
 	setvbuf(fp, NULL, _IONBF, 0); // whole aligned windows are read straight into r->buf
 	r->fp = fp; r->base = (size_t)info->position; r->size = info->size;
+	if (strlen(wadfiles[WADFILENUM(lump)]->filename) < sizeof r->path) strcpy(r->path, wadfiles[WADFILENUM(lump)]->filename);
 	return r;
 }
 
@@ -176,10 +179,29 @@ static size_t PackRead(pack_reader *r, size_t off, void *dst, size_t n)
 		size_t abs = r->base + off + done, chunk;
 		if (abs < r->win_start || abs >= r->win_start + r->win_len)
 		{
-			size_t start = abs & ~(size_t)2047, got;
-			if (fseek(r->fp, (long)start, SEEK_SET) != 0) break;
-			got = fread(r->buf, 1, RD_WINDOW, r->fp);
-			if (got <= abs - start) break;
+			size_t start = abs & ~(size_t)2047, got = 0;
+			unsigned attempt;
+			// OPT13-IO (RS-07): a failed read is tried again after a pause, the second time with the file opened anew (this reader owns its stream); the decoder thread
+			// sleeps with DelayThread like everything else on it. With 3 failures in a row the song stops (the decoder reports it), the game goes on.
+			for (attempt = 0; attempt < 3; attempt++)
+			{
+				if (attempt)
+				{
+					DelayThread((s32)(100000 * attempt));
+					if (attempt == 2 && r->path[0])
+					{
+						FILE *again = fopen(r->path, "rb");
+						if (again) { setvbuf(again, NULL, _IONBF, 0); fclose(r->fp); r->fp = again; }
+					}
+				}
+				if (fseek(r->fp, (long)start, SEEK_SET) == 0)
+				{
+					got = fread(r->buf, 1, RD_WINDOW, r->fp);
+					if (got > abs - start) break;
+				}
+				got = 0;
+			}
+			if (!got) break;
 			r->win_start = start; r->win_len = got;
 		}
 		chunk = min(n - done, r->win_start + r->win_len - abs);
@@ -213,8 +235,11 @@ static int mixer_tid = -1, decoder_tid = -1;
 static volatile int mixer_exited, decoder_exited;
 static int prio_main_orig, prio_main, prio_mixer, prio_decoder;
 
-static void YieldSleep(void) { DelayThread(500); }
-static void SleepMs(UINT32 ms) { DelayThread((s32)(ms * 1000)); }
+// OPT13-IO (RS-06): the sleeps of the GAME thread (the yield of the command queue, StopThreads, WaitConsumed, WaitClosed) are PS2_SleepUs, not DelayThread: DelayThread is built on the
+// SDK's alarm library, which loses wake-ups under the traffic of the network threads (docs/GATES/g1/opt12-NET.md, PS2-NET-3: the game thread slept for good). The sound threads
+// cannot use PS2_SleepUs (it drops the caller to the lowest priority); they are watched instead, see AudioWatch.
+static void YieldSleep(void) { PS2_SleepUs(500); }
+static void SleepMs(UINT32 ms) { PS2_SleepUs(ms * 1000); }
 #else
 static void YieldSleep(void) {}
 #endif
@@ -378,12 +403,19 @@ static void AudioPump(unsigned maxblocks)
 }
 
 #ifdef _EE
+static volatile UINT32 mixer_beat, decoder_beat; // OPT13-IO (RS-06): one count per round of the thread, read by AudioWatch
+static UINT32 diag_hang_mixer_at;                 // -amixhang N: the mixer thread waits for good on a semaphore nobody signals after N rounds (a lost wake-up), a test of AudioWatch
+static int diag_hang_sema = -1;
+
 static void MixerThread(void *arg)
 {
 	(void)arg;
 	while (!eng.quit)
 	{
 		AudioPump(MIXER_BLOCKS);
+		mixer_beat++;
+		if (diag_hang_mixer_at && mixer_beat == diag_hang_mixer_at && diag_hang_sema >= 0)
+			WaitSema(diag_hang_sema); // nobody signals this one: only AudioWatch gets the thread out
 		DelayThread((s32)mixer_period_us);
 	}
 	mixer_exited = 1;
@@ -401,6 +433,7 @@ static void DecoderThread(void *arg)
 		UINT32 us = (UINT32)((GetTimerSystemTime() - t0) * 1000000 / kBUSCLK);
 		if (work) eng.st.dec_cycles_total += (UINT32)(CopCount() - c0);
 		if (us > eng.st.dec_max_us) eng.st.dec_max_us = us;
+		decoder_beat++;
 		if (!work) DelayThread(4000);
 		else if (PS2E_SlotsFilled(&eng) >= 6) DelayThread(600); // leave the game thread some time between blocks
 	}
@@ -441,6 +474,49 @@ static boolean StartThreads(void)
 		return false;
 	}
 	return true;
+}
+
+// OPT13-IO (RS-06): the observer of the sound threads. The mixer and the decoder sleep with DelayThread (the SDK's alarm library); if the library loses a wake-up the thread sleeps
+// for good and the sound stops (the IOP ring repeats its last 106 ms). Every round of a thread counts a beat; once per frame the game thread compares them. A thread whose beat
+// stands still for 300 ms while it is waiting on a semaphore is reported (AUDWD); the MIXER is then given the semaphore it waits on (a thread in DelayThread waits on a private one
+// that only its alarm signals: the signal ends the sleep, the thread goes on as if the alarm had come). The decoder is only reported: it may be inside a read of the medium, which
+// waits on a semaphore of the IOP's reply that nobody else may signal.
+#define AUDWD_STALL_MS 300
+static UINT32 wd_mixer_beat, wd_decoder_beat, wd_kicks, wd_alerts;
+static UINT64 wd_mixer_t, wd_decoder_t;
+
+static void WatchOne(const char *name, int tid, UINT32 beat, UINT32 *last, UINT64 *since, boolean kick)
+{
+	const UINT64 now = A_NOW();
+	ee_thread_status_t st;
+
+	if (beat != *last || !*since)
+	{
+		*last = beat;
+		*since = now;
+		return;
+	}
+	if ((now - *since) * 1000 / A_HZ < AUDWD_STALL_MS || tid < 0)
+		return;
+	*since = now; // the next report/kick after another 300 ms
+	if (ReferThreadStatus(tid, &st) < 0)
+		return;
+	wd_alerts++;
+	I_OutputMsg("AUDWD %s thread stalled for %u ms: status=%d waitType=%u waitId=%u prio=%d beat=%u%s\n", name, AUDWD_STALL_MS, (int)st.status, (unsigned)st.waitType, (unsigned)st.waitId,
+		(int)st.current_priority, (unsigned)beat, kick && st.status == THS_WAIT && st.waitType == TSW_SEMA ? " - signalling its semaphore" : "");
+	if (kick && st.status == THS_WAIT && st.waitType == TSW_SEMA)
+	{
+		SignalSema((int)st.waitId);
+		wd_kicks++;
+	}
+}
+
+static void AudioWatch(void)
+{
+	if (!threaded || eng.quit)
+		return;
+	WatchOne("mixer", mixer_tid, mixer_beat, &wd_mixer_beat, &wd_mixer_t, true);
+	WatchOne("decoder", decoder_tid, decoder_beat, &wd_decoder_beat, &wd_decoder_t, false);
 }
 
 static size_t StackUsed(const uint8_t *stack, size_t size)
@@ -654,7 +730,14 @@ void *I_GetSfx(sfxinfo_t *sfx)
 	source.memory = NULL; source.lump = sfx->lumpnum; source.rd = NULL;
 	in.user = &source; in.size = len; in.read_at = ReadSource;
 	// Read once: LZ4 samples are decoded once by WPack, never during mixing.
-	if (PS2_AudioRead(&in, 0, s->data, len) != len) { Z_Free(s); return NULL; }
+#ifdef _EE
+	W_SoftReads(true); // OPT13-IO (RS-07): a read that fails for good (a pulled stick) loses this effect, it does not end the game
+#endif
+	len = PS2_AudioRead(&in, 0, s->data, len) == len ? len : 0;
+#ifdef _EE
+	W_SoftReads(false);
+#endif
+	if (!len) { Z_Free(s); return NULL; }
 	source.memory = s->data;
 	if (!PS2_ParsePCM(&in, &s->sample.pcm, 1))
 	{
@@ -738,6 +821,15 @@ void I_StartupSound(void)
 		diag_nothread = M_CheckParm("-noathread") != 0;
 		if (M_CheckParm("-aqueue") && M_IsNextParm()) queue_ms_arg = (UINT32)atoi(M_GetNextParm());
 		if (M_CheckParm("-astall") && M_IsNextParm()) diag_stall_ms = (UINT32)atoi(M_GetNextParm());
+		if (M_CheckParm("-amixhang") && M_IsNextParm()) // OPT13-IO (RS-06): a test of AudioWatch
+		{
+			ee_sema_t sm;
+
+			memset(&sm, 0, sizeof sm);
+			sm.max_count = 1;
+			diag_hang_sema = CreateSema(&sm);
+			diag_hang_mixer_at = (UINT32)atoi(M_GetNextParm());
+		}
 		if (M_CheckParm("-areload") && M_IsNextParm()) diag_reload_at = (UINT32)atoi(M_GetNextParm());
 		if (M_CheckParm("-aquit") && M_IsNextParm()) diag_quit_at = (UINT32)atoi(M_GetNextParm());
 		if (M_CheckParm("-arestart") && M_IsNextParm()) diag_restart_at = (UINT32)atoi(M_GetNextParm());
@@ -1056,6 +1148,7 @@ void I_UpdateSound(void)
 #ifdef _EE
 	if (diag_bench) BenchTracks();
 	DiagFrame();
+	AudioWatch();
 #endif
 	if (!threaded && !audio_failure)
 	{
