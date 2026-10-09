@@ -2057,7 +2057,128 @@ void M_FreeToken(char *token)
 #endif
 
 #ifdef PS2_PROFILE
-static char *M_GetTokenImpl(const char *inputString, boolean pooled);
+// PS2-LOAD-24: the tokenizer of the TEXTURES / ANIMDEFS / SPRTINFO lumps with its state in locals (the original reads and writes six statics for every character) and the
+// character classes in a table (11 comparisons per character). The same tokens, positions and comment state as the original below
+// (tools/ps2/gettoken_hosttest.c compares them over the TEXTURES lumps of the game and random texts, with M_UnGetToken in between).
+#define GTC_SKIP 1 // between tokens: ' ' '\t' '\r' '\n' NUL '=' ';'
+#define GTC_END 2  // ends a plain token: ' ' '\t' '\r' '\n' ',' '{' '}' '=' ';'
+static const UINT8 gtcls[256] =
+{
+	[0] = GTC_SKIP, [' '] = GTC_SKIP|GTC_END, ['\t'] = GTC_SKIP|GTC_END, ['\r'] = GTC_SKIP|GTC_END, ['\n'] = GTC_SKIP|GTC_END,
+	['='] = GTC_SKIP|GTC_END, [';'] = GTC_SKIP|GTC_END, [','] = GTC_END, ['{'] = GTC_END, ['}'] = GTC_END,
+};
+static const char *gt_string = NULL; // Populated if inputString != NULL; used otherwise
+static UINT32 gt_length = 0;
+static UINT8 gt_inComment = 0; // 0 = not in comment, 1 = // Single-line, 2 = /* Multi-line */
+
+static char *M_GetTokenImpl(const char *inputString, boolean pooled)
+{
+	const UINT8 *str;
+	UINT32 sp, ep, len;
+	UINT8 inc;
+	char *token;
+
+	if (inputString != NULL)
+	{
+		gt_string = inputString;
+		sp = 0;
+		oldendPos = endPos = 0;
+		gt_length = (UINT32)strlen(inputString);
+	}
+	else
+		sp = oldendPos = endPos;
+	if (gt_string == NULL)
+		return NULL;
+	str = (const UINT8 *)gt_string;
+	len = gt_length;
+	inc = gt_inComment;
+
+	// Try to detect comments now, in case we're pointing right at one
+	if (sp < len - 1 && inc == 0 && str[sp] == '/')
+	{
+		if (str[sp + 1] == '/')
+			inc = 1;
+		else if (str[sp + 1] == '*')
+			inc = 2;
+	}
+
+	// Find the first non-whitespace char, or else the end of the string trying
+	while (sp < len && (inc != 0 || (gtcls[str[sp]] & GTC_SKIP)))
+	{
+		const UINT8 c = str[sp];
+
+		if (inc == 1 && c == '\n')
+			inc = 0; // End of line for a single-line comment
+		else if (inc == 2 && sp < len - 1 && c == '*' && str[sp + 1] == '/')
+		{
+			inc = 0; // End of multi-line comment
+			sp++; // Make damn well sure we're out of the comment ending at the end of it all
+		}
+		sp++;
+
+		// Try to detect comment starts now
+		if (sp < len - 1 && inc == 0 && str[sp] == '/')
+		{
+			if (str[sp + 1] == '/')
+				inc = 1;
+			else if (str[sp + 1] == '*')
+				inc = 2;
+		}
+	}
+	gt_inComment = inc;
+
+	// If the end of the string is reached, no token is to be read
+	if (sp == len)
+	{
+		endPos = len;
+		return NULL;
+	}
+	// Else, if it's one of these three symbols, capture only this one character
+	if (str[sp] == ',' || str[sp] == '{' || str[sp] == '}')
+	{
+		endPos = sp + 1;
+		token = TokenAlloc(2, pooled);
+		token[0] = (char)str[sp];
+		token[1] = '\0';
+		return token;
+	}
+	// Return entire string within quotes, except without the quotes.
+	if (str[sp] == '"')
+	{
+		ep = ++sp;
+		while (ep < len && str[ep] != '"')
+			ep++;
+		endPos = ep + 1;
+		len = ep - sp;
+		token = TokenAlloc(len + 1, pooled);
+		M_Memcpy(token, str + sp, (size_t)len);
+		token[len] = '\0';
+		return token;
+	}
+
+	// Now find the end of the token. This includes several additional characters that are okay to capture as one character, but not trailing at the end of another token.
+	ep = sp + 1;
+	while (ep < len && inc == 0 && !(gtcls[str[ep]] & GTC_END))
+	{
+		ep++;
+		// Try to detect comment starts now; if it's in a comment, we don't want it in this token
+		if (ep < len - 1 && str[ep] == '/')
+		{
+			if (str[ep + 1] == '/')
+				inc = 1;
+			else if (str[ep + 1] == '*')
+				inc = 2;
+		}
+	}
+	gt_inComment = inc;
+	endPos = ep;
+	len = ep - sp;
+	token = TokenAlloc(len + 1, pooled);
+	M_Memcpy(token, str + sp, (size_t)len);
+	token[len] = '\0';
+	return token;
+}
+
 char *M_GetToken(const char *inputString)
 {
 	return M_GetTokenImpl(inputString, false);
@@ -2067,11 +2188,8 @@ char *M_GetTokenPooled(const char *inputString)
 {
 	return M_GetTokenImpl(inputString, true);
 }
-
-static char *M_GetTokenImpl(const char *inputString, boolean pooled)
 #else
 char *M_GetToken(const char *inputString)
-#endif
 {
 	static const char *stringToUse = NULL; // Populated if inputString != NULL; used otherwise
 	static UINT32 startPos = 0;
@@ -2237,6 +2355,7 @@ char *M_GetToken(const char *inputString)
 	texturesToken[texturesTokenLength] = '\0';
 	return texturesToken;
 }
+#endif
 
 /** Undoes the last M_GetToken call
   * The current position along the string being parsed is reset to the last saved position.

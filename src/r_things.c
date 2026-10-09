@@ -211,10 +211,20 @@ static void R_InstallSpriteLump(UINT16 wad,            // graphics patch
 	char cn = R_Frame2Char(frame), cr = R_Rotation2Char(rotation); // for debugging
 
 	char framedescription[256];
-	if (cn != '\xFF')
-		sprintf(framedescription, "%s frame %d (%c)", spritename, frame, cn);
-	else
-		sprintf(framedescription, "%s frame %d", spritename, frame);
+#ifdef PS2_PROFILE
+	// PS2-LOAD-23: only the CONS_Debug(DBG_SETUP, ...) messages below read the text, and they print nothing unless that debug flag is on:
+	// it was formatted (newlib sprintf, ~1500 cycles) for every sprite lump at the start-up
+	framedescription[0] = '\0';
+	if ((cv_debug & DBG_SETUP) == DBG_SETUP)
+	{
+#endif
+		if (cn != '\xFF')
+			sprintf(framedescription, "%s frame %d (%c)", spritename, frame, cn);
+		else
+			sprintf(framedescription, "%s frame %d", spritename, frame);
+#ifdef PS2_PROFILE
+	}
+#endif
 
 	INT32 r;
 	lumpnum_t lumppat = (wad << 16) + lump;
