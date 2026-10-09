@@ -28,6 +28,9 @@
 #include "byteptr.h"
 #include "dehacked.h"
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-20 (-loadhash of the texture list)
+#ifdef PS2_PROFILE
+#include "ps2/ps2_texc.h" // OPT13 IZ (PS2-602): -texcdump
+#endif
 #if defined(PS2) && defined(PS2_PROFILE)
 #include "m_argv.h" // -flatstream / -flatcheck (PS2-180)
 #endif
@@ -1980,6 +1983,7 @@ void R_LoadTextures(void)
 	R_FinishLoadingTextures(newtextures);
 #ifdef PS2_PROFILE
 	R_TexturesHash("tex.boot");
+	PS2TexC_AfterTextures(); // OPT13 IZ (PS2-602): the host engine of the cooker (-texcdump) writes the composites and ends here
 #endif
 }
 

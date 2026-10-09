@@ -80,6 +80,7 @@ struct wpack_s
 	UINT32 numlumps;
 	UINT32 headoffset, headbytes, crcoffset;
 	UINT32 chkcrc;
+	UINT32 chktable, chkpool; // OPT13 IZ (PS2-602): with chkcrc, the identity of the pack content (WPack_Identity)
 	UINT8 *head; // numlumps * headbytes or NULL
 	char name[64];
 };
@@ -446,6 +447,8 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
 		pk->headbytes = ext.headbytes;
 		pk->crcoffset = ext.crcoffset;
 		pk->chkcrc = ext.chkcrc;
+		pk->chktable = ext.chktable;
+		pk->chkpool = ext.chkpool;
 		strlcpy(pk->name, shortname, sizeof pk->name);
 		if (n >= HEADTABLE_MINLUMPS && !headsdropped)
 		{
@@ -626,6 +629,70 @@ end:
 	if (idx != index)
 		free(idx);
 	return done;
+}
+
+// ---- OPT13 IZ (PS2-602, R2): raw lump bytes and decoding from memory (the composite textures of TEXC.PAK are kept in their stored form) --------------
+
+size_t WPack_ReadRaw(FILE *handle, const lumpinfo_t *l, void *dest)
+{
+	if (!l->disksize || l->position > LONG_MAX || l->disksize > (unsigned long)LONG_MAX - l->position || fseek(handle, (long)l->position, SEEK_SET) != 0)
+		return 0;
+	return ReadBytes(handle, dest, l->disksize) ? l->disksize : 0;
+}
+
+boolean WPack_DecodeMem(int compression, const void *src, UINT32 disksize, void *dest, UINT32 size)
+{
+	const UINT8 *in = src;
+	UINT8 *out = dest;
+	UINT32 nb, b, p;
+
+	if (!size || !disksize)
+		return false;
+	if (compression == CM_NOCOMPRESSION)
+	{
+		if (disksize != size)
+			return false;
+		memcpy(out, in, size);
+		return true;
+	}
+	if (compression != CM_LZ4)
+		return false;
+	if (size <= WPACK_BLOCK)
+		return LZ4_decompress_safe((const char *)in, (char *)out, (int)disksize, (int)size) == (int)size;
+	nb = 1 + (size - 1) / WPACK_BLOCK;
+	if (nb * sizeof (UINT32) >= disksize)
+		return false;
+	p = nb * (UINT32)sizeof (UINT32); // u32 index[nb] (bit 31: stored raw), then the blocks
+	for (b = 0; b < nb; b++)
+	{
+		UINT32 entry, csize, bsize = min(WPACK_BLOCK, size - b * WPACK_BLOCK);
+
+		memcpy(&entry, in + b * sizeof (UINT32), sizeof entry);
+		entry = LONG(entry);
+		csize = entry & ~SRP2_RAWBLOCK;
+		if (!csize || csize > WPACK_BLOCK || csize > disksize - p)
+			return false;
+		if (entry & SRP2_RAWBLOCK)
+		{
+			if (csize != bsize)
+				return false;
+			memcpy(out + (size_t)b * WPACK_BLOCK, in + p, csize);
+		}
+		else if (LZ4_decompress_safe((const char *)in + p, (char *)out + (size_t)b * WPACK_BLOCK, (int)csize, (int)bsize) != (int)bsize)
+			return false;
+		p += csize;
+	}
+	return p == disksize;
+}
+
+boolean WPack_Identity(const wpack_t *pk, UINT32 id[3])
+{
+	if (!pk)
+		return false;
+	id[0] = pk->chktable;
+	id[1] = pk->chkpool;
+	id[2] = pk->chkcrc;
+	return true;
 }
 
 // ---- PS2-LOAD-10: head table, integrity check ------------------------------------------------------------------------------------------------

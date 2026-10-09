@@ -33,6 +33,7 @@
 #include "../p_setup.h"
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
+#include "../ps2/ps2_texc.h" // OPT13 IZ (PS2-602, R2): composites prebuilt by the cooker
 
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
@@ -676,6 +677,46 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 	blockwidth = texture->width;
 	blockheight = texture->height;
 	blocksize = blockwidth * blockheight;
+#if defined(PS2) && defined(PS2_PROFILE)
+	// OPT13 IZ (PS2-602, R2): the pixels were made by the cooker from the same patches (TEXC.PAK): a decode of a stored LZ4 block instead of the composition below (4..28 M cycles, 260..320 M
+	// when the zone dropped the patches). A texture the pack has no composite of for this definition (an add-on's, patches from other files) goes the way it always did.
+	if (!ps2_slow_composite && mipmap->format == GL_TEXFMT_P_8 && PS2TexC_Present())
+	{
+		UINT8 *tb = Z_TryMallocAlign((size_t)blocksize, PU_HWRCACHE, &(mipmap->data), sizeof (void *));
+
+		if (tb)
+		{
+			if (PS2TexC_Fetch(texnum, tb, (size_t)blocksize))
+			{
+				if (ps2hwd_dbg_flags & 0x1000000 /* HWDBG_COMPOSE */)
+				{
+					// the check: the same texture composed by the original column loops against the stored pixels
+					static unsigned checked, bad;
+					GLMipmap_t chk = *mipmap;
+					GLMapTexture_t tmp = *grtex;
+
+					chk.data = NULL;
+					ps2_slow_composite = true;
+					HWR_GenerateTexture(texnum, &tmp, &chk);
+					ps2_slow_composite = false;
+					checked++;
+					if (!chk.data || memcmp(chk.data, tb, (size_t)blocksize))
+					{
+						bad++;
+						CONS_Printf("HWC TEXC MISMATCH texture %d %.8s %dx%d (%u of %u checked differ)\n", (int)texnum, texture->name, (int)texture->width, (int)texture->height, bad, checked);
+					}
+					else if (!(checked & 63))
+						CONS_Printf("HWC TEXC check: %u textures identical, %u differ\n", checked - bad, bad);
+					Z_Free(chk.data);
+				}
+				grtex->scaleX = 1.0f/(texture->width*FRACUNIT);
+				grtex->scaleY = 1.0f/(texture->height*FRACUNIT);
+				return;
+			}
+			Z_Free(tb); // (the owner pointer, mipmap->data, is NULL again)
+		}
+	}
+#endif
 #ifdef PS2
 	// PS2-140: a texture of 64 KB and more that does not fit has no data: the driver skips the draws that need it for a frame and the engine asks again
 	block = MakeBlockEx(mipmap, (size_t)blocksize * format2bpp(mipmap->format) >= HWR_TRYPATCH_MIN);
@@ -1113,6 +1154,9 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 {
 	// we must free it since numtextures may have changed
 	HWR_FreeMapTextures();
+#if defined(PS2) && defined(PS2_PROFILE)
+	PS2TexC_Reset(); // OPT13 IZ (PS2-602): the stored composites are looked up by texture number
+#endif
 
 	gl_numtextures = pnumtextures;
 	gl_textures = calloc(gl_numtextures, sizeof(*gl_textures));
@@ -1396,6 +1440,46 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 		}
 	}
 }
+
+#if defined(PS2) && defined(PS2_PROFILE)
+// OPT13 IZ (PS2-602): the composition of texture `texnum` by the original loops, for PS2TexC_Check (-texccheck): into dest, bytes = width * height
+static boolean HWR_PS2_ComposeForCheck(INT32 texnum, UINT8 *dest, size_t bytes)
+{
+	GLMipmap_t chk;
+	GLMapTexture_t tmp;
+	boolean ok;
+
+	Z_FlushCache(); // (the level load, nothing held: the lump reads of the original composition are PU_CACHE blocks of this very frame, which the zone would not evict)
+	memset(&chk, 0, sizeof chk);
+	memset(&tmp, 0, sizeof tmp);
+	chk.format = GL_TEXFMT_P_8;
+	chk.width = (UINT16)textures[texnum]->width;
+	chk.height = (UINT16)textures[texnum]->height;
+	ps2_slow_composite = true;
+	HWR_GenerateTexture(texnum, &tmp, &chk);
+	ps2_slow_composite = false;
+	ok = chk.data && (size_t)chk.width * chk.height == bytes;
+	if (ok)
+		memcpy(dest, chk.data, bytes);
+	Z_Free(chk.data);
+	return ok;
+}
+
+// P_LoadLevel, the hardware renderer is on: what the level needs of TEXC.PAK is read before the first frame (the screen is still the loading screen)
+void HWR_PS2_PrefetchLevel(void)
+{
+	static int checked = -1;
+
+	if (checked < 0)
+		checked = M_CheckParm("-texccheck") != 0;
+	if (checked > 0)
+	{
+		checked = 0;
+		PS2TexC_Check(HWR_PS2_ComposeForCheck);
+	}
+	PS2TexC_PrefetchLevel();
+}
+#endif
 
 // OPT10 (PS2-HW-38): the mip levels of a big flat (the 1 MiB cloud planes) are made from the engine's own converted flat, pinned while the driver
 // reads it: no second copy of 1 MiB (two of them at once ran the 22 MiB arena out of a contiguous 1 MiB block)

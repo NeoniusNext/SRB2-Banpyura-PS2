@@ -119,3 +119,31 @@ the pack is newer than the engine»), как и обрезанный файл, �
 * `SRMT` (текстура): 16 байт заголовка (`"SRMT"`, ширина, высота, флаги) и `w*h` байт — индексы палитры 0; 255 = дыра (альфа < 128). Индексы — то, что делает шейдер палитрового рендера ПК с текселем.
 * `SRMB` (карта цвета скина): разреженные серии (позиция, длина) и по пикселю (альфа, яркость, среднее каналов); движок строит из неё цветную текстуру в индексах палитры (`hw_md2_ps2.inc`).
 Проверка: `cook_models.py --verify` читает пак назад независимым читателем.
+
+## TEXC.PAK (OPT13-IZ, PS2-602, R2): composite textures prebuilt by the cooker
+
+Optional pack beside the ELF (like MODELS.PAK; it is not a wad of the engine: no lump numbers, no netgame file list). The same SRP2 **version 2** container (header, extension, tables, CRC32 per lump,
+head table, LZ4HC blocks of 64 KiB, identical lumps stored once), so every reader of the packs reads it; an engine that does not know it simply never opens it, and an engine that does knows how to
+run without it. Pack versions 1 and 2 of the game packs are unchanged (nothing in them depends on TEXC.PAK); a game pack that is version 1 has no content identity (below), so no texture whose patch comes
+from it has a prebuilt composite.
+
+Why: the hardware renderer composes a wall texture from its patches (`HWR_GenerateTexture`, P8: one palette index per texel, 255 where no patch covers): 4 M EE cycles for a 256x256 texture with its
+patches in the zone, 260..320 M when they are not (a lump read from the pack costs 4 M cycles whatever its size), 26 M for the sky (151 patches); it happens in the middle of a frame whenever a texture is
+asked for the first time or after the zone dropped its data (docs/research/rdrv/OPT13_RDRV.md, 2.6). The cooker makes the same pixels once; the console decodes them (0.1..1.5 M cycles).
+
+* **Lumps.** `TEXCINFO` (lump 0, 16 bytes: `"TXC1"`, UINT32 format 1, UINT32 number of composites, UINT32 0), then one lump per distinct texture definition, named by the 16 lower case hex digits of its
+  key (no extension), in texture list order (a zone's textures lie together, so the prefetch of a level reads a few long runs). The lump is the `width * height` bytes of the composite, rows top to
+  bottom, as `HWR_GenerateTexture` makes them for `GL_TEXFMT_P_8`; stored raw below 256 bytes or when LZ4HC does not get under 90%, else as every other lump (block index when over 64 KiB).
+* **Key.** FNV-1a 64 over (little endian words) the format number (1), width, height, type, patch count, and for every patch: origin x/y, wad number, lump number, flip, alpha, and the three index
+  checksums of the pack the patch lump is in (`chktable`, `chkpool`, `chkcrc` of the version 2 extension: the checksum of the CRC32 table covers the content of every lump). `PS2TexC_Key`
+  (src/ps2/ps2_texc.c) computes it on the console and in the host engine of the cooker alike. A texture whose key is not in the pack (an add-on's definition or patches, a pack other than the one the
+  composites were made for, a blend style other than copy and translucent (those find the nearest colour of the palette of the moment), a square flat (a floor), a size over 1 MiB) is composed
+  from its patches exactly as before, so an add-on can never see a stale composite. A translucent patch (a blend in the translucency tables TRANS10..TRANS90) puts the identity of those nine lumps in the
+  key too. Vertical flips, translucent patches and flats that are walls (the sky `SKY4` is a flat of 512x768) are included: they are the slowest textures of the game.
+* **Making it.** `tools/ps2/cook_texc.sh PAKDIR OUTDIR`: the host engine (the PS2 profile on x86) loads the packs, builds its texture list with the engine's own code and composes every eligible
+  texture (`SRB2 -texcdump FILE`, about 1 s); `tools/ps2/cook.py --texc FILE --out OUTDIR` packs the dump. The pack is for exactly the game packs in PAKDIR: cook the game packs again and this
+  again (a changed pack changes its checksums, hence every key, hence every lookup misses: nothing wrong is ever shown).
+* **Reading.** `PS2TexC_Fetch` (hw_cache.c: first thing in `HWR_GenerateTexture` for a P8 texture): the stored form from the level's prefetch (`PS2TexC_PrefetchLevel` after the level was loaded: the
+  textures of its sidedefs, its sky and the animations they belong to, one read per run of nearby lumps, kept in one long-lived block), else one lump read; `WPack_DecodeMem` decodes it straight into
+  the texture's data block. `-notexc` ignores the pack, `-texcmem KiB` limits the prefetch (default 1024), `-texccheck` compares every stored composite with the original composition at the first
+  level load (`TEXC check: N textures checked, M differ`), `-hwdbg 16777216` checks each texture when it is made.

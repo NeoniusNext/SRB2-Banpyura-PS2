@@ -48,6 +48,13 @@ int WPack_VerifyNMUS(FILE *handle);
 // be aligned. Valid packs are sector-padded. Returns bytes delivered (== size unless damaged). Not reentrant.
 size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size, size_t offset);
 
+// OPT13 IZ (PS2-602, R2). The stored form of a lump as it lies in the file (l->disksize bytes into dest, which needs no alignment): returns the bytes read, 0 on error.
+size_t WPack_ReadRaw(FILE *handle, const lumpinfo_t *l, void *dest);
+// Decodes a lump from its stored form in memory (compression: CM_NOCOMPRESSION or CM_LZ4 as in lumpinfo_t; size: the decoded size), into dest (size bytes, no alignment needed). False on damage.
+boolean WPack_DecodeMem(int compression, const void *src, UINT32 disksize, void *dest, UINT32 size);
+// The content identity of a version 2 pack: the checksums of its table, its string pool and its CRC table (a pack cooked from other lumps has other ones). False for a version 1 pack (pack NULL).
+boolean WPack_Identity(const wpack_t *pack, UINT32 id[3]);
+
 // Frees the I/O and decode buffers (W_Shutdown).
 void WPack_Shutdown(void);
 

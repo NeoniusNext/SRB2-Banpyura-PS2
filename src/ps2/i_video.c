@@ -50,6 +50,7 @@
 #include "hw/ps2_hwd.h"
 #include "hw/ps2_hwd_dbg.h"
 #include "hw/ps2_hw_prof.h"
+#include "ps2_texc.h" // OPT13 IZ (PS2-602)
 #endif
 #include "ps2_prof.h"
 
@@ -1043,6 +1044,7 @@ static void Impl_HWProf(void)
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
 	Z_ModeProf((unsigned int)frames); // OPT13 IZ (PS2-600): the zone policy of the window
+	PS2TexC_Prof((unsigned int)frames); // OPT13 IZ (PS2-602): the stored composites used in the window
 	PS2HWD_ProfExtra((unsigned int)frames); // OPT10 HG
 	PS2MemHud_ProfLine((unsigned int)frames); // OPT11-MEM (PS2-HW-300)
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);

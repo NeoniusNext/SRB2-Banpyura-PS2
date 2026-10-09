@@ -1,6 +1,7 @@
 """Cook the SRB2 pk3 archives into SRP2 packs (format: docs/PACK_FORMAT.md).
 
 usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...] [--tool-dir DIR] [--keep-png] [--from-pak DIR] [--order FILE] [--version 1|2] [--no-dedup]
+       cook.py --texc DUMP [--out DIR]      (OPT13 IZ, PS2-602: TEXC.PAK, the composite textures prebuilt by the host engine; docs/PACK_FORMAT.md)
   --src       directory with srb2.pk3 zones.pk3 characters.pk3 music.pk3 (default srb2-assets)
   --out       output directory (default build/pak): SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK (+ <PACK>.pics.json)
   --tool-dir  where the host picture tool is built (default build/strip-pic-tool)
@@ -442,6 +443,107 @@ def cook(src, dst, jobs, pics=None, order=None, version=VERSION, dedup=True):
                 index_bytes=data_off)
 
 
+# ---- TEXC.PAK (OPT13 IZ, PS2-602, R2): composite textures prebuilt by the host engine -------------------------------------------
+
+TEXC_MAGIC = b'TXCD'
+TEXC_INFO = b'TXC1'
+
+
+def read_texc_dump(path):
+    """The dump `SRB2 -texcdump FILE` writes (src/ps2/ps2_texc.c): u32 'TXCD', u32 version 1, then records u64 key, u32 texture number, u16 w, u16 h, u32 size, size bytes.
+    Returns [(texnum, key, w, h, pixels)] in file order (texture number order)."""
+    d = Path(path).read_bytes()
+    if d[:4] != TEXC_MAGIC or struct.unpack_from('<I', d, 4)[0] != 1:
+        raise SystemExit(f'{path}: not a texture dump (TXCD version 1)')
+    out, p = [], 8
+    while p < len(d):
+        key, num, w, h, size = struct.unpack_from('<QIHHI', d, p)
+        p += 20
+        if size != w * h or p + size > len(d):
+            raise SystemExit(f'{path}: damaged record at byte {p - 20}')
+        out.append((num, key, w, h, d[p:p + size]))
+        p += size
+    return out
+
+
+def _texc_encode(data):
+    sha = hashlib.sha256(data).digest()
+    crc = zlib.crc32(data) & 0xFFFFFFFF
+    head = data[:HEAD_BYTES].ljust(HEAD_BYTES, b'\0')
+    if len(data) < MIN_PACK_SIZE:
+        return CM_RAW, data, sha, crc, head
+    packed = lz4_lump(data)
+    if len(packed) <= len(data) * MAX_RATIO:
+        return CM_LZ4, packed, sha, crc, head
+    return CM_RAW, data, sha, crc, head
+
+
+def cook_texc(dump, dst, jobs):
+    """TEXC.PAK: an SRP2 v2 pack (same container and reader as the game packs) whose lumps are the prebuilt composites, named by the 16 hex digits of the key of the texture definition
+    (PS2TexC_Key), in texture list order (a zone's textures lie together: the level prefetch reads a few long runs); lump 0 is TEXCINFO. Identical pixels are stored once."""
+    recs = read_texc_dump(dump)
+    seen, items = set(), []
+    for num, key, w, h, pix in recs:
+        if key in seen:
+            continue
+        seen.add(key)
+        items.append((f'{key:016x}'.encode(), pix))
+    info = TEXC_INFO + struct.pack('<III', 1, len(items), 0)
+    names = [b'TEXCINFO'] + [nm for nm, _ in items]
+    datas = [info] + [pix for _, pix in items]
+    n = len(names)
+    t0 = time.time()
+    with ProcessPoolExecutor(jobs) as ex:
+        results = list(ex.map(_texc_encode, datas, chunksize=16))
+    t_enc = time.time() - t0
+    pool, offs = bytearray(), []
+    for full in names:
+        fo = len(pool)
+        pool += full + b'\0'
+        offs.append((fo, fo))          # no extension, no folder: the long name is the full name
+    pool_size = len(pool)
+    table_off = SECTOR
+    pool_off = align(table_off + ENTRY.size * n, SECTOR)
+    head_off = align(pool_off + pool_size, SECTOR)
+    crc_off = align(head_off + HEAD_BYTES * n, SECTOR)
+    data_off = align(crc_off + 4 * n, SECTOR)
+    entries, blobs, stored, pos, saved = [], [], {}, data_off, 0
+    for i, (codec, payload, sha, crc, head) in enumerate(results):
+        fo, lo = offs[i]
+        size = len(datas[i])
+        key = (codec, size, hashlib.sha256(payload).digest())
+        if key in stored:
+            entries.append(ENTRY.pack(stored[key], len(payload), size, fo, lo, codec))
+            saved += len(payload)
+            continue
+        pos = align(pos, SECTOR if size >= BLOCK else ALIGN_SMALL)
+        entries.append(ENTRY.pack(pos, len(payload), size, fo, lo, codec))
+        stored[key] = pos
+        blobs.append((pos, payload))
+        pos += len(payload)
+    file_size = align(pos, SECTOR)
+    table_bytes = b''.join(entries)
+    head_bytes = b''.join(r[4] for r in results)
+    crc_bytes = b''.join(struct.pack('<I', r[3]) for r in results)
+    with open(dst, 'wb') as f:
+        f.write(HEADER.pack(MAGIC, 2, HEADER.size, FLAG_NONMUSIC | FLAG_HEAD, n, table_off, pool_off, pool_size, data_off, file_size, BLOCK, 0))
+        f.write(HEADEXT.pack(HEADEXT.size, head_off, HEAD_BYTES, crc_off, fletcher(table_bytes), fletcher(bytes(pool)), fletcher(head_bytes), fletcher(crc_bytes)))
+        f.seek(table_off)
+        f.write(table_bytes)
+        f.seek(pool_off)
+        f.write(pool)
+        f.seek(head_off)
+        f.write(head_bytes)
+        f.seek(crc_off)
+        f.write(crc_bytes)
+        for p, payload in blobs:
+            f.seek(p)
+            f.write(payload)
+        f.truncate(file_size)
+    raw = sum(len(d) for d in datas)
+    return dict(n=n - 1, raw=raw, file_size=file_size, t=t_enc, saved=saved, dups=len(recs) - len(items))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--src', default=str(ROOT / 'srb2-assets'))
@@ -455,11 +557,16 @@ def main():
     ap.add_argument('--version', type=int, default=VERSION, choices=[1, 2])
     ap.add_argument('--no-dedup', action='store_true', help='v2: store identical lumps more than once')
     ap.add_argument('--log', type=Path, help='save cooker output')
+    ap.add_argument('--texc', type=Path, metavar='DUMP', help='OPT13 IZ (PS2-602): make TEXC.PAK (prebuilt composite textures) in --out from the dump of the host engine (SRB2 -texcdump DUMP; tools/ps2/cook_texc.sh) and do nothing else')
     a = ap.parse_args()
     if a.jobs < 1:
         ap.error('--jobs must be positive')
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    if a.texc:
+        r = cook_texc(a.texc, out / 'TEXC.PAK', a.jobs)
+        print(f'TEXC.PAK: {r["n"]} composites ({r["dups"]} duplicate definitions), pixels {r["raw"]:,} B -> pack {r["file_size"]:,} B ({r["file_size"] / r["raw"] * 100:.1f}%), identical pixels stored once: {r["saved"]:,} B, encode {r["t"]:.1f}s')
+        return 0
     messages = []
 
     def log(message):
