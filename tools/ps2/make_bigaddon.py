@@ -36,7 +36,7 @@ def png(w, h, rnd, alpha=True):
     return b.getvalue()
 
 
-def lua_script(n, rnd):
+def lua_script(n, rnd, entries=None):
     names = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']
     tag = 'MOD%03d' % n
     lines = []
@@ -69,7 +69,7 @@ def lua_script(n, rnd):
     w('\treturn table.concat(parts, ",")')
     w('end')
     w('%s.table = {}' % tag)
-    w('for i = 1, %d do' % rnd.randrange(150, 320))
+    w('for i = 1, %d do' % (entries if entries is not None else rnd.randrange(150, 320)))
     w('\t%s.table[i] = { id = i, name = "entry" .. i, value = helper%d(i, %d, %d), tag = "%s" .. (i %% 7) }' % (tag, rnd.randrange(8), rnd.randrange(1, 90), rnd.randrange(1, 255), tag))
     w('end')
     w('%s.summary = describe(consts)' % tag)
@@ -129,6 +129,7 @@ def main():
     ap.add_argument('--textures', type=int, default=40)
     ap.add_argument('--graphics', type=int, default=80)
     ap.add_argument('--soc', type=int, default=150)
+    ap.add_argument('--entries', type=int, default=None, help='entries of the table each script builds when it runs (default 150..320: a lot of data; 5 for a mod that is mostly hooks)')
     ap.add_argument('--seed', type=int, default=1)
     a = ap.parse_args()
     rnd = random.Random(a.seed)
@@ -136,7 +137,7 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     entries = []  # (name, data)
     for i in range(a.scripts):
-        entries.append(('Lua/MOD%03d.lua' % i, lua_script(i, rnd).encode()))
+        entries.append(('Lua/MOD%03d.lua' % i, lua_script(i, rnd, a.entries).encode()))
     entries.append(('SOC/BIGSOC.soc', soc_file(a.soc, rnd).encode()))
     for i in range(a.textures):
         entries.append(('Textures/BIGT%03d.png' % i, png(64, 64, rnd, alpha=False)))
