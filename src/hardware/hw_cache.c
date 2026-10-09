@@ -23,6 +23,9 @@
 #include "../r_textures.h"
 #include "../w_wad.h"
 #include "../z_zone.h"
+#ifdef PS2_PROFILE
+#include "../m_argv.h" // -hwfbtex
+#endif
 #include "../v_video.h"
 #include "../r_draw.h"
 #include "../r_patch.h"
@@ -1114,6 +1117,20 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 	gl_numtextures = pnumtextures;
 	gl_textures = calloc(gl_numtextures, sizeof(*gl_textures));
 	gl_flats = calloc(gl_numtextures, sizeof(*gl_flats));
+#ifdef PS2_PROFILE
+	{
+		// -hwfbtex N (test of the guard below): the N-th call (1 = the first) finds no memory for the tables
+		static int failtex = -1, ncalls;
+
+		if (failtex < 0)
+			failtex = (M_CheckParm("-hwfbtex") && M_IsNextParm()) ? atoi(M_GetNextParm()) : 0;
+		if (failtex && ++ncalls == failtex)
+		{
+			free(gl_flats);
+			gl_flats = NULL;
+		}
+	}
+#endif
 
 	if (gl_textures == NULL || gl_flats == NULL)
 	{
