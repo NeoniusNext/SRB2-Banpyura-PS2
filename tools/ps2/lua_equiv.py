@@ -11,6 +11,7 @@ import argparse
 import difflib
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -38,14 +39,20 @@ def lq(text):
 def alerts(text):
     """WARNING / ERROR lines the scripts cause (the engine's own messages about them), paths cut to the file name; the lines of the base game alone are not in the set"""
     out = []
+    in_tb = False   # the lines of a "stack traceback:" that follows an alert are part of it
     for l in text.splitlines():
         l = l.rstrip('\r\n')
+        if in_tb and re.match(r'^(\s+\S|stack traceback:)', l) and 'LQ ' not in l:
+            out.append('LA ' + re.sub(r'(?:[\w.~-]*[:/\\])+(?=[\w.-]+\.lua)', '', l))
+            continue
+        in_tb = False
         m = re.match(r'^(WARNING|ERROR|NOTICE): ?(.*)$', l)
         if not m and re.search(r'allocated\.$|Ran out of', l):
             m = True   # freeslot() messages
         if not m or 'Demo' in l or 'config' in l or 'Couldn' in l:
             continue
         out.append('LA ' + re.sub(r'(?:[\w.~-]*[:/\\])+(?=[\w.-]+\.lua)', '', l))
+        in_tb = True
     return out
 
 
@@ -60,6 +67,9 @@ def run_pc(name, scripts, a, out):
     if a.demo:
         shutil.copy2(ROOT / 'golden/phase0-v2' / f'{a.demo}.lmp', o / 'home' / '.srb2' / f'{a.demo}.lmp')
         args += ['-timedemo' if a.timedemo else '-playdemo', a.demo + '.lmp']
+    for s in a.extra:
+        shutil.copy2(s, o / 'home' / '.srb2' / s.name)
+        shutil.copy2(s, o / s.name)
     for s in scripts:
         args += ['-file', str(s)]
     args += a.pc_args
@@ -96,7 +106,7 @@ def run_ps2(name, scripts, a, out):
     for s in scripts:
         extra += ['-file', s.name]
     extra += a.ps2_args
-    cmd = [sys.executable, str(ROOT / 'tools/ps2/ftest_run.py'), '--name', 'ps2', '--out', str(out), '--elf', a.elf, '--pak', a.pak, '--files', ','.join(str(s) for s in scripts),
+    cmd = [sys.executable, str(ROOT / 'tools/ps2/ftest_run.py'), '--name', 'ps2', '--out', str(out), '--elf', a.elf, '--pak', a.pak, '--files', ','.join(str(s) for s in list(scripts) + [e.resolve() for e in a.extra]),
            '--until', a.until, '--timeout', str(a.ps2_timeout), '--show', 'LQ '] + (['--demo', a.demo] if a.demo else []) + ['--'] + extra
     if a.demo:
         cmd += ['-timedemo' if a.timedemo else '-playdemo', a.demo + '.lmp']
@@ -120,10 +130,13 @@ def main():
     ap.add_argument('--until', default='LQ DONE')
     ap.add_argument('--pc-timeout', type=float, default=120)
     ap.add_argument('--ps2-timeout', type=float, default=900)
-    ap.add_argument('--pc-args', nargs='*', default=[])
-    ap.add_argument('--ps2-args', nargs='*', default=[])
+    ap.add_argument('--pc-args', default='', help='extra PC parameters, one quoted string')
+    ap.add_argument('--ps2-args', default='', help='extra PS2 parameters, one quoted string')
+    ap.add_argument('--extra', type=Path, action='append', default=[], help='file the scripts load by name (addfile, addfilelocal): copied next to the PC game and to the PS2 data directory, not loaded with -file')
     ap.add_argument('--no-pc', action='store_true', help='reuse <out>/<name>/pc.out')
     a = ap.parse_args()
+    a.pc_args = shlex.split(a.pc_args)
+    a.ps2_args = shlex.split(a.ps2_args)
     scripts = [s.resolve() for s in a.scripts]
     name = a.name or scripts[0].stem
     out = Path(a.out).resolve() / name
