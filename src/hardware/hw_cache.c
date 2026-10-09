@@ -31,15 +31,6 @@
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
 
-// OPT12 HWDRV (PS2-HW-442): the data of a patch mipmap (sprites, HUD) between two selections: a cache block of the LRU kind (PU_CACHE, stamped with the frame by the tag change: it cannot go before the
-// batch that collected the polygon has been drawn). PU_HWRCACHE_UNLOCKED goes at the next allocation that does not fit, and a patch has no way to be made again at draw time ("no data (purged)":
-// the sprite is missing for the frame). ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old rule, A/B).
-#ifdef PS2_PROFILE
-INT32 ps2hwt_patchtag = PU_HWRCACHE_LRU;
-#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), ps2hwt_patchtag)
-#else
-#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), PU_HWRCACHE_UNLOCKED)
-#endif
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
 static inline unsigned int ps2hwt_now(void)
@@ -48,6 +39,16 @@ static inline unsigned int ps2hwt_now(void)
 	__asm__ volatile("mfc0 %0,$9" : "=r"(v));
 	return v;
 }
+#endif
+
+// OPT12 HWDRV (PS2-HW-442): the data of a patch mipmap (sprites, HUD) between two selections: a cache block of the LRU kind (PU_CACHE, stamped with the frame by the tag change: it cannot go before the
+// batch that collected the polygon has been drawn). PU_HWRCACHE_UNLOCKED goes at the next allocation that does not fit, and a patch has no way to be made again at draw time ("no data (purged)":
+// the sprite is missing for the frame). ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old rule, A/B).
+#ifdef PS2_PROFILE
+INT32 ps2hwt_patchtag = PU_HWRCACHE_LRU;
+#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), ps2hwt_patchtag)
+#else
+#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), PU_HWRCACHE_UNLOCKED)
 #endif
 
 INT32 patchformat = GL_TEXFMT_AP_88; // use alpha for holes

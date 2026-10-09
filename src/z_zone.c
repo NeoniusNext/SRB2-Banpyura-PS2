@@ -706,11 +706,12 @@ static void *Z_AllocBlock(size_t size, INT32 tag, size_t align)
 	while (!p)
 	{
 		// the caches go first; when none is left, the subsystem hook (audio effects) gives back what it can rebuild
-		if (!Z_EvictLRU(want, false) && !Z_Reclaim(want))
+		if (!Z_EvictLRU(want, false))
 		{
 			if (zhwcache_lru && !hwlru_flushed)
 			{
-				// PS2-HW-442: the hardware texture data of the frame (spared by the eviction) goes now, as PU_HWRCACHE_UNLOCKED would have gone at the first miss
+				// PS2-HW-442: the hardware texture data of the frame (spared by the eviction) goes before the subsystem hooks are asked (the geometry cache of the renderer is dearer to lose: reclaim switches it off),
+				// as PU_HWRCACHE_UNLOCKED would have gone at the first miss
 				hwlru_flushed = true;
 				zhwlru_flushes++;
 				Z_FreeTagRange(PU_HWRCACHE_LRU, PU_HWRCACHE_LRU);
@@ -719,7 +720,8 @@ static void *Z_AllocBlock(size_t size, INT32 tag, size_t align)
 					p = ZA_Alloc(size, align, side);
 				continue;
 			}
-			break;
+			if (!Z_Reclaim(want))
+				break;
 		}
 		p = ZA_Alloc(size, align, side);
 		// PS2-61: a large request needs one contiguous block, and the oldest caches by age are scattered pieces. When the oldest
