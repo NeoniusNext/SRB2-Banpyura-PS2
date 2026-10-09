@@ -47,6 +47,7 @@
 #include "console.h"
 
 #include "m_misc.h"
+#include "m_tokenizer.h" // PS2-LOAD-25
 #include "m_fixed.h"
 #include "m_random.h"
 
@@ -1632,6 +1633,11 @@ static textmap_block_t linedefBlocks;
 static textmap_block_t sidedefBlocks;
 static textmap_block_t vertexBlocks;
 static textmap_block_t sectorBlocks;
+#ifdef PS2_PROFILE
+static tokscan_t tmscan; // PS2-LOAD-25
+static boolean tmscan_on;
+enum { TMS_THING, TMS_LINEDEF, TMS_SIDEDEF, TMS_VERTEX, TMS_SECTOR };
+#endif
 
 static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
 {
@@ -1668,6 +1674,10 @@ static boolean TextmapCount(size_t size)
 	numsides = 0;
 	numvertexes = 0;
 	numsectors = 0;
+#ifdef PS2_PROFILE
+	tmscan_on = false;
+	memset(&tmscan, 0, sizeof tmscan);
+#endif
 
 	if(!tkn)
 	{
@@ -1686,6 +1696,20 @@ static boolean TextmapCount(size_t size)
 	tkn = M_TokenizerRead(0);
 	if (!fastcmp(tkn, "srb2"))
 		CONS_Alert(CONS_WARNING, "Invalid namespace '%s', only 'srb2' is supported.\n", tkn);
+
+#ifdef PS2_PROFILE
+	// PS2-LOAD-25: a TEXTMAP of nothing but ordinary blocks is tokenized once, here (m_tokenizer.c); the parse takes the pairs from the scan
+	if (M_TokenizerScanBlocks((UINT32)size, &tmscan))
+	{
+		nummapthings = tmscan.counts[0];
+		numlines = tmscan.counts[1];
+		numsides = tmscan.counts[2];
+		numvertexes = tmscan.counts[3];
+		numsectors = tmscan.counts[4];
+		tmscan_on = true;
+		return true;
+	}
+#endif
 
 	while ((tkn = M_TokenizerRead(0)) && M_TokenizerGetEndPos() < size)
 	{
@@ -2295,6 +2319,13 @@ static void TextmapParse(UINT32 dataPos, size_t num, void (*parser)(UINT32, cons
 	}
 #endif
 }
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-25: the pairs of the block come from the one-pass scan when TextmapCount made one
+#define TEXTMAP_PARSE(type, blocks, i, parser) do { if (tmscan_on) M_TokenizerScanParse(&tmscan, type, (UINT32)(i), parser); else TextmapParse((blocks).pos[i], i, parser); } while (0)
+#else
+#define TEXTMAP_PARSE(type, blocks, i, parser) TextmapParse((blocks).pos[i], i, parser)
+#endif
 
 /** Provides a fix to the flat alignment coordinate transform from standard Textmaps.
  */
@@ -3133,7 +3164,7 @@ static void P_LoadTextmap(void)
 		vt->floorzset = vt->ceilingzset = false;
 		vt->floorz = vt->ceilingz = 0;
 
-		TextmapParse(vertexBlocks.pos[i], i, ParseTextmapVertexParameter);
+		TEXTMAP_PARSE(TMS_VERTEX, vertexBlocks, i, ParseTextmapVertexParameter);
 
 		if (vt->x == INT32_MAX)
 			I_Error("P_LoadTextmap: vertex %s has no x value set!\n", sizeu1(i));
@@ -3192,7 +3223,7 @@ static void P_LoadTextmap(void)
 		textmap_planefloor.defined = 0;
 		textmap_planeceiling.defined = 0;
 
-		TextmapParse(sectorBlocks.pos[i], i, ParseTextmapSectorParameter);
+		TEXTMAP_PARSE(TMS_SECTOR, sectorBlocks, i, ParseTextmapSectorParameter);
 
 		P_InitializeSector(sc);
 		if (textmap_colormap.used)
@@ -3243,7 +3274,7 @@ static void P_LoadTextmap(void)
 		ld->sidenum[0] = NO_SIDEDEF;
 		ld->sidenum[1] = NO_SIDEDEF;
 
-		TextmapParse(linedefBlocks.pos[i], i, ParseTextmapLinedefParameter);
+		TEXTMAP_PARSE(TMS_LINEDEF, linedefBlocks, i, ParseTextmapLinedefParameter);
 
 		if (!ld->v1)
 			I_Error("P_LoadTextmap: linedef %s has no v1 value set!\n", sizeu1(i));
@@ -3278,7 +3309,7 @@ static void P_LoadTextmap(void)
 		sd->lightabsolute = sd->lightabsolute_top = sd->lightabsolute_mid = sd->lightabsolute_bottom = false;
 #endif
 
-		TextmapParse(sidedefBlocks.pos[i], i, ParseTextmapSidedefParameter);
+		TEXTMAP_PARSE(TMS_SIDEDEF, sidedefBlocks, i, ParseTextmapSidedefParameter);
 
 		if (!sd->sector)
 			I_Error("P_LoadTextmap: sidedef %s has no sector value set!\n", sizeu1(i));
@@ -3304,7 +3335,7 @@ static void P_LoadTextmap(void)
 		memset(mt->stringargs, 0x00, NUMMAPTHINGSTRINGARGS*sizeof(*mt->stringargs));
 		mt->mobj = NULL;
 
-		TextmapParse(mapthingBlocks.pos[i], i, ParseTextmapThingParameter);
+		TEXTMAP_PARSE(TMS_THING, mapthingBlocks, i, ParseTextmapThingParameter);
 	}
 	LP_END(U_THING, lpu);
 }
@@ -3563,6 +3594,13 @@ static boolean P_LoadMapData(const virtres_t *virt)
 		LP_SAMPLE(14);
 		P_LoadTextmap();
 		LP_SAMPLE(15);
+#ifdef PS2_PROFILE
+		if (tmscan_on)
+		{
+			Tokenizer_SRB2ScanFree(&tmscan);
+			tmscan_on = false;
+		}
+#endif
 		M_TokenizerClose();
 	}
 	else

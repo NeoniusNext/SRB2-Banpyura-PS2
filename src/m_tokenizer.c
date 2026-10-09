@@ -498,87 +498,105 @@ boolean Tokenizer_SRB2SkipBlock(tokenizer_t *tokenizer, UINT32 size)
 	return false;
 }
 
-// TextmapParse: the next "param value" pair of a block, or its closing "}". Returns 1 with the two strings, 0 at the "}" (or the end of the input).
-// The ordinary pair (`name = value;`, `name = "string";` with ordinary white space) is cut out of the tokenizer's own copy of the text: the byte after each token is
-// replaced by a NUL (it is a separator, or the closing quote, which nothing reads again: every block is parsed once, after the count pass) and no token is copied.
-// Anything else (a comment, a ',' '{' '}' or '"' where a name or value should start, a name that ends at one of those, an input that ends) takes the original
-// path, token by token, from the same position, so the answer is the same.
-#ifdef TOK_STATS
-long tok_generic_pairs;
-#endif
-int Tokenizer_SRB2ReadPair(tokenizer_t *t, const char **param, const char **val)
+// One "param value" pair of a block, as the in-place reader and the block scanner see it. Returns 1 with the spans of the name [*s1, *e1) and of the value [*s2, *e2)
+// (a quoted string without its quotes) and *pp after the pair, 0 at the "}" that closes the block (*s1 = its position, *pp after it), -1 for anything but the ordinary
+// pair (`name = value;`, `name = "string";` with ordinary white space): a comment, a ',' '{' '}' or '"' where a name or value should start, a name that ends at one of
+// those, an input that ends. e1 and e2 are the bytes after the two tokens (a separator, or the closing quote); nothing is written here.
+static inline int Tokenizer_SRB2ScanPair(const char *in, UINT32 len, UINT32 *pp, UINT32 *s1, UINT32 *e1, UINT32 *s2, UINT32 *e2)
 {
-	char *in = t->zdup;
-	const UINT32 len = t->inputLength;
-	UINT32 p = t->endPos, s1, e1, s2, e2, next;
+	UINT32 p = *pp;
 	UINT8 c;
-
-	if (t->inComment || in != t->input)
-		goto generic;
 
 	// name
 	while (p < len && (c = (UINT8)in[p], c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '=' || c == ';' || c == 0)) // (a NUL inside the text is a terminator written by an earlier pair: the original skips it too)
 		p++;
 	if (p >= len)
-		goto generic;
+		return -1;
 	c = (UINT8)in[p];
 	if (c == '}')
 	{
-		t->startPos = p;
-		t->endPos = p + 1;
-		*param = *val = NULL;
+		*s1 = p;
+		*pp = p + 1;
 		return 0;
 	}
 	if (c == ',' || c == '{' || c == '"' || c == '/' || c == 0)
-		goto generic;
-	s1 = p;
+		return -1;
+	*s1 = p;
 	while (p < len && !(tokcls[(UINT8)in[p]] & TCLS_END))
 	{
 		if (in[p] == '/')
-			goto generic;
+			return -1;
 		p++;
 	}
-	e1 = p;
+	*e1 = p;
 	if (p >= len || !(tokcls[(UINT8)in[p]] & TCLS_SKIP) || in[p] == 0)
-		goto generic; // the name ends at ',' '{' '}' or the end of the input
+		return -1; // the name ends at ',' '{' '}' or the end of the input
 
 	// value
 	p++;
 	while (p < len && (c = (UINT8)in[p], c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '=' || c == ';' || c == 0)) // (a NUL inside the text is a terminator written by an earlier pair: the original skips it too)
 		p++;
 	if (p >= len)
-		goto generic;
+		return -1;
 	c = (UINT8)in[p];
 	if (c == '"')
 	{
-		s2 = ++p;
+		*s2 = ++p;
 		while (p < len && in[p] != '"')
 			p++;
 		if (p >= len)
-			goto generic;
-		e2 = p; // the closing quote
-		next = p + 1;
+			return -1;
+		*e2 = p; // the closing quote
+		*pp = p + 1;
 	}
 	else
 	{
 		if (c == '}' || c == ',' || c == '{' || c == '/' || c == 0)
-			goto generic;
-		s2 = p;
+			return -1;
+		*s2 = p;
 		while (p < len && !(tokcls[(UINT8)in[p]] & TCLS_END))
 		{
 			if (in[p] == '/')
-				goto generic;
+				return -1;
 			p++;
 		}
-		e2 = p;
+		*e2 = p;
 		if (p >= len || !(tokcls[(UINT8)in[p]] & TCLS_SKIP) || in[p] == 0)
-			goto generic;
-		next = p;
+			return -1;
+		*pp = p;
+	}
+	return 1;
+}
+
+// TextmapParse: the next "param value" pair of a block, or its closing "}". Returns 1 with the two strings, 0 at the "}" (or the end of the input).
+// The ordinary pair is cut out of the tokenizer's own copy of the text: the byte after each token is replaced by a NUL (it is a separator, or the closing quote,
+// which nothing reads again: every block is parsed once, after the count pass) and no token is copied.
+// Anything else takes the original path, token by token, from the same position, so the answer is the same.
+#ifdef TOK_STATS
+long tok_generic_pairs;
+#endif
+int Tokenizer_SRB2ReadPair(tokenizer_t *t, const char **param, const char **val)
+{
+	char *in = t->zdup;
+	UINT32 p = t->endPos, s1, e1, s2, e2;
+	int r;
+
+	if (t->inComment || in != t->input)
+		goto generic;
+	r = Tokenizer_SRB2ScanPair(in, t->inputLength, &p, &s1, &e1, &s2, &e2);
+	if (r < 0)
+		goto generic;
+	if (r == 0)
+	{
+		t->startPos = s1;
+		t->endPos = p;
+		*param = *val = NULL;
+		return 0;
 	}
 	in[e1] = '\0';
 	in[e2] = '\0';
 	t->startPos = s2;
-	t->endPos = next;
+	t->endPos = p;
 	*param = in + s1;
 	*val = in + s2;
 	return 1;
@@ -592,6 +610,235 @@ generic:
 		return 0;
 	*val = Tokenizer_SRB2Read(t, 1);
 	return 1;
+}
+
+// PS2-LOAD-25: the count pass and the parse in one tokenization. A TEXTMAP that is only blocks of ordinary pairs ("vertex { x = 1; y = 2; }") is scanned once: the
+// keyword and the pairs of every block are cut out (nothing is written to the text yet) and kept as spans, with the blocks of each type counted. Anything else
+// (a comment, a keyword that is not one of the five, a pair that is not the ordinary one, a token that ends at or after `size`, which the original loop does not
+// look at) returns false and nothing has changed: the caller runs the count pass and the parse as before. tokscan_t is the result; Tokenizer_SRB2ScanParse
+// terminates the tokens of a block in place and hands them over one at a time.
+static const struct { UINT8 len; char name[8]; } scan_keywords[5] = { {5, "thing"}, {7, "linedef"}, {7, "sidedef"}, {6, "vertex"}, {6, "sector"} };
+
+// Character classes of the scan: the text has no NUL before inputLength (that is where inputLength ends), so the NUL behind it stops every loop and no length is
+// compared per character. SC_SKIP: ' ' '\t' '\r' '\n' '=' ';' (between tokens); SC_STOP: ends a word (the TCLS_END set) or is a '/' (a comment may start) or the NUL.
+#define SC_SKIP 1
+#define SC_STOP 2
+static const UINT8 scancls[256] =
+{
+	[0] = SC_STOP, [' '] = SC_SKIP|SC_STOP, ['\t'] = SC_SKIP|SC_STOP, ['\r'] = SC_SKIP|SC_STOP, ['\n'] = SC_SKIP|SC_STOP,
+	['='] = SC_SKIP|SC_STOP, [';'] = SC_SKIP|SC_STOP, [','] = SC_STOP, ['{'] = SC_STOP, ['}'] = SC_STOP, ['/'] = SC_STOP,
+};
+
+// Tokenizer_SRB2ScanPair for a text without NUL bytes before `len` (in[len] is a NUL): the same answers, a table lookup per character
+static inline __attribute__((always_inline)) int Tokenizer_SRB2ScanPairNoNul(const char *in, UINT32 len, UINT32 *pp, UINT32 *s1, UINT32 *e1, UINT32 *s2, UINT32 *e2)
+{
+	UINT32 p = *pp;
+	UINT8 c;
+
+	while (scancls[(UINT8)in[p]] & SC_SKIP)
+		p++;
+	if (p >= len)
+		return -1;
+	c = (UINT8)in[p];
+	if (c == '}')
+	{
+		*s1 = p;
+		*pp = p + 1;
+		return 0;
+	}
+	if (c == ',' || c == '{' || c == '"' || c == '/')
+		return -1;
+	*s1 = p;
+	while (!(scancls[(UINT8)in[++p]] & SC_STOP))
+		;
+	// (the first character is not a stop character, so the pre-increment skips only it)
+	if (p >= len || !(scancls[(UINT8)in[p]] & SC_SKIP))
+		return -1; // the name ends at ',' '{' '}' '/' or the end of the input
+	*e1 = p;
+
+	// value
+	while (scancls[(UINT8)in[++p]] & SC_SKIP)
+		;
+	if (p >= len)
+		return -1;
+	c = (UINT8)in[p];
+	if (c == '"')
+	{
+		*s2 = ++p;
+		while (in[p] != '"' && p < len)
+			p++;
+		if (p >= len)
+			return -1;
+		*e2 = p; // the closing quote
+		if (p == *s2 + 1 && in[*s2] == '}')
+			return -1; // the string "}" closes the block for the count pass of the original
+		*pp = p + 1;
+	}
+	else
+	{
+		if (c == '}' || c == ',' || c == '{' || c == '/')
+			return -1;
+		*s2 = p;
+		while (!(scancls[(UINT8)in[++p]] & SC_STOP))
+			;
+		*e2 = p;
+		if (p >= len || !(scancls[(UINT8)in[p]] & SC_SKIP))
+			return -1;
+		*pp = p;
+	}
+	return 1;
+}
+
+static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
+{
+	void *bigger;
+	UINT32 ncap;
+
+	if (need <= *cap)
+		return;
+	ncap = *cap ? *cap * 2 : 1024;
+	while (ncap < need)
+		ncap *= 2;
+	bigger = Z_Malloc((size_t)ncap * esize, PU_STATIC, NULL);
+	if (*array)
+	{
+		memcpy(bigger, *array, (size_t)*cap * esize);
+		Z_Free(*array);
+	}
+	*array = bigger;
+	*cap = ncap;
+}
+
+void Tokenizer_SRB2ScanFree(tokscan_t *sc)
+{
+	int i;
+
+	Z_Free(sc->pairs);
+	Z_Free(sc->bfirst);
+	Z_Free(sc->btype);
+	for (i = 0; i < 5; i++)
+		Z_Free(sc->list[i]);
+	memset(sc, 0, sizeof *sc);
+}
+
+boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+{
+	const char *in = t->zdup;
+	const UINT32 len = t->inputLength;
+	UINT32 p = t->endPos, s, s1, e1, s2, e2, k;
+	UINT32 npairs = 0;
+	tokpair_t *pairs = NULL, *pend = NULL;
+	UINT8 c;
+	int type, r, i;
+
+	memset(sc, 0, sizeof *sc);
+	if (t->inComment || in != t->input || in[len] != '\0')
+		return false;
+
+	for (;;)
+	{
+		// the next top-level token: a keyword
+		while (scancls[(UINT8)in[p]] & SC_SKIP)
+			p++;
+		if (p >= len)
+			break;
+		c = (UINT8)in[p];
+		if (c == '/' || c == '"' || c == ',' || c == '{' || c == '}')
+			goto fail;
+		s = p;
+		while (!(scancls[(UINT8)in[++p]] & SC_STOP))
+			if (in[p] == '"')
+				goto fail;
+		if (p >= len || in[p] == '/' || p >= size)
+			goto fail;
+		for (type = 0; type < 5; type++)
+			if (p - s == scan_keywords[type].len && !memcmp(in + s, scan_keywords[type].name, scan_keywords[type].len))
+				break;
+		if (type == 5)
+			goto fail;
+		// its "{"
+		while (scancls[(UINT8)in[p]] & SC_SKIP)
+			p++;
+		if (p >= len || in[p] != '{')
+			goto fail;
+		p++;
+		if (p >= size)
+			goto fail;
+
+		ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst);
+		{ // (btype grows with bfirst: the same capacity)
+			UINT32 tcap = sc->btcap;
+
+			ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype);
+			sc->btcap = tcap;
+		}
+		sc->bfirst[sc->nblocks] = npairs;
+		sc->btype[sc->nblocks] = (UINT8)type;
+		for (;;)
+		{
+			r = Tokenizer_SRB2ScanPairNoNul(in, len, &p, &s1, &e1, &s2, &e2);
+			if (r < 0)
+				goto fail;
+			if (r == 0)
+				break;
+			if (e1 - s1 > 0xFFFF || e2 - s2 > 0xFFFF)
+				goto fail;
+			if (pairs + npairs == pend)
+			{
+				sc->npairs = npairs;
+				ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs);
+				pairs = sc->pairs;
+				pend = pairs + sc->pcap;
+			}
+			pairs[npairs].s1 = s1;
+			pairs[npairs].s2 = s2;
+			pairs[npairs].l1 = (UINT16)(e1 - s1);
+			pairs[npairs].l2 = (UINT16)(e2 - s2);
+			npairs++;
+		}
+		if (p >= size) // the closing "}" ends at or after the end of the lump
+			goto fail;
+		sc->counts[type]++;
+		sc->nblocks++;
+	}
+	if (!sc->nblocks)
+		goto fail; // (no block at all: the original reports it)
+	sc->npairs = npairs;
+	sc->bfirst[sc->nblocks] = npairs; // (there is room: nblocks + 2 was asked for before the last block was counted)
+	for (i = 0; i < 5; i++)
+	{
+		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_STATIC, NULL);
+		sc->counts_filled[i] = 0;
+	}
+	for (k = 0; k < sc->nblocks; k++)
+	{
+		i = sc->btype[k];
+		sc->list[i][sc->counts_filled[i]++] = k;
+	}
+	t->startPos = t->endPos = p;
+	return true;
+
+fail:
+	Tokenizer_SRB2ScanFree(sc);
+	return false;
+}
+
+// The pairs of the num-th block of this type, cut out of the text in place (the byte after each token becomes a NUL: separators and closing quotes, which nothing
+// reads again) and handed to the parser in the order they stand in the text.
+void Tokenizer_SRB2ScanParse(tokenizer_t *t, const tokscan_t *sc, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *))
+{
+	char *in = t->zdup;
+	const UINT32 b = sc->list[type][num];
+	UINT32 k;
+
+	for (k = sc->bfirst[b]; k < sc->bfirst[b + 1]; k++)
+	{
+		const tokpair_t *pr = &sc->pairs[k];
+
+		in[pr->s1 + pr->l1] = '\0';
+		in[pr->s2 + pr->l2] = '\0';
+		parser(num, in + pr->s1, in + pr->s2);
+	}
 }
 #endif
 

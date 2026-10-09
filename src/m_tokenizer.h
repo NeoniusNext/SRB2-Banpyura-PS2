@@ -38,6 +38,29 @@ const char *Tokenizer_SRB2Read(tokenizer_t *tokenizer, UINT32 i);
 #ifdef PS2_PROFILE
 boolean Tokenizer_SRB2SkipBlock(tokenizer_t *tokenizer, UINT32 size); // PS2-LOAD-15
 int Tokenizer_SRB2ReadPair(tokenizer_t *tokenizer, const char **param, const char **val); // PS2-LOAD-17
+
+// PS2-LOAD-25: the blocks of a TEXTMAP that only has ordinary pairs, scanned once (m_tokenizer.c)
+typedef struct
+{
+	UINT32 s1, s2; // start of the name / of the value in the tokenizer's copy of the text
+	UINT16 l1, l2; // their lengths
+} tokpair_t;
+typedef struct
+{
+	tokpair_t *pairs; // all the pairs of all the blocks, in the order of the text
+	UINT32 npairs, pcap;
+	UINT32 *bfirst; // per block: its first pair (and bfirst[nblocks] = npairs)
+	UINT8 *btype; // per block: 0 thing, 1 linedef, 2 sidedef, 3 vertex, 4 sector
+	UINT32 nblocks, bcap, btcap;
+	UINT32 counts[5], counts_filled[5];
+	UINT32 *list[5]; // per type: the block numbers of its blocks in order
+} tokscan_t;
+boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *tokenizer, UINT32 size, tokscan_t *scan);
+void Tokenizer_SRB2ScanParse(tokenizer_t *tokenizer, const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *));
+void Tokenizer_SRB2ScanFree(tokscan_t *scan);
+// the same on the global tokenizer of M_TokenizerOpen (m_misc.c)
+boolean M_TokenizerScanBlocks(UINT32 size, tokscan_t *scan);
+void M_TokenizerScanParse(const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *));
 #endif
 UINT32 Tokenizer_GetEndPos(tokenizer_t *tokenizer);
 void Tokenizer_SetEndPos(tokenizer_t *tokenizer, UINT32 newPos);

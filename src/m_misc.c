@@ -2397,6 +2397,20 @@ boolean M_TokenizerSkipBlock(UINT32 size)
 	return Tokenizer_SRB2SkipBlock(globalTokenizer, size);
 }
 
+boolean M_TokenizerScanBlocks(UINT32 size, tokscan_t *scan)
+{
+	if (!globalTokenizer)
+		return false;
+
+	return Tokenizer_SRB2ScanBlocks(globalTokenizer, size, scan);
+}
+
+void M_TokenizerScanParse(const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *))
+{
+	if (globalTokenizer)
+		Tokenizer_SRB2ScanParse(globalTokenizer, scan, type, num, parser);
+}
+
 int M_TokenizerReadPair(const char **param, const char **val)
 {
 	if (!globalTokenizer)
