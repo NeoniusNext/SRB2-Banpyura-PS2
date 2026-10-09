@@ -1,0 +1,8 @@
+SRB2-PS2-OPT12.ELF: ветка claude/srb2-ps2-optimization-gk1x6k, слияние HWFRONT + NET + HWDRV + CORE + LOAD (коммит 35066b7 и этот файл).
+Сборка: SRB2_PS2_NO= SRB2_PS2_HW=1 python3 tools/ps2/build.py --jobs 2 (EE GCC 15.2.0, релиз, LTO). Данные: python3 tools/ps2/cook.py --src <папка с pk3 SRB2 2.2.15> --out <каталог>; gen_fineacon.py; cook_models.py (MODELS.PAK, не обязательно);
+готовая раскладка: python3 tools/ps2/make_dist.py --elf prebuilt/SRB2-PS2-OPT12.ELF --pak <каталог с PAK> --out dist/SRB2-PS2 --zip. Паки формата SRP2 версии 2 (читает и версию 1).
+Режим вывода: по умолчанию по региону консоли (европейская = PAL 50 Гц); для 60 Гц нужен NTSC (-ntsc или меню видеорежимов).
+Проверено в PCSX2 2.8.2 (32 МБ, программный GS), НЕ на настоящей консоли:
+  DEMO_001..004 software (слитая сборка, профиль): кадры побитно = golden/ps2-head (0 differ), физика = ПК (1050 тиков);
+  DEMO_001 Hardware (релиз, паки v2): 1051 тиков за 817 реальных (44.9 FPS); карта MAP01 software 40 кадров без ошибок.
+Не проверено на этой ELF: Hardware на демо 2..4, карты цепочкой, сеть, Lua-набор, soak. Цели по FPS (60) и «Hardware намного быстрее software» не достигнуты: docs/GATES/g1/opt12-*.md.

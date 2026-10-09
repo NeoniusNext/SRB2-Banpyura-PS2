@@ -258,7 +258,8 @@ def write_pack(entries, dst):
         pos += len(payload)
     file_size = cook.align(pos, cook.SECTOR)
     with open(dst, 'wb') as f:
-        f.write(cook.HEADER.pack(cook.MAGIC, cook.VERSION, cook.HEADER.size, cook.FLAG_NONMUSIC, n, table_off, pool_off, len(pool), data_off, file_size, cook.BLOCK, 0))
+        # OPT12: this writer makes the version 1 layout only (no head table / checksums of version 2); cook.VERSION is 2 now and the reader then failed the string pool checksum of MODELS.PAK
+        f.write(cook.HEADER.pack(cook.MAGIC, 1, cook.HEADER.size, cook.FLAG_NONMUSIC, n, table_off, pool_off, len(pool), data_off, file_size, cook.BLOCK, 0))
         f.seek(table_off)
         f.write(b''.join(ents))
         f.seek(pool_off)
