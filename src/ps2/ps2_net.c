@@ -23,6 +23,7 @@
 #include "ps2_menuhints.h"
 #include "ps2_netui.h"
 #include "ps2_netsvc.h"
+#include "ps2_sys.h" // PS2_SleepUs
 #include "../netcode/d_clisrv.h"
 #include "../netcode/client_connection.h"
 #include "../doomstat.h"
@@ -494,6 +495,20 @@ static struct { UINT32 frame; char cmd[96]; boolean done; } netcmdlist[NETCMD_MA
 static INT32 numnetcmdlist;
 static UINT32 netcmd_frames;
 
+// OPT13-IO (RS-09), a test command: ps2stall MS holds the game thread for MS, as a level load from a slow medium would (nothing polls the network); a connected client must
+// stay in the game (the receive thread's keep-alive, ps2_netsvc.c) although the server's time-out (nettimeout, 350 tics = 10 s) is shorter. Not for play.
+static void Command_PS2Stall_f(void)
+{
+	if (COM_Argc() < 2)
+	{
+		CONS_Printf("ps2stall <milliseconds>\n");
+		return;
+	}
+	CONS_Printf("PS2STALL %d ms\n", atoi(COM_Argv(1)));
+	PS2_SleepUs((UINT32)atoi(COM_Argv(1)) * 1000);
+	CONS_Printf("PS2STALL over\n");
+}
+
 static void NetCmd_Parse(const char *spec)
 {
 	const char *p = spec;
@@ -575,6 +590,7 @@ void PS2Net_Frame(void)
 	{
 		parsed = true;
 		PS2UI_RegisterCommands(); // PS2-336: "ps2_icons"
+		COM_AddCommand("ps2stall", Command_PS2Stall_f, COM_LOCAL); // OPT13-IO (RS-09)
 		if (M_CheckParm("-netcmd") && M_IsNextParm())
 		{
 			const char *arg = M_GetNextParm();

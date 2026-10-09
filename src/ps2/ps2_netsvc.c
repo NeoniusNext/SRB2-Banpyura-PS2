@@ -56,7 +56,8 @@ static struct
 	nsv_stats_t st;
 	tic_t rx_needed; // the first tic the client still needs, as far as the thread knows (never behind the game thread's neededtic)
 	UINT64 ka_t;     // when the last keep-alive of the load went out
-} nsv = {NULL, 0, 0, false, false, false, false, 0, -1, -1, {0, 0, 0, 0, 0, 0, 0}, 0, 0};
+	boolean ka_off;  // -netnokeepalive: the A/B switch of the test
+} nsv = {NULL, 0, 0, false, false, false, false, 0, -1, -1, {0, 0, 0, 0, 0, 0, 0}, 0, 0, false};
 
 static nsv_packet_t scratch; // where a datagram goes when the ring is full (it is dropped, as lwIP would have)
 static UINT8 *nsv_stack; // from the heap while a game socket is open (not 16 KiB of bss for the single-player game)
@@ -126,7 +127,7 @@ static void LoadKeepAlive(const nsv_packet_t *p, const struct sockaddr_in *from)
 	const doomdata_t *d = (const doomdata_t *)p->data;
 	doomdata_t a;
 
-	if (!nsv.connected || p->len < BASEPACKETSIZE + 6 || d->packettype != PT_SERVERTICS)
+	if (!nsv.connected || nsv.ka_off || p->len < BASEPACKETSIZE + 6 || d->packettype != PT_SERVERTICS)
 		return;
 	if (nsv.main_beat == 0 || (INT64)(p->t - nsv.main_beat) <= (INT64)NSV_LOAD_MS * 147456)
 		return; // the game thread is looking at the network: it sends its own
@@ -213,6 +214,7 @@ boolean PS2NetSvc_Start(int fd)
 	nsv.main_beat = 0;
 	nsv.rx_needed = 0;
 	nsv.ka_t = 0;
+	nsv.ka_off = M_CheckParm("-netnokeepalive") != 0;
 	nsv.fd = fd;
 	memset(&nsv.st, 0, sizeof nsv.st);
 	flags = fcntl(fd, F_GETFL, 0);

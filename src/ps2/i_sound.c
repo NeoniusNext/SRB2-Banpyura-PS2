@@ -404,6 +404,7 @@ static void AudioPump(unsigned maxblocks)
 
 #ifdef _EE
 static volatile UINT32 mixer_beat, decoder_beat; // OPT13-IO (RS-06): one count per round of the thread, read by AudioWatch
+static volatile int mixer_sleeping, decoder_sleeping; // 1 while the thread is inside its DelayThread: only then is a stall a lost wake-up (and not a wait for the IOP or for a read)
 static UINT32 diag_hang_mixer_at;                 // -amixhang N: the mixer thread waits for good on a semaphore nobody signals after N rounds (a lost wake-up), a test of AudioWatch
 static int diag_hang_sema = -1;
 
@@ -414,9 +415,11 @@ static void MixerThread(void *arg)
 	{
 		AudioPump(MIXER_BLOCKS);
 		mixer_beat++;
+		mixer_sleeping = 1;
 		if (diag_hang_mixer_at && mixer_beat == diag_hang_mixer_at && diag_hang_sema >= 0)
 			WaitSema(diag_hang_sema); // nobody signals this one: only AudioWatch gets the thread out
 		DelayThread((s32)mixer_period_us);
+		mixer_sleeping = 0;
 	}
 	mixer_exited = 1;
 	ExitThread();
@@ -434,8 +437,10 @@ static void DecoderThread(void *arg)
 		if (work) eng.st.dec_cycles_total += (UINT32)(CopCount() - c0);
 		if (us > eng.st.dec_max_us) eng.st.dec_max_us = us;
 		decoder_beat++;
+		decoder_sleeping = 1;
 		if (!work) DelayThread(4000);
 		else if (PS2E_SlotsFilled(&eng) >= 6) DelayThread(600); // leave the game thread some time between blocks
+		decoder_sleeping = 0;
 	}
 	decoder_exited = 1;
 	ExitThread();
@@ -478,14 +483,14 @@ static boolean StartThreads(void)
 
 // OPT13-IO (RS-06): the observer of the sound threads. The mixer and the decoder sleep with DelayThread (the SDK's alarm library); if the library loses a wake-up the thread sleeps
 // for good and the sound stops (the IOP ring repeats its last 106 ms). Every round of a thread counts a beat; once per frame the game thread compares them. A thread whose beat
-// stands still for 300 ms while it is waiting on a semaphore is reported (AUDWD); the MIXER is then given the semaphore it waits on (a thread in DelayThread waits on a private one
-// that only its alarm signals: the signal ends the sleep, the thread goes on as if the alarm had come). The decoder is only reported: it may be inside a read of the medium, which
-// waits on a semaphore of the IOP's reply that nobody else may signal.
+// stands still for 300 ms is reported (AUDWD). If it is inside its DelayThread (the thread says so: *_sleeping) and waits on a semaphore, the semaphore is signalled: a thread in
+// DelayThread waits on a private one that only its alarm signals, so the signal ends the sleep and the thread goes on as if the alarm had come. A thread that is not in its sleep
+// (inside a read of the medium, or an RPC to the IOP) is only reported: what it waits for is not ours to signal.
 #define AUDWD_STALL_MS 300
 static UINT32 wd_mixer_beat, wd_decoder_beat, wd_kicks, wd_alerts;
 static UINT64 wd_mixer_t, wd_decoder_t;
 
-static void WatchOne(const char *name, int tid, UINT32 beat, UINT32 *last, UINT64 *since, boolean kick)
+static void WatchOne(const char *name, int tid, UINT32 beat, UINT32 *last, UINT64 *since, boolean sleeping)
 {
 	const UINT64 now = A_NOW();
 	ee_thread_status_t st;
@@ -502,9 +507,9 @@ static void WatchOne(const char *name, int tid, UINT32 beat, UINT32 *last, UINT6
 	if (ReferThreadStatus(tid, &st) < 0)
 		return;
 	wd_alerts++;
-	I_OutputMsg("AUDWD %s thread stalled for %u ms: status=%d waitType=%u waitId=%u prio=%d beat=%u%s\n", name, AUDWD_STALL_MS, (int)st.status, (unsigned)st.waitType, (unsigned)st.waitId,
-		(int)st.current_priority, (unsigned)beat, kick && st.status == THS_WAIT && st.waitType == TSW_SEMA ? " - signalling its semaphore" : "");
-	if (kick && st.status == THS_WAIT && st.waitType == TSW_SEMA)
+	I_OutputMsg("AUDWD %s thread stalled for %u ms: status=%d waitType=%u waitId=%u prio=%d beat=%u sleeping=%d%s\n", name, AUDWD_STALL_MS, (int)st.status, (unsigned)st.waitType, (unsigned)st.waitId,
+		(int)st.current_priority, (unsigned)beat, (int)sleeping, sleeping && st.status == THS_WAIT && st.waitType == TSW_SEMA ? " - signalling its semaphore" : "");
+	if (sleeping && st.status == THS_WAIT && st.waitType == TSW_SEMA)
 	{
 		SignalSema((int)st.waitId);
 		wd_kicks++;
@@ -515,8 +520,8 @@ static void AudioWatch(void)
 {
 	if (!threaded || eng.quit)
 		return;
-	WatchOne("mixer", mixer_tid, mixer_beat, &wd_mixer_beat, &wd_mixer_t, true);
-	WatchOne("decoder", decoder_tid, decoder_beat, &wd_decoder_beat, &wd_decoder_t, false);
+	WatchOne("mixer", mixer_tid, mixer_beat, &wd_mixer_beat, &wd_mixer_t, mixer_sleeping != 0);
+	WatchOne("decoder", decoder_tid, decoder_beat, &wd_decoder_beat, &wd_decoder_t, decoder_sleeping != 0);
 }
 
 static size_t StackUsed(const uint8_t *stack, size_t size)
