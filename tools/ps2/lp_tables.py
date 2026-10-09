@@ -11,26 +11,29 @@ from pathlib import Path
 
 
 def ticks(runs, prefix):
+    """EE cycles per frame of a timed demo: the ZSTAT line of -zquit N (cycles over N level frames); the add-on is already loaded when frame 1 starts"""
     out = {}
     for d in sorted(Path(runs).glob(prefix + '*')):
         m = re.match(re.escape(prefix) + r'(base|cur)_d(\d)_(none|hooks|big)$', d.name)
         if not m:
             continue
         t = (d / 'boot.txt').read_text(errors='replace') if (d / 'boot.txt').exists() else ''
-        r = re.findall(r'timed (\d+) gametics in (\d+) realtics', t)
-        if r:
+        r = re.findall(r'^ZSTAT .*?levelframes=(\d+) .*?cycles=(\d+)', t, re.M)
+        if r and int(r[-1][0]):
             out[(m.group(1), int(m.group(2)), m.group(3))] = (int(r[-1][0]), int(r[-1][1]))
-    print('| demo | add-on | base realtics | now realtics | base ms / tic | now ms / tic | ratio |')
+    print('| demo | add-on | base k cycles / frame | now k cycles / frame | base - no add-on | now - no add-on | ratio |')
     print('|---|---|---:|---:|---:|---:|---:|')
     for dm in (1, 2, 3, 4):
+        zero = {w: out.get((w, dm, 'none')) for w in ('base', 'cur')}
         for ad in ('none', 'hooks', 'big'):
             b, c = out.get(('base', dm, ad)), out.get(('cur', dm, ad))
             if not b and not c:
                 continue
-            f = lambda x: ('%d' % x[1]) if x else '-'
-            g = lambda x: ('%.2f' % (x[1] * 1000.0 / 35 / x[0])) if x else '-'
-            ratio = ('%.2fx' % (b[1] / c[1])) if b and c else '-'
-            print('| D%d | %s | %s | %s | %s | %s | %s |' % (dm, {'none': 'none', 'hooks': 'HOOKS.pk3 (100 scripts, hooks)', 'big': 'BIG.pk3 (100 scripts, 400 pictures)'}[ad], f(b), f(c), g(b), g(c), ratio))
+            per = lambda x: x[1] / x[0] if x else None
+            f = lambda x: ('%.0f' % (x / 1e3)) if x else '-'
+            extra = lambda x, z: ('%+.0f' % ((per(x) - per(z)) / 1e3)) if x and z else '-'
+            ratio = ('%.2fx' % (per(b) / per(c))) if b and c else '-'
+            print('| D%d | %s | %s | %s | %s | %s | %s |' % (dm, {'none': 'none', 'hooks': 'HOOKS.pk3', 'big': 'BIG.pk3'}[ad], f(per(b)), f(per(c)), extra(b, zero['base']) if ad != 'none' else '', extra(c, zero['cur']) if ad != 'none' else '', ratio))
 
 
 def levels(sweepdir):
