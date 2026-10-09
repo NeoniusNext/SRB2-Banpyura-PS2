@@ -93,7 +93,8 @@ static int lib_getSprname(lua_State *L)
 	if (lua_isnumber(L, 1))
 	{
 		i = lua_tonumber(L, 1);
-		if (i > LIMIT_NUMSPRITES)
+		PS2_WIDEN(i, LIMIT_NUMSPRITES + 1, NUMSPRITES + 1); // sprnames has one entry more than there are sprites (the empty terminator)
+		if (i > NUMSPRITES)
 			return 0;
 		lua_pushlstring(L, sprnames[i], 4);
 		return 1;
@@ -102,7 +103,7 @@ static int lib_getSprname(lua_State *L)
 	{
 		const char *name = lua_tostring(L, 1);
 		i = R_GetSpriteNumByName(name);
-		if (i != LIMIT_NUMSPRITES)
+		if (i != NUMSPRITES)
 		{
 			lua_pushinteger(L, i);
 			return 1;
@@ -114,7 +115,7 @@ static int lib_getSprname(lua_State *L)
 /// \todo Maybe make it tally up the used_spr from dehacked?
 static int lib_sprnamelen(lua_State *L)
 {
-	lua_pushinteger(L, LIMIT_NUMSPRITES);
+	lua_pushinteger(L, NUMSPRITES);
 	return 1;
 }
 
@@ -252,22 +253,22 @@ static int lib_spr2namelen(lua_State *L)
 // spriteinfo[]
 static int lib_getSpriteInfo(lua_State *L)
 {
-	UINT32 i = LIMIT_NUMSPRITES;
+	UINT32 i = NUMSPRITES;
 	lua_remove(L, 1);
 
 	if (lua_type(L, 1) == LUA_TSTRING)
 	{
 		const char *name = lua_tostring(L, 1);
 		INT32 spr = R_GetSpriteNumByName(name);
-		if (spr == LIMIT_NUMSPRITES)
+		if (spr == NUMSPRITES)
 			return luaL_error(L, "unknown sprite name %s", name);
 		i = spr;
 	}
 	else
 		i = luaL_checkinteger(L, 1);
 
-	if (i == 0 || i >= LIMIT_NUMSPRITES)
-		return luaL_error(L, "spriteinfo[] index %d out of range (1 - %d)", i, LIMIT_NUMSPRITES-1);
+	if (i == 0 || PS2_OOR_SPRITE(i))
+		return luaL_error(L, "spriteinfo[] index %d out of range (1 - %d)", i, NUMSPRITES-1);
 
 	LUA_PushUserdata(L, &spriteinfo[i], META_SPRITEINFO);
 	return 1;
@@ -385,8 +386,8 @@ static int lib_setSpriteInfo(lua_State *L)
 	lua_remove(L, 1);
 	{
 		UINT32 i = luaL_checkinteger(L, 1);
-		if (i == 0 || i >= LIMIT_NUMSPRITES)
-			return luaL_error(L, "spriteinfo[] index %d out of range (1 - %d)", i, LIMIT_NUMSPRITES-1);
+		if (i == 0 || PS2_OOR_SPRITE(i))
+			return luaL_error(L, "spriteinfo[] index %d out of range (1 - %d)", i, NUMSPRITES-1);
 		info = &spriteinfo[i]; // get the spriteinfo to assign to.
 	}
 	luaL_checktype(L, 2, LUA_TTABLE); // check that we've been passed a table.
@@ -422,7 +423,7 @@ static int lib_setSpriteInfo(lua_State *L)
 
 static int lib_spriteinfolen(lua_State *L)
 {
-	lua_pushinteger(L, LIMIT_NUMSPRITES);
+	lua_pushinteger(L, NUMSPRITES);
 	return 1;
 }
 
@@ -678,8 +679,8 @@ static int lib_getState(lua_State *L)
 	lua_remove(L, 1);
 
 	i = luaL_checkinteger(L, 1);
-	if (i >= LIMIT_NUMSTATES)
-		return luaL_error(L, "states[] index %d out of range (0 - %d)", i, LIMIT_NUMSTATES-1);
+	if (PS2_OOR_STATE(i))
+		return luaL_error(L, "states[] index %d out of range (0 - %d)", i, NUMSTATES-1);
 	LUA_PushUserdata(L, &states[i], META_STATE);
 	return 1;
 }
@@ -691,8 +692,8 @@ static int lib_setState(lua_State *L)
 	lua_remove(L, 1); // don't care about states[] userdata.
 	{
 		UINT32 i = luaL_checkinteger(L, 1);
-		if (i >= LIMIT_NUMSTATES)
-			return luaL_error(L, "states[] index %d out of range (0 - %d)", i, LIMIT_NUMSTATES-1);
+		if (PS2_OOR_STATE(i))
+			return luaL_error(L, "states[] index %d out of range (0 - %d)", i, NUMSTATES-1);
 		state = &states[i]; // get the state to assign to.
 	}
 	luaL_checktype(L, 2, LUA_TTABLE); // check that we've been passed a table.
@@ -720,7 +721,7 @@ static int lib_setState(lua_State *L)
 
 		if (i == 1 || (str && fastcmp(str, "sprite"))) {
 			value = luaL_checkinteger(L, 3);
-			if (value < SPR_NULL || value >= LIMIT_NUMSPRITES)
+			if (value < SPR_NULL || PS2_OOR_SPRITE(value))
 				return luaL_error(L, "sprite number %d is invalid.", value);
 			state->sprite = (spritenum_t)value;
 		} else if (i == 2 || (str && fastcmp(str, "frame"))) {
@@ -764,7 +765,7 @@ static int lib_setState(lua_State *L)
 			state->var2 = (INT32)luaL_checkinteger(L, 3);
 		} else if (i == 7 || (str && fastcmp(str, "nextstate"))) {
 			value = luaL_checkinteger(L, 3);
-			if (value < S_NULL || value >= LIMIT_NUMSTATES)
+			if (value < S_NULL || PS2_OOR_STATE(value))
 				return luaL_error(L, "nextstate number %d is invalid.", value);
 			state->nextstate = (statenum_t)value;
 		}
@@ -776,7 +777,7 @@ static int lib_setState(lua_State *L)
 // #states -> LIMIT_NUMSTATES
 static int lib_statelen(lua_State *L)
 {
-	lua_pushinteger(L, LIMIT_NUMSTATES);
+	lua_pushinteger(L, NUMSTATES);
 	return 1;
 }
 
@@ -785,7 +786,7 @@ boolean LUA_SetLuaAction(void *stv, const char *action)
 	state_t *st = (state_t *)stv;
 
 	I_Assert(st != NULL);
-	//I_Assert(st >= states && st < states+LIMIT_NUMSTATES); // if you REALLY want to be paranoid...
+	//I_Assert(st >= states && st < states+NUMSTATES); // if you REALLY want to be paranoid...
 	I_Assert(action != NULL);
 
 	if (!gL) // Lua isn't loaded,
@@ -966,7 +967,7 @@ static int state_set(lua_State *L)
 
 	if (fastcmp(field,"sprite")) {
 		value = luaL_checknumber(L, 3);
-		if (value < SPR_NULL || value >= LIMIT_NUMSPRITES)
+		if (value < SPR_NULL || PS2_OOR_SPRITE(value))
 			return luaL_error(L, "sprite number %d is invalid.", value);
 		st->sprite = (spritenum_t)value;
 	} else if (fastcmp(field,"frame"))
@@ -1010,7 +1011,7 @@ static int state_set(lua_State *L)
 		st->var2 = (INT32)luaL_checknumber(L, 3);
 	else if (fastcmp(field,"nextstate")) {
 		value = luaL_checkinteger(L, 3);
-		if (value < S_NULL || value >= LIMIT_NUMSTATES)
+		if (value < S_NULL || PS2_OOR_STATE(value))
 			return luaL_error(L, "nextstate number %d is invalid.", value);
 		st->nextstate = (statenum_t)value;
 	} else
@@ -1038,8 +1039,8 @@ static int lib_getMobjInfo(lua_State *L)
 	lua_remove(L, 1);
 
 	i = luaL_checkinteger(L, 1);
-	if (i >= LIMIT_NUMMOBJTYPES)
-		return luaL_error(L, "mobjinfo[] index %d out of range (0 - %d)", i, LIMIT_NUMMOBJTYPES-1);
+	if (PS2_OOR_MOBJTYPE(i))
+		return luaL_error(L, "mobjinfo[] index %d out of range (0 - %d)", i, NUMMOBJTYPES-1);
 	LUA_PushUserdata(L, &mobjinfo[i], META_MOBJINFO);
 	return 1;
 }
@@ -1051,8 +1052,8 @@ static int lib_setMobjInfo(lua_State *L)
 	lua_remove(L, 1); // don't care about mobjinfo[] userdata.
 	{
 		UINT32 i = luaL_checkinteger(L, 1);
-		if (i >= LIMIT_NUMMOBJTYPES)
-			return luaL_error(L, "mobjinfo[] index %d out of range (0 - %d)", i, LIMIT_NUMMOBJTYPES-1);
+		if (PS2_OOR_MOBJTYPE(i))
+			return luaL_error(L, "mobjinfo[] index %d out of range (0 - %d)", i, NUMMOBJTYPES-1);
 		info = &mobjinfo[i]; // get the mobjinfo to assign to.
 	}
 	luaL_checktype(L, 2, LUA_TTABLE); // check that we've been passed a table.
@@ -1083,19 +1084,19 @@ static int lib_setMobjInfo(lua_State *L)
 			info->doomednum = (INT32)luaL_checkinteger(L, 3);
 		else if (i == 2 || (str && fastcmp(str,"spawnstate"))) {
 			value = luaL_checkinteger(L, 3);
-			if (value < S_NULL || value >= LIMIT_NUMSTATES)
+			if (value < S_NULL || PS2_OOR_STATE(value))
 				return luaL_error(L, "spawnstate number %d is invalid.", value);
 			info->spawnstate = (statenum_t)value;
 		} else if (i == 3 || (str && fastcmp(str,"spawnhealth")))
 			info->spawnhealth = (INT32)luaL_checkinteger(L, 3);
 		else if (i == 4 || (str && fastcmp(str,"seestate"))) {
 			value = luaL_checkinteger(L, 3);
-			if (value < S_NULL || value >= LIMIT_NUMSTATES)
+			if (value < S_NULL || PS2_OOR_STATE(value))
 				return luaL_error(L, "seestate number %d is invalid.", value);
 			info->seestate = (statenum_t)value;
 		} else if (i == 5 || (str && fastcmp(str,"seesound"))) {
 			value = luaL_checkinteger(L, 3);
-			if (value < sfx_None || value >= LIMIT_NUMSFX)
+			if (value < sfx_None || PS2_OOR_SFX(value))
 				return luaL_error(L, "seesound number %d is invalid.", value);
 			info->seesound = (sfxenum_t)value;
 		} else if (i == 6 || (str && fastcmp(str,"reactiontime")))
@@ -1145,7 +1146,7 @@ static int lib_setMobjInfo(lua_State *L)
 // #mobjinfo -> LIMIT_NUMMOBJTYPES
 static int lib_mobjinfolen(lua_State *L)
 {
-	lua_pushinteger(L, LIMIT_NUMMOBJTYPES);
+	lua_pushinteger(L, NUMMOBJTYPES);
 	return 1;
 }
 
@@ -1441,8 +1442,8 @@ static int lib_getSfxInfo(lua_State *L)
 	lua_remove(L, 1);
 
 	i = luaL_checkinteger(L, 1);
-	if (i == 0 || i >= (unsigned)LIMIT_NUMSFX)
-		return luaL_error(L, "sfxinfo[] index %d out of range (1 - %d)", i, LIMIT_NUMSFX-1);
+	if (i == 0 || PS2_OOR_SFX(i))
+		return luaL_error(L, "sfxinfo[] index %d out of range (1 - %d)", i, NUMSFX-1);
 	LUA_PushUserdata(L, &S_sfx[i], META_SFXINFO);
 	return 1;
 }
@@ -1455,8 +1456,8 @@ static int lib_setSfxInfo(lua_State *L)
 	lua_remove(L, 1);
 	{
 		UINT32 i = luaL_checkinteger(L, 1);
-		if (i == 0 || i >= (unsigned)LIMIT_NUMSFX)
-			return luaL_error(L, "sfxinfo[] index %d out of range (1 - %d)", i, LIMIT_NUMSFX-1);
+		if (i == 0 || PS2_OOR_SFX(i))
+			return luaL_error(L, "sfxinfo[] index %d out of range (1 - %d)", i, NUMSFX-1);
 		info = &S_sfx[i]; // get the sfxinfo to assign to.
 	}
 	luaL_checktype(L, 2, LUA_TTABLE); // check that we've been passed a table.
@@ -1502,7 +1503,7 @@ static int lib_setSfxInfo(lua_State *L)
 
 static int lib_sfxlen(lua_State *L)
 {
-	lua_pushinteger(L, LIMIT_NUMSFX);
+	lua_pushinteger(L, NUMSFX);
 	return 1;
 }
 

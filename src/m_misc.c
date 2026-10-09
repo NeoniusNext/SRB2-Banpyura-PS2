@@ -2016,6 +2016,179 @@ static UINT32 endPos = 0; // now external to M_GetToken, but still static
   * The pointer to the last string supplied is stored as a static variable, so be careful not to free it while this function is still using it!
   * \return A pointer to a string, containing the fetched token. This is in freshly allocated memory, so be sure to Z_Free() it as appropriate.
 */
+#ifdef PS2_PROFILE
+// PS2-LOAD-20: the TEXTURES parser asks for 130 000 tokens at the start-up (two passes over the lumps, every token a Z_Malloc + Z_Free: more than half of
+// R_LoadTextures). M_GetTokenPooled gives the same strings from a table of small buckets outside the zone; M_FreeToken takes a token back
+// (a bucket, or a Z_Free of the rare long one). The text of every token is the same as M_GetToken's.
+#define TOKPOOL_N 64
+#define TOKPOOL_SIZE 64
+static char tokpool[TOKPOOL_N][TOKPOOL_SIZE];
+static UINT8 tokpool_free[TOKPOOL_N];
+static int tokpool_top = -1; // -1: not filled yet
+
+static char *TokenAlloc(size_t size, boolean pooled)
+{
+	if (pooled)
+	{
+		if (tokpool_top < 0)
+		{
+			int i;
+
+			for (i = 0; i < TOKPOOL_N; i++)
+				tokpool_free[i] = (UINT8)(TOKPOOL_N - 1 - i);
+			tokpool_top = TOKPOOL_N;
+		}
+		if (size <= TOKPOOL_SIZE && tokpool_top > 0)
+			return tokpool[tokpool_free[--tokpool_top]];
+	}
+	return (char *)Z_Malloc(size * sizeof(char), PU_STATIC, NULL);
+}
+
+void M_FreeToken(char *token)
+{
+	if (token >= &tokpool[0][0] && token < &tokpool[0][0] + sizeof tokpool)
+		tokpool_free[tokpool_top++] = (UINT8)((token - &tokpool[0][0]) / TOKPOOL_SIZE);
+	else
+		Z_Free(token);
+}
+#define TOKALLOC(size) TokenAlloc((size), pooled)
+#else
+#define TOKALLOC(size) (char *)Z_Malloc((size)*sizeof(char),PU_STATIC,NULL)
+#endif
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-24: the tokenizer of the TEXTURES / ANIMDEFS / SPRTINFO lumps with its state in locals (the original reads and writes six statics for every character) and the
+// character classes in a table (11 comparisons per character). The same tokens, positions and comment state as the original below
+// (tools/ps2/gettoken_hosttest.c compares them over the TEXTURES lumps of the game and random texts, with M_UnGetToken in between).
+#define GTC_SKIP 1 // between tokens: ' ' '\t' '\r' '\n' NUL '=' ';'
+#define GTC_END 2  // ends a plain token: ' ' '\t' '\r' '\n' ',' '{' '}' '=' ';'
+static const UINT8 gtcls[256] =
+{
+	[0] = GTC_SKIP, [' '] = GTC_SKIP|GTC_END, ['\t'] = GTC_SKIP|GTC_END, ['\r'] = GTC_SKIP|GTC_END, ['\n'] = GTC_SKIP|GTC_END,
+	['='] = GTC_SKIP|GTC_END, [';'] = GTC_SKIP|GTC_END, [','] = GTC_END, ['{'] = GTC_END, ['}'] = GTC_END,
+};
+static const char *gt_string = NULL; // Populated if inputString != NULL; used otherwise
+static UINT32 gt_length = 0;
+static UINT8 gt_inComment = 0; // 0 = not in comment, 1 = // Single-line, 2 = /* Multi-line */
+
+static char *M_GetTokenImpl(const char *inputString, boolean pooled)
+{
+	const UINT8 *str;
+	UINT32 sp, ep, len;
+	UINT8 inc;
+	char *token;
+
+	if (inputString != NULL)
+	{
+		gt_string = inputString;
+		sp = 0;
+		oldendPos = endPos = 0;
+		gt_length = (UINT32)strlen(inputString);
+	}
+	else
+		sp = oldendPos = endPos;
+	if (gt_string == NULL)
+		return NULL;
+	str = (const UINT8 *)gt_string;
+	len = gt_length;
+	inc = gt_inComment;
+
+	// Try to detect comments now, in case we're pointing right at one
+	if (sp < len - 1 && inc == 0 && str[sp] == '/')
+	{
+		if (str[sp + 1] == '/')
+			inc = 1;
+		else if (str[sp + 1] == '*')
+			inc = 2;
+	}
+
+	// Find the first non-whitespace char, or else the end of the string trying
+	while (sp < len && (inc != 0 || (gtcls[str[sp]] & GTC_SKIP)))
+	{
+		const UINT8 c = str[sp];
+
+		if (inc == 1 && c == '\n')
+			inc = 0; // End of line for a single-line comment
+		else if (inc == 2 && sp < len - 1 && c == '*' && str[sp + 1] == '/')
+		{
+			inc = 0; // End of multi-line comment
+			sp++; // Make damn well sure we're out of the comment ending at the end of it all
+		}
+		sp++;
+
+		// Try to detect comment starts now
+		if (sp < len - 1 && inc == 0 && str[sp] == '/')
+		{
+			if (str[sp + 1] == '/')
+				inc = 1;
+			else if (str[sp + 1] == '*')
+				inc = 2;
+		}
+	}
+	gt_inComment = inc;
+
+	// If the end of the string is reached, no token is to be read
+	if (sp == len)
+	{
+		endPos = len;
+		return NULL;
+	}
+	// Else, if it's one of these three symbols, capture only this one character
+	if (str[sp] == ',' || str[sp] == '{' || str[sp] == '}')
+	{
+		endPos = sp + 1;
+		token = TokenAlloc(2, pooled);
+		token[0] = (char)str[sp];
+		token[1] = '\0';
+		return token;
+	}
+	// Return entire string within quotes, except without the quotes.
+	if (str[sp] == '"')
+	{
+		ep = ++sp;
+		while (ep < len && str[ep] != '"')
+			ep++;
+		endPos = ep + 1;
+		len = ep - sp;
+		token = TokenAlloc(len + 1, pooled);
+		M_Memcpy(token, str + sp, (size_t)len);
+		token[len] = '\0';
+		return token;
+	}
+
+	// Now find the end of the token. This includes several additional characters that are okay to capture as one character, but not trailing at the end of another token.
+	ep = sp + 1;
+	while (ep < len && inc == 0 && !(gtcls[str[ep]] & GTC_END))
+	{
+		ep++;
+		// Try to detect comment starts now; if it's in a comment, we don't want it in this token
+		if (ep < len - 1 && str[ep] == '/')
+		{
+			if (str[ep + 1] == '/')
+				inc = 1;
+			else if (str[ep + 1] == '*')
+				inc = 2;
+		}
+	}
+	gt_inComment = inc;
+	endPos = ep;
+	len = ep - sp;
+	token = TokenAlloc(len + 1, pooled);
+	M_Memcpy(token, str + sp, (size_t)len);
+	token[len] = '\0';
+	return token;
+}
+
+char *M_GetToken(const char *inputString)
+{
+	return M_GetTokenImpl(inputString, false);
+}
+
+char *M_GetTokenPooled(const char *inputString)
+{
+	return M_GetTokenImpl(inputString, true);
+}
+#else
 char *M_GetToken(const char *inputString)
 {
 	static const char *stringToUse = NULL; // Populated if inputString != NULL; used otherwise
@@ -2117,7 +2290,7 @@ char *M_GetToken(const char *inputString)
 			|| stringToUse[startPos] == '}')
 	{
 		endPos = startPos + 1;
-		texturesToken = (char *)Z_Malloc(2*sizeof(char),PU_STATIC,NULL);
+		texturesToken = TOKALLOC(2);
 		texturesToken[0] = stringToUse[startPos];
 		texturesToken[1] = '\0';
 		return texturesToken;
@@ -2131,7 +2304,7 @@ char *M_GetToken(const char *inputString)
 
 		texturesTokenLength = endPos++ - startPos;
 		// Assign the memory. Don't forget an extra byte for the end of the string!
-		texturesToken = (char *)Z_Malloc((texturesTokenLength+1)*sizeof(char),PU_STATIC,NULL);
+		texturesToken = TOKALLOC(texturesTokenLength+1);
 		// Copy the string.
 		M_Memcpy(texturesToken, stringToUse+startPos, (size_t)texturesTokenLength);
 		// Make the final character NUL.
@@ -2175,13 +2348,14 @@ char *M_GetToken(const char *inputString)
 	texturesTokenLength = endPos - startPos;
 
 	// Assign the memory. Don't forget an extra byte for the end of the string!
-	texturesToken = (char *)Z_Malloc((texturesTokenLength+1)*sizeof(char),PU_STATIC,NULL);
+	texturesToken = TOKALLOC(texturesTokenLength+1);
 	// Copy the string.
 	M_Memcpy(texturesToken, stringToUse+startPos, (size_t)texturesTokenLength);
 	// Make the final character NUL.
 	texturesToken[texturesTokenLength] = '\0';
 	return texturesToken;
 }
+#endif
 
 /** Undoes the last M_GetToken call
   * The current position along the string being parsed is reset to the last saved position.
@@ -2213,6 +2387,41 @@ const char *M_TokenizerRead(UINT32 i)
 
 	return Tokenizer_SRB2Read(globalTokenizer, i);
 }
+
+#ifdef PS2_PROFILE
+boolean M_TokenizerSkipBlock(UINT32 size)
+{
+	if (!globalTokenizer)
+		return false;
+
+	return Tokenizer_SRB2SkipBlock(globalTokenizer, size);
+}
+
+boolean M_TokenizerScanBlocks(UINT32 size, tokscan_t *scan)
+{
+	if (!globalTokenizer)
+		return false;
+
+	return Tokenizer_SRB2ScanBlocks(globalTokenizer, size, scan);
+}
+
+void M_TokenizerScanParse(const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *))
+{
+	if (globalTokenizer)
+		Tokenizer_SRB2ScanParse(globalTokenizer, scan, type, num, parser);
+}
+
+int M_TokenizerReadPair(const char **param, const char **val)
+{
+	if (!globalTokenizer)
+	{
+		*param = *val = NULL;
+		return 0;
+	}
+
+	return Tokenizer_SRB2ReadPair(globalTokenizer, param, val);
+}
+#endif
 
 UINT32 M_TokenizerGetEndPos(void)
 {

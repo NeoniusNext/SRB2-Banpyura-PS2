@@ -28,6 +28,17 @@ import strip_pics  # noqa: E402
 PAIRS = [('srb2.pk3', 'SRB2.PAK'), ('zones.pk3', 'ZONES.PAK'), ('characters.pk3', 'CHARS.PAK'), ('music.pk3', 'MUSIC.PAK')]
 
 
+def fletcher(data):
+    """Index checksum of SRP2 v2 (also written by cook.py and computed by src/w_pack.c): u32 words, a += w; b += a; a ^ rotl(b, 16)."""
+    if len(data) % 4:
+        data = data + bytes(4 - len(data) % 4)
+    a = b = 0
+    for w in struct.unpack(f'<{len(data) // 4}I', data):
+        a = (a + w) & 0xFFFFFFFF
+        b = (b + a) & 0xFFFFFFFF
+    return a ^ (((b << 16) | (b >> 16)) & 0xFFFFFFFF)
+
+
 def cstr(pool, off):
     end = pool.index(b'\0', off)
     return pool[off:end]
@@ -99,17 +110,32 @@ def verify(pk3, pak, model=None, require_cooked=False, log=print):
     f = open(pak, 'rb')
     hdr = f.read(64)
     magic, version, hsize, flags, n, table_off, pool_off, pool_size, data_off, file_size, block, rsv = struct.unpack('<4s11I', hdr[:48])
-    if magic != b'SRP2' or version != 1 or hsize != 64 or block != 65536:
+    if magic != b'SRP2' or version not in (1, 2) or hsize != 64 or block != 65536:
         err(f'bad header {magic} {version} {hsize} {block}')
         return len(bad), 0, {}
     if file_size != Path(pak).stat().st_size:
         err('file_size field != actual size')
-    if flags & ~1 or hdr[44:] != bytes(20):
+    if flags & ~(1 | (2 if version >= 2 else 0)) or hdr[44:] != bytes(20):
         err('unknown flags or nonzero reserved header bytes')
     if any(off % 2048 for off in (table_off, pool_off, data_off, file_size)):
         err('header regions/end are not sector aligned')
     if not (64 <= table_off and table_off + n * 24 <= pool_off and pool_off + pool_size <= data_off <= file_size):
         err('header/table/pool/data regions overlap or leave the file')
+    head_off = head_bytes = crc_off = 0
+    chk = None
+    if version >= 2:
+        # v2 extension at byte 64: extsize, head_off, head_bytes, crc_off, four index checksums, zero padding
+        ext = f.read(64)
+        extsize, head_off, head_bytes, crc_off, *chk = struct.unpack('<8I', ext[:32])
+        if extsize != 64 or ext[32:] != bytes(32):
+            err('bad v2 header extension')
+        if not (flags & 2):
+            err('v2 pack without the head-table flag')
+        head_end = head_off + n * head_bytes
+        crc_end = crc_off + 4 * n
+        if head_bytes != 16 or head_off % 2048 or crc_off % 2048 or head_off < pool_off + pool_size or crc_off < head_end or crc_end > data_off:
+            err('v2 head/CRC table regions are misplaced')
+    f.seek(64 if version < 2 else 128)
     if n != len(infos):
         err(f'entry count {n} != zip {len(infos)}')
     f.seek(table_off)
@@ -120,6 +146,17 @@ def verify(pk3, pak, model=None, require_cooked=False, log=print):
         err('pool not NUL terminated')
     prev_end = data_off
     stats = {0: 0, 1: 0}
+    heads = crcs = b''
+    if version >= 2:
+        f.seek(head_off)
+        heads = f.read(n * head_bytes)
+        f.seek(crc_off)
+        crcs = f.read(4 * n)
+        raw_table = b''.join(struct.pack('<6I', *e) for e in table)
+        for name_, sect, want in (('table', raw_table, chk[0]), ('string pool', pool, chk[1]), ('head table', heads, chk[2]), ('CRC table', crcs, chk[3])):
+            if fletcher(sect) != want:
+                err(f'v2 index checksum of the {name_} does not match')
+    placed = {}   # v2: position -> (disksize, size, codec) of the first entry that uses it (identical lumps may share a payload)
     for i, (zi, (pos, disksize, size, fo, lo, codec)) in enumerate(zip(infos, table)):
         full = cstr(pool, fo)
         if full.decode('ascii') != zi.filename:
@@ -139,7 +176,15 @@ def verify(pk3, pak, model=None, require_cooked=False, log=print):
             a = 2048 if size >= block else 64
             if pos % a:
                 err(f'[{i}] position {pos} not aligned to {a}')
-            if pos < prev_end:
+            if version >= 2:
+                if pos < data_off:
+                    err(f'[{i}] payload starts in the index area ({pos} < {data_off})')
+                if pos in placed:
+                    if placed[pos] != (disksize, size, codec):
+                        err(f'[{i}] shares a payload position with a different lump')
+                else:
+                    placed[pos] = (disksize, size, codec)
+            elif pos < prev_end:
                 err(f'[{i}] overlaps previous data ({pos} < {prev_end})')
             if pos + disksize > file_size:
                 err(f'[{i}] data beyond end of file')
@@ -151,6 +196,11 @@ def verify(pk3, pak, model=None, require_cooked=False, log=print):
                 continue
         if len(data) != size:
             err(f'[{i}] decoded {len(data)} bytes, expected {size}')
+        if version >= 2:
+            if heads[i * head_bytes:(i + 1) * head_bytes] != data[:head_bytes].ljust(head_bytes, b'\0'):
+                err(f'[{i}] {full!r}: head table entry differs from the first bytes of the lump')
+            if struct.unpack_from('<I', crcs, 4 * i)[0] != (zlib.crc32(data) & 0xFFFFFFFF):
+                err(f'[{i}] {full!r}: CRC table entry differs from the CRC32 of the lump')
         ref = b'' if zi.is_dir() else zf.read(zi)
         if i in pics:
             e = pics[i]
@@ -183,6 +233,12 @@ def verify(pk3, pak, model=None, require_cooked=False, log=print):
         if hashlib.sha256(data).digest() != hashlib.sha256(ref).digest():
             err(f'[{i}] {full!r}: sha256 mismatch')
         stats[codec] = stats.get(codec, 0) + 1
+    if version >= 2:
+        prev = None   # distinct payloads must not overlap each other
+        for q in sorted(placed):
+            if prev is not None and q < prev[0] + prev[1]:
+                err(f'payload at {q} overlaps the payload at {prev[0]}')
+            prev = (q, placed[q][0])
     f.close()
     zf.close()
     return len(bad), n, stats

@@ -553,7 +553,17 @@
 #define luai_nummul(a,b)	((a)*(b))
 #define luai_numdiv(a,b)	((a)/(b))
 #define luai_nummod(a,b)	(lua_Number)((a)%(b))
+#ifdef PS2
+// PS2-LUA: x ^ y is computed as a float and converted to the integer lua_Number. A result outside the 32-bit range (2^31, 10^10, 0 ^ -1 = inf, NaN) is undefined in C: the PC
+// build (x86, cvttss2si) gets 0x80000000 for every one of them, the EE (trunc.w.s) saturates to 0x7FFFFFFF. A script that prints 2^31 must see the same number on both.
+static inline int ps2_lua_f2i(float f)
+{
+	return (f >= -2147483648.0f && f < 2147483648.0f) ? (int)f : (int)0x80000000;
+}
+#define luai_numpow(a,b)	ps2_lua_f2i((float)(pow((double)(a),(double)(b))))
+#else
 #define luai_numpow(a,b)	(float)(pow((double)(a),(double)(b)))
+#endif
 #define luai_numunm(a)		(-(a))
 #define luai_numeq(a,b)		((a)==(b))
 #define luai_numlt(a,b)		((a)<(b))

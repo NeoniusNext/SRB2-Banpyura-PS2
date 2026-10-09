@@ -27,6 +27,8 @@
 #include "i_system.h"
 #include "r_fps.h"
 #include "r_things.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-23
+#include "m_argv.h"
 #include "r_translation.h"
 #include "r_patch.h"
 #include "r_patchrotation.h"
@@ -193,7 +195,7 @@ spritenum_t R_GetSpriteNumByName(const char *name)
 	for (spritenum_t i = 0; i < LIMIT_NUMSPRITES; i++)
 		if (!strcmp(name, sprnames[i]))
 			return i;
-	return LIMIT_NUMSPRITES;
+	return NUMSPRITES; // PS2-LUA: "not found" is the PC value, not the size of the live table (a script compares it with its own #sprnames)
 }
 
 //
@@ -209,10 +211,20 @@ static void R_InstallSpriteLump(UINT16 wad,            // graphics patch
 	char cn = R_Frame2Char(frame), cr = R_Rotation2Char(rotation); // for debugging
 
 	char framedescription[256];
-	if (cn != '\xFF')
-		sprintf(framedescription, "%s frame %d (%c)", spritename, frame, cn);
-	else
-		sprintf(framedescription, "%s frame %d", spritename, frame);
+#ifdef PS2_PROFILE
+	// PS2-LOAD-23: only the CONS_Debug(DBG_SETUP, ...) messages below read the text, and they print nothing unless that debug flag is on:
+	// it was formatted (newlib sprintf, ~1500 cycles) for every sprite lump at the start-up
+	framedescription[0] = '\0';
+	if ((cv_debug & DBG_SETUP) == DBG_SETUP)
+	{
+#endif
+		if (cn != '\xFF')
+			sprintf(framedescription, "%s frame %d (%c)", spritename, frame, cn);
+		else
+			sprintf(framedescription, "%s frame %d", spritename, frame);
+#ifdef PS2_PROFILE
+	}
+#endif
 
 	INT32 r;
 	lumpnum_t lumppat = (wad << 16) + lump;
@@ -473,6 +485,19 @@ static void MirrorMissingRotations(void)
 	}
 }
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-23: the text of "SPRITE frame 3 (D)" was formatted (newlib sprintf, ~1500 cycles) for every frame of every one of the 1500 sprites at the start-up,
+// 18 M cycles, to be used by an error message that never comes: it is made where it is printed
+static const char *FrameDescription(char *buf, const char *sprname, UINT32 frame)
+{
+	if (frame < 64)
+		sprintf(buf, "%s frame %d (%c)", sprname, frame, R_Frame2Char(frame));
+	else
+		sprintf(buf, "%s frame %d", sprname, frame);
+	return buf;
+}
+#endif
+
 // Some checks to help development
 static void CheckFrame(const char *sprname)
 {
@@ -481,16 +506,21 @@ static void CheckFrame(const char *sprname)
 		spriteframe_t *spriteframe = &sprtemp[frame];
 
 		char framedescription[256];
+#ifdef PS2_PROFILE
+#define FRAMEDESC FrameDescription(framedescription, sprname, frame)
+#else
+#define FRAMEDESC framedescription
 		if (frame < 64)
 			sprintf(framedescription, "%s frame %d (%c)", sprname, frame, R_Frame2Char(frame));
 		else
 			sprintf(framedescription, "%s frame %d", sprname, frame);
+#endif
 
 		switch (spriteframe->rotate)
 		{
 		case SRF_NONE:
 			// no rotations were found for that frame at all
-			CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: No patches found for %s\n", framedescription);
+			CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: No patches found for %s\n", FRAMEDESC);
 			break;
 
 		case SRF_SINGLE:
@@ -501,7 +531,7 @@ static void CheckFrame(const char *sprname)
 			// we test to see whether the left and right slots are present
 			if ((spriteframe->lumppat[2] == LUMPERROR) || (spriteframe->lumppat[6] == LUMPERROR))
 				CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: Sprite %s is missing rotations (L-R mode)\n",
-					framedescription);
+					FRAMEDESC);
 			break;
 
 		default:
@@ -514,13 +544,15 @@ static void CheckFrame(const char *sprname)
 					// if it was not loaded the two are LUMPERROR
 					if (spriteframe->lumppat[rotation] == LUMPERROR)
 						CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: Sprite %s is missing rotations (1-%c mode)\n",
-								framedescription, ((spriteframe->rotate & SRF_3DGE) ? 'G' : '8'));
+								FRAMEDESC, ((spriteframe->rotate & SRF_3DGE) ? 'G' : '8'));
 				}
 			}
 			break;
 		}
 	}
 }
+
+#undef FRAMEDESC
 
 // Install a single sprite, given its identifying name (4 chars)
 //
@@ -536,16 +568,86 @@ static void CheckFrame(const char *sprname)
 //
 // Returns true if the sprite was succesfully added
 //
+#ifdef PS2_PROFILE
+// PS2-LOAD-4: R_AddSingleSpriteDef compared the 4 letter name of the sprite with the name of EVERY lump of the sprite range (strlen + memcmp, 391 sprites x
+// 5 400 lumps per file): 3% of the start-up. The index lists, for each first-four-letters key, the lumps of the range in ascending order (the order of the
+// scan), so the loop below visits exactly the lumps the scan would have accepted, in the same order. It lives only while AddShortSpriteDefs runs one range.
+typedef struct
+{
+	UINT16 wad, start, end;
+	UINT16 mask;
+	UINT16 *bucket; // lump - start + 1 of the first lump of the key, 0 = none
+	UINT16 *next;   // per lump of the range
+} sprindex_t;
+static sprindex_t sprindex;
+
+static void R_FreeSpriteIndex(void)
+{
+	Z_Free(sprindex.bucket);
+	Z_Free(sprindex.next);
+	memset(&sprindex, 0, sizeof sprindex);
+}
+
+static UINT32 SprKey4(const char *name)
+{
+	UINT32 k;
+
+	memcpy(&k, name, 4);
+	return (k ^ (k >> 13) ^ (k >> 22)) * 2654435761u;
+}
+
+static const sprindex_t *R_GetSpriteIndex(UINT16 wadnum, UINT16 startlump, UINT16 endlump)
+{
+	UINT32 n = endlump - startlump, nb = 16, i;
+	const lumpinfo_t *lumpinfo = wadfiles[wadnum]->lumpinfo;
+
+	if (sprindex.bucket && sprindex.wad == wadnum && sprindex.start == startlump && sprindex.end == endlump)
+		return &sprindex;
+	R_FreeSpriteIndex();
+	while (nb < n / 2 + 1)
+		nb <<= 1;
+	sprindex.bucket = Z_Calloc(nb * sizeof *sprindex.bucket, PU_STATIC, NULL);
+	sprindex.next = Z_Malloc(n * sizeof *sprindex.next, PU_STATIC, NULL);
+	sprindex.mask = (UINT16)(nb - 1);
+	for (i = n; i-- > 0;)
+	{
+		const UINT32 b = (SprKey4(lumpinfo[startlump + i].name) >> 16) & sprindex.mask;
+
+		sprindex.next[i] = sprindex.bucket[b];
+		sprindex.bucket[b] = (UINT16)(i + 1);
+	}
+	sprindex.wad = wadnum;
+	sprindex.start = startlump;
+	sprindex.end = endlump;
+	return &sprindex;
+}
+#endif
+
 boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16 wadnum, UINT16 startlump, UINT16 endlump, boolean longname)
 {
 	UINT16 l;
 	lumpinfo_t *lumpinfo;
 	UINT16 numadded = 0;
+#ifdef PS2_PROFILE
+	const sprindex_t *sidx = NULL;
+	UINT16 scand = 0; // the next candidate of the index: lump - start + 1
+#endif
 
+#ifdef PS2_PROFILE
+#ifdef PS2_DYNLIMITS
+#define SPRTEMP_CLEAR() memset(sprtemp, 0xFF, sizeof (spriteframe_t) * LIMIT_MAXFRAMENUM)
+#else
+#define SPRTEMP_CLEAR() memset(sprtemp, 0xFF, sizeof (sprtemp))
+#endif
+	// PS2-LOAD-23: the scratch table (10 KB) is cleared when the first frame is installed or an earlier definition is copied into it, not for every one of the 1500 sprite names
+	// of every file (an add-on finds frames for a handful of them: 75 MB of memset at the start-up). Nothing reads it before that: a sprite without frames returns below.
+	boolean tempinit = false;
+#else
 #ifdef PS2_DYNLIMITS
 	memset(sprtemp, 0xFF, sizeof (spriteframe_t) * LIMIT_MAXFRAMENUM);
 #else
 	memset(sprtemp,0xFF, sizeof (sprtemp));
+#endif
 #endif
 	maxframe = (size_t)-1;
 
@@ -555,6 +657,10 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 	// if so, it might patch only certain frames, not all
 	if (spritedef->numframes) // (then spriteframes is not null)
 	{
+#ifdef PS2_PROFILE
+		SPRTEMP_CLEAR();
+		tempinit = true;
+#endif
 		// copy the already defined sprite frames
 		M_Memcpy(sprtemp, spritedef->spriteframes,
 		 spritedef->numframes * sizeof (spriteframe_t));
@@ -567,8 +673,27 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 	if (endlump > wadfiles[wadnum]->numlumps)
 		endlump = wadfiles[wadnum]->numlumps;
 
+#ifdef PS2_PROFILE
+	if (!longname && endlump > startlump && endlump - startlump >= 16 && strlen(sprname) == 4) // (PS2-LOAD-23: was 256; an add-on with 200 sprite lumps scanned them 1500 times, 90 M cycles)
+	{
+		sidx = R_GetSpriteIndex(wadnum, startlump, endlump);
+		scand = sidx->bucket[(SprKey4(sprname) >> 16) & sidx->mask];
+	}
+#endif
 	for (l = startlump; l < endlump; l++)
 	{
+#ifdef PS2_PROFILE
+		if (sidx)
+		{
+			// next lump of the range with this key (the key is a hash: the exact test below still decides)
+			while (scand && memcmp(lumpinfo[startlump + scand - 1].name, sprname, 4))
+				scand = sidx->next[scand - 1];
+			if (!scand)
+				break;
+			l = (UINT16)(startlump + scand - 1);
+			scand = sidx->next[scand - 1];
+		}
+#endif
 		if (longname && W_IsLumpFolder(wadnum, l))
 		{
 			CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: all frame lumps for a sprite should be contained inside a single folder\n");
@@ -619,6 +744,13 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 
 			//----------------------------------------------------
 
+#ifdef PS2_PROFILE
+			if (!tempinit)
+			{
+				SPRTEMP_CLEAR();
+				tempinit = true;
+			}
+#endif
 			R_InstallSpriteLump(wadnum, l, numspritelumps, frame, rotation, 0);
 			if (frame2 != -1)
 				R_InstallSpriteLump(wadnum, l, numspritelumps, frame2, rotation2, 1);
@@ -744,6 +876,9 @@ static void AddShortSpriteDefs(UINT16 wadnum, size_t *ptr_spritesadded, size_t *
 #endif
 		}
 	}
+#ifdef PS2_PROFILE
+	R_FreeSpriteIndex();
+#endif
 
 	*ptr_framesadded += end - start;
 }
@@ -780,7 +915,7 @@ static void AddLongSpriteDefs(UINT16 wadnum, size_t *ptr_spritesadded, size_t *p
 		strupr(sprname);
 		sprnum = R_GetSpriteNumByName(sprname);
 
-		if (sprnum != LIMIT_NUMSPRITES && R_AddSingleSpriteDef(sprname, &sprites[sprnum], wadnum, folderstart, folderend, true))
+		if (sprnum != NUMSPRITES && R_AddSingleSpriteDef(sprname, &sprites[sprnum], wadnum, folderstart, folderend, true))
 		{
 			// A new sprite was added (not just replaced)
 			(*ptr_spritesadded)++;
@@ -828,6 +963,64 @@ static vissprite_t *visspritechunks[MAXVISSPRITES >> VISSPRITECHUNKBITS] = {NULL
 // R_InitSprites
 // Called at program start.
 //
+#ifdef PS2_PROFILE
+// PS2-LOAD-23 (-loadprof -loadhash): a hash of the sprite tables R_InitSprites built: every sprite's frames (rotation type, the lump of each angle, the id, flip) and the cached
+// width / offsets of every sprite lump; printed as "LHASH spr.all"
+static void R_SpritesHash(void)
+{
+	ps2lp_hash_t hs = { { 2166136261u, 0x811C9DC5u ^ 0xA5A5A5A5u } };
+	size_t i, j, k;
+
+	if (!ps2lp_on || !M_CheckParm("-loadhash"))
+		return;
+	PS2LP_H32(&hs, (UINT32)numsprites);
+	PS2LP_H32(&hs, (UINT32)numspritelumps);
+	for (i = 0; i < numsprites; i++)
+	{
+		const boolean detail = M_CheckParm("-loadhash-detail"); // (one "LHSPR" line per sprite: where two runs differ)
+		ps2lp_hash_t hd = { { 2166136261u, 0x811C9DC5u ^ 0xA5A5A5A5u } };
+
+		PS2LP_H32(&hs, (UINT32)sprites[i].numframes);
+		PS2LP_H32(&hd, (UINT32)sprites[i].numframes);
+		for (j = 0; j < sprites[i].numframes; j++)
+		{
+			const spriteframe_t *sf = &sprites[i].spriteframes[j];
+
+			if (detail)
+			{
+				PS2LP_H32(&hd, sf->rotate);
+				PS2LP_H32(&hd, sf->flip);
+				for (k = 0; k < 16; k++)
+				{
+					PS2LP_H32(&hd, (UINT32)sf->lumppat[k]);
+					PS2LP_H32(&hd, (UINT32)sf->lumpid[k]);
+				}
+			}
+
+			PS2LP_H32(&hs, sf->rotate);
+			PS2LP_H32(&hs, sf->flip);
+			for (k = 0; k < 16; k++)
+			{
+				PS2LP_H32(&hs, (UINT32)sf->lumppat[k]);
+				PS2LP_H32(&hs, (UINT32)sf->lumpid[k]);
+			}
+		}
+		if (detail && sprites[i].numframes)
+			I_OutputMsg("LHSPR %u %s %08x%08x\n", (unsigned)i, sprnames[i], (unsigned)hd.h[0], (unsigned)hd.h[1]);
+	}
+	for (i = 0; i < numspritelumps; i++)
+	{
+		if (M_CheckParm("-loadhash-detail"))
+			I_OutputMsg("LHSLUMP %u %d %d %d %d\n", (unsigned)i, (int)spritecachedinfo[i].width, (int)spritecachedinfo[i].offset, (int)spritecachedinfo[i].topoffset, (int)spritecachedinfo[i].height);
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].width);
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].offset);
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].topoffset);
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].height);
+	}
+	PS2LP_HashPrint("spr.all", &hs);
+}
+#endif
+
 void R_InitSprites(void)
 {
 	size_t i;
@@ -867,22 +1060,47 @@ void R_InitSprites(void)
 #endif
 
 	// find sprites in each -file added pwad
-	for (i = 0; i < numwadfiles; i++)
-		R_AddSpriteDefs((UINT16)i);
+	{
+		LP_BEGIN(lps);
+
+		for (i = 0; i < numwadfiles; i++)
+			R_AddSpriteDefs((UINT16)i);
+		LP_END(R_SPRDEFS, lps);
+	}
 
 	//
 	// now check for skins
 	//
 
 	// it can be is do before loading config for skin cvar possible value
-	R_InitSkins();
+	{
+		LP_BEGIN(lps);
+
+		R_InitSkins();
+		LP_END(R_SKINS, lps);
+	}
 	for (i = 0; i < numwadfiles; i++)
 	{
+		LP_BEGIN(lps);
+
 		R_AddSkins((UINT16)i, true);
+		LP_END(R_ADDSKINS, lps);
+		LP_RESTART(lps);
 		R_PatchSkins((UINT16)i, true);
+		LP_END(R_PATCHSKINS, lps);
+		LP_RESTART(lps);
 		R_LoadSpriteInfoLumps(i, wadfiles[i]->numlumps);
+		LP_END(R_SPRINFO, lps);
 	}
-	ST_ReloadSkinFaceGraphics();
+	{
+		LP_BEGIN(lps);
+
+		ST_ReloadSkinFaceGraphics();
+		LP_END(R_FACEGFX, lps);
+	}
+#ifdef PS2_PROFILE
+	R_SpritesHash();
+#endif
 
 #ifdef HWRENDER
 	if (rendermode == render_opengl)

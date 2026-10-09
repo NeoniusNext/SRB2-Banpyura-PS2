@@ -13,7 +13,8 @@ import re
 import subprocess
 from pathlib import Path
 
-NM = 'D:/ps2dev/ee/bin/mips64r5900el-ps2-elf-nm.exe'
+import os
+NM = 'D:/ps2dev/ee/bin/mips64r5900el-ps2-elf-nm.exe' if os.name == 'nt' else os.path.join(os.environ.get('PS2DEV', '/opt/ps2dev-x/ps2dev'), 'ee/bin/mips64r5900el-ps2-elf-nm')
 
 
 def symbols(elf):

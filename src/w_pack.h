@@ -22,11 +22,22 @@ boolean WPack_Detect(FILE *handle);
 // Call before ANY I/O, including WPack_Detect; NULL if it could not be allocated. Does not replace driver cache sync.
 void *WPack_SetupHandle(FILE *handle);
 
+typedef struct wpack_s wpack_t; // an open pack of version 2 (head table); NULL for version 1
+
 // Builds lumpinfo_t[] exactly as ResGetLumpsZip does for the pk3 the pack was cooked from (same type RET_PK3,
 // same fields; name/longname/fullname point into one string pool, *pool, which is a single Z_Malloc block).
 // nonmusic is the cooker's W_VerifyNMUSlumps result (true = the pack has other than music/sound lumps).
-// Returns NULL (after a console alert) if the pack is damaged.
-lumpinfo_t *WPack_GetLumps(FILE *handle, UINT16 *nlmp, void **pool, boolean *nonmusic);
+// filename is only for the messages. *pack (may be NULL) receives the context of a v2 pack (register it with WPack_Register, free it with WPack_Close).
+// The index is checked (v2: checksums of the table, the string pool and the head table). Returns NULL (after a console alert naming the pack) if the pack is damaged.
+lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, void **pool, boolean *nonmusic, wpack_t **pack);
+void WPack_Register(wpack_t *pack);
+void WPack_Close(wpack_t *pack);
+// The start-up is over: frees the head tables of all open packs
+void WPack_DropHeads(void);
+// Like WPack_ReadLump; a request that lies in the first bytes of lump number lumpindex is answered from the head table without any file access
+size_t WPack_ReadLumpN(wpack_t *pack, FILE *handle, UINT32 lumpindex, const lumpinfo_t *l, void *dest, size_t size, size_t offset);
+// -verifypack: decodes every lump and compares its CRC32 with the table in the pack; returns the number of damaged lumps; report(lump, what) is called for each
+UINT32 WPack_Verify(wpack_t *pack, FILE *handle, const lumpinfo_t *lumps, UINT32 numlumps, void (*report)(UINT32 lump, const char *what));
 
 // W_VerifyNMUSlumps for a pack: 1 = only music/sound lumps, 0 = other lumps, -1 = not a pack / unreadable.
 int WPack_VerifyNMUS(FILE *handle);

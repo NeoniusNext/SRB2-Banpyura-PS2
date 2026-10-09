@@ -152,9 +152,9 @@ void Command_CountMobjs_f(void)
 		for (j = 1; j < COM_Argc(); j++)
 		{
 			i = atoi(COM_Argv(j));
-			if (i >= LIMIT_NUMMOBJTYPES)
+			if (PS2_OOR_MOBJTYPE(i))
 			{
-				CONS_Printf(M_GetText("Object number %d out of range (max %d).\n"), i, LIMIT_NUMMOBJTYPES-1);
+				CONS_Printf(M_GetText("Object number %d out of range (max %d).\n"), i, NUMMOBJTYPES-1);
 				continue;
 			}
 
@@ -176,7 +176,7 @@ void Command_CountMobjs_f(void)
 
 	CONS_Printf(M_GetText("Count of active objects in level:\n"));
 
-	for (i = 0; i < LIMIT_NUMMOBJTYPES; i++)
+	for (i = 0; i < LIMIT_NUMMOBJTYPES; i++) // (types past the live table have no object)
 	{
 		count = 0;
 
@@ -237,7 +237,7 @@ static const char *MobjTypeName(const mobj_t *mobj)
 	else
 		return "<Not a mobj>";
 
-	if (type < 0 || type >= LIMIT_NUMMOBJTYPES || (type >= MT_FIRSTFREESLOT && !FREE_MOBJS[type - MT_FIRSTFREESLOT]))
+	if (type < 0 || PS2_OOR_MOBJTYPE(type) || (type >= MT_FIRSTFREESLOT && !FREE_MOBJS[type - MT_FIRSTFREESLOT]))
 		return "<Invalid mobj type>";
 	else if (type >= MT_FIRSTFREESLOT)
 		return FREE_MOBJS[type - MT_FIRSTFREESLOT]; // This doesn't include "MT_"...

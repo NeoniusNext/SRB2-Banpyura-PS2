@@ -42,8 +42,10 @@
 
 #include "doomdef.h"
 #include "ps2ref.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler (-loadprof); empty macros outside the PS2 profile
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
+#include "w_pack.h" // PS2-LOAD-10
 #endif
 #include "am_map.h"
 #include "console.h"
@@ -1581,6 +1583,7 @@ void D_SRB2Main(void)
 	// any wad file is added, as they may contain colors themselves
 	M_InitPlayerSetupColors();
 
+	LP_LAP(B_EARLY);
 	CONS_Printf("Z_Init(): Init zone memory allocation daemon. \n");
 	Z_Init();
 
@@ -1662,9 +1665,11 @@ void D_SRB2Main(void)
 #endif
 
 	// load wad, including the main wad file
+	LP_LAP(B_ZINIT);
 	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
 	W_InitMultipleFiles(&startupwadfiles);
 	D_CleanFile(&startupwadfiles);
+	LP_LAP(B_WADMAIN);
 
 #if !defined(DEVELOP) && !defined(PS2_PROFILE) // md5s last updated 22/02/20 (ddmmyy)
 
@@ -1680,12 +1685,14 @@ void D_SRB2Main(void)
 #endif //ifndef DEVELOP
 
 	cht_Init();
+	LP_LAP(B_GFX0);
 
 	//---------------------------------------------------- READY SCREEN
 	// we need to check for dedicated before initialization of some subsystems
 
 	CONS_Printf("I_StartupGraphics()...\n");
 	I_StartupGraphics();
+	LP_LAP(B_GFX1);
 
 #ifdef HWRENDER
 	// Lactozilla: Add every hardware mode CVAR and CCMD.
@@ -1699,10 +1706,14 @@ void D_SRB2Main(void)
 	SCR_Startup();
 
 	PaletteRemap_Init();
+	LP_LAP(B_GFX2);
 
+	LP_SAMPLE(6);
 	HU_Init();
+	LP_LAP(B_HUINIT);
 
 	CON_Init();
+	LP_LAP(B_CONINIT);
 
 	D_RegisterServerCommands();
 	D_RegisterClientCommands(); // be sure that this is called before D_CheckNetGame
@@ -1712,23 +1723,30 @@ void D_SRB2Main(void)
 	I_RegisterSysCommands();
 
 	CON_StopRefresh(); // Temporarily stop refreshing the screen for wad loading
+	LP_LAP(B_GFX3);
+	LP_SAMPLE(7);
 
 #ifdef HAS_ADDONS
 	if (startuppwads.numfiles)
 	{
 		CONS_Printf("W_InitMultipleFiles(): Adding extra PWADs.\n");
+		LP_SAMPLE(16);
 		W_InitMultipleFiles(&startuppwads);
+		LP_SAMPLE(17);
 		D_CleanFile(&startuppwads);
 	}
 #endif
 
 	CON_StartRefresh(); // Restart the refresh!
+	LP_LAP(B_WADEXTRA);
 
 	CONS_Printf("HU_LoadGraphics()...\n");
 	HU_LoadGraphics();
+	LP_LAP(B_HULOAD);
 
 	//--------------------------------------------------------- CONFIG.CFG
 	M_FirstLoadConfig(); // WARNING : this do a "COM_BufExecute()"
+	LP_LAP(B_CONFIG);
 
 	if (M_CheckParm("-gamedata") && M_IsNextParm())
 	{
@@ -1744,6 +1762,7 @@ void D_SRB2Main(void)
 
 	// set user default mode or mode set at cmdline
 	SCR_CheckDefaultMode();
+	LP_LAP(B_GAMEDATA);
 
 	wipegamestate = gamestate;
 
@@ -1785,9 +1804,13 @@ void D_SRB2Main(void)
 
 	CONS_Printf("M_Init(): Init miscellaneous info.\n");
 	M_Init();
+	LP_LAP(B_MINIT);
 
 	CONS_Printf("R_Init(): Init SRB2 refresh daemon.\n");
+	LP_SAMPLE(4);
 	R_Init();
+	LP_LAP(B_RINIT);
+	LP_SAMPLE(5);
 
 	// setting up sound
 	if (dedicated)
@@ -1831,9 +1854,11 @@ void D_SRB2Main(void)
 	}
 
 	S_InitMusicDefs();
+	LP_LAP(B_SOUND);
 
 	CONS_Printf("ST_Init(): Init status bar.\n");
 	ST_Init();
+	LP_LAP(B_STINIT);
 
 #ifdef PS2_PROFILE
 	PS2FTest_Startup(); // PS2-110: -ftest-* diagnostics of the content systems (nothing without the parameters)
@@ -1878,6 +1903,7 @@ void D_SRB2Main(void)
 		COM_ImmedExecute(va("exec \"%s"PATHSEP"adedserv.cfg\"\n", srb2home));
 	else
 		COM_ImmedExecute(va("exec \"%s"PATHSEP"autoexec.cfg\" -noerror\n", srb2home));
+	LP_LAP(B_NET);
 
 	if (!autostart)
 		M_PushSpecialParameters(); // push all "+" parameters at the command buffer
@@ -1915,6 +1941,10 @@ void D_SRB2Main(void)
 
 		G_SetGamestate(GS_NULL);
 		wipegamestate = GS_NULL;
+#ifdef PS2_PROFILE
+		WPack_DropHeads();
+#endif
+		LP_LAP(B_START);
 		return;
 	}
 
@@ -2007,6 +2037,10 @@ void D_SRB2Main(void)
 		F_StartIntro(); // Tails 03-03-2002
 
 	CON_ToggleOff();
+#ifdef PS2_PROFILE
+	WPack_DropHeads(); // PS2-LOAD-10: the start-up reads are done: the head tables of the packs give their memory back
+#endif
+	LP_LAP(B_START);
 
 	if (dedicated && server)
 	{

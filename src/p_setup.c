@@ -47,6 +47,7 @@
 #include "console.h"
 
 #include "m_misc.h"
+#include "m_tokenizer.h" // PS2-LOAD-25
 #include "m_fixed.h"
 #include "m_random.h"
 
@@ -90,6 +91,7 @@
 #include "taglist.h"
 
 #include "netcode/net_command.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler, level hash (empty macros outside the PS2 profile)
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
 #endif
@@ -1631,6 +1633,11 @@ static textmap_block_t linedefBlocks;
 static textmap_block_t sidedefBlocks;
 static textmap_block_t vertexBlocks;
 static textmap_block_t sectorBlocks;
+#ifdef PS2_PROFILE
+static tokscan_t tmscan; // PS2-LOAD-25
+static boolean tmscan_on;
+enum { TMS_THING, TMS_LINEDEF, TMS_SIDEDEF, TMS_VERTEX, TMS_SECTOR };
+#endif
 
 static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
 {
@@ -1667,6 +1674,10 @@ static boolean TextmapCount(size_t size)
 	numsides = 0;
 	numvertexes = 0;
 	numsectors = 0;
+#ifdef PS2_PROFILE
+	tmscan_on = false;
+	memset(&tmscan, 0, sizeof tmscan);
+#endif
 
 	if(!tkn)
 	{
@@ -1686,6 +1697,20 @@ static boolean TextmapCount(size_t size)
 	if (!fastcmp(tkn, "srb2"))
 		CONS_Alert(CONS_WARNING, "Invalid namespace '%s', only 'srb2' is supported.\n", tkn);
 
+#ifdef PS2_PROFILE
+	// PS2-LOAD-25: a TEXTMAP of nothing but ordinary blocks is tokenized once, here (m_tokenizer.c); the parse takes the pairs from the scan
+	if (M_TokenizerScanBlocks((UINT32)size, &tmscan))
+	{
+		nummapthings = tmscan.counts[0];
+		numlines = tmscan.counts[1];
+		numsides = tmscan.counts[2];
+		numvertexes = tmscan.counts[3];
+		numsectors = tmscan.counts[4];
+		tmscan_on = true;
+		return true;
+	}
+#endif
+
 	while ((tkn = M_TokenizerRead(0)) && M_TokenizerGetEndPos() < size)
 	{
 		// Avoid anything inside bracketed stuff, only look for external keywords.
@@ -1695,7 +1720,14 @@ static boolean TextmapCount(size_t size)
 				brackets--;
 		}
 		else if (fastcmp(tkn, "{"))
+		{
+#ifdef PS2_PROFILE
+			// PS2-LOAD-15: the tokens inside the block are only looked at for the "}" that ends it: no strings are made for them
+			if (M_TokenizerSkipBlock((UINT32)size))
+				continue;
+#endif
 			brackets++;
+		}
 		// Check for valid fields.
 		else if (fastcmp(tkn, "thing"))
 			TextmapStorePos(&mapthingBlocks, &nummapthings);
@@ -1720,18 +1752,58 @@ static boolean TextmapCount(size_t size)
 	return true;
 }
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-17: a parameter name is compared with a few dozen names per parameter; the first two characters (constants) decide almost every comparison
+#define TMNAME(p, lit) ((p)[0] == (lit)[0] && (p)[1] == (lit)[1] && fastcmp(p, lit))
+#else
+#define TMNAME(p, lit) fastcmp(p, lit)
+#endif
+
+#ifdef PS2_PROFILE
+// atol() for the plain decimal numbers of a TEXTMAP ("-12", "255"); strtol (locale, white space, base, overflow) for everything else
+static inline long TM_ATOL(const char *s)
+{
+	const char *p = s;
+	long v = 0;
+	boolean neg = false;
+
+	if (*p == '-')
+	{
+		neg = true;
+		p++;
+	}
+	if (*p >= '0' && *p <= '9')
+	{
+		int digits = 0;
+
+		do
+		{
+			v = v * 10 + (*p - '0');
+			p++;
+			digits++;
+		}
+		while (*p >= '0' && *p <= '9' && digits < 9);
+		if (digits < 9 || !(*p >= '0' && *p <= '9'))
+			return neg ? -v : v;
+	}
+	return atol(s);
+}
+#else
+#define TM_ATOL(s) atol(s)
+#endif
+
 static void ParseTextmapVertexParameter(UINT32 i, const char *param, const char *val)
 {
-	if (fastcmp(param, "x"))
+	if (TMNAME(param, "x"))
 		vertexes[i].x = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "y"))
+	else if (TMNAME(param, "y"))
 		vertexes[i].y = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "zfloor"))
+	else if (TMNAME(param, "zfloor"))
 	{
 		vertexes[i].floorz = FLOAT_TO_FIXED(atof(val));
 		vertexes[i].floorzset = true;
 	}
-	else if (fastcmp(param, "zceiling"))
+	else if (TMNAME(param, "zceiling"))
 	{
 		vertexes[i].ceilingz = FLOAT_TO_FIXED(atof(val));
 		vertexes[i].ceilingzset = true;
@@ -1769,27 +1841,27 @@ textmap_plane_t textmap_planeceiling = {0, 0, 0, 0, 0};
 
 static void ParseTextmapSectorParameter(UINT32 i, const char *param, const char *val)
 {
-	if (fastcmp(param, "heightfloor"))
-		sectors[i].floorheight = atol(val) << FRACBITS;
-	else if (fastcmp(param, "heightceiling"))
-		sectors[i].ceilingheight = atol(val) << FRACBITS;
-	if (fastcmp(param, "texturefloor"))
+	if (TMNAME(param, "heightfloor"))
+		sectors[i].floorheight = TM_ATOL(val) << FRACBITS;
+	else if (TMNAME(param, "heightceiling"))
+		sectors[i].ceilingheight = TM_ATOL(val) << FRACBITS;
+	if (TMNAME(param, "texturefloor"))
 		sectors[i].floorpic = P_AddLevelFlat(val, foundflats);
-	else if (fastcmp(param, "textureceiling"))
+	else if (TMNAME(param, "textureceiling"))
 		sectors[i].ceilingpic = P_AddLevelFlat(val, foundflats);
-	else if (fastcmp(param, "lightlevel"))
-		sectors[i].lightlevel = atol(val);
-	else if (fastcmp(param, "lightfloor"))
-		sectors[i].floorlightlevel = atol(val);
-	else if (fastcmp(param, "lightfloorabsolute") && fastcmp("true", val))
+	else if (TMNAME(param, "lightlevel"))
+		sectors[i].lightlevel = TM_ATOL(val);
+	else if (TMNAME(param, "lightfloor"))
+		sectors[i].floorlightlevel = TM_ATOL(val);
+	else if (TMNAME(param, "lightfloorabsolute") && fastcmp("true", val))
 		sectors[i].floorlightabsolute = true;
-	else if (fastcmp(param, "lightceiling"))
-		sectors[i].ceilinglightlevel = atol(val);
-	else if (fastcmp(param, "lightceilingabsolute") && fastcmp("true", val))
+	else if (TMNAME(param, "lightceiling"))
+		sectors[i].ceilinglightlevel = TM_ATOL(val);
+	else if (TMNAME(param, "lightceilingabsolute") && fastcmp("true", val))
 		sectors[i].ceilinglightabsolute = true;
-	else if (fastcmp(param, "id"))
-		Tag_FSet(&sectors[i].tags, atol(val));
-	else if (fastcmp(param, "moreids"))
+	else if (TMNAME(param, "id"))
+		Tag_FSet(&sectors[i].tags, TM_ATOL(val));
+	else if (TMNAME(param, "moreids"))
 	{
 		const char* id = val;
 		while (id)
@@ -1799,175 +1871,175 @@ static void ParseTextmapSectorParameter(UINT32 i, const char *param, const char 
 				id++;
 		}
 	}
-	else if (fastcmp(param, "xpanningfloor"))
+	else if (TMNAME(param, "xpanningfloor"))
 		sectors[i].floorxoffset = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "ypanningfloor"))
+	else if (TMNAME(param, "ypanningfloor"))
 		sectors[i].flooryoffset = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "xpanningceiling"))
+	else if (TMNAME(param, "xpanningceiling"))
 		sectors[i].ceilingxoffset = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "ypanningceiling"))
+	else if (TMNAME(param, "ypanningceiling"))
 		sectors[i].ceilingyoffset = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "xscalefloor"))
+	else if (TMNAME(param, "xscalefloor"))
 		sectors[i].floorxscale = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "yscalefloor"))
+	else if (TMNAME(param, "yscalefloor"))
 		sectors[i].flooryscale = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "xscaleceiling"))
+	else if (TMNAME(param, "xscaleceiling"))
 		sectors[i].ceilingxscale = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "yscaleceiling"))
+	else if (TMNAME(param, "yscaleceiling"))
 		sectors[i].ceilingyscale = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "rotationfloor"))
+	else if (TMNAME(param, "rotationfloor"))
 		sectors[i].floorangle = FixedAngle(FLOAT_TO_FIXED(atof(val)));
-	else if (fastcmp(param, "rotationceiling"))
+	else if (TMNAME(param, "rotationceiling"))
 		sectors[i].ceilingangle = FixedAngle(FLOAT_TO_FIXED(atof(val)));
-	else if (fastcmp(param, "floorplane_a"))
+	else if (TMNAME(param, "floorplane_a"))
 	{
 		textmap_planefloor.defined |= PD_A;
 		textmap_planefloor.a = atof(val);
 	}
-	else if (fastcmp(param, "floorplane_b"))
+	else if (TMNAME(param, "floorplane_b"))
 	{
 		textmap_planefloor.defined |= PD_B;
 		textmap_planefloor.b = atof(val);
 	}
-	else if (fastcmp(param, "floorplane_c"))
+	else if (TMNAME(param, "floorplane_c"))
 	{
 		textmap_planefloor.defined |= PD_C;
 		textmap_planefloor.c = atof(val);
 	}
-	else if (fastcmp(param, "floorplane_d"))
+	else if (TMNAME(param, "floorplane_d"))
 	{
 		textmap_planefloor.defined |= PD_D;
 		textmap_planefloor.d = atof(val);
 	}
-	else if (fastcmp(param, "ceilingplane_a"))
+	else if (TMNAME(param, "ceilingplane_a"))
 	{
 		textmap_planeceiling.defined |= PD_A;
 		textmap_planeceiling.a = atof(val);
 	}
-	else if (fastcmp(param, "ceilingplane_b"))
+	else if (TMNAME(param, "ceilingplane_b"))
 	{
 		textmap_planeceiling.defined |= PD_B;
 		textmap_planeceiling.b = atof(val);
 	}
-	else if (fastcmp(param, "ceilingplane_c"))
+	else if (TMNAME(param, "ceilingplane_c"))
 	{
 		textmap_planeceiling.defined |= PD_C;
 		textmap_planeceiling.c = atof(val);
 	}
-	else if (fastcmp(param, "ceilingplane_d"))
+	else if (TMNAME(param, "ceilingplane_d"))
 	{
 		textmap_planeceiling.defined |= PD_D;
 		textmap_planeceiling.d = atof(val);
 	}
-	else if (fastcmp(param, "lightcolor"))
+	else if (TMNAME(param, "lightcolor"))
 	{
 		textmap_colormap.used = true;
-		textmap_colormap.lightcolor = atol(val);
+		textmap_colormap.lightcolor = TM_ATOL(val);
 	}
-	else if (fastcmp(param, "lightalpha"))
+	else if (TMNAME(param, "lightalpha"))
 	{
 		textmap_colormap.used = true;
-		textmap_colormap.lightalpha = atol(val);
+		textmap_colormap.lightalpha = TM_ATOL(val);
 	}
-	else if (fastcmp(param, "fadecolor"))
+	else if (TMNAME(param, "fadecolor"))
 	{
 		textmap_colormap.used = true;
-		textmap_colormap.fadecolor = atol(val);
+		textmap_colormap.fadecolor = TM_ATOL(val);
 	}
-	else if (fastcmp(param, "fadealpha"))
+	else if (TMNAME(param, "fadealpha"))
 	{
 		textmap_colormap.used = true;
-		textmap_colormap.fadealpha = atol(val);
+		textmap_colormap.fadealpha = TM_ATOL(val);
 	}
-	else if (fastcmp(param, "fadestart"))
+	else if (TMNAME(param, "fadestart"))
 	{
 		textmap_colormap.used = true;
-		textmap_colormap.fadestart = atol(val);
+		textmap_colormap.fadestart = TM_ATOL(val);
 	}
-	else if (fastcmp(param, "fadeend"))
+	else if (TMNAME(param, "fadeend"))
 	{
 		textmap_colormap.used = true;
-		textmap_colormap.fadeend = atol(val);
+		textmap_colormap.fadeend = TM_ATOL(val);
 	}
-	else if (fastcmp(param, "colormapfog") && fastcmp("true", val))
+	else if (TMNAME(param, "colormapfog") && fastcmp("true", val))
 	{
 		textmap_colormap.used = true;
 		textmap_colormap.flags |= CMF_FOG;
 	}
-	else if (fastcmp(param, "colormapfadesprites") && fastcmp("true", val))
+	else if (TMNAME(param, "colormapfadesprites") && fastcmp("true", val))
 	{
 		textmap_colormap.used = true;
 		textmap_colormap.flags |= CMF_FADEFULLBRIGHTSPRITES;
 	}
-	else if (fastcmp(param, "colormapprotected") && fastcmp("true", val))
+	else if (TMNAME(param, "colormapprotected") && fastcmp("true", val))
 		sectors[i].colormap_protected = true;
-	else if (fastcmp(param, "flipspecial_nofloor") && fastcmp("true", val))
+	else if (TMNAME(param, "flipspecial_nofloor") && fastcmp("true", val))
 		sectors[i].flags &= ~MSF_FLIPSPECIAL_FLOOR;
-	else if (fastcmp(param, "flipspecial_ceiling") && fastcmp("true", val))
+	else if (TMNAME(param, "flipspecial_ceiling") && fastcmp("true", val))
 		sectors[i].flags |= MSF_FLIPSPECIAL_CEILING;
-	else if (fastcmp(param, "triggerspecial_touch") && fastcmp("true", val))
+	else if (TMNAME(param, "triggerspecial_touch") && fastcmp("true", val))
 		sectors[i].flags |= MSF_TRIGGERSPECIAL_TOUCH;
-	else if (fastcmp(param, "triggerspecial_headbump") && fastcmp("true", val))
+	else if (TMNAME(param, "triggerspecial_headbump") && fastcmp("true", val))
 		sectors[i].flags |= MSF_TRIGGERSPECIAL_HEADBUMP;
-	else if (fastcmp(param, "triggerline_plane") && fastcmp("true", val))
+	else if (TMNAME(param, "triggerline_plane") && fastcmp("true", val))
 		sectors[i].flags |= MSF_TRIGGERLINE_PLANE;
-	else if (fastcmp(param, "triggerline_mobj") && fastcmp("true", val))
+	else if (TMNAME(param, "triggerline_mobj") && fastcmp("true", val))
 		sectors[i].flags |= MSF_TRIGGERLINE_MOBJ;
-	else if (fastcmp(param, "invertprecip") && fastcmp("true", val))
+	else if (TMNAME(param, "invertprecip") && fastcmp("true", val))
 		sectors[i].flags |= MSF_INVERTPRECIP;
-	else if (fastcmp(param, "gravityflip") && fastcmp("true", val))
+	else if (TMNAME(param, "gravityflip") && fastcmp("true", val))
 		sectors[i].flags |= MSF_GRAVITYFLIP;
-	else if (fastcmp(param, "heatwave") && fastcmp("true", val))
+	else if (TMNAME(param, "heatwave") && fastcmp("true", val))
 		sectors[i].flags |= MSF_HEATWAVE;
-	else if (fastcmp(param, "noclipcamera") && fastcmp("true", val))
+	else if (TMNAME(param, "noclipcamera") && fastcmp("true", val))
 		sectors[i].flags |= MSF_NOCLIPCAMERA;
-	else if (fastcmp(param, "outerspace") && fastcmp("true", val))
+	else if (TMNAME(param, "outerspace") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_OUTERSPACE;
-	else if (fastcmp(param, "doublestepup") && fastcmp("true", val))
+	else if (TMNAME(param, "doublestepup") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_DOUBLESTEPUP;
-	else if (fastcmp(param, "nostepdown") && fastcmp("true", val))
+	else if (TMNAME(param, "nostepdown") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_NOSTEPDOWN;
-	else if (fastcmp(param, "speedpad") && fastcmp("true", val))
+	else if (TMNAME(param, "speedpad") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_SPEEDPAD;
-	else if (fastcmp(param, "starpostactivator") && fastcmp("true", val))
+	else if (TMNAME(param, "starpostactivator") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_STARPOSTACTIVATOR;
-	else if (fastcmp(param, "exit") && fastcmp("true", val))
+	else if (TMNAME(param, "exit") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_EXIT;
-	else if (fastcmp(param, "specialstagepit") && fastcmp("true", val))
+	else if (TMNAME(param, "specialstagepit") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_SPECIALSTAGEPIT;
-	else if (fastcmp(param, "returnflag") && fastcmp("true", val))
+	else if (TMNAME(param, "returnflag") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_RETURNFLAG;
-	else if (fastcmp(param, "redteambase") && fastcmp("true", val))
+	else if (TMNAME(param, "redteambase") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_REDTEAMBASE;
-	else if (fastcmp(param, "blueteambase") && fastcmp("true", val))
+	else if (TMNAME(param, "blueteambase") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_BLUETEAMBASE;
-	else if (fastcmp(param, "fan") && fastcmp("true", val))
+	else if (TMNAME(param, "fan") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_FAN;
-	else if (fastcmp(param, "supertransform") && fastcmp("true", val))
+	else if (TMNAME(param, "supertransform") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_SUPERTRANSFORM;
-	else if (fastcmp(param, "forcespin") && fastcmp("true", val))
+	else if (TMNAME(param, "forcespin") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_FORCESPIN;
-	else if (fastcmp(param, "zoomtubestart") && fastcmp("true", val))
+	else if (TMNAME(param, "zoomtubestart") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_ZOOMTUBESTART;
-	else if (fastcmp(param, "zoomtubeend") && fastcmp("true", val))
+	else if (TMNAME(param, "zoomtubeend") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_ZOOMTUBEEND;
-	else if (fastcmp(param, "finishline") && fastcmp("true", val))
+	else if (TMNAME(param, "finishline") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_FINISHLINE;
-	else if (fastcmp(param, "ropehang") && fastcmp("true", val))
+	else if (TMNAME(param, "ropehang") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_ROPEHANG;
-	else if (fastcmp(param, "jumpflip") && fastcmp("true", val))
+	else if (TMNAME(param, "jumpflip") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_JUMPFLIP;
-	else if (fastcmp(param, "gravityoverride") && fastcmp("true", val))
+	else if (TMNAME(param, "gravityoverride") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_GRAVITYOVERRIDE;
-	else if (fastcmp(param, "nophysics_floor") && fastcmp("true", val))
+	else if (TMNAME(param, "nophysics_floor") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_NOPHYSICSFLOOR;
-	else if (fastcmp(param, "nophysics_ceiling") && fastcmp("true", val))
+	else if (TMNAME(param, "nophysics_ceiling") && fastcmp("true", val))
 		sectors[i].specialflags |= SSF_NOPHYSICSCEILING;
-	else if (fastcmp(param, "friction"))
+	else if (TMNAME(param, "friction"))
 		sectors[i].friction = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "gravity"))
+	else if (TMNAME(param, "gravity"))
 		sectors[i].gravity = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "damagetype"))
+	else if (TMNAME(param, "damagetype"))
 	{
 		if (fastcmp(val, "Generic"))
 			sectors[i].damagetype = SD_GENERIC;
@@ -1990,9 +2062,9 @@ static void ParseTextmapSectorParameter(UINT32 i, const char *param, const char 
 		if (fastcmp(val, "SpecialStage"))
 			sectors[i].damagetype = SD_SPECIALSTAGE;
 	}
-	else if (fastcmp(param, "triggertag"))
-		sectors[i].triggertag = atol(val);
-	else if (fastcmp(param, "triggerer"))
+	else if (TMNAME(param, "triggertag"))
+		sectors[i].triggertag = TM_ATOL(val);
+	else if (TMNAME(param, "triggerer"))
 	{
 		if (fastcmp(val, "Player"))
 			sectors[i].triggerer = TO_PLAYER;
@@ -2005,67 +2077,67 @@ static void ParseTextmapSectorParameter(UINT32 i, const char *param, const char 
 
 static void ParseTextmapSidedefParameter(UINT32 i, const char *param, const char *val)
 {
-	if (fastcmp(param, "offsetx"))
-		sides[i].textureoffset = atol(val)<<FRACBITS;
-	else if (fastcmp(param, "offsety"))
-		sides[i].rowoffset = atol(val)<<FRACBITS;
-	else if (fastcmp(param, "offsetx_top"))
-		SIDEW(&sides[i])->offsetx_top = atol(val) << FRACBITS;
-	else if (fastcmp(param, "offsetx_mid"))
-		SIDEW(&sides[i])->offsetx_mid = atol(val) << FRACBITS;
-	else if (fastcmp(param, "offsetx_bottom"))
-		SIDEW(&sides[i])->offsetx_bottom = atol(val) << FRACBITS;
-	else if (fastcmp(param, "offsety_top"))
-		SIDEW(&sides[i])->offsety_top = atol(val) << FRACBITS;
-	else if (fastcmp(param, "offsety_mid"))
-		SIDEW(&sides[i])->offsety_mid = atol(val) << FRACBITS;
-	else if (fastcmp(param, "offsety_bottom"))
-		SIDEW(&sides[i])->offsety_bottom = atol(val) << FRACBITS;
-	else if (fastcmp(param, "scalex_top"))
+	if (TMNAME(param, "offsetx"))
+		sides[i].textureoffset = TM_ATOL(val)<<FRACBITS;
+	else if (TMNAME(param, "offsety"))
+		sides[i].rowoffset = TM_ATOL(val)<<FRACBITS;
+	else if (TMNAME(param, "offsetx_top"))
+		SIDEW(&sides[i])->offsetx_top = TM_ATOL(val) << FRACBITS;
+	else if (TMNAME(param, "offsetx_mid"))
+		SIDEW(&sides[i])->offsetx_mid = TM_ATOL(val) << FRACBITS;
+	else if (TMNAME(param, "offsetx_bottom"))
+		SIDEW(&sides[i])->offsetx_bottom = TM_ATOL(val) << FRACBITS;
+	else if (TMNAME(param, "offsety_top"))
+		SIDEW(&sides[i])->offsety_top = TM_ATOL(val) << FRACBITS;
+	else if (TMNAME(param, "offsety_mid"))
+		SIDEW(&sides[i])->offsety_mid = TM_ATOL(val) << FRACBITS;
+	else if (TMNAME(param, "offsety_bottom"))
+		SIDEW(&sides[i])->offsety_bottom = TM_ATOL(val) << FRACBITS;
+	else if (TMNAME(param, "scalex_top"))
 		SIDEW(&sides[i])->scalex_top = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "scalex_mid"))
+	else if (TMNAME(param, "scalex_mid"))
 		SIDEW(&sides[i])->scalex_mid = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "scalex_bottom"))
+	else if (TMNAME(param, "scalex_bottom"))
 		SIDEW(&sides[i])->scalex_bottom = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "scaley_top"))
+	else if (TMNAME(param, "scaley_top"))
 		SIDEW(&sides[i])->scaley_top = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "scaley_mid"))
+	else if (TMNAME(param, "scaley_mid"))
 		SIDEW(&sides[i])->scaley_mid = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "scaley_bottom"))
+	else if (TMNAME(param, "scaley_bottom"))
 		SIDEW(&sides[i])->scaley_bottom = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "texturetop"))
+	else if (TMNAME(param, "texturetop"))
 		sides[i].toptexture = R_TextureNumForName(val);
-	else if (fastcmp(param, "texturebottom"))
+	else if (TMNAME(param, "texturebottom"))
 		sides[i].bottomtexture = R_TextureNumForName(val);
-	else if (fastcmp(param, "texturemiddle"))
+	else if (TMNAME(param, "texturemiddle"))
 		sides[i].midtexture = R_TextureNumForName(val);
-	else if (fastcmp(param, "sector"))
-		P_SetSidedefSector(i, atol(val));
-	else if (fastcmp(param, "repeatcnt"))
-		sides[i].repeatcnt = atol(val);
-	else if (fastcmp(param, "light"))
-		SIDEW(&sides[i])->light = atol(val);
-	else if (fastcmp(param, "light_top"))
-		SIDEW(&sides[i])->light_top = atol(val);
-	else if (fastcmp(param, "light_mid"))
-		SIDEW(&sides[i])->light_mid = atol(val);
-	else if (fastcmp(param, "light_bottom"))
-		SIDEW(&sides[i])->light_bottom = atol(val);
-	else if (fastcmp(param, "lightabsolute") && fastcmp("true", val))
+	else if (TMNAME(param, "sector"))
+		P_SetSidedefSector(i, TM_ATOL(val));
+	else if (TMNAME(param, "repeatcnt"))
+		sides[i].repeatcnt = TM_ATOL(val);
+	else if (TMNAME(param, "light"))
+		SIDEW(&sides[i])->light = TM_ATOL(val);
+	else if (TMNAME(param, "light_top"))
+		SIDEW(&sides[i])->light_top = TM_ATOL(val);
+	else if (TMNAME(param, "light_mid"))
+		SIDEW(&sides[i])->light_mid = TM_ATOL(val);
+	else if (TMNAME(param, "light_bottom"))
+		SIDEW(&sides[i])->light_bottom = TM_ATOL(val);
+	else if (TMNAME(param, "lightabsolute") && fastcmp("true", val))
 		SIDEW(&sides[i])->lightabsolute = true;
-	else if (fastcmp(param, "lightabsolute_top") && fastcmp("true", val))
+	else if (TMNAME(param, "lightabsolute_top") && fastcmp("true", val))
 		SIDEW(&sides[i])->lightabsolute_top = true;
-	else if (fastcmp(param, "lightabsolute_mid") && fastcmp("true", val))
+	else if (TMNAME(param, "lightabsolute_mid") && fastcmp("true", val))
 		SIDEW(&sides[i])->lightabsolute_mid = true;
-	else if (fastcmp(param, "lightabsolute_bottom") && fastcmp("true", val))
+	else if (TMNAME(param, "lightabsolute_bottom") && fastcmp("true", val))
 		SIDEW(&sides[i])->lightabsolute_bottom = true;
 }
 
 static void ParseTextmapLinedefParameter(UINT32 i, const char *param, const char *val)
 {
-	if (fastcmp(param, "id"))
-		Tag_FSet(&lines[i].tags, atol(val));
-	else if (fastcmp(param, "moreids"))
+	if (TMNAME(param, "id"))
+		Tag_FSet(&lines[i].tags, TM_ATOL(val));
+	else if (TMNAME(param, "moreids"))
 	{
 		const char* id = val;
 		while (id)
@@ -2075,12 +2147,12 @@ static void ParseTextmapLinedefParameter(UINT32 i, const char *param, const char
 				id++;
 		}
 	}
-	else if (fastcmp(param, "special"))
-		lines[i].special = atol(val);
-	else if (fastcmp(param, "v1"))
-		P_SetLinedefV1(i, atol(val));
-	else if (fastcmp(param, "v2"))
-		P_SetLinedefV2(i, atol(val));
+	else if (TMNAME(param, "special"))
+		lines[i].special = TM_ATOL(val);
+	else if (TMNAME(param, "v1"))
+		P_SetLinedefV1(i, TM_ATOL(val));
+	else if (TMNAME(param, "v2"))
+		P_SetLinedefV2(i, TM_ATOL(val));
 	else if (fastncmp(param, "stringarg", 9) && strlen(param) > 9)
 	{
 		size_t argnum = atol(param + 9);
@@ -2094,15 +2166,15 @@ static void ParseTextmapLinedefParameter(UINT32 i, const char *param, const char
 		size_t argnum = atol(param + 3);
 		if (argnum >= NUMLINEARGS)
 			return;
-		lines[i].args[argnum] = atol(val);
+		lines[i].args[argnum] = TM_ATOL(val);
 	}
-	else if (fastcmp(param, "sidefront"))
-		lines[i].sidenum[0] = atol(val);
-	else if (fastcmp(param, "sideback"))
-		lines[i].sidenum[1] = atol(val);
-	else if (fastcmp(param, "alpha"))
+	else if (TMNAME(param, "sidefront"))
+		lines[i].sidenum[0] = TM_ATOL(val);
+	else if (TMNAME(param, "sideback"))
+		lines[i].sidenum[1] = TM_ATOL(val);
+	else if (TMNAME(param, "alpha"))
 		lines[i].alpha = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "blendmode") || fastcmp(param, "renderstyle"))
+	else if (TMNAME(param, "blendmode") || TMNAME(param, "renderstyle"))
 	{
 		if (fastcmp(val, "translucent"))
 			lines[i].blendmode = AST_COPY;
@@ -2117,49 +2189,49 @@ static void ParseTextmapLinedefParameter(UINT32 i, const char *param, const char
 		if (fastcmp(val, "fog"))
 			lines[i].blendmode = AST_FOG;
 	}
-	else if (fastcmp(param, "executordelay"))
-		lines[i].executordelay = atol(val);
+	else if (TMNAME(param, "executordelay"))
+		lines[i].executordelay = TM_ATOL(val);
 
 	// Flags
-	else if (fastcmp(param, "blocking") && fastcmp("true", val))
+	else if (TMNAME(param, "blocking") && fastcmp("true", val))
 		lines[i].flags |= ML_IMPASSIBLE;
-	else if (fastcmp(param, "blockmonsters") && fastcmp("true", val))
+	else if (TMNAME(param, "blockmonsters") && fastcmp("true", val))
 		lines[i].flags |= ML_BLOCKMONSTERS;
-	else if (fastcmp(param, "twosided") && fastcmp("true", val))
+	else if (TMNAME(param, "twosided") && fastcmp("true", val))
 		lines[i].flags |= ML_TWOSIDED;
-	else if (fastcmp(param, "dontpegtop") && fastcmp("true", val))
+	else if (TMNAME(param, "dontpegtop") && fastcmp("true", val))
 		lines[i].flags |= ML_DONTPEGTOP;
-	else if (fastcmp(param, "dontpegbottom") && fastcmp("true", val))
+	else if (TMNAME(param, "dontpegbottom") && fastcmp("true", val))
 		lines[i].flags |= ML_DONTPEGBOTTOM;
-	else if (fastcmp(param, "skewtd") && fastcmp("true", val))
+	else if (TMNAME(param, "skewtd") && fastcmp("true", val))
 		lines[i].flags |= ML_SKEWTD;
-	else if (fastcmp(param, "noclimb") && fastcmp("true", val))
+	else if (TMNAME(param, "noclimb") && fastcmp("true", val))
 		lines[i].flags |= ML_NOCLIMB;
-	else if (fastcmp(param, "noskew") && fastcmp("true", val))
+	else if (TMNAME(param, "noskew") && fastcmp("true", val))
 		lines[i].flags |= ML_NOSKEW;
-	else if (fastcmp(param, "midpeg") && fastcmp("true", val))
+	else if (TMNAME(param, "midpeg") && fastcmp("true", val))
 		lines[i].flags |= ML_MIDPEG;
-	else if (fastcmp(param, "midsolid") && fastcmp("true", val))
+	else if (TMNAME(param, "midsolid") && fastcmp("true", val))
 		lines[i].flags |= ML_MIDSOLID;
-	else if (fastcmp(param, "wrapmidtex") && fastcmp("true", val))
+	else if (TMNAME(param, "wrapmidtex") && fastcmp("true", val))
 		lines[i].flags |= ML_WRAPMIDTEX;
-	/*else if (fastcmp(param, "effect6") && fastcmp("true", val))
+	/*else if (TMNAME(param, "effect6") && fastcmp("true", val))
 		lines[i].flags |= ML_EFFECT6;*/
-	else if (fastcmp(param, "nonet") && fastcmp("true", val))
+	else if (TMNAME(param, "nonet") && fastcmp("true", val))
 		lines[i].flags |= ML_NONET;
-	else if (fastcmp(param, "netonly") && fastcmp("true", val))
+	else if (TMNAME(param, "netonly") && fastcmp("true", val))
 		lines[i].flags |= ML_NETONLY;
-	else if (fastcmp(param, "bouncy") && fastcmp("true", val))
+	else if (TMNAME(param, "bouncy") && fastcmp("true", val))
 		lines[i].flags |= ML_BOUNCY;
-	else if (fastcmp(param, "transfer") && fastcmp("true", val))
+	else if (TMNAME(param, "transfer") && fastcmp("true", val))
 		lines[i].flags |= ML_TFERLINE;
 }
 
 static void ParseTextmapThingParameter(UINT32 i, const char *param, const char *val)
 {
-	if (fastcmp(param, "id"))
-		Tag_FSet(&mapthings[i].tags, atol(val));
-	else if (fastcmp(param, "moreids"))
+	if (TMNAME(param, "id"))
+		Tag_FSet(&mapthings[i].tags, TM_ATOL(val));
+	else if (TMNAME(param, "moreids"))
 	{
 		const char* id = val;
 		while (id)
@@ -2169,32 +2241,32 @@ static void ParseTextmapThingParameter(UINT32 i, const char *param, const char *
 				id++;
 		}
 	}
-	else if (fastcmp(param, "x"))
-		mapthings[i].x = atol(val);
-	else if (fastcmp(param, "y"))
-		mapthings[i].y = atol(val);
-	else if (fastcmp(param, "height"))
-		mapthings[i].z = atol(val);
-	else if (fastcmp(param, "angle"))
-		mapthings[i].angle = atol(val);
-	else if (fastcmp(param, "pitch"))
-		mapthings[i].pitch = atol(val);
-	else if (fastcmp(param, "roll"))
-		mapthings[i].roll = atol(val);
-	else if (fastcmp(param, "type"))
-		mapthings[i].type = atol(val);
-	else if (fastcmp(param, "scale"))
+	else if (TMNAME(param, "x"))
+		mapthings[i].x = TM_ATOL(val);
+	else if (TMNAME(param, "y"))
+		mapthings[i].y = TM_ATOL(val);
+	else if (TMNAME(param, "height"))
+		mapthings[i].z = TM_ATOL(val);
+	else if (TMNAME(param, "angle"))
+		mapthings[i].angle = TM_ATOL(val);
+	else if (TMNAME(param, "pitch"))
+		mapthings[i].pitch = TM_ATOL(val);
+	else if (TMNAME(param, "roll"))
+		mapthings[i].roll = TM_ATOL(val);
+	else if (TMNAME(param, "type"))
+		mapthings[i].type = TM_ATOL(val);
+	else if (TMNAME(param, "scale"))
 		mapthings[i].spritexscale = mapthings[i].spriteyscale = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "scalex"))
+	else if (TMNAME(param, "scalex"))
 		mapthings[i].spritexscale = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "scaley"))
+	else if (TMNAME(param, "scaley"))
 		mapthings[i].spriteyscale = FLOAT_TO_FIXED(atof(val));
-	else if (fastcmp(param, "mobjscale"))
+	else if (TMNAME(param, "mobjscale"))
 		mapthings[i].scale = FLOAT_TO_FIXED(atof(val));
 	// Flags
-	else if (fastcmp(param, "flip") && fastcmp("true", val))
+	else if (TMNAME(param, "flip") && fastcmp("true", val))
 		mapthings[i].options |= MTF_OBJECTFLIP;
-	else if (fastcmp(param, "absolutez") && fastcmp("true", val))
+	else if (TMNAME(param, "absolutez") && fastcmp("true", val))
 		mapthings[i].options |= MTF_ABSOLUTEZ;
 
 	else if (fastncmp(param, "stringarg", 9) && strlen(param) > 9)
@@ -2210,7 +2282,7 @@ static void ParseTextmapThingParameter(UINT32 i, const char *param, const char *
 		size_t argnum = atol(param + 3);
 		if (argnum >= NUMMAPTHINGARGS)
 			return;
-		mapthings[i].args[argnum] = atol(val);
+		mapthings[i].args[argnum] = TM_ATOL(val);
 	}
 }
 
@@ -2232,6 +2304,11 @@ static void TextmapParse(UINT32 dataPos, size_t num, void (*parser)(UINT32, cons
 		return;
 	}
 
+#ifdef PS2_PROFILE
+	// PS2-LOAD-17: the pair in one call, cut out of the text in place (m_tokenizer.c)
+	while (M_TokenizerReadPair(&param, &val))
+		parser(num, param, val);
+#else
 	while (true)
 	{
 		param = M_TokenizerRead(0);
@@ -2240,7 +2317,15 @@ static void TextmapParse(UINT32 dataPos, size_t num, void (*parser)(UINT32, cons
 		val = M_TokenizerRead(1);
 		parser(num, param, val);
 	}
+#endif
 }
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-25: the pairs of the block come from the one-pass scan when TextmapCount made one
+#define TEXTMAP_PARSE(type, blocks, i, parser) do { if (tmscan_on) M_TokenizerScanParse(&tmscan, type, (UINT32)(i), parser); else TextmapParse((blocks).pos[i], i, parser); } while (0)
+#else
+#define TEXTMAP_PARSE(type, blocks, i, parser) TextmapParse((blocks).pos[i], i, parser)
+#endif
 
 /** Provides a fix to the flat alignment coordinate transform from standard Textmaps.
  */
@@ -3071,6 +3156,7 @@ static void P_LoadTextmap(void)
 	/// from the textmap, and therefore we have to account for it by
 	/// preemptively setting that value beforehand.
 
+	LP_BEGIN(lpu);
 	for (i = 0, vt = vertexes; i < numvertexes; i++, vt++)
 	{
 		// Defaults.
@@ -3078,7 +3164,7 @@ static void P_LoadTextmap(void)
 		vt->floorzset = vt->ceilingzset = false;
 		vt->floorz = vt->ceilingz = 0;
 
-		TextmapParse(vertexBlocks.pos[i], i, ParseTextmapVertexParameter);
+		TEXTMAP_PARSE(TMS_VERTEX, vertexBlocks, i, ParseTextmapVertexParameter);
 
 		if (vt->x == INT32_MAX)
 			I_Error("P_LoadTextmap: vertex %s has no x value set!\n", sizeu1(i));
@@ -3086,6 +3172,8 @@ static void P_LoadTextmap(void)
 			I_Error("P_LoadTextmap: vertex %s has no y value set!\n", sizeu1(i));
 	}
 
+	LP_END(U_VERT, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, sc = sectors; i < numsectors; i++, sc++)
 	{
 		// Defaults.
@@ -3135,7 +3223,7 @@ static void P_LoadTextmap(void)
 		textmap_planefloor.defined = 0;
 		textmap_planeceiling.defined = 0;
 
-		TextmapParse(sectorBlocks.pos[i], i, ParseTextmapSectorParameter);
+		TEXTMAP_PARSE(TMS_SECTOR, sectorBlocks, i, ParseTextmapSectorParameter);
 
 		P_InitializeSector(sc);
 		if (textmap_colormap.used)
@@ -3169,6 +3257,8 @@ static void P_LoadTextmap(void)
 		TextmapFixFlatOffsets(sc);
 	}
 
+	LP_END(U_SECT, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, ld = lines; i < numlines; i++, ld++)
 	{
 		// Defaults.
@@ -3184,7 +3274,7 @@ static void P_LoadTextmap(void)
 		ld->sidenum[0] = NO_SIDEDEF;
 		ld->sidenum[1] = NO_SIDEDEF;
 
-		TextmapParse(linedefBlocks.pos[i], i, ParseTextmapLinedefParameter);
+		TEXTMAP_PARSE(TMS_LINEDEF, linedefBlocks, i, ParseTextmapLinedefParameter);
 
 		if (!ld->v1)
 			I_Error("P_LoadTextmap: linedef %s has no v1 value set!\n", sizeu1(i));
@@ -3196,6 +3286,8 @@ static void P_LoadTextmap(void)
 		P_InitializeLinedef(ld);
 	}
 
+	LP_END(U_LINE, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, sd = sides; i < numsides; i++, sd++)
 	{
 		// Defaults.
@@ -3217,7 +3309,7 @@ static void P_LoadTextmap(void)
 		sd->lightabsolute = sd->lightabsolute_top = sd->lightabsolute_mid = sd->lightabsolute_bottom = false;
 #endif
 
-		TextmapParse(sidedefBlocks.pos[i], i, ParseTextmapSidedefParameter);
+		TEXTMAP_PARSE(TMS_SIDEDEF, sidedefBlocks, i, ParseTextmapSidedefParameter);
 
 		if (!sd->sector)
 			I_Error("P_LoadTextmap: sidedef %s has no sector value set!\n", sizeu1(i));
@@ -3225,6 +3317,8 @@ static void P_LoadTextmap(void)
 		P_InitializeSidedef(sd);
 	}
 
+	LP_END(U_SIDE, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, mt = mapthings; i < nummapthings; i++, mt++)
 	{
 		// Defaults.
@@ -3241,8 +3335,9 @@ static void P_LoadTextmap(void)
 		memset(mt->stringargs, 0x00, NUMMAPTHINGSTRINGARGS*sizeof(*mt->stringargs));
 		mt->mobj = NULL;
 
-		TextmapParse(mapthingBlocks.pos[i], i, ParseTextmapThingParameter);
+		TEXTMAP_PARSE(TMS_THING, mapthingBlocks, i, ParseTextmapThingParameter);
 	}
+	LP_END(U_THING, lpu);
 }
 
 #endif
@@ -3421,13 +3516,21 @@ static boolean P_LoadMapData(const virtres_t *virt)
 			CONS_Alert(CONS_ERROR, "Emtpy TEXTMAP Lump!\n");
 			return false;
 		}
+		LP_BEGIN(lpu);
+		LP_SAMPLE(20);
 		M_TokenizerOpen((char *)VRES_DATA(virt, textmap), textmap->size);
+		LP_SAMPLE(21);
 		VRES_DROP(textmap); // the tokenizer has its own copy
+		LP_END(U_OPEN, lpu);
+		LP_RESTART(lpu);
+		LP_SAMPLE(18);
 		if (!TextmapCount(textmap->size))
 		{
 			M_TokenizerClose();
 			return false;
 		}
+		LP_SAMPLE(19);
+		LP_END(U_COUNT, lpu);
 	}
 	else
 #endif
@@ -3488,7 +3591,16 @@ static boolean P_LoadMapData(const virtres_t *virt)
 #ifdef HAS_UDMF
 	if (udmf)
 	{
+		LP_SAMPLE(14);
 		P_LoadTextmap();
+		LP_SAMPLE(15);
+#ifdef PS2_PROFILE
+		if (tmscan_on)
+		{
+			Tokenizer_SRB2ScanFree(&tmscan);
+			tmscan_on = false;
+		}
+#endif
 		M_TokenizerClose();
 	}
 	else
@@ -4474,6 +4586,10 @@ static void P_LoadReject(UINT8 *data, size_t count)
 }
 #endif
 
+#ifdef PS2_PROFILE
+static size_t ps2lp_rejectbytes; // PS2-LOAD-1: size of the REJECT lump, for P_LevelHash
+#endif
+
 static void P_LoadMapLUT(const virtres_t *virt)
 {
 	virtlump_t* virtblockmap = vres_Find(virt, "BLOCKMAP");
@@ -4481,6 +4597,7 @@ static void P_LoadMapLUT(const virtres_t *virt)
 
 	// Lookup tables
 #ifdef PS2_PROFILE
+	ps2lp_rejectbytes = virtreject ? virtreject->size : 0;
 	if (virtreject && virtreject->size)
 	{
 		// PS2-52: the lump data is the matrix: no second copy next to it (vres_Free skips what was taken)
@@ -7660,13 +7777,190 @@ static void P_CompactBlockmap(void)
 }
 #endif
 
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-1 (-loadprof -loadhash): a hash of everything the level loader built (no pointers, only indices), printed as "LHASH map <hash>".
+// The tool for "the same bytes before and after a load-time change": two runs of the same map on two ELFs must print the same line.
+#define LH(v) PS2LP_H32(&hs, (UINT32)(v))
+static void P_LevelHashTags(ps2lp_hash_t *hsp, const taglist_t *t)
+{
+	ps2lp_hash_t hs = *hsp;
+	UINT32 k;
+
+	LH(t->count);
+	for (k = 0; k < t->count; k++)
+		LH(t->tags[k]);
+	*hsp = hs;
+}
+
+static void P_LevelHash(const char *label)
+{
+	ps2lp_hash_t hs = { { 2166136261u, 0x811C9DC5u ^ 0xA5A5A5A5u } };
+	size_t i, j;
+	char lab[24];
+
+	LH(numvertexes); LH(numsectors); LH(numlines); LH(numsides); LH(nummapthings); LH(numsegs); LH(numsubsectors); LH(numnodes); LH(numlevelflats);
+	for (i = 0; i < numvertexes; i++)
+	{
+		const vertex_t *v = &vertexes[i];
+
+		LH(v->x); LH(v->y); LH(v->floorz); LH(v->ceilingz); LH(v->floorzset); LH(v->ceilingzset);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".vtx"), &hs);
+	for (i = 0; i < numsectors; i++)
+	{
+		const sector_t *sc = &sectors[i];
+
+		LH(sc->floorheight); LH(sc->ceilingheight); LH(sc->floorpic); LH(sc->ceilingpic); LH(sc->lightlevel); LH(sc->special);
+		P_LevelHashTags(&hs, &sc->tags);
+		LH(sc->soundorg.x); LH(sc->soundorg.y); LH(sc->soundorg.z);
+		LH(sc->floorxoffset); LH(sc->flooryoffset); LH(sc->ceilingxoffset); LH(sc->ceilingyoffset);
+		LH(sc->floorxscale); LH(sc->flooryscale); LH(sc->ceilingxscale); LH(sc->ceilingyscale);
+		LH(sc->floorangle); LH(sc->ceilingangle); LH(sc->heightsec); LH(sc->camsec);
+		LH(sc->floorlightlevel); LH(sc->ceilinglightlevel); LH(sc->floorlightabsolute); LH(sc->ceilinglightabsolute);
+		LH(sc->floorlightsec); LH(sc->ceilinglightsec); LH(sc->crumblestate);
+		LH(sc->linecount);
+		for (j = 0; j < sc->linecount; j++)
+			LH(sc->lines[j] - lines);
+		LH(sc->gravity); LH(sc->flags); LH(sc->specialflags); LH(sc->damagetype); LH(sc->triggertag); LH(sc->triggerer); LH(sc->friction);
+		LH(sc->cullheight ? (INT32)(sc->cullheight - lines) : -1);
+		LH(sc->spawn_lightlevel); LH(sc->portal_floor); LH(sc->portal_ceiling);
+		LH(sc->extra_colormap ? 1 : 0);
+	}
+	for (i = 0; i < numlevelflats; i++)
+	{
+		const UINT8 *n = (const UINT8 *)levelflats[i].name;
+
+		for (j = 0; j < 8; j++)
+			LH(n[j]);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".sec"), &hs);
+	for (i = 0; i < numlines; i++)
+	{
+		const line_t *l = &lines[i];
+
+		LH(l->v1 - vertexes); LH(l->v2 - vertexes); LH(l->dx); LH(l->dy); LH(l->angle); LH(l->flags); LH(l->special);
+		P_LevelHashTags(&hs, &l->tags);
+		for (j = 0; j < NUMLINEARGS; j++)
+			LH(l->args[j]);
+		for (j = 0; j < NUMLINESTRINGARGS; j++)
+		{
+			const char *a = l->stringargs[j];
+
+			LH(a ? 1 : 0);
+			while (a && *a)
+				LH(*a++);
+		}
+		LH(l->sidenum[0]); LH(l->sidenum[1]); LH(l->alpha); LH(l->blendmode); LH(l->executordelay);
+		LH(l->bbox[0]); LH(l->bbox[1]); LH(l->bbox[2]); LH(l->bbox[3]);
+		LH(l->slopetype);
+		LH(l->frontsector ? (INT32)(l->frontsector - sectors) : -1);
+		LH(l->backsector ? (INT32)(l->backsector - sectors) : -1);
+		LH(l->callcount); LH(l->secportal);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".lin"), &hs);
+	for (i = 0; i < numsides; i++)
+	{
+		const side_t *sd = &sides[i];
+
+		LH(sd->textureoffset); LH(sd->rowoffset);
+		LH(SIDE_OFFSETX_TOP(sd)); LH(SIDE_OFFSETX_MID(sd)); LH(SIDE_OFFSETX_BOTTOM(sd));
+		LH(SIDE_OFFSETY_TOP(sd)); LH(SIDE_OFFSETY_MID(sd)); LH(SIDE_OFFSETY_BOTTOM(sd));
+		LH(SIDE_SCALEX_TOP(sd)); LH(SIDE_SCALEX_MID(sd)); LH(SIDE_SCALEX_BOTTOM(sd));
+		LH(SIDE_SCALEY_TOP(sd)); LH(SIDE_SCALEY_MID(sd)); LH(SIDE_SCALEY_BOTTOM(sd));
+		LH(SIDE_LIGHT(sd)); LH(SIDE_LIGHT_TOP(sd)); LH(SIDE_LIGHT_MID(sd)); LH(SIDE_LIGHT_BOTTOM(sd));
+		LH(SIDE_LIGHTABSOLUTE(sd)); LH(SIDE_LIGHTABSOLUTE_TOP(sd)); LH(SIDE_LIGHTABSOLUTE_MID(sd)); LH(SIDE_LIGHTABSOLUTE_BOTTOM(sd));
+		LH(sd->toptexture); LH(sd->bottomtexture); LH(sd->midtexture);
+		LH(sd->line ? (INT32)(sd->line - lines) : -1);
+		LH(sd->sector ? (INT32)(sd->sector - sectors) : -1);
+		LH(sd->special); LH(sd->repeatcnt);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".sid"), &hs);
+	for (i = 0; i < numsegs; i++)
+	{
+		const seg_t *sg = &segs[i];
+
+		LH(sg->v1 - vertexes); LH(sg->v2 - vertexes); LH(sg->side); LH(sg->offset); LH(sg->angle);
+		LH(sg->sidedef ? (INT32)(sg->sidedef - sides) : -1);
+		LH(sg->linedef ? (INT32)(sg->linedef - lines) : -1);
+		LH(sg->frontsector ? (INT32)(sg->frontsector - sectors) : -1);
+		LH(sg->backsector ? (INT32)(sg->backsector - sectors) : -1);
+		LH(sg->length); LH(sg->dontrenderme); LH(sg->glseg);
+	}
+	for (i = 0; i < numsubsectors; i++)
+	{
+		const subsector_t *ss = &subsectors[i];
+
+		LH(ss->sector ? (INT32)(ss->sector - sectors) : -1); LH(ss->numlines); LH(ss->firstline);
+	}
+	for (i = 0; i < numnodes; i++)
+	{
+		const node_t *n = &nodes[i];
+
+		LH(n->x); LH(n->y); LH(n->dx); LH(n->dy);
+		for (j = 0; j < 8; j++)
+			LH(n->bbox[j >> 2][j & 3]);
+		LH(n->children[0]); LH(n->children[1]);
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".bsp"), &hs);
+	LH(bmapwidth); LH(bmapheight); LH(bmaporgx); LH(bmaporgy);
+	{
+		const size_t cells = (size_t)bmapwidth * bmapheight;
+
+		// the representation is part of the level (P_CompactBlockmap): cells are offsets, lists are 32 or 16 bit
+		for (i = 0; i < cells; i++)
+			LH(blockmap[i]);
+		if (ps2_blockmaplists)
+		{
+			size_t prefix = cells + 4;
+
+			for (i = prefix; i < ps2_blockmapwords; i++)
+				LH(ps2_blockmaplists[i - prefix]);
+		}
+		else
+			for (i = cells + 4; i < ps2_blockmapwords; i++)
+				LH(blockmaplump[i]);
+		LH(ps2_blockmapwords);
+	}
+	LH(rejectmatrix ? 1 : 0);
+	for (i = 0; rejectmatrix && i < ps2lp_rejectbytes; i++)
+		LH(rejectmatrix[i]);
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".lut"), &hs);
+	for (i = 0; i < nummapthings; i++)
+	{
+		const mapthing_t *t = &mapthings[i];
+
+		LH(t->x); LH(t->y); LH(t->angle); LH(t->pitch); LH(t->roll); LH(t->type); LH(t->options); LH(t->z); LH(t->extrainfo);
+		P_LevelHashTags(&hs, &t->tags);
+		LH(t->scale); LH(t->spritexscale); LH(t->spriteyscale);
+		for (j = 0; j < NUMMAPTHINGARGS; j++)
+			LH(t->args[j]);
+		for (j = 0; j < NUMMAPTHINGSTRINGARGS; j++)
+		{
+			const char *a = t->stringargs[j];
+
+			LH(a ? 1 : 0);
+			while (a && *a)
+				LH(*a++);
+		}
+	}
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".thg"), &hs);
+	PS2LP_HashPrint(strcat(strcpy(lab, label), ".all"), &hs);
+}
+#undef LH
+#endif
+
 static boolean P_LoadMapFromFile(void)
 {
-	virtres_t *virt = vres_GetMap(lastloadedmaplumpnum);
-	virtlump_t *textmap = vres_Find(virt, "TEXTMAP");
+	LP_BEGIN(lpm);
+	virtres_t *virt;
+	virtlump_t *textmap;
 #ifndef PS2_PROFILE
 	size_t i;
 #endif
+	virt = vres_GetMap(lastloadedmaplumpnum);
+	textmap = vres_Find(virt, "TEXTMAP");
+	LP_END(LV_VRES, lpm);
 #ifndef HAS_UDMF
 	if (textmap != NULL) // TEXTMAP data stays in the pack, but this build (SRB2_PS2_NO=udmf) cannot load it
 	{
@@ -7687,19 +7981,28 @@ static boolean P_LoadMapFromFile(void)
 	}
 #endif
 	ZCK("map-begin");
+	LP_RESTART(lpm);
 	if (!P_LoadMapData(virt))
 		return false;
+	LP_END(LV_MAPDATA, lpm);
 	ZCK("map-data");
+	LP_RESTART(lpm);
 	P_LoadMapBSP(virt);
+	LP_END(LV_BSP, lpm);
 	ZCK("map-bsp");
+	LP_RESTART(lpm);
 	P_LoadMapLUT(virt);
 #ifdef PS2_PROFILE
 	P_CompactBlockmap();
 #endif
+	LP_END(LV_LUT, lpm);
 	ZCK("map-blockmap");
 
+	LP_RESTART(lpm);
 	P_LinkMapData();
+	LP_END(LV_LINK, lpm);
 
+	LP_RESTART(lpm);
 	if (!udmf)
 		P_AddBinaryMapTags();
 
@@ -7710,6 +8013,7 @@ static boolean P_LoadMapFromFile(void)
 #ifdef PS2_PROFILE
 	P_CompactLineArgs(); // PS2-143: the loaders and the conversion are done with the line arguments
 #endif
+	LP_END(LV_TAGS, lpm);
 
 	// Copy relevant map data for NetArchive purposes.
 #ifdef PS2_PROFILE
@@ -7736,9 +8040,11 @@ static boolean P_LoadMapFromFile(void)
 #endif
 
 	ZCK("map-spawnstate");
+	LP_RESTART(lpm);
 	P_MakeMapMD5(virt, &mapmd5);
 
 	vres_Free(virt);
+	LP_END(LV_SPAWNSTATE, lpm);
 	ZCK("map-loaded");
 	return true;
 }
@@ -8426,13 +8732,41 @@ void P_AbandonLevelLoad(void)
 }
 #endif
 
+static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate);
+
+#ifdef PS2_PROFILE
+static void P_LevelHash(const char *label); // PS2-LOAD-1 (-loadhash)
+#endif
+
 boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
+{
+	boolean ok;
+	LP_BEGIN(lpt);
+
+	LP_SAMPLE(2);
+	ok = P_LoadLevel_(fromnetsave, reloadinggamestate);
+	LP_END(LV_TOTAL, lpt);
+	LP_SAMPLE(3);
+#ifdef PS2_PROFILE
+	if (ps2lp_on)
+	{
+		char label[16];
+
+		snprintf(label, sizeof label, "map%d", (int)gamemap);
+		PS2LP_Report(label);
+	}
+#endif
+	return ok;
+}
+
+static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 {
 	// use gamemap to get map number.
 	// 99% of the things already did, so.
 	// Map header should always be in place at this point
 	INT32 i, ranspecialwipe = 0;
 	sector_t *ss;
+	LP_BEGIN(lpl);
 	levelloading = true;
 #ifdef PS2_PROFILE
 	Z_LevelPhase(false); // PS2-63: the bulk of the level is carved from the bottom of the arena
@@ -8448,6 +8782,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	CON_Drawer(); // let the user know what we are going to do
 	I_FinishUpdate(); // page flip or blit buffer
+	LP_END(LV_PRE1, lpl);
+	LP_RESTART(lpl);
 
 	// Reset the palette
 	if (!(rendermode == render_none || reloadinggamestate))
@@ -8498,6 +8834,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 			CV_SetValue(&cv_chasecam2, chase);
 	}
 
+	LP_END(LV_PRE2, lpl);
+	LP_RESTART(lpl);
+
 	// Initial height of PointOfView
 	// will be set by player think.
 	players[consoleplayer].viewz = 1;
@@ -8540,10 +8879,15 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 			FixedDiv((F_GetWipeLength(wipedefs[wipe_level_toblack])-2)*NEWTICRATERATIO, NEWTICRATE), MUSICRATE));
 	}
 
+	LP_END(LV_PRE3, lpl);
+	LP_RESTART(lpl);
+
 	// Let's fade to black here
 	// But only if we didn't do the special stage wipe
 	if (!(ranspecialwipe || reloadinggamestate))
 		P_RunLevelWipe();
+	LP_END(LV_PRE4, lpl);
+	LP_RESTART(lpl);
 
 	if (!(reloadinggamestate || titlemapinaction))
 	{
@@ -8578,6 +8922,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	// Close text prompt before freeing the old level
 	F_EndTextPrompt(false, true);
 
+	LP_END(LV_PRE5, lpl); // (LV_PRE1..5 are consecutive parts of what was LV_PRE)
+	LP_RESTART(lpl);
 	LUA_InvalidateLevel();
 
 	for (ss = sectors; sectors+numsectors != ss; ss++)
@@ -8601,6 +8947,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 #endif
 
 	ZCK("level-free-before");
+	LP_SAMPLE(12);
 	Patch_FreeTag(PU_PATCH_LOWPRIORITY);
 	Patch_FreeTag(PU_PATCH_ROTATED);
 	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
@@ -8614,6 +8961,9 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	R_ResetSectorEdgeCache(); // PS2-164: the per-sector edge records lived in PU_LEVEL
 #endif
 	ZCK("level-free-after");
+	LP_SAMPLE(13);
+	LP_END(LV_FREE, lpl);
+	LP_RESTART(lpl);
 
 	R_InitializeLevelInterpolators();
 
@@ -8628,11 +8978,19 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	if (lastloadedmaplumpnum == LUMPERROR)
 		I_Error("Map %s not found.\n", maplumpname);
 
-	R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette);
-	CON_SetupBackColormap();
+	{
+		LP_BEGIN(lpx);
 
-	// SRB2 determines the sky texture to be used depending on the map header.
-	P_SetupLevelSky(mapheaderinfo[gamemap-1]->skynum, true);
+		R_ReInitColormaps(mapheaderinfo[gamemap-1]->palette);
+		LP_END(OTHER1, lpx);
+		LP_RESTART(lpx);
+		CON_SetupBackColormap();
+		LP_END(OTHER2, lpx);
+		LP_RESTART(lpx);
+		// SRB2 determines the sky texture to be used depending on the map header.
+		P_SetupLevelSky(mapheaderinfo[gamemap-1]->skynum, true);
+		LP_END(OTHER3, lpx);
+	}
 
 	P_ResetSpawnpoints();
 
@@ -8641,12 +8999,20 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	P_MapStart(); // tmthing can be used starting from this point
 
 	P_InitSlopes();
+	LP_END(LV_SETUP, lpl);
+	LP_RESTART(lpl);
 
+	LP_SAMPLE(10);
 	if (!P_LoadMapFromFile())
 		return false;
+	LP_SAMPLE(11);
+	LP_END(LV_MAPFILE, lpl);
 #ifdef PS2_PROFILE
 	PS2FTest_Level(); // PS2-110: -ftest-level (the level as the map data made it, before anything spawned)
+	if (ps2lp_on && M_CheckParm("-loadhash"))
+		P_LevelHash("map");
 #endif
+	LP_RESTART(lpl);
 
 	if (!demoplayback)
 	{
@@ -8667,13 +9033,19 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	}
 
 	// init anything that P_SpawnSlopes/P_LoadThings needs to know
+	LP_END(LV_AFTERMAP, lpl);
+	LP_RESTART(lpl);
 	P_InitSpecials();
 
 	P_SpawnSlopes(fromnetsave);
 
 	ZCK("slopes");
+	LP_END(LV_SLOPES, lpl);
+	LP_RESTART(lpl);
 	P_SpawnMapThings(!fromnetsave);
 	ZCK("things");
+	LP_END(LV_THINGS, lpl);
+	LP_RESTART(lpl);
 	skyboxmo[0] = skyboxviewpnts[0];
 	skyboxmo[1] = skyboxcenterpnts[0];
 
@@ -8687,6 +9059,8 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	if (!fromnetsave) //  ugly hack for P_NetUnArchiveMisc (and P_LoadNetGame)
 		P_SpawnPrecipitation();
+	LP_END(LV_SPECIALS, lpl);
+	LP_RESTART(lpl);
 
 #ifdef HWRENDER // not win32 only 19990829 by Kin
 	gl_maploaded = false;
@@ -8703,6 +9077,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 #endif
 #endif
 
+	LP_END(LV_HWBUILD, lpl);
 	// oh god I hope this helps
 	// (addendum: apparently it does!
 	//  none of this needs to be done because it's not the beginning of the map when
@@ -8729,9 +9104,14 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 #ifdef PS2_PROFILE
 	Z_LevelPhase(true); // PS2-63/72: the level is built; the caches (and so the precache) grow from the bottom next to it, not between the long-lived blocks
 #endif
+	LP_RESTART(lpl);
+	LP_SAMPLE(8);
 	if (precache || dedicated)
 		R_PrecacheLevel();
+	LP_SAMPLE(9);
 	ZCK("precache");
+	LP_END(LV_PRECACHE, lpl);
+	LP_RESTART(lpl);
 
 	nextmapoverride = 0;
 	skipstats = 0;
@@ -8777,7 +9157,10 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 
 	// No render mode or reloading gamestate, stop here.
 	if (rendermode == render_none || reloadinggamestate)
+	{
+		LP_END(LV_POST, lpl);
 		return true;
+	}
 
 	R_ResetViewInterpolation(0);
 	R_ResetViewInterpolation(0);
@@ -8786,6 +9169,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	PS2HWFB_LevelLoaded(); // PS2-170: the hardware renderer, given up for an earlier level, is tried again
 #endif
 
+	LP_END(LV_POST, lpl);
 	// Title card!
 	G_StartTitleCard();
 
