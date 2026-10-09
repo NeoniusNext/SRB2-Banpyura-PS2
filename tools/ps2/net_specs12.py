@@ -224,6 +224,13 @@ for _pr in (4, 5):
                   files={'pad.txt': pad(*crosses(200, 4000))}, cfg=CFG_SYNC, start=10)
         mine(f'dl-both-p{_pr}-ds{_ds}', {'timeout': 900, 'nodes': [srv, cli], 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 1400}], 'grace': 3})
 
+# single player (no network at all): the shared main loop (D_RunFrame) and the thread changes must leave it as it was; 40 s of walking in MAP01, no error, the level runs
+for _r in ('Software', 'Hardware'):
+    mine(f'single-smoke-{_r[:2].lower()}', {'timeout': 400, 'nodes': [ps2('cli', EMU1, ['-skipintro', '-warp', 'MAP01', '-netlat', '-padscript', 'file:pad.txt'] + (['-renderer', 'Hardware'] if _r == 'Hardware' else []),
+                                                                       files={'pad.txt': walk(1, 300, 4000, seed=3)}, cfg='fpscap "Match refresh rate"\n' if _r == 'Hardware' else '', start=0, may_exit=True)],
+                                              'until': [{'node': 'cli', 'text': 'PS2 audio: music playback type=4 looping=1 name=O_GFZ1'}], 'grace': 60})
+
+
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]
     for n, s in MINE.items():
