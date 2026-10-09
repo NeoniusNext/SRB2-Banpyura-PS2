@@ -94,6 +94,8 @@
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler, level hash (empty macros outside the PS2 profile)
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
+#include "ps2/ps2_sys.h" // PS2_SleepUs (-loadstall)
+#include "netcode/client_connection.h" // cl_mode
 #endif
 #ifdef PS2
 #include "ps2/ps2_hwfb.h" // PS2-170
@@ -8738,6 +8740,28 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate);
 static void P_LevelHash(const char *label); // PS2-LOAD-1 (-loadhash)
 #endif
 
+#ifdef PS2_PROFILE
+// OPT13-IO (RS-09), a test hook: -loadstall MS makes every level load of a connected client wait this long after the map file was read (a slow medium, or a stick that needed
+// retries), to see whether the server keeps the node (the receive thread's keep-alive, ps2_netsvc.c). Not for play.
+static void P_LoadStall(void)
+{
+	static INT32 ms = -1;
+
+	if (ms < 0)
+	{
+		ms = 0;
+		if (M_CheckParm("-loadstall") && M_IsNextParm())
+			ms = atoi(M_GetNextParm());
+	}
+	if (ms > 0 && netgame && client && cl_mode == CL_CONNECTED)
+	{
+		CONS_Printf("LOADSTALL %d ms\n", (int)ms);
+		PS2_SleepUs((UINT32)ms * 1000);
+		CONS_Printf("LOADSTALL over\n");
+	}
+}
+#endif
+
 boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 {
 	boolean ok;
@@ -9008,6 +9032,7 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 	LP_SAMPLE(11);
 	LP_END(LV_MAPFILE, lpl);
 #ifdef PS2_PROFILE
+	P_LoadStall(); // OPT13-IO (RS-09): a test of the keep-alive (-loadstall)
 	PS2FTest_Level(); // PS2-110: -ftest-level (the level as the map data made it, before anything spawned)
 	if (ps2lp_on && M_CheckParm("-loadhash"))
 		P_LevelHash("map");

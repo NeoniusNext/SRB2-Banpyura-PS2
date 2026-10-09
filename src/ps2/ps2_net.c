@@ -560,13 +560,14 @@ void PS2Net_Frame(void)
 
 	// PS2-NET-5: the receive thread acknowledges the tics of the server for a joined client
 	PS2NetSvc_SetClient(netstate > 0 && netgame && client && gamestate == GS_LEVEL && cl_mode == CL_CONNECTED);
+	PS2NetSvc_SetConnected(netstate > 0 && netgame && client && cl_mode == CL_CONNECTED); // OPT13-IO (RS-09): the keep-alive of a long load
 	if (netstate > 0 && PS2NetSvc_Running() && M_CheckParm("-netdebug") && frames % 70 == 0)
 	{
 		nsv_stats_t ns;
 
 		PS2NetSvc_GetStats(&ns);
-		CONS_Printf("NETSVC frame %u: received %u dropped %u early-acks %u early-mis %u (errors %u) max-depth %u, C heap in use %u B\n", (unsigned)frames, (unsigned)ns.received, (unsigned)ns.dropped,
-			(unsigned)ns.early_acks, (unsigned)ns.early_mis, (unsigned)ns.early_ack_errors, (unsigned)ns.max_depth, (unsigned)mallinfo().uordblks);
+		CONS_Printf("NETSVC frame %u: received %u dropped %u early-acks %u early-mis %u (errors %u) load-keepalives %u max-depth %u, C heap in use %u B\n", (unsigned)frames, (unsigned)ns.received, (unsigned)ns.dropped,
+			(unsigned)ns.early_acks, (unsigned)ns.early_mis, (unsigned)ns.early_ack_errors, (unsigned)ns.load_keepalives, (unsigned)ns.max_depth, (unsigned)mallinfo().uordblks);
 	}
 
 	PS2MenuHints_Frame(); // PS2-339: the crawler's step (the command and the options are set up at the first call)
