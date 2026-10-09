@@ -919,15 +919,13 @@ typedef struct seg_s
 	sector_t *backsector;
 
 	fixed_t length;	// precalculated seg length
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE)
 	// new pointers so that AdjustSegs doesn't mess with v1/v2
 	void *pv1; // polyvertex_t
 	void *pv2; // polyvertex_t
 	float flength; // length of the seg, used by hardware renderer
 
-#ifndef PS2_PROFILE // PS2-149 (OPT10-S): the static lightmaps (STATICLIGHT) are not built in this port: 4 bytes of every seg (49 592 on MAP11)
 	lightmap_t *lightmaps; // for static lightmap
-#endif
 #endif
 
 	polyobj_t *polyseg;
@@ -941,6 +939,26 @@ typedef struct seg_s
 	boolean glseg;
 #endif
 } seg_t;
+
+// OPT12-CORE (PS2-505): pv1 / pv2 / flength of a seg are used by the hardware renderer only. In the PS2 profile they are not in seg_t (12 of its 56 bytes: 595 KB of the zone
+// on MAP11, in software mode too) but in an array parallel to segs[] that HWR_LoadLevel allocates (PU_HWRPLANE, owner ps2_seghw: gone with the level or the renderer).
+// The hardware sources read and write them through these lvalue macros (tools/ps2/hw_seg_accessors.py rewrites new code); PC builds keep the fields.
+#if defined(HWRENDER) && defined(PS2_PROFILE)
+typedef struct
+{
+	void *pv1; // polyvertex_t
+	void *pv2; // polyvertex_t
+	float flength; // length of the seg, used by hardware renderer
+} seghw_t;
+extern seghw_t *ps2_seghw;
+#define SEG_PV1(s) (ps2_seghw[(s) - segs].pv1)
+#define SEG_PV2(s) (ps2_seghw[(s) - segs].pv2)
+#define SEG_FLENGTH(s) (ps2_seghw[(s) - segs].flength)
+#elif defined(HWRENDER)
+#define SEG_PV1(s) ((s)->pv1)
+#define SEG_PV2(s) ((s)->pv2)
+#define SEG_FLENGTH(s) ((s)->flength)
+#endif
 
 //
 // BSP node.

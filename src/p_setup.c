@@ -3608,13 +3608,11 @@ static void P_InitializeSeg(seg_t *seg)
 		seg->backsector = (seg->linedef->flags & ML_TWOSIDED) ? sides[seg->linedef->sidenum[seg->side ^ 1]].sector : NULL;
 	}
 
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE) // (PS2-505: the hardware fields of a seg live in ps2_seghw, allocated by HWR_LoadLevel)
 	seg->pv1 = seg->pv2 = NULL;
 
 	//Hurdler: 04/12/2000: for now, only used in hardware mode
-#ifndef PS2_PROFILE
 	seg->lightmaps = NULL; // list of static lightmap for this seg
-#endif
 #endif
 
 	seg->polyseg = NULL;
@@ -3641,7 +3639,7 @@ static void P_LoadSegs(UINT8 *data)
 		seg->linedef = &lines[SHORT(ms->linedef)];
 
 		seg->length = P_SegLength(seg);
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE)
 		seg->flength = P_SegLengthFloat(seg);
 #endif
 
@@ -3911,7 +3909,7 @@ static boolean P_LoadExtendedSubsectorsAndSegs(UINT8 **data, nodetype_t nodetype
 			segs[i].offset = FixedHypot(v1->x - v->x, v1->y - v->y);
 		}
 		seg->length = P_SegLength(seg);
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE)
 		seg->flength = P_SegLengthFloat(seg);
 #endif
 	}

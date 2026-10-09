@@ -931,20 +931,20 @@ gc_plane_nocache:
 				P_ClosestPointOnLine(viewx, viewy, line->linedef, &v);
 				dist = FIXED_TO_FLOAT(R_PointToDist(v.x, v.y));
 
-				if (line->pv1)
+				if (SEG_PV1(line))
 				{
-					x1 = ((polyvertex_t *)line->pv1)->x;
-					y1 = ((polyvertex_t *)line->pv1)->y;
+					x1 = ((polyvertex_t *)SEG_PV1(line))->x;
+					y1 = ((polyvertex_t *)SEG_PV1(line))->y;
 				}
 				else
 				{
 					x1 = FIXED_TO_FLOAT(line->v1->x);
 					y1 = FIXED_TO_FLOAT(line->v1->x);
 				}
-				if (line->pv2)
+				if (SEG_PV2(line))
 				{
-					xd = ((polyvertex_t *)line->pv2)->x - x1;
-					yd = ((polyvertex_t *)line->pv2)->y - y1;
+					xd = ((polyvertex_t *)SEG_PV2(line))->x - x1;
+					yd = ((polyvertex_t *)SEG_PV2(line))->y - y1;
 				}
 				else
 				{
@@ -1564,20 +1564,20 @@ static void HWR_ProcessSeg(void)
 	gl_sidedef = gl_curline->sidedef;
 	gl_linedef = gl_curline->linedef;
 
-	if (gl_curline->pv1)
+	if (SEG_PV1(gl_curline))
 	{
-		vs.x = ((polyvertex_t *)gl_curline->pv1)->x;
-		vs.y = ((polyvertex_t *)gl_curline->pv1)->y;
+		vs.x = ((polyvertex_t *)SEG_PV1(gl_curline))->x;
+		vs.y = ((polyvertex_t *)SEG_PV1(gl_curline))->y;
 	}
 	else
 	{
 		vs.x = FIXED_TO_FLOAT(gl_curline->v1->x);
 		vs.y = FIXED_TO_FLOAT(gl_curline->v1->y);
 	}
-	if (gl_curline->pv2)
+	if (SEG_PV2(gl_curline))
 	{
-		ve.x = ((polyvertex_t *)gl_curline->pv2)->x;
-		ve.y = ((polyvertex_t *)gl_curline->pv2)->y;
+		ve.x = ((polyvertex_t *)SEG_PV2(gl_curline))->x;
+		ve.y = ((polyvertex_t *)SEG_PV2(gl_curline))->y;
 	}
 	else
 	{
@@ -1611,7 +1611,7 @@ static void HWR_ProcessSeg(void)
 
 	// x offset the texture
 	float cliplow = (float)gl_curline->offset;
-	float cliphigh = cliplow + (gl_curline->flength * FRACUNIT);
+	float cliphigh = cliplow + (SEG_FLENGTH(gl_curline) * FRACUNIT);
 
 	FUINT lightnum = HWR_SideLightLevel(gl_sidedef, gl_frontsector->lightlevel);
 	extracolormap_t *colormap = gl_frontsector->extra_colormap;
@@ -2434,20 +2434,20 @@ static boolean CheckClip(seg_t * seg, sector_t * afrontsector, sector_t * abacks
 	if (afrontsector->f_slope || afrontsector->c_slope || abacksector->f_slope || abacksector->c_slope)
 	{
 		fixed_t v1x, v1y, v2x, v2y; // the seg's vertexes as fixed_t
-		if (gl_curline->pv1)
+		if (SEG_PV1(gl_curline))
 		{
-			v1x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv1)->x);
-			v1y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv1)->y);
+			v1x = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV1(gl_curline))->x);
+			v1y = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV1(gl_curline))->y);
 		}
 		else
 		{
 			v1x = gl_curline->v1->x;
 			v1y = gl_curline->v1->y;
 		}
-		if (gl_curline->pv2)
+		if (SEG_PV2(gl_curline))
 		{
-			v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
-			v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
+			v2x = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV2(gl_curline))->x);
+			v2y = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV2(gl_curline))->y);
 		}
 		else
 		{
@@ -2567,20 +2567,20 @@ static void HWR_AddLine(seg_t * line)
 
 	gl_curline = line;
 
-	if (gl_curline->pv1)
+	if (SEG_PV1(gl_curline))
 	{
-		v1x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv1)->x);
-		v1y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv1)->y);
+		v1x = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV1(gl_curline))->x);
+		v1y = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV1(gl_curline))->y);
 	}
 	else
 	{
 		v1x = gl_curline->v1->x;
 		v1y = gl_curline->v1->y;
 	}
-	if (gl_curline->pv2)
+	if (SEG_PV2(gl_curline))
 	{
-		v2x = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->x);
-		v2y = FLOAT_TO_FIXED(((polyvertex_t *)gl_curline->pv2)->y);
+		v2x = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV2(gl_curline))->x);
+		v2y = FLOAT_TO_FIXED(((polyvertex_t *)SEG_PV2(gl_curline))->y);
 	}
 	else
 	{
@@ -2600,8 +2600,8 @@ static void HWR_AddLine(seg_t * line)
 		if (al_valid && !(hwr_geo_off & 1) && v1x == al_x && v1y == al_y && viewx == al_vx && viewy == al_vy)
 			angle1 = al_angle;
 		else
-			angle1 = HWR_VertAngle(gl_curline->pv1 ? NULL : gl_curline->v1, v1x, v1y);
-		angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
+			angle1 = HWR_VertAngle(SEG_PV1(gl_curline) ? NULL : gl_curline->v1, v1x, v1y);
+		angle2 = HWR_VertAngle(SEG_PV2(gl_curline) ? NULL : gl_curline->v2, v2x, v2y);
 		al_x = v2x;
 		al_y = v2y;
 		al_vx = viewx;
@@ -8320,11 +8320,33 @@ static void HWR_TogglePaletteRendering(void)
 	}
 }
 
+#ifdef PS2_PROFILE
+seghw_t *ps2_seghw; // PS2-505 (OPT12-CORE): pv1/pv2/flength of every seg, see r_defs.h
+#endif
+
 void HWR_LoadLevel(void)
 {
 #ifdef ALAM_LIGHTING
 	// BP: reset light between levels (we draw preview frame lights on current frame)
 	HWR_ResetLights();
+#endif
+
+#ifdef PS2_PROFILE
+	{
+		// PS2-505: the hardware fields of the segs (they are not in seg_t in this port); freed with the level's other hardware data (PU_HWRPLANE)
+		size_t i;
+
+		if (ps2_seghw)
+			Z_Free(ps2_seghw);
+		ps2_seghw = Z_Calloc(numsegs * sizeof (*ps2_seghw), PU_HWRPLANE, &ps2_seghw);
+		for (i = 0; i < numsegs; i++)
+		{
+			const seg_t *seg = &segs[i];
+			const float dx = FIXED_TO_FLOAT(seg->v2->x - seg->v1->x), dy = FIXED_TO_FLOAT(seg->v2->y - seg->v1->y);
+
+			ps2_seghw[i].flength = (float)hypot(dx, dy); // what P_LoadSegs / P_LoadGLSegs used to store in seg_t
+		}
+	}
 #endif
 
 	HWR_CreatePlanePolygons((INT32)numnodes - 1);
@@ -8560,6 +8582,11 @@ void HWR_Shutdown(void)
 	HWR_FreeMapTextures();
 	HWD.pfnFlushScreenTextures();
 #ifdef PS2
+	if (ps2_seghw) // PS2-505
+	{
+		Z_Free(ps2_seghw);
+		ps2_seghw = NULL;
+	}
 	Z_Free(linkdrawlist); // PS2-171
 	linkdrawlist = NULL;
 	linkdrawcap = linkdrawcount = 0;
