@@ -105,7 +105,9 @@ def impaired(name, netem_args, tics=2100, extra_cli=None, cmds='', long_timeout=
     if long_timeout:
         cfg = 'resynchattempts "0"\nblamecfail "On"\n'  # the default nettimeout (350 tics): the client must give up by itself when the line is gone
     cli_args = ['-skipintro', '-connect', f'{H}:{NETEM_PORT}', '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'] + (['-renderer', renderer] if renderer != 'Software' else []) + (extra_cli or [])
-    files = {'pad.txt': pad(*crosses(200, 600, 60), *(crosses(*late_crosses) if late_crosses else [])) + ',' + walk(1, 700, pad_to or tics * 3, seed=2)}  # late_crosses: Enter on the server info screen of a second connect
+    # late_crosses: Enter on the server info screen of a second connect. They come AFTER the walk steps (the script runs its steps in order): the held stick keeps the title menu open
+    # (an idle title screen starts an attract-mode demo after 22 s, and "connect" is refused while a demo plays)
+    files = {'pad.txt': pad(*crosses(200, 600, 60)) + ',' + walk(1, 700, pad_to or tics * 3, seed=2) + (',' + pad(*crosses(*late_crosses)) if late_crosses else '')}
     if cmds:
         files['cmd.txt'] = cmds
         cli_args += ['-netcmd', 'file:cmd.txt']
