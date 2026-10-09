@@ -79,9 +79,9 @@
 #include "g_game.h" // G_SetGameModified
 #include "ps2ref.h"
 
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1 (empty macros outside the PS2 profile)
 #ifdef PS2_PROFILE
 #include "w_pack.h"
-#include "ps2/ps2_loadprof.h" // PS2-LOAD-1
 #include "m_argv.h"
 #endif
 

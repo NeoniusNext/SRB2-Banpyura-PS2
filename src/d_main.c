@@ -42,12 +42,10 @@
 
 #include "doomdef.h"
 #include "ps2ref.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler (-loadprof); empty macros outside the PS2 profile
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
-#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler (-loadprof)
-#ifdef PS2_PROFILE
 #include "w_pack.h" // PS2-LOAD-10
-#endif
 #endif
 #include "am_map.h"
 #include "console.h"

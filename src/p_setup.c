@@ -90,9 +90,9 @@
 #include "taglist.h"
 
 #include "netcode/net_command.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler, level hash (empty macros outside the PS2 profile)
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
-#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler, level hash
 #endif
 #ifdef PS2
 #include "ps2/ps2_hwfb.h" // PS2-170
@@ -8701,6 +8701,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 	ok = P_LoadLevel_(fromnetsave, reloadinggamestate);
 	LP_END(LV_TOTAL, lpt);
 	LP_SAMPLE(3);
+#ifdef PS2_PROFILE
 	if (ps2lp_on)
 	{
 		char label[16];
@@ -8708,6 +8709,7 @@ boolean P_LoadLevel(boolean fromnetsave, boolean reloadinggamestate)
 		snprintf(label, sizeof label, "map%d", (int)gamemap);
 		PS2LP_Report(label);
 	}
+#endif
 	return ok;
 }
 
