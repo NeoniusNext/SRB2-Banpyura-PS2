@@ -1001,6 +1001,7 @@ void R_InitMobjInterpolators(void)
 // OPT13 IS (RF-5, RTICK D-g): the interpolation state of a mobj is three records of twelve words in the same order (p_mobj.h: the current x, y, z, angle, pitch, roll, spriteroll, scale,
 // spritexscale, spriteyscale, spritexoffset, spriteyoffset; old_*; old_*2): the tic moves old to old2 and the current to old as six double words each, 12 loads and 12 stores
 // where 24 words were moved one by one (the machine of the profile: lw / sw 1 cycle each, ld / sd as many for twice the bytes). The values are those of the word by word copy.
+#ifdef __mips__
 typedef unsigned long long __attribute__((may_alias, aligned(8))) r_u64_t;
 
 static inline void R_CopyInterpRecord(void *dst, const void *src)
@@ -1016,6 +1017,12 @@ static inline void R_CopyInterpRecord(void *dst, const void *src)
 	d[4] = f;
 	d[5] = g;
 }
+#else
+static inline void R_CopyInterpRecord(void *dst, const void *src)
+{
+	memcpy(dst, src, 12 * sizeof (fixed_t));
+}
+#endif
 
 static inline void R_ResetMobjInterpolationStateInline(mobj_t *mobj)
 {
@@ -1033,34 +1040,59 @@ static inline void R_ResetMobjInterpolationStateInline(mobj_t *mobj)
 
 #ifdef PS2_PROFILE
 extern int ps2hwd_fx2; // ps2/hw/ps2_hw_fx2.h
+#define R_FPS_NOMERGE __asm__ volatile("" ::: "memory") // (the compiler would merge the word copies into double word moves: this path is the one before OPT13 IS)
 #define R_FX4_NOINTERP2 0x40000000 // -hwfx 1073741824: the interpolation state is moved word by word, as before OPT13 IS (A/B on one ELF)
 
 static void R_ResetMobjInterpolationStateWords(mobj_t *mobj)
 {
 	mobj->old_x2 = mobj->old_x;
+	R_FPS_NOMERGE;
 	mobj->old_y2 = mobj->old_y;
+	R_FPS_NOMERGE;
 	mobj->old_z2 = mobj->old_z;
+	R_FPS_NOMERGE;
 	mobj->old_angle2 = mobj->old_angle;
+	R_FPS_NOMERGE;
 	mobj->old_pitch2 = mobj->old_pitch;
+	R_FPS_NOMERGE;
 	mobj->old_roll2 = mobj->old_roll;
+	R_FPS_NOMERGE;
 	mobj->old_spriteroll2 = mobj->old_spriteroll;
+	R_FPS_NOMERGE;
 	mobj->old_scale2 = mobj->old_scale;
+	R_FPS_NOMERGE;
 	mobj->old_spritexscale2 = mobj->old_spritexscale;
+	R_FPS_NOMERGE;
 	mobj->old_spriteyscale2 = mobj->old_spriteyscale;
+	R_FPS_NOMERGE;
 	mobj->old_spritexoffset2 = mobj->old_spritexoffset;
+	R_FPS_NOMERGE;
 	mobj->old_spriteyoffset2 = mobj->old_spriteyoffset;
+	R_FPS_NOMERGE;
 	mobj->old_x = mobj->x;
+	R_FPS_NOMERGE;
 	mobj->old_y = mobj->y;
+	R_FPS_NOMERGE;
 	mobj->old_z = mobj->z;
+	R_FPS_NOMERGE;
 	mobj->old_angle = mobj->angle;
+	R_FPS_NOMERGE;
 	mobj->old_pitch = mobj->pitch;
+	R_FPS_NOMERGE;
 	mobj->old_roll = mobj->roll;
+	R_FPS_NOMERGE;
 	mobj->old_spriteroll = mobj->spriteroll;
+	R_FPS_NOMERGE;
 	mobj->old_scale = mobj->scale;
+	R_FPS_NOMERGE;
 	mobj->old_spritexscale = mobj->spritexscale;
+	R_FPS_NOMERGE;
 	mobj->old_spriteyscale = mobj->spriteyscale;
+	R_FPS_NOMERGE;
 	mobj->old_spritexoffset = mobj->spritexoffset;
+	R_FPS_NOMERGE;
 	mobj->old_spriteyoffset = mobj->spriteyoffset;
+	R_FPS_NOMERGE;
 
 	if (mobj->player)
 	{

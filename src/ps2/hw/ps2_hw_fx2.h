@@ -34,7 +34,8 @@
 #define FX4_NOSHFUSE 0x8000000 // PS2-HW-701: the drop shadow of a plain sprite goes through HWR_DrawDropShadowGen as before
 #define FX4_FUSECHK 0x10000000 // PS2-HW-700/701 check mode: the fused builders run, the old paths draw, the polygon of the old path is compared with the fused one (HWC fuse MISMATCH)
 #define FX4_NOINTERP2 0x40000000 // PS2-HW-703 (r_fps.c): the interpolation state of the mobjs is moved word by word at the tic, as before the records of 12 words
-#define FX4_NOPROJ2 0x20000000 // PS2-HW-702: the projection of the plain sprite as before OPT13
+#define FX4_NOSTAT 0x800 // PS2-HW-702: HWR_ProjectPlain lerps the state of a thing that did not move in the last tic as before (A/B on one ELF)
+#define FX4_NOPBC 0x20000000 // PS2-HW-704 (hw_pbatch.inc): the state cache of the collection has 512 slots as before (A/B on one ELF)
 #define FX2_PTRORDER 0x1000 // PS2-HW-250 (FX3): the order of the patches in the batches by the hash of their address, as before (A/B)
 
 extern int ps2hwd_fx2;

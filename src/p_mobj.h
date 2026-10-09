@@ -509,7 +509,10 @@ typedef struct precipmobj_s
 // OPT13 IS (RF-5): R_ResetMobjInterpolationState copies the records as 48 bytes at a time; the layout it relies on
 #include <stddef.h>
 _Static_assert(offsetof(mobj_t, old_x) - offsetof(mobj_t, x) == 48 && offsetof(mobj_t, spriteyoffset) - offsetof(mobj_t, x) == 44 && offsetof(mobj_t, old_spriteyoffset) - offsetof(mobj_t, old_x) == 44, "mobj_t interpolation records");
-_Static_assert(offsetof(mobj_t, old_spriteyoffset2) - offsetof(mobj_t, old_x2) == 44 && offsetof(mobj_t, old_x) % 8 == 0 && offsetof(mobj_t, x) % 8 == 0 && offsetof(mobj_t, old_x2) % 8 == 0, "mobj_t interpolation records (old2)");
+_Static_assert(offsetof(mobj_t, old_spriteyoffset2) - offsetof(mobj_t, old_x2) == 44, "mobj_t interpolation records (old2)");
+#ifdef __mips__ // (the double word moves of R_ResetMobjInterpolationState need 8 byte aligned records; the PC build, with 8 byte pointers, copies with memcpy)
+_Static_assert(offsetof(mobj_t, old_x) % 8 == 0 && offsetof(mobj_t, x) % 8 == 0 && offsetof(mobj_t, old_x2) % 8 == 0 && offsetof(precipmobj_t, x) % 8 == 0 && offsetof(precipmobj_t, old_x) % 8 == 0, "mobj_t interpolation records are 8 byte aligned");
+#endif
 _Static_assert(offsetof(precipmobj_t, old_x) - offsetof(precipmobj_t, x) == 48 && offsetof(precipmobj_t, old_x) == offsetof(mobj_t, old_x) && offsetof(precipmobj_t, flags) == offsetof(mobj_t, flags), "precipmobj_t shares the start of mobj_t");
 
 typedef struct actioncache_s
