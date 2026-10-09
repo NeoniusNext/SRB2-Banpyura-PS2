@@ -578,6 +578,9 @@ void M_TokenizerClose(void);
 const char *M_TokenizerRead(UINT32 i);
 const char *M_TokenizerReadZDoom(UINT32 i);
 UINT32 M_TokenizerGetEndPos(void);
+#ifdef PS2_PROFILE
+boolean M_TokenizerSkipBlock(UINT32 size); // PS2-LOAD-15 (m_tokenizer.c)
+#endif
 void M_TokenizerSetEndPos(UINT32 newPos);
 char *sizeu1(size_t num);
 char *sizeu2(size_t num);

@@ -2214,6 +2214,16 @@ const char *M_TokenizerRead(UINT32 i)
 	return Tokenizer_SRB2Read(globalTokenizer, i);
 }
 
+#ifdef PS2_PROFILE
+boolean M_TokenizerSkipBlock(UINT32 size)
+{
+	if (!globalTokenizer)
+		return false;
+
+	return Tokenizer_SRB2SkipBlock(globalTokenizer, size);
+}
+#endif
+
 UINT32 M_TokenizerGetEndPos(void)
 {
 	if (!globalTokenizer)

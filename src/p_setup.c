@@ -1696,7 +1696,14 @@ static boolean TextmapCount(size_t size)
 				brackets--;
 		}
 		else if (fastcmp(tkn, "{"))
+		{
+#ifdef PS2_PROFILE
+			// PS2-LOAD-15: the tokens inside the block are only looked at for the "}" that ends it: no strings are made for them
+			if (M_TokenizerSkipBlock((UINT32)size))
+				continue;
+#endif
 			brackets++;
+		}
 		// Check for valid fields.
 		else if (fastcmp(tkn, "thing"))
 			TextmapStorePos(&mapthingBlocks, &nummapthings);
@@ -3072,6 +3079,7 @@ static void P_LoadTextmap(void)
 	/// from the textmap, and therefore we have to account for it by
 	/// preemptively setting that value beforehand.
 
+	LP_BEGIN(lpu);
 	for (i = 0, vt = vertexes; i < numvertexes; i++, vt++)
 	{
 		// Defaults.
@@ -3087,6 +3095,8 @@ static void P_LoadTextmap(void)
 			I_Error("P_LoadTextmap: vertex %s has no y value set!\n", sizeu1(i));
 	}
 
+	LP_END(U_VERT, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, sc = sectors; i < numsectors; i++, sc++)
 	{
 		// Defaults.
@@ -3170,6 +3180,8 @@ static void P_LoadTextmap(void)
 		TextmapFixFlatOffsets(sc);
 	}
 
+	LP_END(U_SECT, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, ld = lines; i < numlines; i++, ld++)
 	{
 		// Defaults.
@@ -3197,6 +3209,8 @@ static void P_LoadTextmap(void)
 		P_InitializeLinedef(ld);
 	}
 
+	LP_END(U_LINE, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, sd = sides; i < numsides; i++, sd++)
 	{
 		// Defaults.
@@ -3226,6 +3240,8 @@ static void P_LoadTextmap(void)
 		P_InitializeSidedef(sd);
 	}
 
+	LP_END(U_SIDE, lpu);
+	LP_RESTART(lpu);
 	for (i = 0, mt = mapthings; i < nummapthings; i++, mt++)
 	{
 		// Defaults.
@@ -3244,6 +3260,7 @@ static void P_LoadTextmap(void)
 
 		TextmapParse(mapthingBlocks.pos[i], i, ParseTextmapThingParameter);
 	}
+	LP_END(U_THING, lpu);
 }
 
 #endif
@@ -3422,13 +3439,17 @@ static boolean P_LoadMapData(const virtres_t *virt)
 			CONS_Alert(CONS_ERROR, "Emtpy TEXTMAP Lump!\n");
 			return false;
 		}
+		LP_BEGIN(lpu);
 		M_TokenizerOpen((char *)VRES_DATA(virt, textmap), textmap->size);
 		VRES_DROP(textmap); // the tokenizer has its own copy
+		LP_END(U_OPEN, lpu);
+		LP_RESTART(lpu);
 		if (!TextmapCount(textmap->size))
 		{
 			M_TokenizerClose();
 			return false;
 		}
+		LP_END(U_COUNT, lpu);
 	}
 	else
 #endif
