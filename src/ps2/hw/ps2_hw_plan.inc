@@ -1400,5 +1400,10 @@ int PS2HWD_QuadVisibleRef(const void *vp)
 		y0 = sy < y0 ? sy : y0;
 		y1 = sy > y1 ? sy : y1;
 	}
-	return !(ceil(x0 - (double)QUAD_MARGIN) > floor(x1 + (double)QUAD_MARGIN) || ceil(y0 - (double)QUAD_MARGIN) > floor(y1 + (double)QUAD_MARGIN));
+	// (a margin a hair under the driver's: the driver rounds in floats, a centre that is within the rounding of the edge of its widened box must not be called an error of the cull)
+	{
+		const double mg = (double)QUAD_MARGIN - 0.01;
+
+		return !(ceil(x0 - mg) > floor(x1 + mg) || ceil(y0 - mg) > floor(y1 + mg));
+	}
 }
