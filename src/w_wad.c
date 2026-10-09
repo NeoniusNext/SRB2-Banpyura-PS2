@@ -260,6 +260,9 @@ static void W_LoadDehackedLumpsPK3(UINT16 wadnum, boolean mainfile)
 				LUA_DoLump(wadnum, posStart, true);
 		}
 	}
+#ifdef PS2_PROFILE
+	LUA_CollectLoaded(); // PS2-LOAD-18: the one full collection of this file's scripts
+#endif
 
 	posStart = W_CheckNumForFolderStartPK3("SOC/", wadnum, 0);
 	if (posStart != INT16_MAX)
@@ -293,6 +296,9 @@ static void W_LoadDehackedLumps(UINT16 wadnum, boolean mainfile)
 			if (memcmp(lump_p->name,"LUA_",4)==0)
 				LUA_DoLump(wadnum, lump, true);
 	}
+#ifdef PS2_PROFILE
+	LUA_CollectLoaded(); // PS2-LOAD-18
+#endif
 
 	{
 		lumpinfo_t *lump_p = wadfiles[wadnum]->lumpinfo;
@@ -521,6 +527,34 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
 
 /** Optimized pattern search in a file.
  */
+#ifdef PS2_PROFILE
+// PS2-LOAD-19: the original reads up to 64 KB one fgetc at a time looking for the 4 byte signature; the window is read at once and searched in memory. The first
+// occurrence is the same one (the signature has no repeated byte), and the file position is left just behind it, as the loop left it.
+static boolean ResFindSignature (FILE* handle, char endPat[], UINT32 startpos)
+{
+	const size_t patlen = strlen(endPat);
+	size_t got, i;
+	UINT8 *buf;
+	long endpos;
+
+	fseek(handle, 0, SEEK_END);
+	endpos = ftell(handle);
+	if (endpos < 0 || (long)startpos > endpos)
+		return false;
+	buf = Z_Malloc((size_t)(endpos - (long)startpos) + 1, PU_STATIC, NULL);
+	fseek(handle, startpos, SEEK_SET);
+	got = fread(buf, 1, (size_t)(endpos - (long)startpos), handle);
+	for (i = 0; i + patlen <= got; i++)
+		if (buf[i] == (UINT8)endPat[0] && !memcmp(buf + i, endPat, patlen))
+		{
+			Z_Free(buf);
+			fseek(handle, (long)(startpos + i + patlen), SEEK_SET);
+			return true;
+		}
+	Z_Free(buf);
+	return false;
+}
+#else
 static boolean ResFindSignature (FILE* handle, char endPat[], UINT32 startpos)
 {
 	char *s;
@@ -543,7 +577,11 @@ static boolean ResFindSignature (FILE* handle, char endPat[], UINT32 startpos)
 	}
 	return false;
 }
+#endif
 
+#ifdef PS2_PROFILE
+#define ZIP_LAZYPOS 0x80000000UL // lumpinfo position: the offset of the local header, the data start is not worked out yet
+#endif
 #if defined(_MSC_VER)
 #pragma pack(1)
 #endif
@@ -600,6 +638,7 @@ typedef struct zlentry_s
 
 /** Create a lumpinfo_t array for a PKZip file.
  */
+#ifndef PS2_PROFILE // (PS2-LOAD-19: ResGetLumpsZipFast below)
 static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 {
     zend_t zend;
@@ -733,6 +772,165 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 	*nlmp = numlumps;
 	return lumpinfo;
 }
+#endif
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-19: ResGetLumpsZip above with the file reads of a mod pack cut down. The original asks the file for every central directory entry (a read of 46 bytes,
+// the name, a seek over the extra fields) and then, for every entry, seeks to its local header and reads it to learn where the data starts: three to four host
+// requests per lump, ~270 000 cycles each lump. The directory is one read (its size is in the end record), and the data start of an entry is worked out from its
+// local header the first time the lump is read (lumpinfo position carries ZIP_LAZYPOS until then; W_ReadLumpHeaderPwad_ resolves it).
+static lumpinfo_t* ResGetLumpsZipFast (FILE* handle, UINT16* nlmp)
+{
+	zend_t zend;
+	zentry_t zentry;
+	UINT8 *cd, *cp, *cend;
+	UINT16 numlumps;
+	lumpinfo_t* lumpinfo;
+	lumpinfo_t *lump_p;
+	size_t i;
+
+	char pat_end[] = {0x50, 0x4b, 0x05, 0x06, 0x00};
+
+	fseek(handle, 0, SEEK_END);
+	if (!ResFindSignature(handle, pat_end, max(0, ftell(handle) - (22 + 65536))))
+	{
+		CONS_Alert(CONS_ERROR, "Missing central directory\n");
+		return NULL;
+	}
+
+	fseek(handle, -4, SEEK_CUR);
+	if (fread(&zend, 1, sizeof zend, handle) < sizeof zend)
+	{
+		CONS_Alert(CONS_ERROR, "Corrupt central directory (%s)\n", M_FileError(handle));
+		return NULL;
+	}
+	numlumps = zend.entries;
+
+	cd = Z_Malloc((size_t)zend.cdirsize + 1, PU_STATIC, NULL);
+	if (fseek(handle, zend.cdiroffset, SEEK_SET) != 0 || fread(cd, 1, zend.cdirsize, handle) < zend.cdirsize)
+	{
+		CONS_Alert(CONS_ERROR, "Failed to read central directory (%s)\n", M_FileError(handle));
+		Z_Free(cd);
+		return NULL;
+	}
+	cp = cd;
+	cend = cd + zend.cdirsize;
+
+	lump_p = lumpinfo = Z_Malloc(numlumps * sizeof (*lumpinfo), PU_STATIC, NULL);
+	for (i = 0; i < numlumps; i++, lump_p++)
+	{
+		char* fullname;
+		char* trimname;
+		char* dotpos;
+
+		if ((size_t)(cend - cp) < sizeof(zentry_t))
+		{
+			CONS_Alert(CONS_ERROR, "Failed to read central directory (%s)\n", M_FileError(handle));
+			Z_Free(lumpinfo);
+			Z_Free(cd);
+			return NULL;
+		}
+		memcpy(&zentry, cp, sizeof(zentry_t));
+		if (memcmp(zentry.signature, "PK\1\2", 4))
+		{
+			CONS_Alert(CONS_ERROR, "Central directory is corrupt\n");
+			Z_Free(lumpinfo);
+			Z_Free(cd);
+			return NULL;
+		}
+		cp += sizeof(zentry_t);
+		if ((size_t)(cend - cp) < (size_t)zentry.namelen + zentry.xtralen + zentry.commlen)
+		{
+			CONS_Alert(CONS_ERROR, "Unable to read lumpname (%s)\n", M_FileError(handle));
+			Z_Free(lumpinfo);
+			Z_Free(cd);
+			return NULL;
+		}
+
+		if (zentry.offset >= ZIP_LAZYPOS)
+		{
+			CONS_Alert(CONS_ERROR, "Central directory is corrupt\n"); // (a pack of 2 GB or more: the console cannot seek there)
+			Z_Free(lumpinfo);
+			Z_Free(cd);
+			return NULL;
+		}
+		lump_p->position = zentry.offset | ZIP_LAZYPOS; // the local header, until the lump is read
+		lump_p->disksize = zentry.compsize;
+		lump_p->diskpath = NULL;
+		lump_p->size = zentry.size;
+
+		fullname = malloc(zentry.namelen + 1);
+		memcpy(fullname, cp, zentry.namelen);
+		fullname[zentry.namelen] = '\0';
+		{ // (fgets of the original stopped at a line break or a NUL inside the name; a name has neither)
+			char *stop = memchr(fullname, '\n', zentry.namelen);
+
+			if (stop)
+				stop[1] = '\0';
+		}
+		cp += zentry.namelen + zentry.xtralen + zentry.commlen;
+
+		// Strip away file address and extension for the 8char name.
+		if ((trimname = strrchr(fullname, '/')) != 0)
+			trimname++;
+		else
+			trimname = fullname; // Care taken for root files.
+
+		if ((dotpos = strrchr(trimname, '.')) == 0)
+			dotpos = fullname + strlen(fullname); // Watch for files without extension.
+
+		memset(lump_p->name, '\0', 9); // Making sure they're initialized to 0. Is it necessary?
+		strncpy(lump_p->name, trimname, min(8, dotpos - trimname));
+		lump_p->hash = quickncasehash(lump_p->name, 8);
+
+		lump_p->longname = Z_Calloc(dotpos - trimname + 1, PU_STATIC, NULL);
+		strlcpy(lump_p->longname, trimname, dotpos - trimname + 1);
+
+		lump_p->fullname = Z_Calloc(zentry.namelen + 1, PU_STATIC, NULL);
+		strncpy(lump_p->fullname, fullname, zentry.namelen);
+
+		switch(zentry.compression)
+		{
+		case 0:
+			lump_p->compression = CM_NOCOMPRESSION;
+			break;
+#ifdef HAVE_ZLIB
+		case 8:
+			lump_p->compression = CM_DEFLATE;
+			break;
+#endif
+		case 14:
+			lump_p->compression = CM_LZF;
+			break;
+		default:
+			CONS_Alert(CONS_WARNING, "%s: Unsupported compression method\n", fullname);
+			lump_p->compression = CM_UNSUPPORTED;
+			break;
+		}
+
+		free(fullname);
+	}
+	Z_Free(cd);
+
+	*nlmp = numlumps;
+	return lumpinfo;
+}
+
+// The data of a lump of a pk3 starts behind its local header (name and extra field have a length of their own there)
+static boolean W_ResolveZipPosition(FILE *handle, lumpinfo_t *l)
+{
+	zlentry_t zlentry;
+	unsigned long header = l->position & ~ZIP_LAZYPOS;
+
+	if (fseek(handle, (long)header, SEEK_SET) != 0 || fread(&zlentry, 1, sizeof(zlentry_t), handle) < sizeof(zlentry_t))
+	{
+		CONS_Alert(CONS_ERROR, "Local headers for lump %s are corrupt\n", l->fullname);
+		return false;
+	}
+	l->position = header + sizeof(zlentry_t) + zlentry.namelen + zlentry.xtralen;
+	return true;
+}
+#endif
 
 static INT32 CheckPathsNotEqual(const char *path1, const char *path2)
 {
@@ -1059,7 +1257,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 		lumpinfo = ResGetLumpsStandalone(handle, &numlumps, "LUA_INIT");
 		break;
 	case RET_PK3:
+#ifdef PS2_PROFILE
+		lumpinfo = ResGetLumpsZipFast(handle, &numlumps);
+#else
 		lumpinfo = ResGetLumpsZip(handle, &numlumps);
+#endif
 		break;
 	case RET_WAD:
 		lumpinfo = ResGetLumpsWad(handle, &numlumps, filename);
@@ -2549,6 +2751,10 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 	// We setup the desired file handle to read the lump data.
 	if (wadfiles[wad]->type != RET_FOLDER)
 		handle = wadfiles[wad]->handle;
+#ifdef PS2_PROFILE
+	if ((l->position & ZIP_LAZYPOS) && !W_ResolveZipPosition(handle, l))
+		return 0;
+#endif
 #ifdef PS2_PROFILE
 	if (wadfiles[wad]->pool) // cooked pack: all reads use the aligned bounce path, including raw lumps
 	{

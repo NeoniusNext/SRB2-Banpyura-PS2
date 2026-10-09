@@ -1704,7 +1704,9 @@ void D_SRB2Main(void)
 	if (startuppwads.numfiles)
 	{
 		CONS_Printf("W_InitMultipleFiles(): Adding extra PWADs.\n");
+		LP_SAMPLE(16);
 		W_InitMultipleFiles(&startuppwads);
+		LP_SAMPLE(17);
 		D_CleanFile(&startuppwads);
 	}
 #endif

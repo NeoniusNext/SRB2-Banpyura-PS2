@@ -30,6 +30,7 @@ extern INT32 lua_lumploading; // is LUA_LoadLump being called?
 extern INT32 lua_locallyloading; // is this wad file being loaded locally?
 
 static inline void LUA_DoLump(UINT16 wad, UINT16 lump, boolean noresults) {}
+static inline void LUA_CollectLoaded(void) {}
 static inline void LUA_Step(void) {}
 static inline void LUA_CVarChanged(void *cvar) {}
 static inline void LUA_InvalidateUserdata(void *data) {} // Z_Free
@@ -75,6 +76,9 @@ int LUA_GetErrorMessage(lua_State *L);
 int LUA_Call(lua_State *L, int nargs, int nresults, int errorhandlerindex);
 boolean LUA_LoadLump(UINT16 wad, UINT16 lump);
 void LUA_DoLump(UINT16 wad, UINT16 lump, boolean noresults);
+#ifdef PS2_PROFILE
+void LUA_CollectLoaded(void); // PS2-LOAD-18: the full collection after the scripts of a file
+#endif
 #ifdef LUA_ALLOW_BYTECODE
 void LUA_DumpFile(const char *filename);
 #endif

@@ -97,7 +97,7 @@ void PS2LP_SampleEvent(int ev)
 	}
 	if (done || !mode)
 		return;
-	// mode N samples between its two events (2N-2, 2N-1): 1 main .. end of D_SRB2Main, 2 the first P_LoadLevel, 3 R_Init, 4 HU_Init .. command registration, 5 R_PrecacheLevel, 6 P_LoadMapFromFile, 7 the old level freed, 8 P_LoadTextmap
+	// mode N samples between its two events (2N-2, 2N-1): 1 main .. end of D_SRB2Main, 2 the first P_LoadLevel, 3 R_Init, 4 HU_Init .. command registration, 5 R_PrecacheLevel, 6 P_LoadMapFromFile, 7 the old level freed, 8 P_LoadTextmap, 9 the extra files of the command line (-file)
 	if (ev == 2 * mode - 2)
 		PS2Prof_SampleBegin();
 	else if (ev == 2 * mode - 1)

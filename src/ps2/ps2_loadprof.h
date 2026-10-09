@@ -87,6 +87,7 @@
 	X(LUA_LOADLUMP, "Lua: LUA_LoadLump (all)") \
 	X(LUA_PARSE, "Lua:   luaL_loadbuffer (lexer + parser)") \
 	X(LUA_RUN, "Lua:   chunk run") \
+	X(LUA_GC, "Lua:   full collections after a script was loaded / run") \
 	X(SOC_PARSE, "SOC: DEH_LoadDehackedLump (all)") \
 	/* add-ons */ \
 	X(AD_TOTAL, "add-on: P_AddWadFile / D_AddFile path (all)") \
