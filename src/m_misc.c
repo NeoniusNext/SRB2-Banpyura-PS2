@@ -2222,6 +2222,17 @@ boolean M_TokenizerSkipBlock(UINT32 size)
 
 	return Tokenizer_SRB2SkipBlock(globalTokenizer, size);
 }
+
+int M_TokenizerReadPair(const char **param, const char **val)
+{
+	if (!globalTokenizer)
+	{
+		*param = *val = NULL;
+		return 0;
+	}
+
+	return Tokenizer_SRB2ReadPair(globalTokenizer, param, val);
+}
 #endif
 
 UINT32 M_TokenizerGetEndPos(void)

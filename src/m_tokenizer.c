@@ -370,106 +370,202 @@ const char *Tokenizer_SRB2Read(tokenizer_t *tokenizer, UINT32 i)
 	return tokenizer->token[i];
 }
 
-// TextmapCount, inside a block: moves past the "}" that closes it without making a token of anything in between. The block is walked byte by byte with the same
-// rules as Tokenizer_SRB2Next: outside a word or string a ',' '{' or '}' is a token of its own, a '"' starts a string (its content is the token: "\"}\"" closes a block
-// too, as it did), '=' ';' and white space separate, a word ends at one of those, and "//" or "/*" starts a comment wherever it is met outside a string (a block comment
-// may end with the "*/" that follows its own "/*" after one more character, as the original loop did: "/*/" is a whole comment). False when the input ends first or the
+// TextmapCount, inside a block: moves past the "}" that closes it without making a token of anything in between, looking at the bytes eight at a time. The rules of
+// Tokenizer_SRB2Next that matter for finding it: a '}' outside a string is a token of its own (and the string "}" is the same token: it closed a block before too); a '"'
+// that starts a token starts a string, in the middle of a word it is an ordinary character. A '/' outside a string may start a comment, and the original starts the comment
+// check of a word one character late ("a//b" is one word), so a block with a '/' in it is done by the exact token loop instead. False when the input ends first or the
 // closing token ends at or after `size` (the original loop stopped there without looking at the token). tokenizer->line is not counted here (nothing reads it).
+#define SKIP_LO 0x0101010101010101ull
+#define SKIP_HI 0x8080808080808080ull
+static inline boolean SkipHasByte(UINT64 w, UINT8 c)
+{
+	const UINT64 x = w ^ (SKIP_LO * c);
+
+	return ((x - SKIP_LO) & ~x & SKIP_HI) != 0;
+}
+
+static boolean Tokenizer_SRB2SkipBlockExact(tokenizer_t *tokenizer, UINT32 size)
+{
+	UINT32 s, e;
+	UINT8 kind;
+
+	while (Tokenizer_SRB2Next(tokenizer, &s, &e, &kind))
+	{
+		if (tokenizer->endPos >= size)
+			return false;
+		if (e - s == 1 && tokenizer->input[s] == '}')
+			return true;
+	}
+	return false;
+}
+
 boolean Tokenizer_SRB2SkipBlock(tokenizer_t *tokenizer, UINT32 size)
 {
 	const char *in = tokenizer->input;
 	const UINT32 len = tokenizer->inputLength;
 	UINT32 p = tokenizer->endPos;
-	UINT8 inc = tokenizer->inComment;
-	UINT32 close = len; // index of the closing '}' (or of the closing quote of a string "}")
-	boolean found = false;
+	boolean afterstring = true; // the byte before p ends a token or a string: a '"' at p starts a string
 
 	if (!in)
 		return false;
+	if (tokenizer->inComment)
+		return Tokenizer_SRB2SkipBlockExact(tokenizer, size);
 
-	if (inc == 1) // (a single-line comment left open by the last token: ends at the next line break)
+	while (p < len)
 	{
-		while (p < len && in[p] != '\n')
-			p++;
-		if (p < len) { p++; inc = 0; }
-	}
-	else if (inc == 2) // (a block comment left open)
-	{
-		while (p < len && !(p < len - 1 && in[p] == '*' && in[p + 1] == '/'))
-			p++;
-		if (p < len) { p += 2; inc = 0; }
-	}
+		UINT8 c;
 
-	while (inc == 0 && p < len)
-	{
-		const UINT8 c = (UINT8)in[p];
-
-		if (c == '/' && p < len - 1 && (in[p + 1] == '/' || in[p + 1] == '*'))
+		while (p + 8 <= len)
 		{
-			if (in[p + 1] == '/')
-			{
-				while (p < len && in[p] != '\n')
-					p++;
-				if (p < len) p++; // (the line break ends the comment)
-			}
-			else
-			{
-				p++; // the loop of the original starts at the "/" and looks for "*/" from the next byte on
-				while (p < len && !(p < len - 1 && in[p] == '*' && in[p + 1] == '/'))
-					p++;
-				if (p < len) p += 2;
-			}
-			if (p >= len)
+			UINT64 w;
+
+			memcpy(&w, in + p, 8);
+			if (SkipHasByte(w, '}') || SkipHasByte(w, '"') || SkipHasByte(w, '/'))
 				break;
-			continue;
+			p += 8;
+			afterstring = false;
 		}
+		if (p >= len)
+			break;
+		c = (UINT8)in[p];
+
+		if (c == '/')
+			return Tokenizer_SRB2SkipBlockExact(tokenizer, size);
 		if (c == '}')
 		{
-			close = p;
-			found = true;
 			p++;
-			break;
+			tokenizer->startPos = p - 1;
+			tokenizer->endPos = p;
+			return p < size;
 		}
-		if (c == '"') // a string: its content is the token
+		if (c == '"')
 		{
-			UINT32 q = p + 1;
+			UINT32 q;
 
+			if (!afterstring && p > 0)
+			{
+				const UINT8 b = (UINT8)in[p - 1];
+
+				if (!((tokcls[b] & TCLS_SKIP) || b == ',' || b == '{' || b == '}'))
+				{
+					p++; // inside a word: an ordinary character
+					continue;
+				}
+			}
+			q = p + 1;
 			while (q < len && in[q] != '"')
 				q++;
 			if (q - (p + 1) == 1 && in[p + 1] == '}') // the string "}"
 			{
-				p = q + 1;
-				found = true;
-				break;
+				tokenizer->startPos = p + 1;
+				tokenizer->endPos = q + 1;
+				return q + 1 < size;
 			}
 			p = q + 1;
+			afterstring = true;
 			continue;
 		}
-		if (c == ',' || c == '{' || (tokcls[c] & TCLS_SKIP))
-		{
-			p++;
-			continue;
-		}
-		// a word: up to the next separator, or to a comment that starts inside it
 		p++;
+		afterstring = false;
+	}
+	tokenizer->startPos = tokenizer->endPos = p > len ? p : len;
+	return false;
+}
+
+// TextmapParse: the next "param value" pair of a block, or its closing "}". Returns 1 with the two strings, 0 at the "}" (or the end of the input).
+// The ordinary pair (`name = value;`, `name = "string";` with ordinary white space) is cut out of the tokenizer's own copy of the text: the byte after each token is
+// replaced by a NUL (it is a separator, or the closing quote, which nothing reads again: every block is parsed once, after the count pass) and no token is copied.
+// Anything else (a comment, a ',' '{' '}' or '"' where a name or value should start, a name that ends at one of those, an input that ends) takes the original
+// path, token by token, from the same position, so the answer is the same.
+#ifdef TOK_STATS
+long tok_generic_pairs;
+#endif
+int Tokenizer_SRB2ReadPair(tokenizer_t *t, const char **param, const char **val)
+{
+	char *in = t->zdup;
+	const UINT32 len = t->inputLength;
+	UINT32 p = t->endPos, s1, e1, s2, e2, next;
+	UINT8 c;
+
+	if (t->inComment || in != t->input)
+		goto generic;
+
+	// name
+	while (p < len && (c = (UINT8)in[p], c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '=' || c == ';' || c == 0)) // (a NUL inside the text is a terminator written by an earlier pair: the original skips it too)
+		p++;
+	if (p >= len)
+		goto generic;
+	c = (UINT8)in[p];
+	if (c == '}')
+	{
+		t->startPos = p;
+		t->endPos = p + 1;
+		*param = *val = NULL;
+		return 0;
+	}
+	if (c == ',' || c == '{' || c == '"' || c == '/' || c == 0)
+		goto generic;
+	s1 = p;
+	while (p < len && !(tokcls[(UINT8)in[p]] & TCLS_END))
+	{
+		if (in[p] == '/')
+			goto generic;
+		p++;
+	}
+	e1 = p;
+	if (p >= len || !(tokcls[(UINT8)in[p]] & TCLS_SKIP) || in[p] == 0)
+		goto generic; // the name ends at ',' '{' '}' or the end of the input
+
+	// value
+	p++;
+	while (p < len && (c = (UINT8)in[p], c == ' ' || c == '\t' || c == '\r' || c == '\n' || c == '=' || c == ';' || c == 0)) // (a NUL inside the text is a terminator written by an earlier pair: the original skips it too)
+		p++;
+	if (p >= len)
+		goto generic;
+	c = (UINT8)in[p];
+	if (c == '"')
+	{
+		s2 = ++p;
+		while (p < len && in[p] != '"')
+			p++;
+		if (p >= len)
+			goto generic;
+		e2 = p; // the closing quote
+		next = p + 1;
+	}
+	else
+	{
+		if (c == '}' || c == ',' || c == '{' || c == '/' || c == 0)
+			goto generic;
+		s2 = p;
 		while (p < len && !(tokcls[(UINT8)in[p]] & TCLS_END))
 		{
+			if (in[p] == '/')
+				goto generic;
 			p++;
-			if (in[p] == '/' && p < len - 1 && (in[p + 1] == '/' || in[p + 1] == '*'))
-				break;
 		}
+		e2 = p;
+		if (p >= len || !(tokcls[(UINT8)in[p]] & TCLS_SKIP) || in[p] == 0)
+			goto generic;
+		next = p;
 	}
-	(void)close;
-	tokenizer->inComment = 0;
-	tokenizer->endPos = p;
-	tokenizer->startPos = found ? p - 1 : p;
-	if (!found)
-	{
-		if (p > len)
-			tokenizer->endPos = p;
-		return false;
-	}
-	return p < size;
+	in[e1] = '\0';
+	in[e2] = '\0';
+	t->startPos = s2;
+	t->endPos = next;
+	*param = in + s1;
+	*val = in + s2;
+	return 1;
+
+generic:
+#ifdef TOK_STATS
+	tok_generic_pairs++;
+#endif
+	*param = Tokenizer_SRB2Read(t, 0);
+	if (!*param || (((*param)[0] == '}') && !(*param)[1]))
+		return 0;
+	*val = Tokenizer_SRB2Read(t, 1);
+	return 1;
 }
 #endif
 

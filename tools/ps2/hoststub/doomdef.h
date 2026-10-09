@@ -7,6 +7,7 @@
 #include <string.h>
 typedef uint8_t UINT8;
 typedef uint32_t UINT32;
+typedef uint64_t UINT64;
 typedef int boolean;
 #define true 1
 #define false 0

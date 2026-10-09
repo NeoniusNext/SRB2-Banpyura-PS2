@@ -37,6 +37,7 @@ const char *Tokenizer_Read(tokenizer_t *tokenizer, UINT32 i);
 const char *Tokenizer_SRB2Read(tokenizer_t *tokenizer, UINT32 i);
 #ifdef PS2_PROFILE
 boolean Tokenizer_SRB2SkipBlock(tokenizer_t *tokenizer, UINT32 size); // PS2-LOAD-15
+int Tokenizer_SRB2ReadPair(tokenizer_t *tokenizer, const char **param, const char **val); // PS2-LOAD-17
 #endif
 UINT32 Tokenizer_GetEndPos(tokenizer_t *tokenizer);
 void Tokenizer_SetEndPos(tokenizer_t *tokenizer, UINT32 newPos);

@@ -30,6 +30,7 @@ tokenizer_t *Fast_Tokenizer_Open(const char *, size_t, unsigned);
 void Fast_Tokenizer_Close(tokenizer_t *);
 const char *Fast_Tokenizer_SRB2Read(tokenizer_t *, uint32_t);
 int Fast_Tokenizer_SRB2SkipBlock(tokenizer_t *, uint32_t);
+int Fast_Tokenizer_SRB2ReadPair(tokenizer_t *, const char **, const char **);
 
 static unsigned long long seed = 0x9E3779B97F4A7C15ull;
 static unsigned Rnd(void) { seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17; return (unsigned)(seed >> 20); }
@@ -94,10 +95,87 @@ static int Compare(const char *name, const char *text, size_t len)
 						return 1;
 					}
 				}
+			/* the pair reader of TextmapParse against the loop it replaces, from the same place, to the end of the block */
+			if (oka == 0 || 1)
+			{
+				tokenizer_t *a3 = Orig_Tokenizer_Open(text, len, 2), *b3 = Fast_Tokenizer_Open(text, len, 2);
+				a3->line = b3->line = 0;
+				for (long k = 0; k < calls; k++) { Orig_Tokenizer_SRB2Read(a3, 0); Fast_Tokenizer_SRB2Read(b3, 0); }
+				for (int guard = 0; guard < 400; guard++)
+				{
+					const char *pa, *va = NULL, *pb, *vb = NULL;
+					int ra, rb;
+
+					if (a3->endPos > a3->inputLength)
+						break;
+					pa = Orig_Tokenizer_SRB2Read(a3, 0);
+					if (!pa || !strcmp(pa, "}")) ra = 0; else { va = Orig_Tokenizer_SRB2Read(a3, 1); ra = 1; }
+					rb = Fast_Tokenizer_SRB2ReadPair(b3, &pb, &vb);
+					if (ra != rb || (ra && (strcmp(pa, pb) || (va == NULL) != (vb == NULL) || (va && strcmp(va, vb)))) || a3->endPos != b3->endPos || a3->inComment != b3->inComment)
+					{
+						printf("%s: pair after call %ld differs: orig %d '%s' '%s' end=%u c=%u, fast %d '%s' '%s' end=%u c=%u\n", name, calls, ra, pa ? pa : "(null)", va ? va : "(null)", a3->endPos, a3->inComment, rb, pb ? pb : "(null)", vb ? vb : "(null)", b3->endPos, b3->inComment);
+						return 1;
+					}
+					if (!ra)
+						break;
+				}
+				Orig_Tokenizer_Close(a3);
+				Fast_Tokenizer_Close(b3);
+			}
 			Orig_Tokenizer_Close(a2);
 			Fast_Tokenizer_Close(b2);
 		}
 	}
+	Orig_Tokenizer_Close(a);
+	Fast_Tokenizer_Close(b);
+	return 0;
+}
+
+
+/* the whole text as TextmapParse reads it: keywords and "{" with the plain reader, the blocks pair by pair (original: two reads per pair; fast: ReadPair, in place) */
+static int ComparePairs(const char *name, const char *text, size_t len)
+{
+	tokenizer_t *a = Orig_Tokenizer_Open(text, len, 2), *b = Fast_Tokenizer_Open(text, len, 2);
+	long pairs = 0;
+
+	a->line = b->line = 0;
+	for (;;)
+	{
+		const char *ta = Orig_Tokenizer_SRB2Read(a, 0), *tb = Fast_Tokenizer_SRB2Read(b, 0);
+
+		if (a->endPos > a->inputLength)
+			break;
+		if ((ta == NULL) != (tb == NULL) || (ta && strcmp(ta, tb)) || a->endPos != b->endPos || a->inComment != b->inComment)
+		{
+			printf("%s: keyword read differs after %ld pairs: '%s' end=%u / '%s' end=%u\n", name, pairs, ta ? ta : "(null)", a->endPos, tb ? tb : "(null)", b->endPos);
+			return 1;
+		}
+		if (!ta)
+			break;
+		if (!strcmp(ta, "{") && a->input[a->startPos] == '{' && a->endPos == a->startPos + 1)
+			for (;;)
+			{
+				const char *pa, *va = NULL, *pb, *vb = NULL;
+				int ra, rb;
+
+				if (a->endPos > a->inputLength)
+					goto done;
+				pa = Orig_Tokenizer_SRB2Read(a, 0);
+				if (!pa || !strcmp(pa, "}")) ra = 0; else { va = Orig_Tokenizer_SRB2Read(a, 1); ra = 1; }
+				rb = Fast_Tokenizer_SRB2ReadPair(b, &pb, &vb);
+				pairs++;
+				if (a->endPos > a->inputLength)
+					goto done;
+				if (ra != rb || (ra && (strcmp(pa, pb) || (va == NULL) != (vb == NULL) || (va && strcmp(va, vb)))) || a->endPos != b->endPos || a->inComment != b->inComment)
+				{
+					printf("%s: pair %ld differs: orig %d '%s' '%s' end=%u c=%u, fast %d '%s' '%s' end=%u c=%u\n", name, pairs, ra, pa ? pa : "(null)", va ? va : "(null)", a->endPos, a->inComment, rb, pb ? pb : "(null)", vb ? vb : "(null)", b->endPos, b->inComment);
+					return 1;
+				}
+				if (!ra)
+					break;
+			}
+	}
+done:
 	Orig_Tokenizer_Close(a);
 	Fast_Tokenizer_Close(b);
 	return 0;
@@ -120,6 +198,7 @@ int main(int argc, char **argv)
 		buf = malloc(sz + 1);
 		fread(buf, 1, sz, f); fclose(f);
 		fail += Compare(argv[i], buf, sz);
+		fail += ComparePairs(argv[i], buf, sz);
 		printf("%s: %ld bytes compared\n", argv[i], sz);
 		free(buf);
 	}
@@ -131,6 +210,19 @@ int main(int argc, char **argv)
 		for (k = 0; k < len; k++)
 			text[k] = alpha[Rnd() % (sizeof alpha - 1)];
 		fail += Compare("random", text, len);
+		fail += ComparePairs("random", text, len);
+	}
+	/* no slash at all, many quotes and braces: the eight-byte block skip */
+	for (n = 0; n < 600000 && !fail; n++)
+	{
+		static const char alpha2[] = "ab1 \n\t{}\"\";=,";
+		size_t len = 1 + Rnd() % 70, k;
+		char text[80];
+
+		for (k = 0; k < len; k++)
+			text[k] = alpha2[Rnd() % (sizeof alpha2 - 1)];
+		fail += Compare("noslash", text, len);
+		fail += ComparePairs("noslash", text, len);
 	}
 	/* bigger random texts built from UDMF words */
 	for (n = 0; n < 2000 && !fail; n++)
@@ -148,6 +240,7 @@ int main(int argc, char **argv)
 			if (Rnd() & 1) text[len++] = ' ';
 		}
 		fail += Compare("udmf-words", text, len);
+		fail += ComparePairs("udmf-words", text, len);
 	}
 	puts(fail ? "FAILED" : "ALL EQUAL");
 	return fail != 0;

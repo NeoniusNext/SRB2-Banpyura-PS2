@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 OUT = ROOT / 'build/hosttest'
 OUT.mkdir(parents=True, exist_ok=True)
-names = ['Tokenizer_Open', 'Tokenizer_Close', 'Tokenizer_Read', 'Tokenizer_SRB2Read', 'Tokenizer_GetEndPos', 'Tokenizer_SetEndPos', 'Tokenizer_SRB2SkipBlock', 'Tokenizer_SRB2Next']
+names = ['Tokenizer_Open', 'Tokenizer_Close', 'Tokenizer_Read', 'Tokenizer_SRB2Read', 'Tokenizer_GetEndPos', 'Tokenizer_SetEndPos', 'Tokenizer_SRB2SkipBlock', 'Tokenizer_SRB2ReadPair', 'Tokenizer_SRB2Next']
 import shutil
 GEN = OUT / 'tokgen'
 GEN.mkdir(exist_ok=True)
