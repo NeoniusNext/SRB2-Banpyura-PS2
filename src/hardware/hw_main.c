@@ -62,6 +62,7 @@ extern float Cubepal[2][2][2][3];
 static boolean HWR_PS2_NoCull(void);
 static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
+extern int PS2HWD_QuadVisibleRef(const void *quad); // OPT13 IQ-7c: the reference of the cull checks: can a pixel centre be inside the view after the quad is clipped to it? (ps2_hw_plan.inc)
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
@@ -5170,7 +5171,7 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 			static unsigned chk, bad;
 
 			chk++;
-			if (!PS2HWD_QuadHidden(wallVerts))
+			if (PS2HWD_QuadVisibleRef(wallVerts)) // (was !PS2HWD_QuadHidden: "near the eye" counts as not hidden there, and the cull drops the sprites behind the eye rightly)
 			{
 				bad++;
 				CONS_Printf("HWC sprite cull MISMATCH %u of %u (sprite %s)\n", bad, chk, spr->mobj && (UINT32)spr->mobj->sprite < NUMSPRITES ? sprnames[spr->mobj->sprite] : "?");
@@ -5364,7 +5365,7 @@ static inline void HWR_DrawPrecipitationSprite(gl_vissprite_t *spr)
 		static unsigned chk, bad;
 
 		chk++;
-		if (!PS2HWD_QuadHidden(wallVerts))
+		if (PS2HWD_QuadVisibleRef(wallVerts)) // (see HWR_DrawSprite)
 		{
 			bad++;
 			CONS_Printf("HWC precipitation cull MISMATCH %u of %u\n", bad, chk);
