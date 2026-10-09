@@ -30,6 +30,9 @@ static int plan_active;
 #define PLAN_BIG_BLOCKS 512u // an image of at least this many blocks (at its exact level) may be stored PLAN_BIG_EXTRA levels coarser than the exact plan when the budget needs it
 #define PLAN_BIG_EXTRA 2
 #define PLAN_DOWN_BLOCKS 256u // an image is made again at a coarser planned level when that frees at least this many blocks
+#define PLAN_FID_PCT 85u // the fidelity pass fills the budget of the frame up to this share (per cent)
+#define PLAN_FID_AREA 1500.0f // ... for the images whose visible area is at least this (pixels squared) first
+static int plan_nofid; // -hwfid 1: no fidelity pass (A/B)
 #define PLAN_TOL_KEEP 1.5f // an image stored at a coarser level than the plan asks for is kept while it magnifies at most this much (no flicker between levels)
 
 typedef struct
@@ -922,6 +925,40 @@ void PS2HWD_PlanEnd(void)
 			break;
 		sum -= bsave;
 		lx[best]++;
+	}
+	// OPT12 HWDRV (PS2-HW-443): the budget is not used up. The exact plan stores an image at the level where a texel is still a pixel (a minified texture: 1/8 of the texels, the one of every 8x8 that
+	// keeps the contrast), and the picture of such a wall differs from the PC driver's (which samples the full size texture): MAD 5.9 against 0.85, 5.8 % of the pixels over 48 levels in the first frame of
+	// DEMO_002, with the sampling lattice of the PC (moire lines) replaced by noise. While room is left (up to PLAN_FID_PCT of the budget) the images that show the most go back to the full size,
+	// biggest visible area first; images already stored coarser are kept by plan_too_coarse (no re-upload, no flicker), so the full size takes the place of an image as it is made again. -hwfid 1: off.
+	if (!plan_nofid && sum < budget / 100u * PLAN_FID_PCT)
+	{
+		const u32 limit = budget / 100u * PLAN_FID_PCT;
+		int pass;
+
+		for (pass = 0; pass < 2; pass++)
+		{
+			const float amin = pass == 0 ? PLAN_FID_AREA : 1.0f; // pixels squared of the image's visible area: the big ones first, then the rest
+
+			for (i = 0; i < plan_n && sum < limit; i++)
+			{
+				u32 now, lvl;
+
+				if (lx[i] == 0 || !(tot[i] >= amin) || (pass == 1 && tot[i] >= PLAN_FID_AREA))
+					continue;
+				now = plan_blocks(key[i], lx[i]);
+				for (lvl = 0; lvl < lx[i]; lvl++) // the finest level that fits
+				{
+					const u32 extra = plan_blocks(key[i], (int)lvl) - now;
+
+					if (sum + extra <= limit)
+					{
+						sum += extra;
+						lx[i] = (u8)lvl;
+						break;
+					}
+				}
+			}
+		}
 	}
 	if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)
 		for (i = 0; i < n; i++)

@@ -324,6 +324,9 @@ boolean PS2HWD_Init(void)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	plan_nofid = 0;
+	if (M_CheckParm("-hwfid") && M_IsNextParm())
+		plan_nofid = atoi(M_GetNextParm()) != 0; // PS2-HW-443: 1 = no fidelity pass in the frame plan (the images stay at the level where a texel is a pixel)
 	keep_off = 0;
 	if (M_CheckParm("-hwkeep") && M_IsNextParm())
 		keep_off = atoi(M_GetNextParm()); // PS2-HW-442: 0 = the data of the textures is an LRU cache (the default), 1 = as before (freed at the next allocation that does not fit), 2 = LRU cache without the keep list
