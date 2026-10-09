@@ -1221,16 +1221,26 @@ static vissprite_t *R_NewVisSprite(void)
 			return &overflowsprite;
 		}
 		visspritecount++;
-		{ // OPT13-RCACHE: a vissprite starts from zero (R_ProjectDropShadow and R_ProjectBoundingBox set only some fields; the rest was whatever the arena held)
-			INT16 *cb = vs->clipbot, *ct = vs->cliptop;
-			memset(vs, 0, sizeof *vs);
-			vs->clipbot = cb;
-			vs->cliptop = ct;
-		}
 		return vs;
 	}
 #else
 	return R_GetVisSprite(visspritecount++);
+#endif
+}
+
+// OPT13-RCACHE: R_ProjectDropShadow and R_ProjectBoundingBox set only some of the fields of the vissprite they take (28 of about 45 for the shadow); the others were whatever
+// the arena held there (renderflags is read by R_DrawVisSprite: the colour map of a shadow followed the garbage; found by memcheck and MALLOC_PERTURB_ on the host, invisible in
+// PCSX2 where the RAM starts as zeros). Those two start from zero; the clip arrays stay the sprite's own. The sprites of R_ProjectSprite set what they read (memcheck, 4 demos: clean).
+static void R_ClearVisSprite(vissprite_t *vs)
+{
+#ifdef PS2_PROFILE
+	INT16 *cb = vs->clipbot, *ct = vs->cliptop;
+
+	memset(vs, 0, sizeof *vs);
+	vs->clipbot = cb;
+	vs->cliptop = ct;
+#else
+	(void)vs; // (the PC build keeps what it did: its clip arrays are inside the sprite)
 #endif
 }
 
@@ -2054,6 +2064,7 @@ static void R_ProjectDropShadow(mobj_t *thing, vissprite_t *vis, fixed_t scale, 
 	if (shadowyscale < FRACUNIT/patch->height) return; // fix some crashes?
 
 	shadow = R_NewVisSprite();
+	R_ClearVisSprite(shadow);
 	shadow->patch = patch;
 	shadow->heightsec = vis->heightsec;
 
@@ -2163,6 +2174,7 @@ static void R_ProjectBoundingBox(mobj_t *thing, vissprite_t *vis)
 	}
 
 	box = R_NewVisSprite();
+	R_ClearVisSprite(box);
 	box->mobj = thing;
 	box->mobjflags = thing->flags;
 	box->thingheight = interp.height;
