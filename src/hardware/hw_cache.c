@@ -1116,7 +1116,18 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 	gl_flats = calloc(gl_numtextures, sizeof(*gl_flats));
 
 	if (gl_textures == NULL || gl_flats == NULL)
+	{
+#ifdef PS2
+		// PS2-HW-446 (OPT12 HWDRV): under the guard of ps2_hwfb.c (the hardware part of a level load, the first frame of a renderer switch) this is not the end of the game: the
+		// tables are given back and the level goes on in software (the stab_run.sh hwfb chain ended here, at map 23, with the start before this change as well)
+		free(gl_textures);
+		free(gl_flats);
+		gl_textures = gl_flats = NULL;
+		gl_numtextures = 0;
+		Z_GuardThrow("HWR_LoadMapTextures: ran out of memory for OpenGL textures"); // (no return when a guard is armed)
+#endif
 		I_Error("HWR_LoadMapTextures: ran out of memory for OpenGL textures");
+	}
 
 	gl_maptexturesloaded = true;
 }
