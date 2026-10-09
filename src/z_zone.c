@@ -242,7 +242,7 @@ static UINT32 zreg_overflows;
 #define ZHWLRU_SMALL (32u << 10)
 static boolean zhwcache_lru;
 static unsigned int zhwlru_conv, zhwlru_flushes;
-static size_t zhwlru_free = 128u << 10, zhwlru_cap, zhwlru_used;
+static size_t zhwlru_free = 512u << 10, zhwlru_cap, zhwlru_used;
 static UINT32 zhwlru_frame;
 void Z_SetHWCacheLRU(boolean on, size_t freemin, size_t cap)
 {

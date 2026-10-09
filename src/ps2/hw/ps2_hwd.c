@@ -331,7 +331,7 @@ boolean PS2HWD_Init(void)
 	if (M_CheckParm("-hwkeep") && M_IsNextParm())
 		keep_off = atoi(M_GetNextParm()); // PS2-HW-442: 0 = the data of the textures is an LRU cache (the default), 1 = as before (freed at the next allocation that does not fit), 2 = LRU cache without the keep list
 	{
-		size_t freemin = 128u << 10, cap = 0; // -hwkeepfree KB / -hwkeepcap KB: the arena that must stay free / the bytes of big blocks a frame may make LRU cache blocks, 0 = no limit (Z_HWCacheTag)
+		size_t freemin = 512u << 10, cap = 0; // OPT12: 512 KB (128 before: D1..D4 at -zreserve 1536 6.77/7.85/10.35/9.76 -> 6.72/7.18/9.75/9.76) -hwkeepfree KB / -hwkeepcap KB: the arena that must stay free / the bytes of big blocks a frame may make LRU cache blocks, 0 = no limit (Z_HWCacheTag)
 
 		if (M_CheckParm("-hwkeepfree") && M_IsNextParm())
 			freemin = (size_t)atoi(M_GetNextParm()) << 10;
