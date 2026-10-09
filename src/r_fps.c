@@ -998,30 +998,44 @@ void R_InitMobjInterpolators(void)
 	interpolated_mobjs_capacity = 0;
 }
 
-void R_UpdateMobjInterpolators(void)
+// OPT13 IS (RF-5, RTICK D-g): the interpolation state of a mobj is three records of twelve words in the same order (p_mobj.h: the current x, y, z, angle, pitch, roll, spriteroll, scale,
+// spritexscale, spriteyscale, spritexoffset, spriteyoffset; old_*; old_*2): the tic moves old to old2 and the current to old as six double words each, 12 loads and 12 stores
+// where 24 words were moved one by one (the machine of the profile: lw / sw 1 cycle each, ld / sd as many for twice the bytes). The values are those of the word by word copy.
+typedef unsigned long long __attribute__((may_alias, aligned(8))) r_u64_t;
+
+static inline void R_CopyInterpRecord(void *dst, const void *src)
 {
-	size_t i;
-#ifdef PS2_OPT_PTICK
-	// PS2-96: the old_* copies are read only by interpolated drawing (every reader checks R_UsingFrameInterpolation()); at the tic
-	// rate nothing looks at them and the copy of every interpolated mobj each tic is wasted. When interpolation is switched on, the
-	// first tic refreshes them (the first frame after the switch may show one stale step).
-	if (!R_UsingFrameInterpolation())
-		return;
-#endif
-	for (i = 0; i < interpolated_mobjs_len; i++)
-	{
-		mobj_t *mobj = interpolated_mobjs[i];
-		if (!P_MobjWasRemoved(mobj))
-			R_ResetMobjInterpolationState(mobj);
-	}
+	const r_u64_t *s = (const r_u64_t *)src;
+	r_u64_t *d = (r_u64_t *)dst;
+	const r_u64_t a = s[0], b = s[1], c = s[2], e = s[3], f = s[4], g = s[5];
+
+	d[0] = a;
+	d[1] = b;
+	d[2] = c;
+	d[3] = e;
+	d[4] = f;
+	d[5] = g;
 }
 
-//
-// P_ResetMobjInterpolationState
-//
-// Reset the rendering interpolation state of the mobj.
-//
-void R_ResetMobjInterpolationState(mobj_t *mobj)
+static inline void R_ResetMobjInterpolationStateInline(mobj_t *mobj)
+{
+	R_CopyInterpRecord(&mobj->old_x2, &mobj->old_x);
+	R_CopyInterpRecord(&mobj->old_x, &mobj->x);
+
+	if (mobj->player)
+	{
+		mobj->player->old_drawangle2 = mobj->player->old_drawangle;
+		mobj->player->old_drawangle = mobj->player->drawangle;
+	}
+
+	mobj->resetinterp = false;
+}
+
+#ifdef PS2_PROFILE
+extern int ps2hwd_fx2; // ps2/hw/ps2_hw_fx2.h
+#define R_FX4_NOINTERP2 0x40000000 // -hwfx 1073741824: the interpolation state is moved word by word, as before OPT13 IS (A/B on one ELF)
+
+static void R_ResetMobjInterpolationStateWords(mobj_t *mobj)
 {
 	mobj->old_x2 = mobj->old_x;
 	mobj->old_y2 = mobj->old_y;
@@ -1056,6 +1070,49 @@ void R_ResetMobjInterpolationState(mobj_t *mobj)
 
 	mobj->resetinterp = false;
 }
+#endif
+
+void R_UpdateMobjInterpolators(void)
+{
+	size_t i;
+	mobj_t **const list = interpolated_mobjs;
+	const size_t n = interpolated_mobjs_len;
+#ifdef PS2_OPT_PTICK
+	// PS2-96: the old_* copies are read only by interpolated drawing (every reader checks R_UsingFrameInterpolation()); at the tic
+	// rate nothing looks at them and the copy of every interpolated mobj each tic is wasted. When interpolation is switched on, the
+	// first tic refreshes them (the first frame after the switch may show one stale step).
+	if (!R_UsingFrameInterpolation())
+		return;
+#endif
+#ifdef PS2_PROFILE
+	if (ps2hwd_fx2 & R_FX4_NOINTERP2)
+	{
+		for (i = 0; i < n; i++)
+		{
+			mobj_t *mobj = list[i];
+			if (!P_MobjWasRemoved(mobj))
+				R_ResetMobjInterpolationStateWords(mobj);
+		}
+		return;
+	}
+#endif
+	for (i = 0; i < n; i++)
+	{
+		mobj_t *mobj = list[i];
+		if (!P_MobjWasRemoved(mobj))
+			R_ResetMobjInterpolationStateInline(mobj);
+	}
+}
+
+//
+// P_ResetMobjInterpolationState
+//
+// Reset the rendering interpolation state of the mobj.
+//
+void R_ResetMobjInterpolationState(mobj_t *mobj)
+{
+	R_ResetMobjInterpolationStateInline(mobj);
+}
 
 //
 // P_ResetPrecipitationMobjInterpolationState
@@ -1064,26 +1121,5 @@ void R_ResetMobjInterpolationState(mobj_t *mobj)
 //
 void R_ResetPrecipitationMobjInterpolationState(precipmobj_t *mobj)
 {
-	mobj->old_x2 = mobj->old_x;
-	mobj->old_y2 = mobj->old_y;
-	mobj->old_z2 = mobj->old_z;
-	mobj->old_angle2 = mobj->old_angle;
-	mobj->old_pitch2 = mobj->old_pitch;
-	mobj->old_roll2 = mobj->old_roll;
-	mobj->old_spriteroll2 = mobj->old_spriteroll;
-	mobj->old_spritexscale2 = mobj->old_spritexscale;
-	mobj->old_spriteyscale2 = mobj->old_spriteyscale;
-	mobj->old_spritexoffset2 = mobj->old_spritexoffset;
-	mobj->old_spriteyoffset2 = mobj->old_spriteyoffset;
-	mobj->old_x = mobj->x;
-	mobj->old_y = mobj->y;
-	mobj->old_z = mobj->z;
-	mobj->old_angle = mobj->angle;
-	mobj->old_pitch = mobj->pitch;
-	mobj->old_roll = mobj->roll;
-	mobj->old_spriteroll = mobj->spriteroll;
-	mobj->old_spritexscale = mobj->spritexscale;
-	mobj->old_spriteyscale = mobj->spriteyscale;
-	mobj->old_spritexoffset = mobj->spritexoffset;
-	mobj->old_spriteyoffset = mobj->spriteyoffset;
+	R_CopyInterpRecord(&mobj->old_x, &mobj->x); // (a precipitation mobj has no old2 record: nothing reads one)
 }

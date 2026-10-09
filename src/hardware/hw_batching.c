@@ -640,9 +640,14 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 // HWR_ProcessPolygon (PS2-HW-403, above) do for such a polygon, in one call: the texture is made current, the polygon goes to its bucket (the bucket cache, else the general entry). The
 // caller (hw_main.c, HWR_FX_SprFuse / HWR_FX_ShadowFuse) has the texture touched once per view. Returns 0, having done nothing, when this way does not apply (no sprite batch, the geometry
 // cache or the polygon hash is looking, the old collection): the caller then draws the polygon the old way.
+boolean HWR_PBSprReady(void)
+{
+	return (currently_batching & hwr_sprite_batch) && !((UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB) | (hwr_fr_off & 64u)) && (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM));
+}
+
 boolean HWR_PBSprQuad(GLMipmap_t *tex, const FSurfaceInfo *s, const FOutVector *v, FBITFIELD flags, int shader_target)
 {
-	if (!(currently_batching & hwr_sprite_batch) || ((UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB) | (hwr_fr_off & 64u)) || !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM)))
+	if (!HWR_PBSprReady())
 		return 0;
 	current_texture = tex;
 	if (!HWR_PBFast(s, v, 4, flags, shader_target, false, hwr_sprite_shadow ? 0u : 1u))

@@ -33,6 +33,7 @@
 #define FX4_NOFUSE 0x4000000 // PS2-HW-700: the plain opaque sprite of the sprite batch goes through HWR_DrawSprite as before (the fused builder of hw_main.c is off)
 #define FX4_NOSHFUSE 0x8000000 // PS2-HW-701: the drop shadow of a plain sprite goes through HWR_DrawDropShadowGen as before
 #define FX4_FUSECHK 0x10000000 // PS2-HW-700/701 check mode: the fused builders run, the old paths draw, the polygon of the old path is compared with the fused one (HWC fuse MISMATCH)
+#define FX4_NOINTERP2 0x40000000 // PS2-HW-703 (r_fps.c): the interpolation state of the mobjs is moved word by word at the tic, as before the records of 12 words
 #define FX4_NOPROJ2 0x20000000 // PS2-HW-702: the projection of the plain sprite as before OPT13
 #define FX2_PTRORDER 0x1000 // PS2-HW-250 (FX3): the order of the patches in the batches by the hash of their address, as before (A/B)
 

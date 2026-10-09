@@ -292,21 +292,31 @@ typedef struct mobj_s
 	// List: thinker links.
 	thinker_t thinker;
 
-	// Info for drawing: position.
-	fixed_t x, y, z;
-	fixed_t old_x, old_y, old_z; // position interpolation
-	fixed_t old_x2, old_y2, old_z2;
-
 	// More list: links in sector (if needed)
 	struct mobj_s *snext;
 	struct mobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
 
-	// More drawing info: to determine current sprite.
-	angle_t angle, pitch, roll; // orientation
-	angle_t old_angle, old_pitch, old_roll; // orientation interpolation
-	angle_t old_angle2, old_pitch2, old_roll2;
-	angle_t spriteroll, old_spriteroll, old_spriteroll2;
 	spritenum_t sprite; // used to find patch_t and flip value
+
+	// OPT13 IS (RF-5): the state the renderer interpolates, as two records of twelve words in the same order (R_ResetMobjInterpolationState moves a record as six double
+	// words: old <- current, old2 <- old; the third record, old2, is mobj_t only, below). The records are 8-byte aligned (thinker_t is 20 bytes, then 3 words); precipmobj_t
+	// has the same first two, with the scale words unused (the fields after them must stay at the same offsets in both structures).
+	// Info for drawing: position, orientation, scale.
+	fixed_t x, y, z;
+	angle_t angle, pitch, roll; // orientation
+	angle_t spriteroll;
+	fixed_t scale;
+	fixed_t spritexscale, spriteyscale;
+	fixed_t spritexoffset, spriteyoffset;
+	// position, orientation and scale interpolation
+	fixed_t old_x, old_y, old_z;
+	angle_t old_angle, old_pitch, old_roll;
+	angle_t old_spriteroll;
+	fixed_t old_scale;
+	fixed_t old_spritexscale, old_spriteyscale;
+	fixed_t old_spritexoffset, old_spriteyoffset;
+
+	// More drawing info: to determine current sprite.
 	UINT32 frame; // frame number, plus bits see p_pspr.h
 	UINT16 sprite2; // player sprites
 	UINT16 anim_duration; // for FF_ANIMATE states
@@ -314,10 +324,6 @@ typedef struct mobj_s
 	UINT32 renderflags; // render flags
 	INT32 blendmode; // blend mode
 	fixed_t alpha; // alpha
-	fixed_t spritexscale, spriteyscale;
-	fixed_t spritexoffset, spriteyoffset;
-	fixed_t old_spritexscale, old_spriteyscale, old_spritexscale2, old_spriteyscale2;
-	fixed_t old_spritexoffset, old_spriteyoffset, old_spritexoffset2, old_spriteyoffset2;
 	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
 
 	struct msecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
@@ -398,9 +404,6 @@ typedef struct mobj_s
 
 	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
 
-	fixed_t scale;
-	fixed_t old_scale; // interpolation
-	fixed_t old_scale2;
 	fixed_t destscale;
 	fixed_t scalespeed;
 
@@ -422,6 +425,17 @@ typedef struct mobj_s
 	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
 	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
 
+	// OPT13 IS (RF-5): the third record of the interpolation state (the one before old_*: read by P_SpawnGhostMobj and the minecart), same order as old_*
+	struct
+	{
+		fixed_t old_x2, old_y2, old_z2;
+		angle_t old_angle2, old_pitch2, old_roll2;
+		angle_t old_spriteroll2;
+		fixed_t old_scale2;
+		fixed_t old_spritexscale2, old_spriteyscale2;
+		fixed_t old_spritexoffset2, old_spriteyoffset2;
+	} __attribute__((aligned(8)));
+
 	// WARNING: New fields must be added separately to savegame and Lua.
 } mobj_t;
 
@@ -437,21 +451,29 @@ typedef struct precipmobj_s
 	// List: thinker links.
 	thinker_t thinker;
 
-	// Info for drawing: position.
-	fixed_t x, y, z;
-	fixed_t old_x, old_y, old_z; // position interpolation
-	fixed_t old_x2, old_y2, old_z2;
-
 	// More list: links in sector (if needed)
 	struct precipmobj_s *snext;
 	struct precipmobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
 
-	// More drawing info: to determine current sprite.
-	angle_t angle, pitch, roll; // orientation
-	angle_t old_angle, old_pitch, old_roll; // orientation interpolation
-	angle_t old_angle2, old_pitch2, old_roll2;
-	angle_t spriteroll, old_spriteroll, old_spriteroll2;
 	spritenum_t sprite; // used to find patch_t and flip value
+
+	// OPT13 IS (RF-5): as in mobj_t (the two records of twelve words; a precipitation mobj has no scale and no old2 record: nothing reads them)
+	// Info for drawing: position, orientation.
+	fixed_t x, y, z;
+	angle_t angle, pitch, roll; // orientation
+	angle_t spriteroll;
+	fixed_t unused_scale;
+	fixed_t spritexscale, spriteyscale;
+	fixed_t spritexoffset, spriteyoffset;
+	// position and orientation interpolation
+	fixed_t old_x, old_y, old_z;
+	angle_t old_angle, old_pitch, old_roll;
+	angle_t old_spriteroll;
+	fixed_t unused_old_scale;
+	fixed_t old_spritexscale, old_spriteyscale;
+	fixed_t old_spritexoffset, old_spriteyoffset;
+
+	// More drawing info: to determine current sprite.
 	UINT32 frame; // frame number, plus bits see p_pspr.h
 	UINT16 sprite2; // player sprites
 	UINT16 anim_duration; // for FF_ANIMATE states
@@ -459,10 +481,6 @@ typedef struct precipmobj_s
 	UINT32 renderflags; // render flags
 	INT32 blendmode; // blend mode
 	fixed_t alpha; // alpha
-	fixed_t spritexscale, spriteyscale;
-	fixed_t spritexoffset, spriteyoffset;
-	fixed_t old_spritexscale, old_spriteyscale, old_spritexscale2, old_spriteyscale2;
-	fixed_t old_spritexoffset, old_spriteyoffset, old_spritexoffset2, old_spriteyoffset2;
 	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
 
 	struct mprecipsecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
@@ -487,6 +505,12 @@ typedef struct precipmobj_s
 	state_t *state;
 	INT32 flags; // flags from mobjinfo tables
 } precipmobj_t;
+
+// OPT13 IS (RF-5): R_ResetMobjInterpolationState copies the records as 48 bytes at a time; the layout it relies on
+#include <stddef.h>
+_Static_assert(offsetof(mobj_t, old_x) - offsetof(mobj_t, x) == 48 && offsetof(mobj_t, spriteyoffset) - offsetof(mobj_t, x) == 44 && offsetof(mobj_t, old_spriteyoffset) - offsetof(mobj_t, old_x) == 44, "mobj_t interpolation records");
+_Static_assert(offsetof(mobj_t, old_spriteyoffset2) - offsetof(mobj_t, old_x2) == 44 && offsetof(mobj_t, old_x) % 8 == 0 && offsetof(mobj_t, x) % 8 == 0 && offsetof(mobj_t, old_x2) % 8 == 0, "mobj_t interpolation records (old2)");
+_Static_assert(offsetof(precipmobj_t, old_x) - offsetof(precipmobj_t, x) == 48 && offsetof(precipmobj_t, old_x) == offsetof(mobj_t, old_x) && offsetof(precipmobj_t, flags) == offsetof(mobj_t, flags), "precipmobj_t shares the start of mobj_t");
 
 typedef struct actioncache_s
 {

@@ -65,6 +65,7 @@ UINT32 HWR_PS2_SideTexWord(INT32 raw); // hw_cache.c: the word of a side texture
 // PS2-HW-52: the sprite loop (HWR_DrawSprites) collects the polygons of opaque sprites and their shadows and draws them as batches
 extern boolean hwr_sprite_batch; // HWR_ProcessPolygon flushes the batch at the first polygon that is not order independent
 extern boolean hwr_sprite_shadow; // the polygon is a drop shadow
+boolean HWR_PBSprReady(void); // OPT13 IS: the sprite batch takes quads straight (HWR_PBSprQuad cannot refuse)
 boolean HWR_PBSprQuad(GLMipmap_t *tex, const FSurfaceInfo *s, const FOutVector *v, FBITFIELD flags, int shader_target); // OPT13 IS: a sprite or shadow quad straight to the collection (0: not this way, nothing done)
 #endif
 
