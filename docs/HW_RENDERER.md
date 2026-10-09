@@ -244,7 +244,7 @@ implemented primitive path correctly.
 | Screen textures/presentation | Full-size captures, GS/EE residency, exact identity copies, aspect/letterbox | P five default-mode slots; larger-than-pool high-resolution captures need tiled storage/compositing |
 | Wipes (normal/tinted/continuous) | CT32 continuous destination-alpha and per-channel tinted compositions | Engine flags/masks/reference frames outstanding; CT16S cannot preserve continuous mask alpha |
 | Texture filtering/wrap/mipmaps/anisotropy | Repeat/clamp, nearest/bilinear; TF_TRANSPARENT nearest matches PC driver policy | Mip chains, mixed LOD, anisotropy and shader-filtered alpha reference frames outstanding |
-| Texture colour/resolution | PSMT8 exact palette indices or CT32 RGB; exact supported dimensions | No RGB555 conversion/remap/decimation. >1024 axes, larger-than-pool textures and insufficient budgets fail explicitly; lossless tiling required |
+| Texture colour/resolution | PSMT8 exact palette indices or CT32 RGB; exact supported dimensions | No RGB555 conversion/remap. An axis over 1024 is stored as two images (PS2-HW-70; OPT12: `decim` = 0 on all four demos, `THPIPMT3` 64x1536, `SKY8` 1024x512 draw whole); the frame plan picks mip levels of minified textures (exact, then up to 85 % of the budget back to full size, PS2-HW-443); larger-than-pool textures and insufficient budgets still fail explicitly |
 | Wireframe | Not implemented; diagnostic | Line/edge emission and state semantics |
 
 ### Blend equations
