@@ -1221,6 +1221,12 @@ static vissprite_t *R_NewVisSprite(void)
 			return &overflowsprite;
 		}
 		visspritecount++;
+		{ // OPT13-RCACHE: a vissprite starts from zero (R_ProjectDropShadow and R_ProjectBoundingBox set only some fields; the rest was whatever the arena held)
+			INT16 *cb = vs->clipbot, *ct = vs->cliptop;
+			memset(vs, 0, sizeof *vs);
+			vs->clipbot = cb;
+			vs->cliptop = ct;
+		}
 		return vs;
 	}
 #else
