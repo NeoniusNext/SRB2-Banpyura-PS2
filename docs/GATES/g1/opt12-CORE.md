@@ -163,7 +163,7 @@ MAP11 крупнее в 1.27 раза по подсекторам (полиго�
 | MAP11 Hardware | статический откат на software («map with 15942 subsectors is too big for it»), потом OOM как выше | тот же статический откат, дальше software живёт (60 кадров, `free=983 696`); HW без отката недостижим (раздел 5) |
 | цепочка 50 смен карты (`leak`, `-zchain 01×49`), software | — | `used` n=2 15 814 576 → n=50 15 816 128 (+1.5 КБ), libc free 378 152 → 374 040 |
 | то же, Hardware | — | `used` колеблется 16.60…16.86 МБ без тренда (n=2 16 675 280, n=49 16 596 112, n=50 16 791 536), libcpeak 366 528 неизменен |
-`SHOWMEM now` строкой не печатал (при `-vidcmd` консольная переменная не успевает до `-zquit`): приведены те же счётчики из `ZSTAT`, из которых `showmem` считает RAM (`ps2_memhud.c`, `PS2MemHud_Sample`).
+В этих прогонах строка `SHOWMEM now` не напечаталась (`-vidcmd 'showmem "On"'` переменную не включил, причину не искал): приведены те же счётчики из `ZSTAT`, из которых `showmem` считает RAM (`ps2_memhud.c`, `PS2MemHud_Sample`); реальные строки `SHOWMEM now` — в разделе 10, если успел.
 
 ## 9. Стабильность (итоговая ELF = релиз без `--prof`, LTO, коммит 03d3575, `build/out-rel` в worktree `core-rel`; `tools/ps2/stab_run.sh ELF rel1 ...`, лог `build/logs/stab-rel1.txt`)
 
