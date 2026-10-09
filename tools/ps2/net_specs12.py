@@ -142,6 +142,13 @@ for _name, _files, _extra in (('dl-nsk', ['NSK.pk3'], []), ('dl-both', ['NSK.pk3
               files={'pad.txt': pad(*crosses(200, 4000))}, cfg=CFG_SYNC, start=10)
     mine(_name, {'timeout': 900, 'nodes': [srv, cli], 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 1400}], 'grace': 3})
 
+# the same download with the server sending N fragments per tic (downloadspeed, default 16: 16 KB in a burst): how much of the burst the client receives
+for _ds in (2, 4, 8, 32):
+    srv = pcsrv(extra=['-netlat', '-file'] + [f'{ADDONS}/{f}' for f in ('NSK.pk3', 'ZT.pk3')] + ['+downloadspeed', str(_ds)], start=3)
+    cli = ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'],
+              files={'pad.txt': pad(*crosses(200, 4000))}, cfg=CFG_SYNC, start=10)
+    mine(f'dl-both-ds{_ds}', {'timeout': 900, 'nodes': [srv, cli], 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 1400}], 'grace': 3})
+
 # ---- compatibility with the ORIGINAL netcode: build/pc-ref is the PC build of the main tree (no OPT12 code, no -netsync/-netlat hooks, so no NETSYNC lines of its own).
 # PS2 client (all the OPT12 changes on) <-> original PC dedicated server; original PC client <-> PS2 server. "blamecfail" makes the server kick a client whose player state
 # disagrees (consistency check of the original protocol), so a finished run without "Consistency failure"/"left the game" is the proof of equal state.
