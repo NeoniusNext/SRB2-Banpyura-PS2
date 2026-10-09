@@ -452,11 +452,6 @@ extern UINT64 ps2prof_cyc[16];
 #define PS2_CYC_ADD(n, v) ((void)0)
 #endif
 boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y);
-#ifdef PS2_QUICKCHECK
-typedef struct { fixed_t z, floorz, ceilingz; } ps2_scenerypair_t;
-boolean P_SceneryPairEval(const mobj_t *mo, ps2_scenerypair_t *out, sector_t **sec2out);
-#endif
-boolean P_SceneryPairStill(mobj_t *mo); // PS2-500 (OPT12-CORE, p_map.c): the Z+CheckPosition pair of a motionless NOCLIP decoration in a plain sector; false = not covered, nothing changed
 boolean P_TryCameraMove(fixed_t x, fixed_t y, camera_t *thiscam); // romoney5: why is this defined twice?
 boolean P_IsCameraNoclip(camera_t *thiscam);
 boolean P_CheckCameraPosition(fixed_t x, fixed_t y, camera_t *thiscam);

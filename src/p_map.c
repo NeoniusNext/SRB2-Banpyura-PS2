@@ -2036,127 +2036,7 @@ static boolean PIT_CheckLine(line_t *ld)
 // =========================================================================
 //                         MOVEMENT CLIPPING
 // =========================================================================
-#if defined(PS2_OPT_CORE) && defined(PS2_OPT_REND)
-// PS2-501 (OPT12-CORE): "open space". When the box of the thing touches no polyobject cell, no other thing that PIT_CheckThing would look at beyond its first
-// test, and no line that PIT_CheckLine would look at beyond its first two tests, the polyobject pass, the thing pass and the line pass of P_CheckPosition change
-// nothing (every side effect, every adjustment of tmfloorz/tmceilingz/tmdrpoffceilz, every Lua hook and every `return false` of those functions lies behind the
-// tests repeated here, in the same order and with the same operands: PS2-176 for PIT_DoCheckThing, the first lines of PIT_CheckLine). The geometry part before
-// them (sector heights, FOFs, slopes) has already run in P_CheckPosition and is not touched. Anything that could matter (an overlapping thing, a crossing line, a
-// polyobject line, a polyobject cell) answers false and the original passes run. What they do not do on the way is writing validcount into the lines (stamps that
-// the next pass of a different validcount does not read) and calling through function pointers.
-static boolean P_CheckPositionOpen(const mobj_t *thing, fixed_t x, fixed_t y, INT32 xl, INT32 xh, INT32 yl, INT32 yh)
-{
-	INT32 bx, by;
-	const INT32 hx = xh >= bmapwidth ? bmapwidth - 1 : xh;
-	const INT32 hy = yh >= bmapheight ? bmapheight - 1 : yh;
-
-	if (polyblocklinks && xl <= ps2_polycells[1] && xh >= ps2_polycells[0] && yl <= ps2_polycells[3] && yh >= ps2_polycells[2])
-		return false; // a polyobject may be in the cells
-	if (thing->flags & MF_NOCLIP)
-		return true; // the original returns right after the polyobject pass
-
-	if (!(thing->flags & MF_NOCLIPTHING))
-	{
-		const fixed_t r = thing->radius;
-
-		for (bx = xl; bx <= hx; bx++)
-			for (by = yl; by <= hy; by++)
-			{
-				const blocknode_t *block;
-
-				for (block = blocklinks[(size_t)by*bmapwidth + bx]; block != NULL; block = block->mnext)
-				{
-					const mobj_t *other = block->mobj;
-					fixed_t bd;
-
-					if (other == thing)
-						continue;
-					bd = other->radius + r;
-					if (abs(other->x - x) < bd && abs(other->y - y) < bd)
-						return false; // overlapping in x/y: PIT_CheckThing looks further
-				}
-			}
-	}
-
-	for (bx = xl; bx <= hx; bx++)
-		for (by = yl; by <= hy; by++)
-		{
-			const INT32 offset = *(blockmap + (size_t)by*bmapwidth + bx);
-
-			if (ps2_blockmaplists)
-			{
-				const UINT16 *shortlist;
-
-				for (shortlist = ps2_blockmaplists + offset + 1; *shortlist != UINT16_MAX; shortlist++)
-				{
-					line_t *ld = &lines[*shortlist];
-
-					if (ld->polyobj)
-						return false;
-					if (tmbbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || tmbbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-					|| tmbbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || tmbbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
-						continue;
-					if (P_BoxOnLineSide(tmbbox, ld) != -1)
-						continue;
-					return false; // the box crosses this line
-				}
-			}
-			else
-			{
-				const INT32 *list;
-
-				for (list = blockmaplump + offset + 1; *list != -1; list++)
-				{
-					line_t *ld = &lines[*list];
-
-					if (ld->polyobj)
-						return false;
-					if (tmbbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || tmbbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
-					|| tmbbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || tmbbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
-						continue;
-					if (P_BoxOnLineSide(tmbbox, ld) != -1)
-						continue;
-					return false;
-				}
-			}
-		}
-	return true;
-}
-#endif
-
-#ifdef PS2_QUICKCHECK // shadow check of PS2-501: the open-space answer is computed, the ORIGINAL passes run anyway, and the results are compared (wrapper below)
-static boolean qcp_open;
-static fixed_t qcp_fz, qcp_cz, qcp_dz, qcp_dc;
-static ffloor_t *qcp_fr, *qcp_cr;
-static pslope_t *qcp_fs, *qcp_cs;
-static UINT32 qcp_rng;
-static mobj_t qcp_before;
-unsigned ps2_qcp_checked;
-static boolean P_CheckPositionImpl(mobj_t *thing, fixed_t x, fixed_t y);
-#include <stdio.h>
-static void P_QcpDump(void) { fprintf(stderr, "QCHECK open-space CheckPosition compared: %u\n", ps2_qcp_checked); }
 boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
-{
-	boolean r;
-
-	qcp_open = false;
-	r = P_CheckPositionImpl(thing, x, y);
-	if (qcp_open)
-	{
-		if (!r || tmfloorz != qcp_fz || tmceilingz != qcp_cz || tmdropoffz != qcp_dz || tmdrpoffceilz != qcp_dc || tmfloorrover != qcp_fr || tmceilingrover != qcp_cr
-			|| tmfloorslope != qcp_fs || tmceilingslope != qcp_cs || tmfloorthing || tmhitthing || P_GetRandSeed() != qcp_rng || ceilingline || blockingline
-			|| (!P_MobjWasRemoved(thing) && memcmp((const char *)&qcp_before + sizeof(thinker_t), (const char *)thing + sizeof(thinker_t), sizeof(mobj_t) - sizeof(thinker_t))))
-			I_Error("PS2-501 check: the open-space answer for mobj type %d differs from the original passes (ret %d floorz %d/%d ceilingz %d/%d drpoffceilz %d/%d)", (int)thing->type, (int)r,
-				(int)qcp_fz, (int)tmfloorz, (int)qcp_cz, (int)tmceilingz, (int)qcp_dc, (int)tmdrpoffceilz);
-		if (!ps2_qcp_checked++)
-			atexit(P_QcpDump);
-	}
-	return r;
-}
-static boolean P_CheckPositionImpl(mobj_t *thing, fixed_t x, fixed_t y)
-#else
-boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
-#endif
 {
 	INT32 xl, xh, yl, yh, bx, by;
 	subsector_t *newsubsec;
@@ -2323,24 +2203,6 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 
 	BMBOUNDFIX(xl, xh, yl, yh);
 
-#if defined(PS2_OPT_CORE) && defined(PS2_OPT_REND)
-	if (!PS2_QUICK_OFF(1) && P_CheckPositionOpen(thing, x, y, xl, xh, yl, yh))
-	{
-#ifdef PS2_QUICKCHECK
-		qcp_open = true;
-		qcp_fz = tmfloorz; qcp_cz = tmceilingz; qcp_dz = tmdropoffz; qcp_dc = tmdrpoffceilz;
-		qcp_fr = tmfloorrover; qcp_cr = tmceilingrover; qcp_fs = tmfloorslope; qcp_cs = tmceilingslope;
-		qcp_rng = P_GetRandSeed();
-		qcp_before = *thing;
-#else
-		PS2_CNT(6);
-		validcount += (tmflags & MF_NOCLIP) ? 2 : 3; // the validcount++ of the three passes (two: the original returns after the polyobject pass for MF_NOCLIP)
-		tmfloorthing = tmhitthing = NULL;
-		return true;
-#endif
-	}
-#endif
-
 	// Check polyobjects and see if tmfloorz/tmceilingz need to be altered
 	{
 		validcount++;
@@ -2471,7 +2333,6 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 		return true;
 
 	// Check things first.
-	PS2_CYC_T0(t_th);
 	if (!(thing->flags & MF_NOCLIPTHING))
 	{
 		for (bx = xl; bx <= xh; bx++)
@@ -2485,112 +2346,17 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 					return false;
 			}
 	}
-	PS2_CYC_ADD(15, t_th);
 
 	validcount++;
 
 	// check lines
-	{
-	PS2_CYC_T0(t_ln);
 	for (bx = xl; bx <= xh; bx++)
 		for (by = yl; by <= yh; by++)
 			if (!P_BlockLinesIterator(bx, by, PIT_CheckLine))
 				blockval = false;
-	PS2_CYC_ADD(14, t_ln);
-	}
 
 	return blockval;
 }
-
-#if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK) && defined(PS2_OPT_REND)
-// PS2-500 (OPT12-CORE): the ZMovement + CheckPosition pair of a MOTIONLESS decoration (MF_NOCLIP|MF_SCENERY, no momentum) that is not resting on the floor
-// (flowers on a ledge, tree branches, algae: 150..600 pairs per tic on a THZ/DSZ level, 12 % of the instructions of the tic and 5 % of the tic of DEMO_003
-// in OPT11), in a "plain" sector: no FOFs, no slopes, no polyobject in the sub sector or in the cells of the box. What the original does for such an
-// object (P_SceneryZMovement, P_CheckPosition up to the early return of MF_NOCLIP, the four stores of P_SceneryThinker) has an answer that is a function
-// of the two heights of the sector: z is clipped against the OLD floorz/ceilingz, and floorz/ceilingz become the heights of the sector that holds
-// the point, rovers NULL. Everything else the original touches is a global that no code reads between two P_CheckPosition/P_TryMove calls
-// (tm*, ceilingline, blockingline, validcount); they are set the same way here anyway, and tmthing is retargeted like the original does (reference
-// counts). tmdrpoffceilz (the one stale global that DOES carry over between calls) is only written by the FOF/polyobject branches and by the lines,
-// none of which is reached for such an object, so it is not touched by either version. Anything not covered returns false BEFORE a byte is changed.
-#ifndef PS2_QUICKCHECK
-typedef struct { fixed_t z, floorz, ceilingz; } ps2_scenerypair_t;
-static
-#endif
-boolean P_SceneryPairEval(const mobj_t *mo, ps2_scenerypair_t *out, sector_t **sec2out)
-{
-	const subsector_t *ss0 = mo->subsector;
-	const sector_t *sec;
-	sector_t *sec2;
-	boolean flip;
-	fixed_t z;
-	INT32 xl, xh, yl, yh;
-
-	if (!(mo->flags & MF_NOCLIP) || (mo->eflags & MFE_APPLYPMOMZ) || mo->momx || mo->momy || mo->momz || mo->player || !ss0)
-		return false;
-	sec = ss0->sector;
-	if (sec->ffloors || ss0->polyList || sec->f_slope || sec->c_slope || sec->damagetype == SD_DEATHPITTILT || sec->damagetype == SD_DEATHPITNOTILT)
-		return false;
-
-	flip = (mo->eflags & MFE_VERTICALFLIP) != 0;
-	z = mo->z;
-	if (((z <= mo->floorz && !flip) || (z + mo->height >= mo->ceilingz && flip)) && !(mo->flags & MF_NOCLIPHEIGHT))
-		z = flip ? mo->ceilingz - mo->height : mo->floorz; // (momz == 0: nothing falls, nothing bounces)
-	else if (!(mo->flags & MF_NOGRAVITY))
-		return false; // gravity (P_CheckGravity) is the original's
-	if (((z + mo->height > mo->ceilingz && !flip) || (z < mo->floorz && flip)) && !(mo->flags & MF_NOCLIPHEIGHT))
-		z = flip ? mo->floorz : mo->ceilingz - mo->height;
-
-	sec2 = R_PointInSubsector(mo->x, mo->y)->sector;
-	if (sec2->ffloors || sec2->f_slope || sec2->c_slope)
-		return false;
-	if (polyblocklinks)
-	{
-		xl = (unsigned)(mo->x - mo->radius - bmaporgx)>>MAPBLOCKSHIFT;
-		xh = (unsigned)(mo->x + mo->radius - bmaporgx)>>MAPBLOCKSHIFT;
-		yl = (unsigned)(mo->y - mo->radius - bmaporgy)>>MAPBLOCKSHIFT;
-		yh = (unsigned)(mo->y + mo->radius - bmaporgy)>>MAPBLOCKSHIFT;
-		BMBOUNDFIX(xl, xh, yl, yh);
-		if (xl <= ps2_polycells[1] && xh >= ps2_polycells[0] && yl <= ps2_polycells[3] && yh >= ps2_polycells[2])
-			return false; // a polyobject may be in the cells
-	}
-	out->z = z;
-	out->floorz = sec2->floorheight;
-	out->ceilingz = sec2->ceilingheight;
-	*sec2out = sec2;
-	return true;
-}
-
-boolean P_SceneryPairStill(mobj_t *mo)
-{
-	ps2_scenerypair_t r;
-	sector_t *sec2;
-
-	if (!P_SceneryPairEval(mo, &r, &sec2))
-		return false;
-	ps_checkposition_calls.value.i++;
-	mo->z = r.z;
-	P_SetTarget(&tmthing, mo);
-	tmflags = mo->flags;
-	tmx = mo->x;
-	tmy = mo->y;
-	tmbbox[BOXTOP] = mo->y + mo->radius;
-	tmbbox[BOXBOTTOM] = mo->y - mo->radius;
-	tmbbox[BOXRIGHT] = mo->x + mo->radius;
-	tmbbox[BOXLEFT] = mo->x - mo->radius;
-	ceilingline = blockingline = NULL;
-	tmfloorz = tmdropoffz = r.floorz;
-	tmceilingz = r.ceilingz;
-	tmfloorrover = tmceilingrover = NULL;
-	tmfloorslope = tmceilingslope = NULL;
-	tmfloorthing = tmhitthing = NULL;
-	validcount += 2;
-	mo->floorz = r.floorz;
-	mo->ceilingz = r.ceilingz;
-	mo->floorrover = NULL;
-	mo->ceilingrover = NULL;
-	return true;
-}
-#endif
 
 static const fixed_t hoopblockdist = 16*FRACUNIT + 8*FRACUNIT;
 static const fixed_t hoophalfheight = (56*FRACUNIT)/2;
