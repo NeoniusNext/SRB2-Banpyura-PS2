@@ -503,6 +503,7 @@ void P_AddCachedAction(mobj_t *mobj, INT32 statenum);
 
 // check mobj against water content, before movement code
 void P_MobjCheckWater(mobj_t *mobj);
+mobj_t *P_AllocMobjBlock(void); // zeroed memory for a new mobj (PS2-511: a slice of a chunk)
 
 // Player spawn points
 void P_SpawnPlayer(INT32 playernum);

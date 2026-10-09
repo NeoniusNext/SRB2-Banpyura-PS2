@@ -494,6 +494,9 @@ typedef struct sector_s
 	// floor and ceiling lighting
 	INT16 floorlightlevel, ceilinglightlevel;
 	boolean floorlightabsolute, ceilinglightabsolute; // absolute or relative to sector's light level?
+#ifdef PS2_PROFILE
+	boolean moved, colormap_protected; // PS2-507: the small fields of this struct side by side (no padding): 276 -> 256 bytes
+#endif
 	INT32 floorlightsec, ceilinglightsec; // take floor/ceiling light level from another sector
 
 	INT32 crumblestate; // used for crumbling and bobbing
@@ -513,22 +516,34 @@ typedef struct sector_s
 	size_t maxattached;
 	lightlist_t *lightlist;
 	INT32 numlights;
+#ifndef PS2_PROFILE
 	boolean moved;
+#endif
 
 	// per-sector colormaps!
 	extracolormap_t *extra_colormap;
+#ifndef PS2_PROFILE
 	boolean colormap_protected;
+#endif
 
 	fixed_t gravity; // per-sector gravity factor
 	fixed_t *gravityptr; // For binary format: Read gravity from floor height of master sector
 
 	sectorflags_t flags;
 	sectorspecialflags_t specialflags;
+#ifdef PS2_PROFILE
+	mtag_t triggertag; // tag to call upon triggering (PS2-507: the small fields together)
+	UINT8 damagetype;
+	UINT8 triggerer; // who can trigger?
+	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
+	INT16 spawn_lightlevel; // for fade thinker
+#else
 	UINT8 damagetype;
 
 	// Linedef executor triggering
 	mtag_t triggertag; // tag to call upon triggering
 	UINT8 triggerer; // who can trigger?
+#endif
 
 	fixed_t friction;
 
@@ -545,10 +560,12 @@ typedef struct sector_s
 	// Eternity engine slope
 	pslope_t *f_slope; // floor slope
 	pslope_t *c_slope; // ceiling slope
+#ifndef PS2_PROFILE
 	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
 
 	// for fade thinker
 	INT16 spawn_lightlevel;
+#endif
 
 	// colormap structure
 	extracolormap_t *spawn_extra_colormap;
@@ -590,6 +607,12 @@ typedef struct line_s
 	// Animation related.
 	INT16 flags;
 	INT16 special;
+#ifdef PS2_PROFILE
+	// PS2-507 (OPT12-CORE): the three small fields in one word (the order of the fields of this struct is not part of any format): 112 -> 104 bytes, 200 KB on MAP11
+	UINT8 blendmode; // blendmode
+	UINT8 slopetype; // slopetype_t (the enum is four bytes)
+	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
+#endif
 	taglist_t tags;
 #ifdef PS2_PROFILE
 	// PS2-143 (OPT10-S): 40 bytes per line only for the lines that have a non-zero argument (about 5% of them); the others share one zero block
@@ -604,13 +627,17 @@ typedef struct line_s
 	// Visual appearance: sidedefs.
 	UINT32 sidenum[2]; // sidenum[1] will be NO_SIDEDEF if one-sided
 	fixed_t alpha; // translucency
+#ifndef PS2_PROFILE
 	UINT8 blendmode; // blendmode
+#endif
 	INT32 executordelay;
 
 	fixed_t bbox[4]; // bounding box for the extent of the linedef
 
 	// To aid move clipping.
+#ifndef PS2_PROFILE
 	slopetype_t slopetype;
+#endif
 
 	// Front and back sector.
 	// Note: redundant? Can be retrieved from SideDefs.
@@ -620,7 +647,9 @@ typedef struct line_s
 	size_t validcount; // if == validcount, already checked
 	polyobj_t *polyobj; // Belongs to a polyobject?
 
+#ifndef PS2_PROFILE
 	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
+#endif
 
 	UINT32 secportal; // transferred sector portal
 
@@ -919,15 +948,13 @@ typedef struct seg_s
 	sector_t *backsector;
 
 	fixed_t length;	// precalculated seg length
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE)
 	// new pointers so that AdjustSegs doesn't mess with v1/v2
 	void *pv1; // polyvertex_t
 	void *pv2; // polyvertex_t
 	float flength; // length of the seg, used by hardware renderer
 
-#ifndef PS2_PROFILE // PS2-149 (OPT10-S): the static lightmaps (STATICLIGHT) are not built in this port: 4 bytes of every seg (49 592 on MAP11)
 	lightmap_t *lightmaps; // for static lightmap
-#endif
 #endif
 
 	polyobj_t *polyseg;
@@ -941,6 +968,26 @@ typedef struct seg_s
 	boolean glseg;
 #endif
 } seg_t;
+
+// OPT12-CORE (PS2-505): pv1 / pv2 / flength of a seg are used by the hardware renderer only. In the PS2 profile they are not in seg_t (12 of its 56 bytes: 595 KB of the zone
+// on MAP11, in software mode too) but in an array parallel to segs[] that HWR_LoadLevel allocates (PU_HWRPLANE, owner ps2_seghw: gone with the level or the renderer).
+// The hardware sources read and write them through these lvalue macros (tools/ps2/hw_seg_accessors.py rewrites new code); PC builds keep the fields.
+#if defined(HWRENDER) && defined(PS2_PROFILE)
+typedef struct
+{
+	void *pv1; // polyvertex_t
+	void *pv2; // polyvertex_t
+	float flength; // length of the seg, used by hardware renderer
+} seghw_t;
+extern seghw_t *ps2_seghw;
+#define SEG_PV1(s) (ps2_seghw[(s) - segs].pv1)
+#define SEG_PV2(s) (ps2_seghw[(s) - segs].pv2)
+#define SEG_FLENGTH(s) (ps2_seghw[(s) - segs].flength)
+#elif defined(HWRENDER)
+#define SEG_PV1(s) ((s)->pv1)
+#define SEG_PV2(s) ((s)->pv2)
+#define SEG_FLENGTH(s) ((s)->flength)
+#endif
 
 //
 // BSP node.
@@ -1158,13 +1205,21 @@ typedef struct
 
 	// Lump to use for view angles 0-7/15.
 	lumpnum_t lumppat[16]; // lump number 16 : 16 wad : lump
+#ifdef PS2_PROFILE
+	UINT16 lumpid[16]; // id in the spriteoffset, spritewidth, etc. tables (PS2-506: 16 bits, R_InstallSpriteLump refuses more sprite lumps than that)
+#else
 	size_t lumpid[16]; // id in the spriteoffset, spritewidth, etc. tables
+#endif
 
 	// Flip bits (1 = flip) to use for view angles 0-7/15.
 	UINT16 flip;
 
 #ifdef ROTSPRITE
+#ifdef PS2_PROFILE
+	rotsprite_t **rotated; // Rotated patches: NULL, or the 16 pointers, allocated by the first rotated sprite of the frame (PS2-506: 64 bytes of every frame, 3 350 frames on MAP11)
+#else
 	rotsprite_t *rotated[16]; // Rotated patches
+#endif
 #endif
 } spriteframe_t;
 

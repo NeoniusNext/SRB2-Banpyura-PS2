@@ -857,6 +857,17 @@ boolean Picture_CheckIfDoomPatch(softwarepatch_t *patch, size_t size)
 static boolean picture_tryflat; // PS2-140: Picture_TryTextureToFlat is running: no room for the flat is a NULL, not the end of the run
 #endif
 
+#ifdef PS2_PROFILE
+#include "m_argv.h"
+static boolean ps2_nocompage_set(void) // -znocompage: A/B switch of PS2-510 (measurements)
+{
+	static int v = -1;
+
+	if (v < 0)
+		v = M_CheckParm("-znocompage") != 0;
+	return v;
+}
+#endif
 void *Picture_TextureToFlat(size_t texnum)
 {
 	texture_t *texture;
@@ -872,6 +883,9 @@ void *Picture_TextureToFlat(size_t texnum)
 	// Check the texture cache
 	// If the texture's not there, it'll be generated right now
 	texture = textures[texnum];
+#ifdef PS2_PROFILE
+	const boolean ps2_hadcomposite = texturecache[texnum] != NULL;
+#endif
 	R_CheckTextureCache(texnum);
 
 	// Allocate the flat
@@ -913,6 +927,11 @@ void *Picture_TextureToFlat(size_t texnum)
 		}
 	}
 
+#ifdef PS2_PROFILE
+	// PS2-510: the composite made only for this conversion is the first thing the cache gives back (a wall that uses the texture touches it again)
+	if (!ps2_hadcomposite && !ps2_nocompage_set())
+		Z_AgeCache(texturecache[texnum], 2);
+#endif
 	return converted;
 }
 

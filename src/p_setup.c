@@ -3608,13 +3608,11 @@ static void P_InitializeSeg(seg_t *seg)
 		seg->backsector = (seg->linedef->flags & ML_TWOSIDED) ? sides[seg->linedef->sidenum[seg->side ^ 1]].sector : NULL;
 	}
 
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE) // (PS2-505: the hardware fields of a seg live in ps2_seghw, allocated by HWR_LoadLevel)
 	seg->pv1 = seg->pv2 = NULL;
 
 	//Hurdler: 04/12/2000: for now, only used in hardware mode
-#ifndef PS2_PROFILE
 	seg->lightmaps = NULL; // list of static lightmap for this seg
-#endif
 #endif
 
 	seg->polyseg = NULL;
@@ -3641,7 +3639,7 @@ static void P_LoadSegs(UINT8 *data)
 		seg->linedef = &lines[SHORT(ms->linedef)];
 
 		seg->length = P_SegLength(seg);
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE)
 		seg->flength = P_SegLengthFloat(seg);
 #endif
 
@@ -3911,7 +3909,7 @@ static boolean P_LoadExtendedSubsectorsAndSegs(UINT8 **data, nodetype_t nodetype
 			segs[i].offset = FixedHypot(v1->x - v->x, v1->y - v->y);
 		}
 		seg->length = P_SegLength(seg);
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE)
 		seg->flength = P_SegLengthFloat(seg);
 #endif
 	}
@@ -4066,7 +4064,7 @@ static boolean P_LoadBlockMap(UINT8 *data, size_t count)
 
 	// haleyjd 2/22/06: setup polyobject blockmap
 #ifdef PS2_PROFILE
-	polyblocklinks = NULL; // PS2-88: allocated by the first polyobject that is linked (p_polyobj.c)
+	Polyobj_ResetCells(); // PS2-88, 508: the polyobject blockmap exists only in a level that has polyobjects (p_polyobj.c)
 	PS2_POLYCELLS_RESET(); // PS2-200
 #else
 	count = sizeof(*polyblocklinks) * bmapwidth * bmapheight;
@@ -4449,7 +4447,7 @@ static void P_CreateBlockMap(void)
 
 		// haleyjd 2/22/06: setup polyobject blockmap
 #ifdef PS2_PROFILE
-		polyblocklinks = NULL; // PS2-88
+		Polyobj_ResetCells(); // PS2-88, 508
 		PS2_POLYCELLS_RESET(); // PS2-200
 #else
 		count = sizeof(*polyblocklinks) * bmapwidth * bmapheight;
@@ -7512,10 +7510,16 @@ static void P_MakeMapMD5(virtres_t *virt, void *dest)
 		virtlump_t* virtmthings = vres_Find(virt, "THINGS");
 		virtlump_t* virtsides   = vres_Find(virt, "SIDEDEFS");
 
-		P_MakeBufferMD5((char*)virtlines->data,   virtlines->size, linemd5);
-		P_MakeBufferMD5((char*)virtsectors->data, virtsectors->size,  sectormd5);
-		P_MakeBufferMD5((char*)virtmthings->data, virtmthings->size,   thingmd5);
-		P_MakeBufferMD5((char*)virtsides->data,   virtsides->size, sidedefmd5);
+		// OPT12-CORE: in the PS2 profile the lump data is read on use and dropped after the loaders (PS2-52): ->data is NULL here, and the digest was made of the
+		// bytes at address 0 (a wrong mapmd5 in demos / server info on the recompiler; the interpreter of PCSX2 does not get past it). Read the lumps again.
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtlines),   virtlines->size, linemd5);
+		VRES_DROP(virtlines);
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtsectors), virtsectors->size,  sectormd5);
+		VRES_DROP(virtsectors);
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtmthings), virtmthings->size,   thingmd5);
+		VRES_DROP(virtmthings);
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtsides),   virtsides->size, sidedefmd5);
+		VRES_DROP(virtsides);
 
 		for (i = 0; i < 16; i++)
 			resmd5[i] = (linemd5[i] + sectormd5[i] + thingmd5[i] + sidedefmd5[i]) & 0xFF;

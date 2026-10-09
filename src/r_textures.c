@@ -455,6 +455,22 @@ static UINT8 *R_TryReadLump(UINT16 wadnum, lumpnum_t lumpnum)
 // This is not optimised, but it's supposed to be executed only once
 // per level, when enough memory is available.
 //
+#if defined(PS2) && defined(PS2_PROFILE)
+// OPT12-CORE diagnostics: -ztexlog prints every texture composite / flat built after the first second of a level (what the cache has to rebuild again and again)
+extern tic_t leveltime;
+static boolean R_TexLog(void)
+{
+	static int on = -1;
+
+	if (on < 0)
+		on = M_CheckParm("-ztexlog") != 0;
+	return on && leveltime > 35;
+}
+#define R_TEXLOG(kind, texnum) do { if (R_TexLog()) I_OutputMsg("TEXGEN %s %d %s %dx%d t=%d\n", kind, (int)(texnum), textures[texnum]->name, (int)textures[texnum]->width, (int)textures[texnum]->height, (int)leveltime); } while (0)
+#else
+#define R_TEXLOG(kind, texnum) ((void)0)
+#endif
+
 UINT8 *R_GenerateTexture(size_t texnum)
 {
 	UINT8 *block;
@@ -480,6 +496,7 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	I_Assert(texnum <= (size_t)numtextures);
 	texture = textures[texnum];
 	I_Assert(texture != NULL);
+	R_TEXLOG("comp", texnum);
 
 	// Just create a composite one
 	if (texture->type == TEXTURETYPE_FLAT)
@@ -1334,7 +1351,10 @@ UINT8 *R_GetFlatForTexture(size_t texnum)
 		}
 		if (!streamed)
 #endif
+		{
+		R_TEXLOG("flat", texnum);
 		texture->flat = (UINT8 *)Picture_TextureToFlat(texnum);
+		}
 #ifdef PS2_PROFILE
 		// PS2-OPT-03: a texture used as a flat was converted into a PU_STATIC block that nothing ever released
 		// (MAP11: 50 blocks, 1.4 MB); like the plain flats it is a cache block now and is built again when it was evicted
