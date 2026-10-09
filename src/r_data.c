@@ -325,7 +325,7 @@ static void R_CreateFadeColormaps(void)
 	size_t len, i;
 #ifdef PS2_PROFILE
 	static ps2nearest_t fadectx; // (the original asked NearestColor, i.e. the master palette, 16384 times)
-	ps2nearest_t *nearest = &fadectx;
+	const ps2nearest_t *nearest = &fadectx;
 
 	PS2Nearest_Build(&fadectx, pMasterPalette);
 #endif
@@ -861,7 +861,7 @@ static uint8_t LightNearestCall(void *ctx, uint8_t r, uint8_t g, uint8_t b)
 	return ((lightnear_t *)ctx)->f(r, g, b);
 }
 
-static UINT8 lightcheck_buf[256 * 34];
+static UINT8 *lightcheck_buf; // (-loadhash only: allocated for the check)
 static boolean lightcheck_pending;
 
 static boolean R_LightStepsFast(UINT8 *dest, double cdestr, double cdestg, double cdestb, UINT8 fadestart, UINT8 (*nearestf)(UINT8, UINT8, UINT8))
@@ -870,6 +870,9 @@ static boolean R_LightStepsFast(UINT8 *dest, double cdestr, double cdestg, doubl
 	lightnear_t ln;
 	int i, c;
 	boolean check = ps2lp_on && M_CheckParm("-loadhash");
+
+	if (check && !lightcheck_buf)
+		lightcheck_buf = Z_Malloc(256 * 34, PU_STATIC, NULL);
 
 	for (i = 0; i < 256; i++)
 		for (c = 0; c < 3; c++)

@@ -32,6 +32,8 @@ def main():
     ap.add_argument('--prefix', default='')
     ap.add_argument('--sum', default='')
     ap.add_argument('--share-of', default='')
+    ap.add_argument('--md', action='store_true', help='markdown table: | stage | base M | now M | ratio | share of now % |')
+    ap.add_argument('--skip-zero', action='store_true', help='leave out the slots that are zero in both logs')
     a = ap.parse_args()
     b, db = read(a.base)
     c, dc = read(a.cur)
@@ -51,13 +53,22 @@ def main():
             total = c[a.share_of][0]
         else:
             total = sum(v[0] for k, v in c.items() if k.startswith(a.share_of))
-    print('%-14s %10s %10s %7s %7s %9s  %s' % ('slot', 'base M', 'now M', 'ratio', 'share%', 'count', 'what'))
+    if a.md:
+        print('| stage | base M | now M | ratio | share now |')
+        print('|---|---:|---:|---:|---:|')
+    else:
+        print('%-14s %10s %10s %7s %7s %9s  %s' % ('slot', 'base M', 'now M', 'ratio', 'share%', 'count', 'what'))
     for s in slots:
         bc, bn = b.get(s, (0, 0))
         cc, cn = c.get(s, (0, 0))
+        if a.skip_zero and not bc and not cc:
+            continue
         ratio = ('%.2fx' % (bc / cc)) if bc and cc else '-'
-        share = ('%.1f' % (100.0 * cc / total)) if total else ''
-        print('%-14s %10.1f %10.1f %7s %7s %4d/%-4d  %s' % (s, bc / 1e6, cc / 1e6, ratio, share, bn, cn, desc.get(s, '')))
+        share = ('%.1f %%' % (100.0 * cc / total)) if total else ''
+        if a.md:
+            print('| %s (`%s`) | %.1f | %.1f | %s | %s |' % (desc.get(s, '').strip(), s, bc / 1e6, cc / 1e6, ratio, share))
+        else:
+            print('%-14s %10.1f %10.1f %7s %7s %4d/%-4d  %s' % (s, bc / 1e6, cc / 1e6, ratio, share, bn, cn, desc.get(s, '')))
     if a.sum:
         sb = sum(v[0] for k, v in b.items() if k.startswith(a.sum))
         sc = sum(v[0] for k, v in c.items() if k.startswith(a.sum))

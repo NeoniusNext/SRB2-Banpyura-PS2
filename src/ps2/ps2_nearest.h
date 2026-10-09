@@ -34,12 +34,10 @@ typedef struct
 	UINT32 copy[256]; // the colours it was built from (the answer depends on the colours, not on the pointer)
 	UINT8 sr[256], sg[256], sb[256], sidx[256]; // palette sorted by red + green + blue (stable: equal sums in index order)
 	UINT16 start[767]; // start[s] = first sorted position whose sum is >= s; start[766] = 256
-	UINT32 mkey[4096]; // memo of the answers (the fade colormaps ask for 16 384 colours of which 6 183 differ): direct mapped on the colour, 0xFFFFFFFF = empty
-	UINT8 mval[4096];
 } ps2nearest_t;
 
 void PS2Nearest_Build(ps2nearest_t *n, const void *palette);
-UINT8 PS2Nearest_Find(ps2nearest_t *n, UINT8 r, UINT8 g, UINT8 b); // (fills the memo of n)
+UINT8 PS2Nearest_Find(const ps2nearest_t *n, UINT8 r, UINT8 g, UINT8 b);
 boolean PS2Nearest_Same(const ps2nearest_t *n, const void *palette); // has the palette still the colours the context was built from
 
 #endif

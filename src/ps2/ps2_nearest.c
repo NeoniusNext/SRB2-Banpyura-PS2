@@ -57,7 +57,6 @@ void PS2Nearest_Build(ps2nearest_t *n, const void *palette)
 		n->sb[at] = (UINT8)(w >> 16);
 		n->sidx[at] = (UINT8)i;
 	}
-	memset(n->mkey, 0xFF, sizeof n->mkey);
 	n->valid = true;
 }
 
@@ -73,16 +72,11 @@ boolean PS2Nearest_Same(const ps2nearest_t *n, const void *palette)
 	return true;
 }
 
-UINT8 PS2Nearest_Find(ps2nearest_t *n, UINT8 r, UINT8 g, UINT8 b)
+UINT8 PS2Nearest_Find(const ps2nearest_t *n, UINT8 r, UINT8 g, UINT8 b)
 {
-	const UINT32 key = (UINT32)r | ((UINT32)g << 8) | ((UINT32)b << 16);
-	const UINT32 slot = (key * 2654435761u) >> 20; // (the top twelve bits)
 	const int qs = (int)r + g + b;
 	int up = n->start[qs], dn = up - 1;
 	int best = 256 * 256 * 4, bestidx = 256; // (the original starts at this distortion too: every real one is smaller)
-
-	if (n->mkey[slot] == key)
-		return n->mval[slot];
 
 	for (;;)
 	{
@@ -104,7 +98,5 @@ UINT8 PS2Nearest_Find(ps2nearest_t *n, UINT8 r, UINT8 g, UINT8 b)
 			bestidx = n->sidx[at];
 		}
 	}
-	n->mkey[slot] = key;
-	n->mval[slot] = (UINT8)bestidx;
 	return (UINT8)bestidx;
 }
