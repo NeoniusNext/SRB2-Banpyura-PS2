@@ -1359,9 +1359,11 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	if (pool)
 		W_VerifyPackFile(filename, pack, handle, lumpinfo, numlumps);
 #endif
+#ifdef PS2_PROFILE
 	if (pool && WPack_FileSize(handle) >= 0)
 		wadfile->filesize = (unsigned)WPack_FileSize(handle); // known since the stream was prepared (no seek on the device)
 	else
+#endif
 	{
 		fseek(handle, 0, SEEK_END);
 		wadfile->filesize = (unsigned)ftell(handle);
