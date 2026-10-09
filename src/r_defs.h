@@ -494,6 +494,9 @@ typedef struct sector_s
 	// floor and ceiling lighting
 	INT16 floorlightlevel, ceilinglightlevel;
 	boolean floorlightabsolute, ceilinglightabsolute; // absolute or relative to sector's light level?
+#ifdef PS2_PROFILE
+	boolean moved, colormap_protected; // PS2-507: the small fields of this struct side by side (no padding): 276 -> 256 bytes
+#endif
 	INT32 floorlightsec, ceilinglightsec; // take floor/ceiling light level from another sector
 
 	INT32 crumblestate; // used for crumbling and bobbing
@@ -513,22 +516,34 @@ typedef struct sector_s
 	size_t maxattached;
 	lightlist_t *lightlist;
 	INT32 numlights;
+#ifndef PS2_PROFILE
 	boolean moved;
+#endif
 
 	// per-sector colormaps!
 	extracolormap_t *extra_colormap;
+#ifndef PS2_PROFILE
 	boolean colormap_protected;
+#endif
 
 	fixed_t gravity; // per-sector gravity factor
 	fixed_t *gravityptr; // For binary format: Read gravity from floor height of master sector
 
 	sectorflags_t flags;
 	sectorspecialflags_t specialflags;
+#ifdef PS2_PROFILE
+	mtag_t triggertag; // tag to call upon triggering (PS2-507: the small fields together)
+	UINT8 damagetype;
+	UINT8 triggerer; // who can trigger?
+	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
+	INT16 spawn_lightlevel; // for fade thinker
+#else
 	UINT8 damagetype;
 
 	// Linedef executor triggering
 	mtag_t triggertag; // tag to call upon triggering
 	UINT8 triggerer; // who can trigger?
+#endif
 
 	fixed_t friction;
 
@@ -545,10 +560,12 @@ typedef struct sector_s
 	// Eternity engine slope
 	pslope_t *f_slope; // floor slope
 	pslope_t *c_slope; // ceiling slope
+#ifndef PS2_PROFILE
 	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
 
 	// for fade thinker
 	INT16 spawn_lightlevel;
+#endif
 
 	// colormap structure
 	extracolormap_t *spawn_extra_colormap;
@@ -590,6 +607,12 @@ typedef struct line_s
 	// Animation related.
 	INT16 flags;
 	INT16 special;
+#ifdef PS2_PROFILE
+	// PS2-507 (OPT12-CORE): the three small fields in one word (the order of the fields of this struct is not part of any format): 112 -> 104 bytes, 200 KB on MAP11
+	UINT8 blendmode; // blendmode
+	UINT8 slopetype; // slopetype_t (the enum is four bytes)
+	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
+#endif
 	taglist_t tags;
 #ifdef PS2_PROFILE
 	// PS2-143 (OPT10-S): 40 bytes per line only for the lines that have a non-zero argument (about 5% of them); the others share one zero block
@@ -604,13 +627,17 @@ typedef struct line_s
 	// Visual appearance: sidedefs.
 	UINT32 sidenum[2]; // sidenum[1] will be NO_SIDEDEF if one-sided
 	fixed_t alpha; // translucency
+#ifndef PS2_PROFILE
 	UINT8 blendmode; // blendmode
+#endif
 	INT32 executordelay;
 
 	fixed_t bbox[4]; // bounding box for the extent of the linedef
 
 	// To aid move clipping.
+#ifndef PS2_PROFILE
 	slopetype_t slopetype;
+#endif
 
 	// Front and back sector.
 	// Note: redundant? Can be retrieved from SideDefs.
@@ -620,7 +647,9 @@ typedef struct line_s
 	size_t validcount; // if == validcount, already checked
 	polyobj_t *polyobj; // Belongs to a polyobject?
 
+#ifndef PS2_PROFILE
 	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
+#endif
 
 	UINT32 secportal; // transferred sector portal
 
