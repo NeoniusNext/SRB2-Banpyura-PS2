@@ -14,6 +14,12 @@
 | 2 | неинициализированные чтения (тень vissprite, channels, r_portal) + `-zpoison` | см. git log | принят |
 | 4a | `.bss` −82 КБ (`pts[4096]` в `PS2HWD_TestVU0`) | см. git log | принят |
 | 4b | R1: сборка композита (`-hwcomp 0` = как было) | см. git log | принят |
+| 5 | раскладка: `mobj_t` (после префикса `precipmobj_t`), `sector_t`, `line_t`, `drawseg_t`, `node_t` | см. git log | принят (побитность; выигрыш по кэш-модели, не измерен на консоли) |
+| 6 | маска Lua-хуков (тип × вид) вместо `lua_mobjhooks_any` | см. git log | принят |
+| 7a | RS-03: порядок лумп `lump_order.txt` по умолчанию в `cook.py` | см. git log | принят |
+| 7b | RS-05a: консоль старта (кеш фона, склейка перерисовок, `CON_FlushStartup`) | см. git log | принят |
+| 7c | самопроверка отсева спрайтов HWC | см. git log | починена |
+| R3 | `-prefthink` (pref следующего потока) | см. git log | за флагом, выкл. |
 
 ## 3. host_build_fix_main
 
@@ -69,3 +75,22 @@
 | D4 | 91.4 → 100.6 М (набор событий другой) | 85.8 → 63.4 М (−26 %) | 52.1 → 31.3 |
 
 Среднее кадра не меняется (D1 6.681 → 6.637, D2 7.048 → 7.032, D3 9.558 → 9.547, D4 8.636 → 8.710 М: в пределах разброса «лотереи» регулятора плана; как и предупреждал отчёт RDRV, оценивать по `HWREGEN` и худшему кадру). Отдельные текстуры скачут (THROCK3 4.07 → 7.20: чтение лумпы из PAK в эмуляторе), направление стабильно.
+
+## 5. Раскладка структур (RCACHE L1 `layout_hc3`, RTICK D-а)
+
+Что сделано (`src/p_mobj.h`, `src/r_defs.h`; значения полей не меняются, везде обращение по имени: сейвы, Lua, сеть, демо):
+* `mobj_t`: всё до `eflags` стоит на прежних смещениях, дальше поля тика идут подряд (`type, info, health, target, tracer, player, fuse, scale, destscale, standingslope, threshold, watertop, waterbottom, reactiontime, movedir, movecount, hnext, hprev, …`), редкое (`drawonlyforplayer, blocknode, mobjnum, old_scale*, cusval, cvmem, interpidx`) в хвосте; `color` перенесён в дыру за `eflags`. **Отличие от патча исследования (`layout_hc3.patch` и D-а переставляют весь `mobj_t`): `precipmobj_t` приводится к `mobj_t` (`P_CycleStateAnimation`, `P_SetupStateAnimation`, спрайтовый код обоих рендереров: `vis->mobj = (mobj_t *)thing`, `R_ThingIsPaperSprite`, `P_MobjFlip`), общий префикс до `flags` и смещения `flags2`/`eflags` (252) обязаны остаться: четыре демо погоды не содержат, и перестановка префикса сломала бы дождь и снег молча.** Поэтому горячая зона не 3.25 строки, как в D-а, а 4.5.
+* `sector_t`: первая строка — то, что читают тик и обход BSP (`floorheight … special, validcount, heightsec, ffloors, f_slope/c_slope, thinglist, touching_thinglist, flags, gravity, friction, damagetype, triggerer, hasslope, moved`), вторая — освещение и линии, дальше размещение текстур плоскостей и редкое; `soundorg` в конце. Условные `#ifdef PS2_PROFILE` упаковки PS2-507 заменены одним порядком для обеих сборок.
+* `line_t`: первые 64 байта = `v1, v2, dx, dy, bbox, frontsector, backsector, validcount, polyobj, flags, special, blendmode, slopetype, callcount, sidenum`; `drawseg_t`: массивы `ffloorplanes[40]` и `thicksides[40]` (320 Б) в конец; `node_t`: `children` рядом с `x, y, dx, dy`.
+* Размеры не меняются (`mobj_t` 412 Б при шаге пула 416, `sector_t` 264, `line_t` 104, `node_t` 52, `drawseg_t` 444). `seg_t` уже 44 Б (PS2-505, исследование считало 56) — 48 Б не нужно. Выравнивание мобов: шаг пула 416 Б (PS2-511) делает половину мобов начинающимися со смещением 32 Б; шаг 448 Б добавил бы 32 Б на моба (D3: +135 КБ арены) ради < 1 строки — не взято.
+**Статика (линии кэша 64 Б на объект, компилятор EE + DWARF, массив с шагом структуры; `docs/research/rcache/layout/layout.py`):**
+
+| структура | поля горячего пути | было | стало |
+|---|---:|---:|---:|
+| `mobj_t` ядро тика (29 полей) | 29 | 6.00 | **4.50** (чётные 4, нечётные 5) |
+| `mobj_t` все 48 читаемых тиком/рендером | 48 | 7.00 | 6.00 |
+| `sector_t` (21 поле: тик + BSP) | 21 | 4.88 | **2.38** |
+| `line_t` (12 полей `PIT_CheckLine`) | 12 | 2.38 | **1.75** |
+| `node_t` (спуск BSP) | 5 | 1.75 | **1.25** |
+
+**Побитность:** хост `host_variant.sh lay "" same`: `tics.csv` и хэши всех 1050 кадров 4 демо равны базе; EE golden software на ELF со всеми пунктами (u8): D1..D4 «0 differ», `tics.csv` = golden и = `phase0-v2/run1` (RESULT OK ×8). HW: мировой поток полигонов (`-hwpolyhash`, `w=` = стены и плоскости, `s=` = сектора) совпадает по состоянию игры на всех 1050 кадрах D1 и D2 (остальное — ниже).
