@@ -3583,6 +3583,7 @@ static boolean hwr_fx_useshader; // HWR_UseShader() of this view
 // OPT13 IS (RF-2, PS2-HW-700/701): the plain opaque sprite and the drop shadow of the sprite batch built in one function and handed to the collection (HWR_PBSprQuad), without the vissprite
 // to HWR_DrawSprite to HWR_ProcessPolygon chain (the surface copy, the four vertices written and read back, the patch lookup, the blend and light decisions made again for each sprite).
 extern INT32 ps2hwt_patchtag; // hw_cache.c (PS2-HW-442): the tag a patch's data takes after its upload (HWR_PATCH_UNLOCKED)
+static const ps2cull_t *hwr_fx_dcs; // the view of the driver for the shadows of this view's sprite loop (HWR_DrawSprites asks once: it does not change while the sprites are drawn)
 static boolean hwr_fx_fuse; // PS2-HW-700 on for this view (the stream is off, no -hwfx bit)
 typedef struct
 {
@@ -4122,7 +4123,7 @@ static boolean HWR_FX_ShadowFuse(gl_vissprite_t *spr, mobj_t *thing, fixed_t sca
 	}
 	if (!groundslope)
 	{
-		const ps2cull_t *cs = PS2HWD_CullSetup();
+		const ps2cull_t *cs = hwr_fx_dcs;
 
 		if (cs->valid && HWR_FX_SphereHidden(cs, fx, FIXED_TO_FLOAT(groundz) + flip * shadowlift, fy, offset * 1.4143f + shadowlift + 0.5f))
 		{
@@ -6723,6 +6724,7 @@ static void HWR_DrawSprites(void)
 
 	if (sprbatch)
 		HWC_ADD(HWC_SPR_ON);
+	hwr_fx_dcs = PS2HWD_CullSetup();
 #endif
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, cv_glmodellighting.value);
 #ifdef PS2_PROFILE
