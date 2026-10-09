@@ -2457,7 +2457,7 @@ static inline void HWR_FrProcessSeg(seg_t *line, angle_t angle2, angle_t angle1)
 			frs.shit++;
 			if (FR_DBG())
 				I_OutputMsg("HWFRC seg=%d line=%d f=%d b=%d x=%.1f,%.1f..%.1f,%.1f ang=%08x..%08x arc=%08x+%08x\n", (int)(line - segs), (int)(line->linedef - lines), (int)(gl_frontsector - sectors), gl_backsector ? (int)(gl_backsector - sectors) : -1,
-					line->pv1 ? ((polyvertex_t *)line->pv1)->x : 0.0f, line->pv1 ? ((polyvertex_t *)line->pv1)->y : 0.0f, line->pv2 ? ((polyvertex_t *)line->pv2)->x : 0.0f, line->pv2 ? ((polyvertex_t *)line->pv2)->y : 0.0f,
+					SEG_PV1(line) ? ((polyvertex_t *)SEG_PV1(line))->x : 0.0f, SEG_PV1(line) ? ((polyvertex_t *)SEG_PV1(line))->y : 0.0f, SEG_PV2(line) ? ((polyvertex_t *)SEG_PV2(line))->x : 0.0f, SEG_PV2(line) ? ((polyvertex_t *)SEG_PV2(line))->y : 0.0f,
 					(unsigned)angle2, (unsigned)angle1, (unsigned)fra.fl, (unsigned)fra.fspan);
 			return;
 		}
