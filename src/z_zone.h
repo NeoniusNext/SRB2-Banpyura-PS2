@@ -127,7 +127,7 @@ void Z_PurgeLock(boolean lock); // nestable: current-frame roots protected; earl
 void Z_NextFrame(void); // frame boundary (once per displayed frame): blocks used since the last call become evictable
 void Z_Touch(void *ptr); // allocation root, never an interior pointer: used this frame (Z_ChangeTag/Z_SetUser do it too)
 void Z_ReleaseCache(void *ptr); // root only, after all aliases consumed: enables pressure eviction in this frame
-typedef struct { void *chunk; unsigned used; } zlevelpool_t;
+typedef struct { void *chunk; unsigned used; unsigned epoch; } zlevelpool_t;
 void *Z_LevelPoolAlloc(zlevelpool_t *pool, size_t size, unsigned perchunk); // OPT12-CORE (PS2-511): zeroed, 16-byte aligned, PU_LEVEL, never freed alone
 void Z_AgeCache(void *ptr, UINT32 frames); // OPT12-CORE (PS2-510): like Z_ReleaseCache, but the block counts as `frames` frames old: it goes before what the last frame used
 void Z_FlushCache(void); // P_LoadLevel, nothing held: every owner-backed cache block (PU_CACHE, evictable sprites) goes

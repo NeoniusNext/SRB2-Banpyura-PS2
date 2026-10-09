@@ -335,11 +335,20 @@ static void *Z_FreeBlock(zablock_t *block)
 	return ZA_Free(ptr);
 }
 
+#ifdef PS2
+static UINT32 zlevelepoch = 1; // PS2-511: bumped whenever PU_LEVEL blocks are freed; a zlevelpool_t made in an earlier epoch has lost its chunk
+#endif
+
 // Frees every block with a tag in range. Never checks the heap, so allocation can call it under pressure.
 static void Z_FreeTagRange(INT32 lowtag, INT32 hightag)
 {
 	zablock_t *block;
 	const boolean purge = lowtag >= PU_PURGELEVEL && hightag >= ZA_MAXTAG;
+
+#ifdef PS2
+	if (lowtag <= PU_LEVEL && hightag >= PU_LEVEL)
+		zlevelepoch++;
+#endif
 
 	if (purge && !zpurge_maybe)
 		return; // PS2-76: no block was ever tagged purgable since the last walk
@@ -1112,15 +1121,19 @@ void Z_AgeCache(void *ptr, UINT32 frames)
 
 #ifdef PS2
 // OPT12-CORE (PS2-511): small PU_LEVEL objects that are never freed one by one (mobjs, 3D floors, slopes) come from chunks: one zone block (16-byte header, round-up) per
-// `perchunk` objects instead of one each. Objects are 16-byte aligned (stride = size rounded up to 16). The pool's owner pointer is cleared by the zone when the level frees
-// the chunk; `used` is reset the next time a chunk is taken.
+// `perchunk` objects instead of one each. Objects are 16-byte aligned (stride = size rounded up to 16). The chunks have NO owner pointer: an owner shared by all the chunks
+// of a pool (the same variable) fails Z_CheckHeap for every chunk but the newest one (found by the 50-map chain, the level change after a hardware fallback). Instead the pool
+// remembers the epoch (zlevelepoch, bumped by every free of PU_LEVEL blocks) it took its chunk in; in a later epoch the chunk is gone and a new one is taken.
 void *Z_LevelPoolAlloc(zlevelpool_t *pool, size_t size, unsigned perchunk)
 {
 	const size_t stride = (size + 15) & ~(size_t)15;
 
-	if (!pool->chunk || pool->used >= perchunk)
+	if (!pool->chunk || pool->epoch != zlevelepoch || pool->used >= perchunk)
 	{
-		pool->chunk = Z_Calloc((size_t)perchunk * stride, PU_LEVEL, &pool->chunk);
+		void *chunk = Z_Calloc((size_t)perchunk * stride, PU_LEVEL, NULL); // (an out-of-memory jump leaves the pool as it was)
+
+		pool->chunk = chunk;
+		pool->epoch = zlevelepoch;
 		pool->used = 0;
 	}
 	return (UINT8 *)pool->chunk + (size_t)pool->used++ * stride;
