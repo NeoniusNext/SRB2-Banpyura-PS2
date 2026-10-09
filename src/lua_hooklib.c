@@ -73,7 +73,9 @@ static UINT8 * hooksErrored;
 static int errorRef;
 
 #ifdef PS2_OPT_PTICK
-boolean lua_mobjhooks_any; // PS2-174: see lua_hook.h
+UINT32 *lua_mobjhookmask; // PS2-174, OPT13 IQ-6: see lua_hook.h
+INT32 lua_mobjhooktypes;
+_Static_assert(MOBJ_HOOK(MAX) <= 32, "lua_mobjhookmask holds one bit per mobj hook kind");
 #endif
 
 static boolean mobj_hook_available(int hook_type, mobjtype_t mobj_type)
@@ -187,9 +189,16 @@ static void add_mobj_hook(lua_State *L, int hook_type)
 	if (!mobjHookIds)
 		mobjHookIds = Z_Calloc(sizeof (*mobjHookIds) * LIMIT_NUMMOBJTYPES, PU_STATIC, &mobjHookIds);
 #endif
+#ifdef PS2_OPT_PTICK
+	if (!lua_mobjhookmask)
+	{
+		lua_mobjhookmask = Z_Calloc(sizeof (*lua_mobjhookmask) * LIMIT_NUMMOBJTYPES, PU_STATIC, &lua_mobjhookmask);
+		lua_mobjhooktypes = LIMIT_NUMMOBJTYPES;
+	}
+#endif
 	add_hook(&mobjHookIds[mobj_type][hook_type]);
 #ifdef PS2_OPT_PTICK
-	lua_mobjhooks_any = true;
+	lua_mobjhookmask[mobj_type] |= 1u << hook_type; // (after add_hook: the bit means numHooks > 0, as mobj_hook_available says)
 #endif
 }
 
@@ -210,6 +219,18 @@ void LUA_GrowMobjHooks(INT32 oldtypes, INT32 newtypes)
 				Z_SetUser(grown[type][hook].ids, (void **)&grown[type][hook].ids);
 	Z_Free(mobjHookIds);
 	mobjHookIds = grown;
+#ifdef PS2_OPT_PTICK
+	if (lua_mobjhookmask)
+	{
+		UINT32 *gm = Z_Calloc(sizeof (*gm) * newtypes, PU_STATIC, NULL);
+
+		M_Memcpy(gm, lua_mobjhookmask, sizeof (*gm) * oldtypes);
+		Z_Free(lua_mobjhookmask);
+		lua_mobjhookmask = gm;
+		Z_SetUser(gm, (void **)&lua_mobjhookmask);
+		lua_mobjhooktypes = newtypes;
+	}
+#endif
 }
 #endif
 
