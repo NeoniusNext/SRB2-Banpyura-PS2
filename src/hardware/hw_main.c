@@ -63,6 +63,7 @@ static boolean HWR_PS2_NoCull(void);
 static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 extern int PS2HWD_QuadVisibleRef(const void *quad); // OPT13 IQ-7c: the reference of the cull checks: can a pixel centre be inside the view after the quad is clipped to it? (ps2_hw_plan.inc)
+static boolean HWR_PS2_SpriteHiddenOld(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim); // (below, for the cull check)
 #else
 #define HWP_LOCAL ((void)0)
 #define HWP_LAP(idx) ((void)0)
@@ -5168,17 +5169,31 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 #ifdef PS2_PROFILE
 		if (spr->ps2_hid) // PS2-HW-72 check mode: HWR_ProjectSprite would have culled this sprite: its quad here must hold no pixel centre either
 		{
-			static unsigned chk, bad;
+			static unsigned chk, bad, chk_by[3], bad_by[3];
+			const int by = spr->ps2_hid < 3 ? spr->ps2_hid : 2; // 1: the exact test of the quad (HWR_PS2_SpriteHidden), 2: the sphere test (HWR_FX_SpriteHiddenCheap)
 
 			chk++;
+			chk_by[by]++;
 			if (PS2HWD_QuadVisibleRef(wallVerts)) // (was !PS2HWD_QuadHidden: "near the eye" counts as not hidden there, and the cull drops the sprites behind the eye rightly)
 			{
 				bad++;
-				CONS_Printf("HWC sprite cull MISMATCH %u of %u (sprite %s)\n", bad, chk, spr->mobj && (UINT32)spr->mobj->sprite < NUMSPRITES ? sprnames[spr->mobj->sprite] : "?");
+				bad_by[by]++;
+				if (bad <= 12)
+				{
+					// what the projection would say about the quad it was given, now: the same arguments, the transform of the draw
+					const boolean aim = cv_glspritebillboarding.value && fabsf(gl_viewludcos) > 1.0e-6f;
+					const float basey = spr->ps2_iok ? (P_MobjFlip(spr->mobj) == -1 ? FIXED_TO_FLOAT(spr->ps2_iz + spr->ps2_ih) : FIXED_TO_FLOAT(spr->ps2_iz)) : 0.0f;
+
+					CONS_Printf("HWC sprite cull MISMATCH %u of %u (sprite %s, by %s, exact-again %d, quadhidden %d, iok %d, aim %d, disp %d, view %u)\n", bad, chk,
+						spr->mobj && (UINT32)spr->mobj->sprite < NUMSPRITES ? sprnames[spr->mobj->sprite] : "?", by == 1 ? "exact" : "sphere",
+						(int)HWR_PS2_SpriteHiddenOld(spr->x1, spr->x2, spr->z1, spr->z2, spr->gz, spr->gzt, spr->dispoffset, basey, aim), PS2HWD_QuadHidden(wallVerts), (int)spr->ps2_iok, (int)aim, (int)spr->dispoffset, (unsigned)hwr_fx_view);
+				}
+				else
+					CONS_Printf("HWC sprite cull MISMATCH %u of %u\n", bad, chk);
 			}
 			else if (!(chk & 1023))
 			{
-				CONS_Printf("HWC sprite cull check: %u sprites, %u differ\n", chk, bad);
+				CONS_Printf("HWC sprite cull check: %u sprites, %u differ (exact test %u/%u, sphere test %u/%u)\n", chk, bad, bad_by[1], chk_by[1], bad_by[2], chk_by[2]);
 			}
 		}
 #endif
@@ -6885,12 +6900,23 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 			const boolean aim = cv_glspritebillboarding.value && fabsf(gl_viewludcos) > 1.0e-6f;
 			const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-			if ((hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE))) ? (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) || (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+			UINT8 why = 0; // 2: the sphere test, 1: the exact test (the cull check of HWR_DrawSprite says which of them was wrong)
+
+			if (hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE)))
+			{
+				if (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey))
+					why = 2;
+				else if (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+					why = 1;
+			}
+			else if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+				why = 1;
+			if (why)
 			{
 				HWD_ADD(HWC_FX_QHID);
 				if (!(ps2hwd_dbg_flags & 0x1000000))
 					return true;
-				ps2_hidden = 1;
+				ps2_hidden = why;
 			}
 		}
 		HWD_LAP(HWP_PS_E);
@@ -7460,12 +7486,23 @@ static void HWR_ProjectSprite(mobj_t *thing)
 		const boolean aim = cv_glspritebillboarding.value && !papersprite && fabsf(gl_viewludcos) > 1.0e-6f; // as HWR_RotateSpritePolyToAim: not for a view that looks level
 		const float basey = P_MobjFlip(thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
-		if ((hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE))) ? (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey) || (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))) : HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+		UINT8 why = 0; // 2: the sphere test, 1: the exact test (the cull check of HWR_DrawSprite says which of them was wrong)
+
+		if (hwr_fx_cheap && !(ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSPHERE)))
+		{
+			if (HWR_FX_SpriteHiddenCheap(x1, x2, z1, z2, gz, gzt, dispoffset, basey))
+				why = 2;
+			else if (!HWR_FX_SpriteResident(sprframe->lumppat[rot]) && HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+				why = 1;
+		}
+		else if (HWR_PS2_SpriteHidden(x1, x2, z1, z2, gz, gzt, dispoffset, basey, aim))
+			why = 1;
+		if (why)
 		{
 			HWD_ADD(HWC_FX_QHID);
 			if (!(ps2hwd_dbg_flags & 0x1000000)) // -hwdbg 16777216 (HWDBG_COMPOSE): the sprite is made all the same, HWR_DrawSprite checks the quad it builds
 				return;
-			ps2_hidden = 1;
+			ps2_hidden = why;
 		}
 	}
 #endif
