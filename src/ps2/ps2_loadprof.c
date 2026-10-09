@@ -83,7 +83,7 @@ void PS2Prof_SampleBegin(void); // ps2_prof.c
 void PS2Prof_SampleEnd(void);
 #endif
 
-// -ps2sample -lpsamp N (build.py --sample): N=1 samples main() .. end of D_SRB2Main, N=2 the first P_LoadLevel. ev: 0 main, 1 end of D_SRB2Main, 2 level start, 3 level end
+// -ps2sample -lpsamp N (build.py --sample): see the table below. ev: 0 main, 1 end of D_SRB2Main, 2 level start, 3 level end, 4 R_Init start, 5 end, 6 HU_Init, 7 end of command registration
 void PS2LP_SampleEvent(int ev)
 {
 #ifdef PS2_SAMPLE
@@ -97,9 +97,10 @@ void PS2LP_SampleEvent(int ev)
 	}
 	if (done || !mode)
 		return;
-	if ((mode == 1 && ev == 0) || (mode == 2 && ev == 2))
+	// mode N samples between its two events (2N-2, 2N-1): 1 main .. end of D_SRB2Main, 2 the first P_LoadLevel, 3 R_Init, 4 HU_Init .. command registration, 5 R_PrecacheLevel, 6 P_LoadMapFromFile, 7 the old level freed
+	if (ev == 2 * mode - 2)
 		PS2Prof_SampleBegin();
-	else if ((mode == 1 && ev == 1) || (mode == 2 && ev == 3))
+	else if (ev == 2 * mode - 1)
 	{
 		PS2Prof_SampleEnd();
 		done = 1;

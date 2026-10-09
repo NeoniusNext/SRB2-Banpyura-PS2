@@ -1682,9 +1682,12 @@ void D_SRB2Main(void)
 	PaletteRemap_Init();
 	LP_LAP(B_GFX2);
 
+	LP_SAMPLE(6);
 	HU_Init();
+	LP_LAP(B_HUINIT);
 
 	CON_Init();
+	LP_LAP(B_CONINIT);
 
 	D_RegisterServerCommands();
 	D_RegisterClientCommands(); // be sure that this is called before D_CheckNetGame
@@ -1694,7 +1697,8 @@ void D_SRB2Main(void)
 	I_RegisterSysCommands();
 
 	CON_StopRefresh(); // Temporarily stop refreshing the screen for wad loading
-	LP_LAP(B_GFX);
+	LP_LAP(B_GFX3);
+	LP_SAMPLE(7);
 
 #ifdef HAS_ADDONS
 	if (startuppwads.numfiles)
@@ -1775,8 +1779,10 @@ void D_SRB2Main(void)
 	LP_LAP(B_MINIT);
 
 	CONS_Printf("R_Init(): Init SRB2 refresh daemon.\n");
+	LP_SAMPLE(4);
 	R_Init();
 	LP_LAP(B_RINIT);
+	LP_SAMPLE(5);
 
 	// setting up sound
 	if (dedicated)

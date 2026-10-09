@@ -59,6 +59,9 @@ UINT8 GetColorLUTDirect(colorlookup_t *lut, UINT8 r, UINT8 g, UINT8 b);
 
 // Set the current RGB palette lookup to use for palettized graphics
 void V_SetPalette(INT32 palettenum);
+#ifdef PS2_PROFILE
+void V_DeferPaletteReload(boolean defer); // PS2-LOAD-13: one reload for a block of palette cvar registrations
+#endif
 
 void V_SetPaletteLump(const char *pal);
 

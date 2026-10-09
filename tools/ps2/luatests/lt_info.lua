@@ -56,9 +56,16 @@ P("color_rw", skincolors[SKINCOLOR_LQCOLOR].name, skincolors[SKINCOLOR_LQCOLOR].
 P("sprnames", sprnames[SPR_LQS1], sprnames[SPR_LQS2], sprnames[SPR_THOK], sprnames[SPR_PLAY], R_GetSpriteNumByName and 1 or 0)
 P("lens_after", #states, #mobjinfo, #sfxinfo, #spriteinfo, #sprnames, #skincolors)
 -- exhaustion: warnings are printed by the engine and compared as text as well
+-- references held across the growth of the tables (PS2: the tables are moved when a script needs a slot past the small size; the userdata have to follow)
+local hs, hm, hx, hi, hc = states[S_PLAY_STND], mobjinfo[MT_PLAYER], sfxinfo[sfx_jump], spriteinfo[SPR_PLAY], skincolors[SKINCOLOR_RED]
+P("held_before", hs.tics, hm.speed, hx.priority, hc.name)
 local last
 for i = 1, 70 do last = freeslot("MT_LQXTRA" .. i) end
 P("last_mt", last)
+hs.tics = 77 hm.speed = 12345 hx.priority = 99 hc.name = "HeldRed"
+P("held_after", states[S_PLAY_STND].tics, mobjinfo[MT_PLAYER].speed, sfxinfo[sfx_jump].priority, skincolors[SKINCOLOR_RED].name, hs.tics, hm.speed, hx.priority, hc.name)
+states[S_PLAY_STND].tics = 5 mobjinfo[MT_PLAYER].speed = 6 sfxinfo[sfx_jump].priority = 7
+P("held_back", hs.tics, hm.speed, hx.priority)
 -- the action constants and hooks the info tables carry
 P("actions", states[S_THOK].action ~= nil or "nil", try(function() return states[S_THOK].var1 end), try(function() return states[S_PLAY_STND].tics end))
 P("mobjflags", MF_SOLID, MF_SHOOTABLE, MF_NOGRAVITY, MF_SPRING, MF_PAIN, MF2_OBJECTFLIP, MF_NOTHINK, MFE_UNDERWATER)

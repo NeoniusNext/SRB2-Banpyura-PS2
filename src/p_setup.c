@@ -8665,6 +8665,8 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 
 	CON_Drawer(); // let the user know what we are going to do
 	I_FinishUpdate(); // page flip or blit buffer
+	LP_END(LV_PRE1, lpl);
+	LP_RESTART(lpl);
 
 	// Reset the palette
 	if (!(rendermode == render_none || reloadinggamestate))
@@ -8715,6 +8717,9 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 			CV_SetValue(&cv_chasecam2, chase);
 	}
 
+	LP_END(LV_PRE2, lpl);
+	LP_RESTART(lpl);
+
 	// Initial height of PointOfView
 	// will be set by player think.
 	players[consoleplayer].viewz = 1;
@@ -8757,10 +8762,15 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 			FixedDiv((F_GetWipeLength(wipedefs[wipe_level_toblack])-2)*NEWTICRATERATIO, NEWTICRATE), MUSICRATE));
 	}
 
+	LP_END(LV_PRE3, lpl);
+	LP_RESTART(lpl);
+
 	// Let's fade to black here
 	// But only if we didn't do the special stage wipe
 	if (!(ranspecialwipe || reloadinggamestate))
 		P_RunLevelWipe();
+	LP_END(LV_PRE4, lpl);
+	LP_RESTART(lpl);
 
 	if (!(reloadinggamestate || titlemapinaction))
 	{
@@ -8795,7 +8805,7 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 	// Close text prompt before freeing the old level
 	F_EndTextPrompt(false, true);
 
-	LP_END(LV_PRE, lpl);
+	LP_END(LV_PRE5, lpl); // (LV_PRE1..5 are consecutive parts of what was LV_PRE)
 	LP_RESTART(lpl);
 	LUA_InvalidateLevel();
 
@@ -8820,6 +8830,7 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 #endif
 
 	ZCK("level-free-before");
+	LP_SAMPLE(12);
 	Patch_FreeTag(PU_PATCH_LOWPRIORITY);
 	Patch_FreeTag(PU_PATCH_ROTATED);
 	Z_FreeTags(PU_LEVEL, PU_PURGELEVEL - 1);
@@ -8833,6 +8844,7 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 	R_ResetSectorEdgeCache(); // PS2-164: the per-sector edge records lived in PU_LEVEL
 #endif
 	ZCK("level-free-after");
+	LP_SAMPLE(13);
 	LP_END(LV_FREE, lpl);
 	LP_RESTART(lpl);
 
@@ -8873,8 +8885,10 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 	LP_END(LV_SETUP, lpl);
 	LP_RESTART(lpl);
 
+	LP_SAMPLE(10);
 	if (!P_LoadMapFromFile())
 		return false;
+	LP_SAMPLE(11);
 	LP_END(LV_MAPFILE, lpl);
 #ifdef PS2_PROFILE
 	PS2FTest_Level(); // PS2-110: -ftest-level (the level as the map data made it, before anything spawned)
@@ -8974,8 +8988,10 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 	Z_LevelPhase(true); // PS2-63/72: the level is built; the caches (and so the precache) grow from the bottom next to it, not between the long-lived blocks
 #endif
 	LP_RESTART(lpl);
+	LP_SAMPLE(8);
 	if (precache || dedicated)
 		R_PrecacheLevel();
+	LP_SAMPLE(9);
 	ZCK("precache");
 	LP_END(LV_PRECACHE, lpl);
 	LP_RESTART(lpl);

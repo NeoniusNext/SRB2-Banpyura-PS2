@@ -23,8 +23,9 @@
 	X(B_GFX0, "boot: cht_Init .. before I_StartupGraphics") \
 	X(B_GFX1, "boot: I_StartupGraphics") \
 	X(B_GFX2, "boot: SCR_Startup, palette remap") \
-	X(B_GFX3, "boot: HU_Init, CON_Init, command registration") \
-	X(B_GFX, "boot: I_StartupGraphics .. console init") \
+	X(B_HUINIT, "boot: HU_Init") \
+	X(B_CONINIT, "boot: CON_Init") \
+	X(B_GFX3, "boot: command registration (server, client, engine, sound, sys)") \
 	X(B_WADEXTRA, "boot: extra PWADs (-file / autoload)") \
 	X(B_HULOAD, "boot: HU_LoadGraphics") \
 	X(B_CONFIG, "boot: M_FirstLoadConfig") \
@@ -50,7 +51,11 @@
 	X(W_CHECKNAME, "W_CheckNumForName* (all)") \
 	/* level */ \
 	X(LV_TOTAL, "P_LoadLevel (all)") \
-	X(LV_PRE, "  before the old level is freed (wipe, music, ...)") \
+	X(LV_PRE1, "    pre 1: CON_Drawer / I_FinishUpdate (loading screen)") \
+	X(LV_PRE2, "    pre 2: palette, secnodes, SOC / level script, settings") \
+	X(LV_PRE3, "    pre 3: cvars, sounds stop, music fade") \
+	X(LV_PRE4, "    pre 4: level wipe (fade out)") \
+	X(LV_PRE5, "    pre 5: Speeding off text, S_Start (music)") \
 	X(LV_FREE, "  old level freed") \
 	X(LV_SETUP, "  level setup before the map file (sky, colormaps, ...)") \
 	X(LV_MAPFILE, "  P_LoadMapFromFile (all)") \
