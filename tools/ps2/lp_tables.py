@@ -36,41 +36,45 @@ def ticks(runs, prefix):
             print('| D%d | %s | %s | %s | %s | %s | %s |' % (dm, {'none': 'none', 'hooks': 'HOOKS.pk3', 'big': 'BIG.pk3'}[ad], f(per(b)), f(per(c)), extra(b, zero['base']) if ad != 'none' else '', extra(c, zero['cur']) if ad != 'none' else '', ratio))
 
 
-def levels(sweepdir):
-    """per map: (cycles of P_LoadLevel, hash) in the order of the sessions"""
-    res = {}
-    for boot in sorted(Path(sweepdir).glob('*/boot.txt')):
+def levels(sweepdir, names):
+    """per map name: (cycles of P_LoadLevel, cycles of the wipe, hash). The sessions are read in order and the n-th P_LoadLevel report is the n-th name of the chain
+    (a map that dies before its report shifts the rest: the counts are checked)"""
+    seq = []
+    for boot in sorted(Path(sweepdir).glob('*/boot.txt'), key=lambda p: int(re.search(r'-s(\d+)$', p.parent.name).group(1))):
         text = boot.read_text(errors='replace')
         hashes = re.findall(r'^LHASH map\.all ([0-9a-f]+)', text, re.M)
-        totals = re.findall(r'^LP map(\d+) LV_TOTAL (\d+)', text, re.M)
-        wipes = re.findall(r'^LP map(\d+) LV_PRE4 (\d+)', text, re.M)
-        wipe = {m: int(c) for m, c in wipes}
-        for i, (m, c) in enumerate(totals):
+        totals = re.findall(r'^LP map\d+ LV_TOTAL (\d+)', text, re.M)
+        wipes = {i: int(c) for i, c in enumerate(re.findall(r'^LP map\d+ LV_PRE4 (\d+)', text, re.M))}
+        for i, c in enumerate(totals):
             if i < len(hashes):
-                res[m] = (int(c), wipe.get(m, 0), hashes[i])
-    return res
+                seq.append((int(c), wipes.get(i, 0), hashes[i]))
+    return {n: seq[i] for i, n in enumerate(names) if i < len(seq)}, len(seq)
 
 
-def sweep(base, cur, top):
-    b, c = levels(base), levels(cur)
-    maps = sorted(set(b) & set(c), key=int)
+def sweep(base, cur, top, names):
+    names = [n for n in names.split(',') if n]
+    b, nb = levels(base, names)
+    c, nc = levels(cur, names)
+    maps = [n for n in names if n in b and n in c]
+    print('maps: %d asked, %d reports in the baseline sweep, %d in the candidate sweep' % (len(names), nb, nc))
     same = sum(1 for m in maps if b[m][2] == c[m][2])
     print('maps in both sweeps: %d, level structure hash equal: %d, different: %d' % (len(maps), same, len(maps) - same))
     for m in maps:
         if b[m][2] != c[m][2]:
             print('  DIFFERENT map %s: %s vs %s' % (m, b[m][2], c[m][2]))
+    if not maps:
+        return
     tb = sum(b[m][0] for m in maps)
     tc = sum(c[m][0] for m in maps)
     wc = sum(c[m][1] for m in maps)
-    print('sum of P_LoadLevel over these maps: base %.0f M, now %.0f M (%.2fx); the wipe of the candidate runs %.0f M of it, without the wipe (the baseline log has no wipe slot: its wipe is taken as the same): %.0f M -> %.0f M (%.2fx)'
+    print('sum of P_LoadLevel over these maps: base %.0f M, now %.0f M (%.2fx); the wipe of the candidate runs %.0f M of it (the baseline log has no wipe slot: its wipe is taken as the same), without the wipe: %.0f M -> %.0f M (%.2fx)'
           % (tb / 1e6, tc / 1e6, tb / tc, wc / 1e6, (tb - wc) / 1e6, (tc - wc) / 1e6, (tb - wc) / (tc - wc)))
     print()
-    print('| map | base M | now M | base M without wipe | now M without wipe | ratio | hash |')
+    print('| map | base M | now M | base M without wipe | now M without wipe | ratio | level hash |')
     print('|---|---:|---:|---:|---:|---:|---|')
-    rows = sorted(maps, key=lambda m: -(c[m][0] - c[m][1]))[:top]
-    for m in rows:
+    for m in sorted(maps, key=lambda m: -(c[m][0] - c[m][1]))[:top]:
         wipe = c[m][1]
-        print('| MAP%02d | %.1f | %.1f | %.1f | %.1f | %.2fx | %s |' % (int(m), b[m][0] / 1e6, c[m][0] / 1e6, (b[m][0] - wipe) / 1e6, (c[m][0] - wipe) / 1e6, (b[m][0] - wipe) / max(1, c[m][0] - wipe), 'equal' if b[m][2] == c[m][2] else 'DIFFERENT'))
+        print('| MAP%s | %.1f | %.1f | %.1f | %.1f | %.2fx | %s |' % (m, b[m][0] / 1e6, c[m][0] / 1e6, (b[m][0] - wipe) / 1e6, (c[m][0] - wipe) / 1e6, (b[m][0] - wipe) / max(1, c[m][0] - wipe), 'equal' if b[m][2] == c[m][2] else 'DIFFERENT'))
 
 
 def main():
@@ -80,11 +84,12 @@ def main():
     ap.add_argument('b', nargs='?')
     ap.add_argument('--prefix', default='rel3_')
     ap.add_argument('--top', type=int, default=12)
+    ap.add_argument('--names', default='11,M3,MH,23,MG,ME,05,08,41,01,03,63,MB')
     a = ap.parse_args()
     if a.what == 'ticks':
         ticks(a.a, a.prefix)
     else:
-        sweep(a.a, a.b, a.top)
+        sweep(a.a, a.b, a.top, a.names)
 
 
 if __name__ == '__main__':
