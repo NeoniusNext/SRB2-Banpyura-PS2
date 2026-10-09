@@ -99,8 +99,8 @@ def netem(name, args, start=0):
                      '--log', (ROOT / S.BASE / f'run/{name}/netem.jsonl').as_posix()] + args}
 
 
-def impaired(name, netem_args, tics=2100, extra_cli=None, cmds='', long_timeout=False, until=None, abort=True, timeout=1200, renderer='Software', pad_to=None, late_crosses=None, late_items=()):
-    srv = pcsrv(extra=['-netlat'], start=0, longto=not long_timeout)
+def impaired(name, netem_args, tics=2100, extra_cli=None, cmds='', long_timeout=False, until=None, abort=True, timeout=1200, renderer='Software', pad_to=None, late_crosses=None, late_items=(), srv_exe=None):
+    srv = pcsrv(extra=['-netlat'], start=0, longto=not long_timeout, **({'exe': srv_exe} if srv_exe else {}))
     cfg = ('' if long_timeout else CFG_SYNC)
     if long_timeout:
         cfg = 'resynchattempts "0"\nblamecfail "On"\n'  # the default nettimeout (350 tics): the client must give up by itself when the line is gone
@@ -207,6 +207,10 @@ mine('menu-browse-blackhole-cancel', {'timeout': 400, 'nodes': [ps2('cli', EMU1,
                                                                    files={'pad.txt': pad((250, 'start'), (330, 'down'), (400, 'cross'), (540, 'cross'), (790, 'circle'))},
                                                                    cfg='masterserver "http://10.255.255.1:8090/MS/0"\nmasterserver_debug "On"\n', start=0, may_exit=True)],
                                       'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
+
+# the ORIGINAL server (build/pc-ref, no OPT12 code) with a PS2 client over a lossy line: the early acknowledgements and the resend requests must work with the unchanged server too
+impaired('compat-refsrv-loss15', ['--loss', '15', '--delay', '30', '--jitter', '10'], tics=1400, srv_exe=REF,
+         until=[{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}], abort=False)
 
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]
