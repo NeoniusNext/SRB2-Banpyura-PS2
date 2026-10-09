@@ -316,3 +316,10 @@ PS2-клиент Hardware (`fpscap "Match refresh rate"`), ПК dedicated, 21 00
 ## 8. Итог (25 строк)
 
 См. сообщение, которым отчёт сдан; коротко: причина зависания найдена и исправлена (потерянное пробуждение `DelayThread`), пинг PS2-клиента на ПК-сервере 89 → 30 мс (Software, одна ELF, 3 запуска), в Hardware 59 → 29 мс; дыр в потоке тиков 115 → 3; подключение от модулей до «joined» 16.1 → 8.2 с, повторное 3.8 → 2.3 с; скачивание ZT.pk3 12.1 → 3.9 с (причина — переполнение ящика lwIP, нить приёма теперь выше lwIP); мастер-сервер не отвечает 18.3 → 5.0 с с экраном и отменой; выдержки 10 мин Software и Hardware — 603 отсчёта `NETSYNC`, 0 отличий; оригинальная ПК-сборка работает в обеих ролях.
+
+### 6.12 Проверки, что остальное не сломано
+
+* **Software-путь побитно:** ванильная `--ps2ref` сборка этого дерева (`SRB2_PS2_NO= python3 tools/ps2/build.py --jobs 2 --ps2ref`, `build/out-ref`), `SRB2_PAK=build/pak tools/ps2/golden_full.sh build/elf-ref16.ELF gfnet`: **DEMO_001..004 — тики совпали со своими строками golden (1050 из 1050), кадры 30 из 30 «0 differ» против `golden/ps2-head`, `RESULT OK` во всех четырёх**; против ПК-golden тики совпали (1050 строк), несколько пикселей в кадрах — прежние отличия PS2 от ПК, не от этой работы.
+* **ПК-сборки:** `build/pc-net` (`-DNETSYNC_DIAG`) и `build/pc-wt` (`-DSRB2_CONFIG_PS2REF=ON`, свой worktree) собираются после всех правок общего кода (`d_clisrv.c`, `d_main.c`, `d_net.c`, `d_netfil.c`, `i_tcp.c`, `tic_command.c`): всё PS2-специфичное под `#ifdef PS2` / `PS2_PROFILE` / `NETSYNC_DIAG`.
+* **Одиночная игра без сети** (`single-smoke-so`/`-ha`, `-warp MAP01`, pad ходит): Software 386 с игры без ошибок и `underruns=0`; Hardware rc 0, без ошибок.
+* **Пути входа в Hardware:** `hw-osk-connect` (меню, экранная клавиатура), `hw-netcmd-connect` (`connect` с титула), `osk-connect`, `menu-browse` (список с mock-мастера) на `e16` — rc 0, `NETSYNC` 43 / 43 / 43 / 16 отсчётов, 0 отличий.
