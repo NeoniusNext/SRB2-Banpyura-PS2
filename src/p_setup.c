@@ -7510,10 +7510,16 @@ static void P_MakeMapMD5(virtres_t *virt, void *dest)
 		virtlump_t* virtmthings = vres_Find(virt, "THINGS");
 		virtlump_t* virtsides   = vres_Find(virt, "SIDEDEFS");
 
-		P_MakeBufferMD5((char*)virtlines->data,   virtlines->size, linemd5);
-		P_MakeBufferMD5((char*)virtsectors->data, virtsectors->size,  sectormd5);
-		P_MakeBufferMD5((char*)virtmthings->data, virtmthings->size,   thingmd5);
-		P_MakeBufferMD5((char*)virtsides->data,   virtsides->size, sidedefmd5);
+		// OPT12-CORE: in the PS2 profile the lump data is read on use and dropped after the loaders (PS2-52): ->data is NULL here, and the digest was made of the
+		// bytes at address 0 (a wrong mapmd5 in demos / server info on the recompiler; the interpreter of PCSX2 does not get past it). Read the lumps again.
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtlines),   virtlines->size, linemd5);
+		VRES_DROP(virtlines);
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtsectors), virtsectors->size,  sectormd5);
+		VRES_DROP(virtsectors);
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtmthings), virtmthings->size,   thingmd5);
+		VRES_DROP(virtmthings);
+		P_MakeBufferMD5((char*)VRES_DATA(virt, virtsides),   virtsides->size, sidedefmd5);
+		VRES_DROP(virtsides);
 
 		for (i = 0; i < 16; i++)
 			resmd5[i] = (linemd5[i] + sectormd5[i] + thingmd5[i] + sidedefmd5[i]) & 0xFF;
