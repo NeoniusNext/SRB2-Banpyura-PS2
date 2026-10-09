@@ -45,6 +45,11 @@ void PS2NetUI_End(void);
 
 // The player was told what happened (a failure window was shown or the player cancelled): the caller need not show a message of its own
 boolean PS2NetUI_Reported(void);
+// PS2-NET-9: a waiting screen for the blocking HTTP requests (the master server): called every few ms from the request's wait loops with the time since it began. It stays
+// silent for the first 0.4 s, then draws "Contacting the master server" with the seconds and a Circle = Cancel hint (one frame per 100 ms, the pad is read). false = cancelled.
+boolean PS2NetUI_Waiting(const char *what, UINT32 elapsed_ms);
+// the request is over: the screen goes down
+void PS2NetUI_WaitingEnd(void);
 // -vidshot nN: the number of the frame of the network screen that was drawn last (0 while it is not up)
 INT32 PS2NetUI_Frame(void);
 

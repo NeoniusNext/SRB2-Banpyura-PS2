@@ -42,6 +42,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
+#include "../ps2_sys.h" // PS2_SleepUs (OPT12 NET-3)
 #include "../ps2_models.h" // PS2Models_TryAlloc (the model work areas)
 
 // PS2-HW-67: the driver's diagnostics (limitation warnings, texture cap changes, HWT/HWFX/HWPROF traces) go to the log only: through CONS_Printf/CONS_Alert

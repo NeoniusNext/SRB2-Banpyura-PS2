@@ -71,6 +71,7 @@
 #include "z_zone.h"
 #include "d_main.h"
 #include "netcode/d_netfil.h"
+#include "netcode/netlat.h"
 #include "m_cheat.h"
 #include "y_inter.h"
 #include "p_local.h" // chasecam
@@ -841,6 +842,7 @@ static void D_RunFrame(void)
 		}
 
 		I_UpdateTime(cv_timescale.value);
+		NetLat_Frame(); // PS2-NET-1 (diagnostic: -netlat)
 
 		if (lastwipetic)
 		{
@@ -870,6 +872,10 @@ static void D_RunFrame(void)
 
 		interp = R_UsingFrameInterpolation() && !dedicated;
 		doDisplay = false;
+#ifdef PS2
+		const tic_t ps2_gametic0 = gametic; // PS2-NET-6: did this pass run tics?
+		const boolean ps2_early = realtics <= 0 && !singletics && D_NetEarlyTic(false); // a tic of the server is waiting and the clock has not ticked: run it now
+#endif
 
 #ifdef HW3SOUND
 		HW3S_BeginFrameUpdate();
@@ -877,7 +883,11 @@ static void D_RunFrame(void)
 
 		refreshdirmenu = 0; // not sure where to put this, here as good as any?
 
+#ifdef PS2
+		if (realtics > 0 || singletics || ps2_early)
+#else
 		if (realtics > 0 || singletics)
+#endif
 		{
 			// don't skip more than 10 frames at a time
 			// (fadein / fadeout cause massive frame skip!)
@@ -888,6 +898,9 @@ static void D_RunFrame(void)
 #endif
 				realtics = 1;
 
+#ifdef PS2
+			NetLat_Pass(ps2_early ? 1 : 0, (INT32)realtics);
+#endif
 			// process tics (but maybe not if realtic == 0)
 			PS2SUB_B(33);
 #ifdef PS2_PROF_DIRECT
@@ -929,11 +942,22 @@ static void D_RunFrame(void)
 			}
 
 			renderisnewtic = true;
+#ifdef PS2
+			if (gametic == ps2_gametic0 && ps2_early)
+				renderisnewtic = false;
+#endif
 		}
 		else
 		{
 			renderisnewtic = false;
 		}
+#ifdef PS2
+		if (gametic != ps2_gametic0)
+			NetLat_RunPass();
+		D_NetEarlyPassEnd(gametic != ps2_gametic0);
+		if (gametic != ps2_gametic0 && D_NetEarlyActive())
+			hu_stopped = false; // TryRunTics only clears it on a clock pass; a tic run early has moved the picture on
+#endif
 
 		if (interp)
 		{
@@ -946,7 +970,11 @@ static void D_RunFrame(void)
 
 			if (!(paused || P_AutoPause()) && deltatics < 1.0 && !hu_stopped)
 			{
+#ifdef PS2
+				rendertimefrac = D_NetEarlyActive() ? D_NetEarlyFrac() : g_time.timefrac; // PS2-NET-6: from the time of the last run of a tic
+#else
 				rendertimefrac = g_time.timefrac;
+#endif
 			}
 			else
 			{

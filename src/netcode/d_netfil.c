@@ -1376,6 +1376,11 @@ static void OpenNewFileForDownload(fileneeded_t *file, const char *filename)
 		I_Error("FileSendTicker: No more memory\n");
 }
 
+#ifdef PS2_PROFILE
+static UINT64 ps2_dl_write_cycles;
+static UINT32 ps2_dl_fragments;
+#endif
+
 void PT_FileFragment(SINT8 node, INT32 netconsole)
 {
 	if (netnodes[node].ingame)
@@ -1484,9 +1489,16 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 			file->receivedfragments[fragmentpos / fragmentsize] = true;
 
 			// We can receive packets in the wrong order, anyway all OSes support gaped files
+#ifdef PS2_PROFILE
+			const precise_t ps2_w0 = I_GetPreciseTime(); // PS2-NET-10: what the write of a fragment costs (-netlat); a 16 KB stage that wrote them in one piece halved this and changed nothing in the time of the download: removed
+#endif
 			fseek(file->file, fragmentpos, SEEK_SET);
 			if (fragmentsize && fwrite(netbuffer->u.filetxpak.data, boundedfragmentsize, 1, file->file) != 1)
 				I_Error("Can't write to %s: %s\n",file->filename, M_FileError(file->file));
+#ifdef PS2_PROFILE
+			ps2_dl_write_cycles += I_GetPreciseTime() - ps2_w0;
+			ps2_dl_fragments++;
+#endif
 			file->currentsize += boundedfragmentsize;
 
 			AddFragmentToAckPacket(file->ackpacket, file->iteration, fragmentpos / fragmentsize, filenum);
@@ -1520,6 +1532,13 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 					filedownload.remaining--;
 				}
 
+#ifdef PS2_PROFILE
+				if (M_CheckParm("-netlat"))
+					CONS_Printf("NETLAT download %u fragments, %u ms in fseek+fwrite (%u us each)\n", (unsigned)ps2_dl_fragments,
+						(unsigned)(ps2_dl_write_cycles * 1000 / I_GetPrecisePrecision()), (unsigned)(ps2_dl_fragments ? ps2_dl_write_cycles * 1000000 / I_GetPrecisePrecision() / ps2_dl_fragments : 0));
+				ps2_dl_write_cycles = 0;
+				ps2_dl_fragments = 0;
+#endif
 				CONS_Printf(M_GetText("Finished download of \"%s\"\n"), filename);
 			}
 		}

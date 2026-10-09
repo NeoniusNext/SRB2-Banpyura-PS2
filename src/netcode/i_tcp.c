@@ -55,6 +55,8 @@
 		#ifdef PS2
 		#include <fcntl.h>
 		#include "../ps2/ps2_net.h"
+		#include "../ps2/ps2_netsvc.h" // PS2-NET-5: the receive thread of the game socket
+		#include "netlat.h"
 		#include "../i_time.h"
 		#include "../command.h"
 		#ifndef FIONBIO
@@ -611,6 +613,26 @@ static boolean SOCK_Get(void)
 	for (size_t n = 0; n < mysocketses; n++)
 	{
 #ifdef PS2
+		if (PS2NetSvc_Running())
+		{
+			// PS2-NET-5: the datagrams were taken off the socket by the receive thread (ps2_netsvc.c), in the order they came; this is the same read, from its ring
+			const nsv_packet_t *sp;
+
+			PS2NetSvc_MainBeat();
+			sp = PS2NetSvc_Peek();
+			if (!sp)
+				continue;
+			M_Memcpy(&doomcom->data, sp->data, sp->len);
+			memset(&fromaddress, 0, sizeof fromaddress);
+			fromaddress.ip4.sin_family = AF_INET;
+			fromaddress.ip4.sin_port = sp->from_port;
+			fromaddress.ip4.sin_addr.s_addr = sp->from_addr;
+			fromlen = (socklen_t)sizeof(struct sockaddr_in);
+			c = (ssize_t)sp->len;
+			NetLat_RxAge(sp->t);
+			PS2NetSvc_Pop();
+		}
+		else
 		{
 			// PS2-121: lwIP's O_NONBLOCK through libcglue did not make recvfrom() return: ask select() first (zero timeout)
 			fd_set rfds;
@@ -620,11 +642,15 @@ static boolean SOCK_Get(void)
 			FD_SET(mysockets[n], &rfds);
 			if (select(mysockets[n] + 1, &rfds, NULL, NULL, &tv) <= 0)
 				continue;
+			fromlen = (socklen_t)sizeof(fromaddress);
+			c = recvfrom(mysockets[n], (char *)&doomcom->data, MAXPACKETLENGTH, 0,
+				(void *)&fromaddress, &fromlen);
 		}
-#endif
+#else
 		fromlen = (socklen_t)sizeof(fromaddress);
 		c = recvfrom(mysockets[n], (char *)&doomcom->data, MAXPACKETLENGTH, 0,
 			(void *)&fromaddress, &fromlen);
+#endif
 		if (c != ERRSOCKET)
 		{
 #ifdef PS2
@@ -1255,6 +1281,9 @@ boolean I_InitTcpDriver(void)
 
 static void SOCK_CloseSocket(void)
 {
+#ifdef PS2
+	PS2NetSvc_Stop(); // PS2-NET-5: the thread leaves the socket before it is closed
+#endif
 	for (size_t i=0; i < mysocketses; i++)
 	{
 		if (mysockets[i] != (SOCKET_TYPE)ERRSOCKET)
@@ -1387,7 +1416,11 @@ static boolean SOCK_OpenSocket(void)
 	// build the socket but close it first
 	SOCK_CloseSocket();
 #ifdef PS2
-	return UDP_Socket();
+	if (!UDP_Socket())
+		return false;
+	if (mysocketses == 1 && mysockets[0] != (SOCKET_TYPE)ERRSOCKET && PS2NetSvc_Start(mysockets[0]))
+		CONS_Printf("PS2 net: receive thread started (%u KiB of heap)\n", (unsigned)(PS2NetSvc_HeapUse() >> 10)); // PS2-NET-5; without it the game thread reads the socket itself, as before
+	return true;
 #else
 	return UDP_Socket();
 #endif

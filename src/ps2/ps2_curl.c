@@ -5,6 +5,8 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -78,6 +80,49 @@ static long NowMs(void)
 	return (long)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
 #endif
 }
+
+#ifdef _EE
+static long http_t0;       // the start of the blocking request (PS2-NET-9: for the waiting screen)
+static int http_aborted;   // the player pressed Circle on the waiting screen
+// PS2-NET-3 (OPT12): lwIP's select() with a time-out waits on the SDK's alarm library (WaitSemaEx), the one whose lost wake-ups hung the game thread (docs/GATES/g1/opt12-NET.md).
+// The game thread polls instead: select() with a zero time-out every millisecond (PS2_SleepUs) until the time is up.
+#include "ps2_sys.h"
+static int SelectWait(int nfds, fd_set *r, fd_set *w, fd_set *e, struct timeval *tv)
+{
+	const long end = NowMs() + (tv ? (long)tv->tv_sec * 1000 + tv->tv_usec / 1000 : 0);
+
+	for (;;)
+	{
+		fd_set r1, w1, e1;
+		struct timeval zero = {0, 0};
+		int rc;
+
+		if (r) r1 = *r;
+		if (w) w1 = *w;
+		if (e) e1 = *e;
+		rc = select(nfds, r ? &r1 : NULL, w ? &w1 : NULL, e ? &e1 : NULL, &zero);
+		if (rc != 0 || NowMs() >= end)
+		{
+			if (rc > 0)
+			{
+				if (r) *r = r1;
+				if (w) *w = w1;
+				if (e) *e = e1;
+			}
+			return rc;
+		}
+		if (http_t0 && !PS2Net_Waiting("Contacting the master server", (UINT32)(NowMs() - http_t0)))
+		{
+			http_aborted = 1; // callers see "nothing ready" and look at http_aborted
+			return 0;
+		}
+		PS2_SleepUs(1000);
+	}
+}
+#else
+#define SelectWait select
+#define http_aborted 0
+#endif
 
 #ifdef __GNUC__
 static void Fail(char *errbuf, size_t errsize, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
@@ -220,10 +265,42 @@ static int ConnectBegin(const url_t *u, sock_t *out, int *done, char *errbuf, si
 	{
 		int fl = fcntl(s, F_GETFL, 0);
 		fcntl(s, F_SETFL, fl | O_NONBLOCK);
+#ifdef _EE
+		{
+			// PS2-NET-9 (OPT12): through libcglue the fcntl flag did not make connect() return (a host that does not answer held the game for lwIP's whole SYN retry time, 18..19 s, see
+			// docs/GATES/g1/opt12-NET.md). The first try (lwip_ioctl FIONBIO on the descriptor that socket() returned) did nothing: libcglue's descriptor is not lwIP's socket number
+			// (connect() looks the descriptor up and passes the info's userdata on). So lwIP's own FIONBIO ioctl (the value of lwip/sockets.h: _IOW('f', 126, unsigned long)) gets the
+			// userdata of the descriptor, which is lwIP's number (checked: it must be a small number, else nothing is done).
+			struct fdinfo { void *userdata; void *ops; };
+			extern struct fdinfo *libcglue_get_fd_info(int fd); // ps2sdkapi.h (not included: it pulls the whole libcglue API in)
+			extern int lwip_ioctl(int s, long cmd, void *argp) __attribute__((weak)); // (weak: nothing is pulled out of the library for it)
+			struct fdinfo *fi = libcglue_get_fd_info(s);
+			unsigned long nb = 1;
+			const long ls = fi ? (long)(intptr_t)fi->userdata : -1;
+
+			if (lwip_ioctl && ls >= 0 && ls < 64)
+				lwip_ioctl((int)ls, (long)0x8004667eUL, &nb);
+			printf("PS2 http: descriptor %d is lwIP socket %ld\n", (int)s, ls);
+			fflush(stdout);
+		}
+#endif
 	}
 #endif
 	*done = 0;
+#ifdef _EE
+	{
+		const long t0 = NowMs();
+
+		rc = connect(s, (struct sockaddr *)&sa, sizeof sa);
+		if (NowMs() - t0 > 200)
+		{
+			printf("PS2 http: connect() to %s took %ld ms (returned %d, errno %d)\n", u->host, NowMs() - t0, rc, errno);
+			fflush(stdout);
+		}
+	}
+#else
 	rc = connect(s, (struct sockaddr *)&sa, sizeof sa);
+#endif
 	if (rc != 0)
 	{
 #ifdef _WIN32
@@ -259,7 +336,7 @@ static int ConnectPoll(sock_t s, const char *host, long waitms, int *done, char 
 	FD_SET(s, &efds); // Winsock reports a refused connection here
 	tv.tv_sec = waitms / 1000;
 	tv.tv_usec = (waitms % 1000) * 1000;
-	rc = select((int)s + 1, NULL, &wfds, &efds, &tv);
+	rc = SelectWait((int)s + 1, NULL, &wfds, &efds, &tv);
 	*done = 0;
 	if (rc > 0)
 	{
@@ -291,6 +368,12 @@ static int Connect(const url_t *u, long deadline, sock_t *out, char *errbuf, siz
 	{
 		const long left = deadline - NowMs();
 
+		if (http_aborted)
+		{
+			Fail(errbuf, errsize, "Aborted by the player");
+			sock_close(s);
+			return CURLE_ABORTED_BY_CALLBACK;
+		}
 		if (left <= 0)
 		{
 			Fail(errbuf, errsize, "Connection timed out connecting to %s", u->host);
@@ -320,7 +403,7 @@ static int SendAll(sock_t s, const char *p, size_t n, long deadline)
 		FD_SET(s, &wfds);
 		tv.tv_sec = (left > 500 ? 500 : left) / 1000;
 		tv.tv_usec = ((left > 500 ? 500 : left) % 1000) * 1000;
-		if (select((int)s + 1, NULL, &wfds, NULL, &tv) <= 0)
+		if (SelectWait((int)s + 1, NULL, &wfds, NULL, &tv) <= 0)
 			continue;
 		k = (int)send(s, p, (int)(n > 1400 ? 1400 : n), 0);
 		if (k <= 0)
@@ -464,6 +547,13 @@ static int Exchange(const url_t *u, int is_post, const char *post, long postsize
 			else if (clen >= 0 && have >= (size_t)clen)
 				break;
 		}
+		if (http_aborted)
+		{
+			Fail(errbuf, errsize, "Aborted by the player");
+			free(raw.p);
+			sock_close(s);
+			return CURLE_ABORTED_BY_CALLBACK;
+		}
 		if (left <= 0)
 		{
 			Fail(errbuf, errsize, "Operation timed out with %s bytes received", he ? "some" : "no");
@@ -475,7 +565,7 @@ static int Exchange(const url_t *u, int is_post, const char *post, long postsize
 		FD_SET(s, &rfds);
 		tv.tv_sec = (left > 500 ? 500 : left) / 1000;
 		tv.tv_usec = ((left > 500 ? 500 : left) % 1000) * 1000;
-		if (select((int)s + 1, &rfds, NULL, NULL, &tv) <= 0)
+		if (SelectWait((int)s + 1, &rfds, NULL, NULL, &tv) <= 0)
 			continue;
 		k = (int)recv(s, tmp, sizeof tmp, 0);
 		if (k < 0)
@@ -573,7 +663,7 @@ static int Exchange(const url_t *u, int is_post, const char *post, long postsize
 	return CURLE_OK;
 }
 
-CURLcode PS2Http_Request(const char *url, const char *post, long postsize, int is_post, long timeout, int maxredirs, int follow,
+static CURLcode Request(const char *url, const char *post, long postsize, int is_post, long timeout, int maxredirs, int follow,
 	const char *useragent, ps2curl_write_fn write_fn, void *userdata, long *status, char *errbuf, size_t errsize)
 {
 	url_t u;
@@ -584,6 +674,10 @@ CURLcode PS2Http_Request(const char *url, const char *post, long postsize, int i
 	if (errbuf && errsize)
 		errbuf[0] = '\0';
 	snprintf(cur, sizeof cur, "%s", url);
+#ifdef _EE
+	http_t0 = NowMs();
+	http_aborted = 0;
+#endif
 	for (;;)
 	{
 		buf_t head = {0}, body = {0};
@@ -672,6 +766,18 @@ CURLcode PS2Http_Request(const char *url, const char *post, long postsize, int i
 		free(body.p);
 		return CURLE_OK;
 	}
+}
+
+CURLcode PS2Http_Request(const char *url, const char *post, long postsize, int is_post, long timeout, int maxredirs, int follow,
+	const char *useragent, ps2curl_write_fn write_fn, void *userdata, long *status, char *errbuf, size_t errsize)
+{
+	const CURLcode rc = Request(url, post, postsize, is_post, timeout, maxredirs, follow, useragent, write_fn, userdata, status, errbuf, errsize);
+
+#ifdef _EE
+	http_t0 = 0;
+	PS2Net_WaitingEnd(); // PS2-NET-9: the waiting screen goes down whatever the end was
+#endif
+	return rc;
 }
 
 // ===== PS2-137: streaming GET, stepped from the game loop (add-on download from the server's HTTP source) =====

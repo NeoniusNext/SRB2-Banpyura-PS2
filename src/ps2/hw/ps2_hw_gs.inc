@@ -216,7 +216,7 @@ static void ring_wait(int limit)
 		poll_dma();
 		if (H.pending <= limit)
 			break;
-		DelayThread(30); // polled sleep: a lost interrupt can never hang the game
+		PS2_SleepUs(30); // OPT12 NET-3: no SDK alarm library; polled sleep: a lost interrupt can never hang the game
 		if ((u32)(cyc() - t0) > WAIT_LIMIT)
 		{
 			wd_recover("GIF DMA ownership timeout (ring_wait)"); // channel 2 is stopped first: no in-flight buffer is handed back
@@ -408,7 +408,7 @@ static int gs_wait_finished(void)
 			wd_recover("GS FINISH timeout (gs_wait_finished)");
 			return 0;
 		}
-		DelayThread(60);
+		PS2_SleepUs(60);
 	}
 	H.st.cyc_wait += cyc() - t0;
 	H.finish_pending = 0;
@@ -521,7 +521,7 @@ static void flip_wait(void)
 			wd_recover("flip timeout (flip_wait)");
 			break;
 		}
-		DelayThread(100);
+		PS2_SleepUs(100);
 	}
 	H.st.cyc_flipwait += cyc() - w0;
 }
@@ -559,7 +559,7 @@ static void frame_begin(void)
 
 		H.st.flip_waits++;
 		while (H.pend && (u32)(cyc() - w0) < FLIP_LIMIT)
-			DelayThread(100);
+			PS2_SleepUs(100);
 		if (H.pend && H.pend_done) // no vblank interrupt in 125 ms: flip by hand
 		{
 			u32 fi = DIntr();
