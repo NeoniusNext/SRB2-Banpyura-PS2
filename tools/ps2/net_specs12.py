@@ -54,6 +54,11 @@ lat_pair('lat-sw', 'Software')
 lat_pair('lat-hw', 'Hardware')
 lat_pair('lat-sw-trace', 'Software', tics=1100, extra_cli=['-netlattrace'])
 lat_pair('lat-sw-noearly', 'Software', extra_cli=['-netnoearly'])
+# the same ELF with every OPT12 network change switched off (priorities, receive thread / early acks, early tics + tic buffer, fast ACD): the baseline of A/B runs on one build
+OLD = ['-netnoboost', '-netnosvc', '-netnoearly', '-netnoacdfast']
+lat_pair('lat-sw-old', 'Software', extra_cli=OLD)
+lat_pair('lat-hw-old', 'Hardware', extra_cli=OLD)
+lat_pair('lat-sw-trace-old', 'Software', tics=1100, extra_cli=OLD + ['-netlattrace'])
 lat_pair('lat-sw-trace-noearly', 'Software', tics=1100, extra_cli=['-netlattrace', '-netnoearly'])
 lat_pair('lat-sw-trace-buf0', 'Software', tics=1100, extra_cli=['-netlattrace', '-netearlybuf', '0'])
 lat_pair('lat-hw-trace', 'Hardware', tics=1100, extra_cli=['-netlattrace'])
@@ -94,13 +99,13 @@ def netem(name, args, start=0):
                      '--log', (ROOT / S.BASE / f'run/{name}/netem.jsonl').as_posix()] + args}
 
 
-def impaired(name, netem_args, tics=2100, extra_cli=None, cmds='', long_timeout=False, until=None, abort=True, timeout=1200, renderer='Software', pad_to=None):
+def impaired(name, netem_args, tics=2100, extra_cli=None, cmds='', long_timeout=False, until=None, abort=True, timeout=1200, renderer='Software', pad_to=None, late_crosses=None):
     srv = pcsrv(extra=['-netlat'], start=0, longto=not long_timeout)
     cfg = ('' if long_timeout else CFG_SYNC)
     if long_timeout:
         cfg = 'resynchattempts "0"\nblamecfail "On"\n'  # the default nettimeout (350 tics): the client must give up by itself when the line is gone
     cli_args = ['-skipintro', '-connect', f'{H}:{NETEM_PORT}', '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'] + (['-renderer', renderer] if renderer != 'Software' else []) + (extra_cli or [])
-    files = {'pad.txt': pad(*crosses(200, 600, 60)) + ',' + walk(1, 700, pad_to or tics * 3, seed=2)}
+    files = {'pad.txt': pad(*crosses(200, 600, 60), *(crosses(*late_crosses) if late_crosses else [])) + ',' + walk(1, 700, pad_to or tics * 3, seed=2)}  # late_crosses: Enter on the server info screen of a second connect
     if cmds:
         files['cmd.txt'] = cmds
         cli_args += ['-netcmd', 'file:cmd.txt']
@@ -119,7 +124,7 @@ impaired('delay-150', ['--delay', '150', '--jitter', '20'], tics=1400)
 # the cable is pulled for 4 s (shorter than the 10 s time-out): the game goes on, the state stays equal
 impaired('cable-short', ['--schedule', '40:blackhole=4'], tics=2800)
 # the cable is pulled for 25 s: the client gives up (server timeout -> title), no hang; then it connects again ("connect" typed at displayed frame 3000)
-impaired('cable-long', ['--schedule', '40:blackhole=25'], long_timeout=True, abort=False, cmds=f'3000:connect {H}:{NETEM_PORT}', tics=0,
+impaired('cable-long', ['--schedule', '40:blackhole=25'], long_timeout=True, abort=False, cmds=f'3000:connect {H}:{NETEM_PORT}', tics=0, late_crosses=(3030, 3900, 60),
          until=[{'node': 'cli', 'text': 'PS2 net: server timeout'}, {'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 4200}], timeout=1500)
 
 # ---- soak: 10 minutes of game time (21000 tics) with both ends walking, the state hash compared afterwards (net_batch.py) ----
@@ -128,9 +133,10 @@ for _r in ('Software', 'Hardware'):
 
 # ---- add-on download from a PC server over the game connection (UDP): NSK.pk3 (408 KB) and ZT.pk3 (2 MB); the time between "Downloading addon" and "Finished download" is in the client log ----
 ADDONS = S.ADDONS
-for _name, _files in (('dl-nsk', ['NSK.pk3']), ('dl-both', ['NSK.pk3', 'ZT.pk3'])):
+for _name, _files, _extra in (('dl-nsk', ['NSK.pk3'], []), ('dl-both', ['NSK.pk3', 'ZT.pk3'], []), ('dl-both-nostage', ['NSK.pk3', 'ZT.pk3'], ['-netnostage']),
+                              ('dl-both-old', ['NSK.pk3', 'ZT.pk3'], ['-netnostage', '-netnoboost', '-netnosvc', '-netnoearly'])):
     srv = pcsrv(extra=['-netlat', '-file'] + [f'{ADDONS}/{f}' for f in _files], start=3)
-    cli = ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'],
+    cli = ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'] + _extra,
               files={'pad.txt': pad(*crosses(200, 4000))}, cfg=CFG_SYNC, start=10)
     mine(_name, {'timeout': 900, 'nodes': [srv, cli], 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 1400}], 'grace': 3})
 

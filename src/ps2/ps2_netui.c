@@ -29,7 +29,7 @@
 #include "ps2_netui.h"
 #include "ps2_uiicons.h"
 
-enum { UI_PROGRESS, UI_READY, UI_FAILED };
+enum { UI_PROGRESS, UI_READY, UI_FAILED, UI_WAIT };
 
 static struct
 {
@@ -53,6 +53,8 @@ static struct
 	gamestate_t gs_saved;    // static: the guard may jump out of the frame while the game state is borrowed
 } ui;
 
+static char wait_what[64];       // PS2-NET-9: what the waiting screen says
+static UINT32 wait_ms;           // ... and how long it has lasted
 static INT32 opt_slow_ms = -1;   // -netslow MS: every step stays at least this long on the screen (tests and pictures)
 static INT32 opt_ready_ms = -1;  // -netuiready MS: how long "Network ready" stays (default 700; 2500 before OPT12)
 static INT32 opt_fail_s = -1;    // -netuifail S: how long the failure window waits for a key (default 45)
@@ -294,6 +296,19 @@ static void DrawFailed(void)
 	V_DrawCenteredString(BASEVIDWIDTH/2, y, V_ALLOWLOWERCASE|V_RETURN8, msg);
 }
 
+// the waiting screen of the blocking HTTP requests (PS2-NET-9)
+static void DrawWaiting(void)
+{
+	DrawPanelFrame(M_GetText("Network"), M_GetText("Please wait"), MENUCOLOR);
+	DrawSpinner(TEXT_X + 1, 52);
+	V_DrawString(TEXT_X + 16, 51, MENUCOLOR|MENUCAPS, wait_what);
+	V_DrawRightAlignedThinString(TEXT_R, 101, V_ALLOWLOWERCASE|MENUCOLOR, va("%u s", (unsigned)(wait_ms / 1000)));
+	V_DrawFill(TEXT_X, 111, TEXT_R - TEXT_X, 3, 26);
+	PS2MenuHints_Log("netscreen", PS2I_CIRCLE " Cancel");
+	V_DrawCenteredString(BASEVIDWIDTH/2, BASEVIDHEIGHT-16-16, MENUCOLOR|MENUCAPS, va("%s %s", PS2I_CIRCLE, M_GetText("Cancel")));
+	DrawBar(96, true);
+}
+
 static void DrawFrame(void)
 {
 	ui.gs_saved = gamestate;
@@ -303,9 +318,10 @@ static void DrawFrame(void)
 	{
 		case UI_READY: DrawReady(); break;
 		case UI_FAILED: DrawFailed(); break;
+		case UI_WAIT: DrawWaiting(); break;
 		default: DrawProgress(); break;
 	}
-	PS2MenuHints_FrameEnd(ui.mode == UI_READY ? "netscreen-ready" : ui.mode == UI_FAILED ? "netscreen-failed" : "netscreen-progress");
+	PS2MenuHints_FrameEnd(ui.mode == UI_READY ? "netscreen-ready" : ui.mode == UI_FAILED ? "netscreen-failed" : ui.mode == UI_WAIT ? "netscreen-wait" : "netscreen-progress");
 	ui.frame++;
 	I_UpdateNoVsync(); // page flip or blit buffer (-vidshot nN takes its picture in there)
 }
@@ -486,6 +502,50 @@ void PS2NetUI_End(void)
 		memset(gamekeydown, 0, NUMKEYS); // as the connection screen does when it is left: nothing stays pressed for the game
 	ui.on = false;
 	ui.frame = 0;
+}
+
+boolean PS2NetUI_Waiting(const char *what, UINT32 elapsed_ms)
+{
+	static UINT64 last;
+
+	if (ui.on && ui.mode != UI_WAIT)
+		return true; // the bring-up screen is up: it has its own loop
+	if (!ui.on || ui.mode != UI_WAIT)
+	{
+		if (elapsed_ms < 400)
+			return true;
+		memset(&ui, 0, sizeof ui);
+		ui.on = true;
+		ui.mode = UI_WAIT;
+		// no picture over a running level either: the update of a hosted game in the master server's list is a request too, and it must not cover the game
+		ui.silent = rendermode == render_none || dedicated || !screens[0] || Z_GuardArmed() || PS2Lua_InCall() || gamestate == GS_LEVEL;
+		ui.t_begin = ui.t_step = I_GetPreciseTime();
+		last = 0;
+		if (M_CheckParm("-netdebug"))
+			CONS_Printf("NETUI waiting \"%s\" (silent %d) after %u ms\n", what, (int)ui.silent, (unsigned)elapsed_ms);
+	}
+	if (ui.silent)
+		return true;
+	if (last && MsSince(last) < 100)
+		return true;
+	last = I_GetPreciseTime();
+	snprintf(wait_what, sizeof wait_what, "%s", what);
+	wait_ms = elapsed_ms;
+	Tick(true);
+	return !ui.cancel;
+}
+
+void PS2NetUI_WaitingEnd(void)
+{
+	if (ui.on && ui.mode == UI_WAIT)
+	{
+		if (M_CheckParm("-netdebug"))
+			CONS_Printf("NETUI waiting over after %u ms (cancelled %d)\n", (unsigned)MsSince(ui.t_begin), (int)ui.cancel);
+		if (!ui.silent)
+			memset(gamekeydown, 0, NUMKEYS);
+		ui.on = false;
+		ui.cancel = false;
+	}
 }
 
 boolean PS2NetUI_Reported(void)

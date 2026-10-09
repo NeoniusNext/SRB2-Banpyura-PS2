@@ -438,6 +438,16 @@ boolean PS2Net_Up(void)
 	return true;
 }
 
+boolean PS2Net_Waiting(const char *what, UINT32 elapsed_ms)
+{
+	return PS2NetUI_Waiting(what, elapsed_ms);
+}
+
+void PS2Net_WaitingEnd(void)
+{
+	PS2NetUI_WaitingEnd();
+}
+
 boolean PS2Net_Reported(void)
 {
 	return PS2NetUI_Reported();

@@ -955,6 +955,8 @@ static void D_RunFrame(void)
 		if (gametic != ps2_gametic0)
 			NetLat_RunPass();
 		D_NetEarlyPassEnd(gametic != ps2_gametic0);
+		if (gametic != ps2_gametic0 && D_NetEarlyActive())
+			hu_stopped = false; // TryRunTics only clears it on a clock pass; a tic run early has moved the picture on
 #endif
 
 		if (interp)

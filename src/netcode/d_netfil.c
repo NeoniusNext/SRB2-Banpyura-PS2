@@ -1328,6 +1328,10 @@ static void AddFragmentToAckPacket(fileack_pak *packet, UINT8 iteration, UINT32 
 	segment->acks |= 1 << (fragmentpos - segment->start);
 }
 
+#ifdef PS2
+static void DL_Flush(fileneeded_t *f); // PS2-NET-10, below
+#endif
+
 void FileReceiveTicker(void)
 {
 	for (INT32 i = 0; i < fileneedednum; i++)
@@ -1336,6 +1340,9 @@ void FileReceiveTicker(void)
 
 		if (file->status == FS_DOWNLOADING)
 		{
+#ifdef PS2
+			DL_Flush(file); // PS2-NET-10: once per tic
+#endif
 			if (lasttimeackpacketsent - I_GetTime() > TICRATE / 2)
 				SendAckPacket(file->ackpacket, i);
 
@@ -1375,6 +1382,64 @@ static void OpenNewFileForDownload(fileneeded_t *file, const char *filename)
 	if (!file->receivedfragments)
 		I_Error("FileSendTicker: No more memory\n");
 }
+
+#ifdef PS2_PROFILE
+static UINT64 ps2_dl_write_cycles;
+static UINT32 ps2_dl_fragments;
+#endif
+
+#ifdef PS2
+// PS2-NET-10 (OPT12): the write of a received fragment. Every fragment (~490 bytes, up to 16 in a tic) was an fseek + fwrite on the host: / memory card / USB device, a round trip to the IOP each; the
+// fragments of a pass arrive in order, so they are collected in a 16 KB stage and written as one piece: when the stage is full, when a fragment does not follow the last one, and once per tic
+// (FileReceiveTicker), at the latest when the file ends or the connection is closed (DL_Flush before fclose). -netnostage writes every fragment at once, as before.
+#define DL_STAGE 16384
+static boolean dl_nostage = false, dl_stage_checked = false;
+
+static void DL_Flush(fileneeded_t *f)
+{
+	if (f->stage && f->stagelen && f->file)
+	{
+		fseek(f->file, f->stagepos, SEEK_SET);
+		if (fwrite(f->stage, f->stagelen, 1, f->file) != 1)
+			I_Error("Can't write to %s: %s\n", f->filename, M_FileError(f->file));
+	}
+	f->stagelen = 0;
+}
+
+static void DL_StageFree(fileneeded_t *f)
+{
+	DL_Flush(f);
+	free(f->stage);
+	f->stage = NULL;
+}
+
+static void DL_Write(fileneeded_t *f, UINT32 pos, const void *data, UINT16 len)
+{
+	if (!dl_stage_checked)
+	{
+		dl_stage_checked = true;
+		dl_nostage = M_CheckParm("-netnostage") != 0;
+	}
+	if (!dl_nostage && !f->stage)
+		f->stage = malloc(DL_STAGE); // NULL: no memory for it, every fragment is written at once
+	if (f->stage && len <= DL_STAGE)
+	{
+		if (!f->stagelen || pos != f->stagepos + f->stagelen || f->stagelen + len > DL_STAGE)
+		{
+			DL_Flush(f);
+			f->stagepos = pos;
+		}
+		M_Memcpy(f->stage + f->stagelen, data, len);
+		f->stagelen += len;
+		if (f->stagelen + 512 > DL_STAGE)
+			DL_Flush(f); // full: the next fragment would not fit
+		return;
+	}
+	fseek(f->file, pos, SEEK_SET);
+	if (len && fwrite(data, len, 1, f->file) != 1)
+		I_Error("Can't write to %s: %s\n", f->filename, M_FileError(f->file));
+}
+#endif
 
 void PT_FileFragment(SINT8 node, INT32 netconsole)
 {
@@ -1484,9 +1549,21 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 			file->receivedfragments[fragmentpos / fragmentsize] = true;
 
 			// We can receive packets in the wrong order, anyway all OSes support gaped files
+#ifdef PS2_PROFILE
+			const precise_t ps2_w0 = I_GetPreciseTime(); // PS2-NET-10: what the write of a fragment costs (-netlat)
+#endif
+#ifdef PS2
+			if (fragmentsize)
+				DL_Write(file, fragmentpos, netbuffer->u.filetxpak.data, boundedfragmentsize);
+#else
 			fseek(file->file, fragmentpos, SEEK_SET);
 			if (fragmentsize && fwrite(netbuffer->u.filetxpak.data, boundedfragmentsize, 1, file->file) != 1)
 				I_Error("Can't write to %s: %s\n",file->filename, M_FileError(file->file));
+#endif
+#ifdef PS2_PROFILE
+			ps2_dl_write_cycles += I_GetPreciseTime() - ps2_w0;
+			ps2_dl_fragments++;
+#endif
 			file->currentsize += boundedfragmentsize;
 
 			AddFragmentToAckPacket(file->ackpacket, file->iteration, fragmentpos / fragmentsize, filenum);
@@ -1494,6 +1571,9 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 			// Finished?
 			if (file->currentsize == file->totalsize)
 			{
+#ifdef PS2
+				DL_StageFree(file); // PS2-NET-10: the last fragments are written before the file is closed
+#endif
 				fclose(file->file);
 				file->file = NULL;
 				free(file->receivedfragments);
@@ -1520,6 +1600,13 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 					filedownload.remaining--;
 				}
 
+#ifdef PS2_PROFILE
+				if (M_CheckParm("-netlat"))
+					CONS_Printf("NETLAT download %u fragments, %u ms in fseek+fwrite (%u us each)\n", (unsigned)ps2_dl_fragments,
+						(unsigned)(ps2_dl_write_cycles * 1000 / I_GetPrecisePrecision()), (unsigned)(ps2_dl_fragments ? ps2_dl_write_cycles * 1000000 / I_GetPrecisePrecision() / ps2_dl_fragments : 0));
+				ps2_dl_write_cycles = 0;
+				ps2_dl_fragments = 0;
+#endif
 				CONS_Printf(M_GetText("Finished download of \"%s\"\n"), filename);
 			}
 		}
@@ -1592,6 +1679,9 @@ void CloseNetFile(void)
 		for (INT32 i = 0; i < fileneedednum; i++)
 			if (fileneeded[i].status == FS_DOWNLOADING && fileneeded[i].file)
 			{
+#ifdef PS2
+				DL_StageFree(&fileneeded[i]); // PS2-NET-10: what was received is in the file before it is closed (a paused download resumes from it)
+#endif
 				fclose(fileneeded[i].file);
 				free(fileneeded[i].ackpacket);
 

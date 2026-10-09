@@ -22,6 +22,10 @@ UINT32 PS2Net_HeapUse(void);
 // the next "connect" would end in I_Error): the file is emptied instead. 0 = gone or emptied, -1 = neither worked.
 int PS2Net_Unlink(const char *path);
 
+// PS2-NET-9: for the blocking HTTP requests: a waiting screen after 0.4 s (false = the player pressed Circle), and its end
+boolean PS2Net_Waiting(const char *what, UINT32 elapsed_ms);
+void PS2Net_WaitingEnd(void);
+
 // -netcmd "N:command|..." (diagnostic): console commands at displayed frame N; called once per frame
 void PS2Net_Frame(void);
 // PS2-NET-3: -netwd starts the stall watchdog thread (prints the state of every EE thread when the game thread stops reading the clock for 3 s)
