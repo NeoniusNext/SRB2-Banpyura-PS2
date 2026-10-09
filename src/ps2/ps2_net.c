@@ -565,8 +565,8 @@ void PS2Net_Frame(void)
 		nsv_stats_t ns;
 
 		PS2NetSvc_GetStats(&ns);
-		CONS_Printf("NETSVC frame %u: received %u dropped %u early-acks %u early-mis %u (errors %u) max-depth %u\n", (unsigned)frames, (unsigned)ns.received, (unsigned)ns.dropped,
-			(unsigned)ns.early_acks, (unsigned)ns.early_mis, (unsigned)ns.early_ack_errors, (unsigned)ns.max_depth);
+		CONS_Printf("NETSVC frame %u: received %u dropped %u early-acks %u early-mis %u (errors %u) max-depth %u, C heap in use %u B\n", (unsigned)frames, (unsigned)ns.received, (unsigned)ns.dropped,
+			(unsigned)ns.early_acks, (unsigned)ns.early_mis, (unsigned)ns.early_ack_errors, (unsigned)ns.max_depth, (unsigned)mallinfo().uordblks);
 	}
 
 	PS2MenuHints_Frame(); // PS2-339: the crawler's step (the command and the options are set up at the first call)
