@@ -183,7 +183,7 @@ void I_StartupTimer(void)
 }
 
 #ifdef PS2_PROFILE
-extern unsigned long long ps2prof_sleep_cyc; // ps2_prof.c (OPT12 HWDRV, PS2-HW-440): the working cycles printed by HWPROF0 are the wall minus these sleeps and the waits of the driver
+unsigned long long ps2prof_sleep_cyc; // (OPT12 HWDRV, PS2-HW-440) defined here, not in ps2_prof.c: that file is not linked into the release build, which still has the HWPROF code; the working cycles printed by HWPROF0 are the wall minus these sleeps and the waits of the driver
 static inline unsigned int sleep_cyc_now(void) { unsigned int v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
 #endif
 

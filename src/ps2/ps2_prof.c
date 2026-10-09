@@ -362,8 +362,7 @@ static void Report(void)
 	tics = 0;
 }
 
-// OPT12 HWDRV (PS2-HW-440): the cycles the main loop spent asleep in I_Sleep / I_SleepDuration (i_system.c), read by the HWPROF line to print the working cycles (wall without waits)
-unsigned long long ps2prof_sleep_cyc;
+// ps2prof_sleep_cyc (the cycles asleep in I_Sleep / I_SleepDuration, PS2-HW-440) is defined in i_system.c
 
 #ifdef PS2_PROF_DIRECT
 // PS2-94: LTO profile build (no linker wrappers): I_FinishUpdate reports every displayed frame; everything is "other"
