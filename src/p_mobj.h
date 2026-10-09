@@ -343,84 +343,90 @@ typedef struct mobj_s
 	UINT32 flags; // flags from mobjinfo tables
 	UINT32 flags2; // MF2_ flags
 	UINT16 eflags; // extra flags
+	UINT16 color; // Player and mobj sprites in multiplayer modes are modified using an internal color lookup table for re-indexing. (OPT13 IQ-5: moved up into the padding behind eflags)
 
-	void *skin; // overrides 'sprite' when non-NULL (for player bodies to 'remember' the skin)
-
-	// Player and mobj sprites in multiplayer modes are modified
-	//  using an internal color lookup table for re-indexing.
-	UINT16 color;
-
-	// This replaces MF_TRANSLATION. Use 0 for default (no translation).
-	UINT16 translation;
-
-	struct player_s *drawonlyforplayer; // If set, hides the mobj for everyone except this player and their spectators
-	struct mobj_s *dontdrawforviewmobj; // If set, hides the mobj if dontdrawforviewmobj is the current camera (first-person player or awayviewmobj)
-
-	// Interaction info, by BLOCKMAP.
-	// Links in blocks (if needed).
-	blocknode_t *blocknode;
-
-	// Additional pointers for NiGHTS hoops
-	struct mobj_s *hnext;
-	struct mobj_s *hprev;
-
+	// OPT13 IQ-5: from here on the fields are ordered by use. Everything up to eflags stays where it was: precipmobj_t (below) is cast to mobj_t (P_CycleStateAnimation, the sprite
+	// code of both renderers) and shares this start. The tic (P_MobjThinker, P_ZMovement, P_CheckPosition, ...) reads the first group on every object, one or two cache lines of the
+	// EE (64 bytes, 8 KiB cache): the rest is for drawing, save games and rarely used code. The order is not seen by savegames, Lua, the network or the demos (fields are named everywhere).
 	mobjtype_t type;
 	const mobjinfo_t *info; // &mobjinfo[mobj->type]
 
 	INT32 health; // for player this is rings + 1 -- no it isn't, not any more!!
 
-	// Movement direction, movement generation (zig-zagging).
-	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
-	INT32 movecount; // when 0, select a new dir
-
 	struct mobj_s *target; // Thing being chased/attacked (or NULL), and originator for missiles.
-
-	INT32 reactiontime; // If not 0, don't attack yet.
-
-	INT32 threshold; // If >0, the target will be chased no matter what.
+	struct mobj_s *tracer; // Thing being chased/attacked for tracers.
 
 	// Additional info record for player avatars only.
 	// Only valid if type == MT_PLAYER
 	struct player_s *player;
 
-	INT32 lastlook; // Player number last looked for.
+	INT32 fuse; // Does something in P_MobjThinker on reaching 0.
 
-	mapthing_t *spawnpoint; // Used for CTF flags, objectplace, and a handful other applications.
+	fixed_t scale;
+	fixed_t destscale;
 
-	struct mobj_s *tracer; // Thing being chased/attacked for tracers.
+	struct pslope_s *standingslope; // The slope that the object is standing on (shouldn't need synced in savegames, right?)
+
+	INT32 threshold; // If >0, the target will be chased no matter what.
+
+	fixed_t watertop; // top of the water FOF the mobj is in
+	fixed_t waterbottom; // bottom of the water FOF the mobj is in
+
+	INT32 reactiontime; // If not 0, don't attack yet.
+
+	// Movement direction, movement generation (zig-zagging).
+	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
+	INT32 movecount; // when 0, select a new dir
+
+	// Additional pointers for NiGHTS hoops
+	struct mobj_s *hnext;
+	struct mobj_s *hprev;
+
+	struct mobj_s *dontdrawforviewmobj; // If set, hides the mobj if dontdrawforviewmobj is the current camera (first-person player or awayviewmobj)
 
 	fixed_t friction;
 	fixed_t movefactor;
 
-	INT32 fuse; // Does something in P_MobjThinker on reaching 0.
-	fixed_t watertop; // top of the water FOF the mobj is in
-	fixed_t waterbottom; // bottom of the water FOF the mobj is in
-
-	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
-
-	fixed_t scale;
-	fixed_t old_scale; // interpolation
-	fixed_t old_scale2;
-	fixed_t destscale;
-	fixed_t scalespeed;
-
 	// Extra values are for internal use for whatever you want
 	INT32 extravalue1;
 	INT32 extravalue2;
+
+	fixed_t scalespeed;
+
+	INT32 lastlook; // Player number last looked for.
+
+	mapthing_t *spawnpoint; // Used for CTF flags, objectplace, and a handful other applications.
+
+	void *skin; // overrides 'sprite' when non-NULL (for player bodies to 'remember' the skin)
+
+	// This replaces MF_TRANSLATION. Use 0 for default (no translation).
+	UINT16 translation;
+
+	boolean resetinterp; // if true, some fields should not be interpolated (see R_InterpolateMobjState implementation)
+	boolean colorized; // Whether the mobj uses the rainbow colormap
+	boolean mirrored; // The object's rotations will be mirrored left to right, e.g., see frame AL from the right and AR from the left
+
+	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
+	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
+
+	// ---- seldom: drawing for single players, the blockmap, save games, SOC values, interpolation of the scale
+	struct player_s *drawonlyforplayer; // If set, hides the mobj for everyone except this player and their spectators
+
+	// Interaction info, by BLOCKMAP.
+	// Links in blocks (if needed).
+	blocknode_t *blocknode;
+
+	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
+
+	fixed_t old_scale; // interpolation
+	fixed_t old_scale2;
 
 	// Custom values are not to be altered by us!
 	// They are for SOCs to store things in.
 	INT32 cusval;
 	INT32 cvmem;
 
-	struct pslope_s *standingslope; // The slope that the object is standing on (shouldn't need synced in savegames, right?)
-
-	boolean resetinterp; // if true, some fields should not be interpolated (see R_InterpolateMobjState implementation)
 	UINT32 interpidx; // OPT13 (RTICK): index of this mobj in interpolated_mobjs (r_fps.c), a hint for O(1) removal; verified before use
-	boolean colorized; // Whether the mobj uses the rainbow colormap
-	boolean mirrored; // The object's rotations will be mirrored left to right, e.g., see frame AL from the right and AR from the left
-	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
-	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
 
 	// WARNING: New fields must be added separately to savegame and Lua.
 } mobj_t;
