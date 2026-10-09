@@ -757,6 +757,7 @@ const char *PS2Mem_TagName(int tag)
 		case PU_HWRLIGHTTABLEDATA: return "PU_HWRLIGHTTABLEDATA";
 		case PU_HWRBATCH: return "PU_HWRBATCH";
 		case PU_RENDERWORK: return "PU_RENDERWORK";
+		case PU_HWRCACHE_LRU: return "PU_HWRCACHE_LRU";
 		case PU_HWRCACHE: return "PU_HWRCACHE";
 		case PU_CACHE: return "PU_CACHE";
 		case PU_LEVEL: return "PU_LEVEL";
@@ -1055,7 +1056,7 @@ static char ZA_Class(const zablock_t *b)
 		return 'L';
 	if (t == PU_RENDERWORK)
 		return 'W';
-	if (t >= PU_CACHE)
+	if (t >= PU_CACHE || t == PU_HWRCACHE_LRU)
 		return 'C';
 	if (t == PU_PATCH || t == PU_PATCH_DATA || t == PU_SPRITE || t == PU_HUDGFX || t == PU_PATCH_LOWPRIORITY || t == PU_PATCH_ROTATED)
 		return 'P';

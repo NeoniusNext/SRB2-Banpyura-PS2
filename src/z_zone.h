@@ -59,6 +59,8 @@ enum
 	PU_HWRBATCH              = 25, // persistent CPU-side batching arrays; never a purgeable texture cache
 #ifdef PS2_PROFILE
 	PU_RENDERWORK            = 26, // pinned renderer construction scratch, allocated beside reconstructible caches
+	PU_HWRCACHE_LRU          = 27, // OPT12 HWDRV (PS2-HW-442): data of the hardware renderer's textures kept between uses: evicted least recently used first (a cache block), and freed at once by an allocation that
+	                               // nothing else can serve (what PU_HWRCACHE_UNLOCKED is freed by always); Z_ChangeTag turns PU_HWRCACHE_UNLOCKED into this one while Z_SetHWCacheLRU is on
 #endif
 
 	PU_HWRCACHE              = 48, // static until unlocked
@@ -125,6 +127,8 @@ void *Z_TryReallocAlign(void *ptr, size_t size, INT32 tag, void *user, INT32 ali
 void Z_PinCachePatch(void *ptr); // PS2-140: a PU_CACHE patch that got a hardware texture stops being evictable
 void Z_PurgeLock(boolean lock); // nestable: current-frame roots protected; earlier-frame caches may be evicted
 void Z_NextFrame(void); // frame boundary (once per displayed frame): blocks used since the last call become evictable
+void Z_SetHWCacheLRU(boolean on, size_t freemin, size_t cap); // OPT12 HWDRV (PS2-HW-442): tag changes to PU_HWRCACHE_UNLOCKED (with an owner) make an LRU cache block (PU_CACHE) instead of a block that goes at the next allocation that does not fit: at most `cap` bytes a frame, while freemin bytes of the arena are free
+INT32 Z_HWCacheTag(size_t bytes); // the tag a hardware texture cache block of this size gets now: PU_CACHE or PU_HWRCACHE_UNLOCKED
 void Z_Touch(void *ptr); // allocation root, never an interior pointer: used this frame (Z_ChangeTag/Z_SetUser do it too)
 void Z_ReleaseCache(void *ptr); // root only, after all aliases consumed: enables pressure eviction in this frame
 void Z_FlushCache(void); // P_LoadLevel, nothing held: every owner-backed cache block (PU_CACHE, evictable sprites) goes
@@ -174,6 +178,8 @@ void PS2Spill_Reset(void); // ps2_spill.c: the libc-to-arena spill bookkeeping a
 static inline void Z_PurgeLock(boolean lock) { (void)lock; }
 static inline void Z_NextFrame(void) {}
 static inline void Z_Touch(void *ptr) { (void)ptr; }
+static inline void Z_SetHWCacheLRU(boolean on, size_t freemin, size_t cap) { (void)on; (void)freemin; (void)cap; }
+static inline INT32 Z_HWCacheTag(size_t bytes) { (void)bytes; return PU_HWRCACHE_UNLOCKED; }
 static inline void Z_ReleaseCache(void *ptr) { (void)ptr; }
 static inline void Z_LevelPhase(boolean playing) { (void)playing; }
 static inline void Z_FlushCache(void) {}

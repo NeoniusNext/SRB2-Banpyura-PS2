@@ -23,6 +23,9 @@
 #include "../r_textures.h"
 #include "../w_wad.h"
 #include "../z_zone.h"
+#ifdef PS2_PROFILE
+#include "../m_argv.h" // -hwfbtex
+#endif
 #include "../v_video.h"
 #include "../r_draw.h"
 #include "../r_patch.h"
@@ -30,6 +33,7 @@
 #include "../p_setup.h"
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
+
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
 static inline unsigned int ps2hwt_now(void)
@@ -38,6 +42,16 @@ static inline unsigned int ps2hwt_now(void)
 	__asm__ volatile("mfc0 %0,$9" : "=r"(v));
 	return v;
 }
+#endif
+
+// OPT12 HWDRV (PS2-HW-442): the data of a patch mipmap (sprites, HUD) between two selections: a cache block of the LRU kind (PU_CACHE, stamped with the frame by the tag change: it cannot go before the
+// batch that collected the polygon has been drawn). PU_HWRCACHE_UNLOCKED goes at the next allocation that does not fit, and a patch has no way to be made again at draw time ("no data (purged)":
+// the sprite is missing for the frame). ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old rule, A/B).
+#ifdef PS2_PROFILE
+INT32 ps2hwt_patchtag = PU_HWRCACHE_LRU;
+#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), ps2hwt_patchtag)
+#else
+#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), PU_HWRCACHE_UNLOCKED)
 #endif
 
 INT32 patchformat = GL_TEXFMT_AP_88; // use alpha for holes
@@ -1103,9 +1117,34 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 	gl_numtextures = pnumtextures;
 	gl_textures = calloc(gl_numtextures, sizeof(*gl_textures));
 	gl_flats = calloc(gl_numtextures, sizeof(*gl_flats));
+#ifdef PS2_PROFILE
+	{
+		// -hwfbtex N (test of the guard below): the N-th call (1 = the first) finds no memory for the tables
+		static int failtex = -1, ncalls;
+
+		if (failtex < 0)
+			failtex = (M_CheckParm("-hwfbtex") && M_IsNextParm()) ? atoi(M_GetNextParm()) : 0;
+		if (failtex && ++ncalls == failtex)
+		{
+			free(gl_flats);
+			gl_flats = NULL;
+		}
+	}
+#endif
 
 	if (gl_textures == NULL || gl_flats == NULL)
+	{
+#ifdef PS2
+		// PS2-HW-446 (OPT12 HWDRV): under the guard of ps2_hwfb.c (the hardware part of a level load, the first frame of a renderer switch) this is not the end of the game: the
+		// tables are given back and the level goes on in software (the stab_run.sh hwfb chain ended here, at map 23, with the start before this change as well)
+		free(gl_textures);
+		free(gl_flats);
+		gl_textures = gl_flats = NULL;
+		gl_numtextures = 0;
+		Z_GuardThrow("HWR_LoadMapTextures: ran out of memory for OpenGL textures"); // (no return when a guard is armed)
+#endif
 		I_Error("HWR_LoadMapTextures: ran out of memory for OpenGL textures");
+	}
 
 	gl_maptexturesloaded = true;
 }
@@ -1418,9 +1457,11 @@ void HWR_PS2_LockData(void *data)
 	Z_ChangeTag(data, PU_HWRCACHE);
 }
 
+// OPT12 HWDRV (PS2-HW-442): the tag of the driver's data cache blocks between two uses is Z_HWCacheTag(bytes): PU_CACHE (evicted least recently used first, under pressure) while the arena has
+// room, else the old PU_HWRCACHE_UNLOCKED (freed by the next allocation that does not fit). -hwkeep 1 (ps2_hwd.c) is the old rule everywhere.
 void HWR_PS2_UnlockData(void *data)
 {
-	Z_ChangeTag(data, PU_HWRCACHE_UNLOCKED);
+	Z_ChangeTag(data, PU_HWRCACHE_UNLOCKED); // (Z_ChangeTag makes it a cache block while Z_HWCacheTag allows)
 }
 
 void HWR_PS2_FreeData(void *data)
@@ -1431,7 +1472,7 @@ void HWR_PS2_FreeData(void *data)
 // a purgable zone block owned by *newuser (the driver's data cache: decimated levels of a texture); NULL when the zone has no room
 void *HWR_PS2_AllocData(size_t bytes, void **newuser)
 {
-	return Z_TryMallocAlign(bytes, PU_HWRCACHE_UNLOCKED, newuser, 6);
+	return Z_TryMallocAlign(bytes, Z_HWCacheTag(bytes), newuser, 6);
 }
 
 // The driver takes the texels of a mipmap over (its data cache): the block stays a purgable zone block, owned by *newuser from now on, and
@@ -1519,7 +1560,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap);
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(grMipmap->data);
 }
 
 #endif
@@ -1539,7 +1580,7 @@ static void HWR_LoadPatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(grMipmap->data);
 }
 
 // ----------------------+
@@ -1559,7 +1600,7 @@ static void HWR_UpdatePatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(grMipmap->data);
 }
 
 // -----------------+
@@ -1632,7 +1673,7 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
 	if (!gpatch)
 		return;
 
-	Z_ChangeTag(gpatch->mipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(gpatch->mipmap->data);
 }
 
 patch_t *HWR_GetCachedGLPatchPwad(UINT16 wadnum, UINT16 lumpnum)
@@ -1803,6 +1844,9 @@ void HWR_SetPalette(RGBA_t *palette)
 		{
 			Z_FreeTag(PU_HWRCACHE);
 			Z_FreeTag(PU_HWRCACHE_UNLOCKED);
+#ifdef PS2_PROFILE
+			Z_FreeTag(PU_HWRCACHE_LRU); // OPT12 HWDRV (PS2-HW-442)
+#endif
 		}
 	}
 }
@@ -1877,6 +1921,9 @@ void HWR_SetMapPalette(void)
 		{
 			Z_FreeTag(PU_HWRCACHE);
 			Z_FreeTag(PU_HWRCACHE_UNLOCKED);
+#ifdef PS2_PROFILE
+			Z_FreeTag(PU_HWRCACHE_LRU); // OPT12 HWDRV (PS2-HW-442)
+#endif
 		}
 	}
 }

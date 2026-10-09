@@ -954,7 +954,7 @@ static void Impl_HWProf(void)
 	static INT32 frames, windows;
 	static unsigned int hwprof_vbl0; // vblank counter at the end of the previous window (st.vblanks is a running count)
 	static UINT32 last_count;
-	static UINT64 wall;
+	static UINT64 wall, sleep0;
 	UINT32 now = ps2hwp_now();
 	ps2hwd_stats_t st;
 	ps2hwd_info_t info;
@@ -967,6 +967,19 @@ static void Impl_HWProf(void)
 		PS2HWD_DumpWorkingSet();
 	PS2HWD_GetStats(&st, 1);
 	PS2HWD_GetInfo(&info);
+	{
+		// OPT12 HWDRV (PS2-HW-440): the working cycles of a frame = wall minus what the EE spent waiting (ring / GS finish, the flip of the previous frame, the frame cap sleep);
+		// the flip histogram says how many vblanks each picture stayed (a steady 60 Hz is all in bin 1; bin 0 = replaced within a vblank)
+		extern unsigned long long ps2prof_sleep_cyc;
+		const UINT64 slept = ps2prof_sleep_cyc - sleep0;
+		const UINT64 perframe_wait = ((UINT64)st.cyc_wait + (UINT64)st.cyc_flipwait) / (UINT64)frames + slept / (UINT64)frames;
+		const UINT64 wallf = wall / (UINT64)frames;
+
+		sleep0 = ps2prof_sleep_cyc;
+		I_OutputMsg("HWPROF0 win=%d work=%u wall=%u sleep=%u cad=%u/%u/%u/%u/%u vbl=%u flips=%u\n", (int)windows,
+			(unsigned)(wallf > perframe_wait ? wallf - perframe_wait : 0), (unsigned)wallf, (unsigned)(slept / (UINT64)frames),
+			st.flip_hist[0], st.flip_hist[1], st.flip_hist[2], st.flip_hist[3], st.flip_hist[4], st.vblanks - hwprof_vbl0, st.flips);
+	}
 	I_OutputMsg("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u vbl=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u cap=%u pred=%u capchg=%u restamp=%u decim=%u\n",
 		(int)windows, (int)frames, (unsigned)(wall / frames),
 		(unsigned)(ps2hwp_cyc[HWP_CLEAR] / frames), (unsigned)(ps2hwp_cyc[HWP_BSP] / frames), (unsigned)(ps2hwp_cyc[HWP_BATCH] / frames),

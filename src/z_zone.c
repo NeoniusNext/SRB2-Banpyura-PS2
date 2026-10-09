@@ -153,7 +153,7 @@ static boolean Z_Evictable(const zablock_t *block, boolean current)
 {
 	if (ZA_ISFREE(block) || block->user == NULL || block == zpinned || !(current || Z_Age(block) != 0))
 		return false;
-	return ZA_TAG(block) == PU_CACHE || (ZA_TAG(block) == PU_SPRITE && Patch_IsEvictable(ZA_PAYLOAD(block)));
+	return ZA_TAG(block) == PU_CACHE || ZA_TAG(block) == PU_HWRCACHE_LRU || (ZA_TAG(block) == PU_SPRITE && Patch_IsEvictable(ZA_PAYLOAD(block)));
 }
 
 // Long-lived data is carved from the top of the arena, what comes and goes with levels and caches from the bottom.
@@ -234,11 +234,51 @@ static zablock_t *zreg[Z_REG_MAX];
 static UINT32 zreg_n;
 static boolean zreg_ok = true;
 static UINT32 zreg_overflows;
+// OPT12 HWDRV (PS2-HW-442): the data of the hardware renderer's textures (PU_HWRCACHE_UNLOCKED, "purgable whenever needed": freed at once by every allocation that does not fit, and
+// the 81 patches of one wall texture are then read from the pack again, 4 M cycles each) becomes a block of its own tag, PU_HWRCACHE_LRU, while this is on: a cache block (evicted oldest
+// first and only when the room is needed, like the patches and the sprites) that Z_AllocBlock also frees, all at once, when no other cache can serve an allocation (the renderer can make this
+// data again, as it could with the old tag; a cache block of the current frame is otherwise spared and MAP10 ended in "Out of memory allocating 4000 bytes"). `freemin` bytes of the arena
+// have to be free for the conversion, and at most `cap` bytes of blocks above ZHWLRU_SMALL are converted in one frame (0 = no limit).
+#define ZHWLRU_SMALL (32u << 10)
+static boolean zhwcache_lru;
+static unsigned int zhwlru_conv, zhwlru_flushes;
+static size_t zhwlru_free = 128u << 10, zhwlru_cap, zhwlru_used;
+static UINT32 zhwlru_frame;
+void Z_SetHWCacheLRU(boolean on, size_t freemin, size_t cap)
+{
+	zhwcache_lru = on;
+	zhwlru_free = freemin;
+	zhwlru_cap = cap;
+}
+INT32 Z_HWCacheTag(size_t bytes)
+{
+	if (!zhwcache_lru || ZA_FreeBytes() < zhwlru_free)
+		return PU_HWRCACHE_UNLOCKED;
+	if (zhwlru_cap && bytes > ZHWLRU_SMALL)
+	{
+		if (zhwlru_frame != zframe)
+		{
+			zhwlru_frame = zframe;
+			zhwlru_used = 0;
+		}
+		if (zhwlru_used + bytes > zhwlru_cap)
+			return PU_HWRCACHE_UNLOCKED;
+		zhwlru_used += bytes;
+	}
+	zhwlru_conv++;
+	return PU_HWRCACHE_LRU;
+}
+void Z_HWCacheStats(unsigned int *conv, unsigned int *flushes)
+{
+	*conv = zhwlru_conv;
+	*flushes = zhwlru_flushes;
+	zhwlru_conv = zhwlru_flushes = 0;
+}
 static boolean zpurge_maybe; // some block may carry a tag >= PU_PURGELEVEL (set when one is tagged; the purge walk clears it)
 
 static boolean Z_RegTag(INT32 tag)
 {
-	return tag == PU_CACHE || tag == PU_SPRITE;
+	return tag == PU_CACHE || tag == PU_SPRITE || tag == PU_HWRCACHE_LRU;
 }
 
 static UINT32 Z_RegLower(const zablock_t *block) // first index whose address is >= block
@@ -634,6 +674,7 @@ static void *Z_AllocBlock(size_t size, INT32 tag, size_t align)
 	const int side = Z_SideForTag(tag);
 	void *p, *frontier = NULL;
 	size_t want = size > SIZE_MAX - Z_EVICT_SLACK ? SIZE_MAX : size + Z_EVICT_SLACK;
+	boolean hwlru_flushed = false;
 
 	if (zflush_period && ++zflush_count >= zflush_period)
 	{
@@ -665,8 +706,23 @@ static void *Z_AllocBlock(size_t size, INT32 tag, size_t align)
 	while (!p)
 	{
 		// the caches go first; when none is left, the subsystem hook (audio effects) gives back what it can rebuild
-		if (!Z_EvictLRU(want, false) && !Z_Reclaim(want))
-			break;
+		if (!Z_EvictLRU(want, false))
+		{
+			if (zhwcache_lru && !hwlru_flushed)
+			{
+				// PS2-HW-442: the hardware texture data of the frame (spared by the eviction) goes before the subsystem hooks are asked (the geometry cache of the renderer is dearer to lose: reclaim switches it off),
+				// as PU_HWRCACHE_UNLOCKED would have gone at the first miss
+				hwlru_flushed = true;
+				zhwlru_flushes++;
+				Z_FreeTagRange(PU_HWRCACHE_LRU, PU_HWRCACHE_LRU);
+				p = ZA_Alloc(size, align, side);
+				if (!p && size >= Z_MAKEROOM_MIN && Z_MakeRoom(size + Z_EVICT_ALIGN_PAD, false))
+					p = ZA_Alloc(size, align, side);
+				continue;
+			}
+			if (!Z_Reclaim(want))
+				break;
+		}
 		p = ZA_Alloc(size, align, side);
 		// PS2-61: a large request needs one contiguous block, and the oldest caches by age are scattered pieces. When the oldest
 		// bytes did not make it, the cheapest run of free and evictable neighbours is freed (the rest of the cache stays).
@@ -2049,6 +2105,8 @@ void Z_ChangeTag(void *ptr, INT32 tag)
 		I_Error("Z_ChangeTag at %s:%d: wrong id", file, line);
 #endif
 
+	if (tag == PU_HWRCACHE_UNLOCKED && block->user != NULL)
+		tag = ZA_TAG(block) == PU_HWRCACHE_LRU ? PU_HWRCACHE_LRU : Z_HWCacheTag(ZA_SIZE(block)); // OPT12 HWDRV (PS2-HW-442): a block that is one already stays one (and is not charged again)
 	if (tag >= PU_PURGELEVEL && block->user == NULL)
 		I_Error("Internal memory management error: "
 			"tried to make block purgable but it has no owner");

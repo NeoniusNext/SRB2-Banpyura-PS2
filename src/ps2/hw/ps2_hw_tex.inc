@@ -308,9 +308,14 @@ static void own_clear(u32 blk, u32 n);
 static void lod_account(texrec_t *r);
 static int batch_phase; // (defined below)
 
+static int drop_reason; // OPT12 HWDRV (PS2-HW-441): who drops the image (0 = the default: eviction when counted, 5 otherwise); set by the callers that drop for another reason
+
 static void tex_drop(int i, int count_eviction)
 {
 	texrec_t *r = &H.rec[i];
+
+	if (r->owner)
+		r->owner->ps2_drop = (u8)(drop_reason ? drop_reason : (count_eviction ? 1 : 5));
 
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_account(r);
@@ -1165,6 +1170,26 @@ static void dc_flush(void)
 		if (dc[i].key && !dc[i].busy)
 			dc_drop(&dc[i]);
 }
+
+// ---- PS2-HW-442 (OPT12 HWDRV): the data of the textures between two uses ----
+// A map texture of the hardware renderer is composed from patches that the engine reads from the pack (HWR_GenerateTexture): about 4 M cycles for every lump that is not in the zone's cache
+// (the read of one lump costs the same for 2 KB and for 60 KB). The composite is released to the zone right after the upload (PU_HWRCACHE_UNLOCKED), and that tag is "purgable whenever
+// needed": any allocation that does not fit frees it. When the VRAM image is dropped (evicted, or made again at another level of the plan) the composite is gone as well and the 81 patches of
+// THROCK4 are read again: DEMO_002 lost 260..320 M cycles (one second) at a time, six times in 700 frames. z_zone.c turns the tag into PU_HWRCACHE_LRU (-hwkeep 0, the default; -hwkeep 1
+// is the old rule): an LRU cache block that goes when the room is needed. keep_off is the A/B switch of the whole.
+static int keep_off; // -hwkeep N (0 = on, the default; 1 = the old behaviour): A/B on one ELF (the bits of -hwdbg belong to several files)
+
+#ifdef __mips__
+extern void Z_HWCacheStats(unsigned int *conv, unsigned int *flushes);
+static void keep_prof(unsigned int frames)
+{
+	unsigned int conv, flushes;
+
+	(void)frames;
+	Z_HWCacheStats(&conv, &flushes);
+	I_OutputMsg("HWPROF46 texture data cache (PS2-HW-442): %s, blocks made LRU cache blocks=%u, freed at once by an allocation nothing else could serve=%u (zone free %u K)\n", keep_off ? "off (-hwkeep)" : "on", conv, flushes, (unsigned)(Z_ArenaFree() >> 10));
+}
+#endif
 
 #define REL_MAX 160
 #define REL_BYTES_MAX (1024u * 1024u) // texels read by queued DMA that the cache must keep locked: bounds the memory the zone cannot take back

@@ -66,6 +66,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
+extern INT32 ps2hwt_patchtag; // hardware/hw_cache.c (PS2-HW-442)
 static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
@@ -324,6 +325,22 @@ boolean PS2HWD_Init(void)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	plan_nofid = 0;
+	if (M_CheckParm("-hwfid") && M_IsNextParm())
+		plan_nofid = atoi(M_GetNextParm()) != 0; // PS2-HW-443: 1 = no fidelity pass in the frame plan (the images stay at the level where a texel is a pixel)
+	keep_off = 0;
+	if (M_CheckParm("-hwkeep") && M_IsNextParm())
+		keep_off = atoi(M_GetNextParm()); // PS2-HW-442: 0 = the data of the textures is an LRU cache (the default), 1 = as before (freed at the next allocation that does not fit), 2 = LRU cache without the keep list
+	{
+		size_t freemin = 128u << 10, cap = 0; // -hwkeepfree KB / -hwkeepcap KB: the arena that must stay free / the bytes of big blocks a frame may make LRU cache blocks, 0 = no limit (Z_HWCacheTag)
+
+		if (M_CheckParm("-hwkeepfree") && M_IsNextParm())
+			freemin = (size_t)atoi(M_GetNextParm()) << 10;
+		if (M_CheckParm("-hwkeepcap") && M_IsNextParm())
+			cap = (size_t)atoi(M_GetNextParm()) << 10;
+		Z_SetHWCacheLRU(keep_off != 1, freemin, cap);
+		ps2hwt_patchtag = keep_off == 1 ? PU_HWRCACHE_UNLOCKED : PU_HWRCACHE_LRU;
+	}
 	if (M_CheckParm("-hwbench"))
 		PS2HWD_Bench();
 	if (M_CheckParm("-hwplan") && M_IsNextParm())
@@ -1679,6 +1696,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
 			H.cur_tex = NOREC;
 			H.cur_missing = 1;
+			skip_tex = TexInfo;
+			skip_why = "no polygon of the frame sees it";
 			TX.invisible++;
 			return;
 		}
@@ -1688,7 +1707,9 @@ static void settex_now(GLMipmap_t *TexInfo)
 			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
 				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d UPGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
 			ov_flush_all();
+			drop_reason = 2;
 			tex_drop(img_of((int)(r - H.rec)), 0);
+			drop_reason = 0;
 			r = NULL;
 			TX.upgrades++;
 		}
@@ -1698,7 +1719,9 @@ static void settex_now(GLMipmap_t *TexInfo)
 			if (ps2hwd_dbg_flags & HWDBG_IMMDBG)
 				CONS_Printf("HWIMM f=%u %s %ux%u want=%u have=%d DOWNGRADE imm=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);
 			ov_flush_all();
+			drop_reason = 3;
 			tex_drop(img_of((int)(r - H.rec)), 0);
+			drop_reason = 0;
 			r = NULL;
 			TX.downgrades++;
 		}
@@ -1717,7 +1740,9 @@ static void settex_now(GLMipmap_t *TexInfo)
 				if (nb > r->nblk)
 					H.upg_blocks += nb;
 				ov_flush_all();
+				drop_reason = 4;
 				tex_drop((int)(r - H.rec), 0);
+				drop_reason = 0;
 				H.st.tex_restamped++;
 				r = NULL;
 			}
@@ -1744,6 +1769,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 	{
 		H.cur_tex = NOREC;
 		H.cur_missing = 1;
+		skip_tex = TexInfo;
+		skip_why = "selected while collecting";
 		return;
 	}
 	if (!TexInfo->data && !(TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= 2048
@@ -1751,8 +1778,17 @@ static void settex_now(GLMipmap_t *TexInfo)
 			|| (want && TexInfo->regen_kind == 2) || (want > 1 && dc_find_finer(dc_key(TexInfo), TexInfo->width, TexInfo->height, want, &(u32){0}))))) // PS2-HW-38/39: a level of a flat needs no copy of the flat (tex_upload pins the engine's)
 	{
 		u32 c0 = cyc();
+		static unsigned regen_reports;
 
 		HWR_PS2_RegenerateMipmap(TexInfo);
+		if (cyc() - c0 > 2000000u && regen_reports++ < 40) // PS2-HW-441: a texture that takes the engine 7 ms and more to make again (patches read back from the pack): the stall the player sees
+			CONS_Printf("HWREGEN f=%u %s %ux%u kind=%d made again in %u cycles (zone free %u K) uploads before=%u dropped by=%u\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height,
+				(int)TexInfo->regen_kind, (unsigned)(cyc() - c0), (unsigned)(Z_ArenaFree() >> 10), (unsigned)TexInfo->ps2_nup, (unsigned)TexInfo->ps2_drop);
+		{
+			const u32 dc = cyc() - c0;
+
+			TexInfo->ps2_cost = (u8)(dc >> 18 > 255u ? 255u : dc >> 18);
+		}
 		TX.regen_cyc += cyc() - c0;
 		TX.regen_n++;
 		H.st.tex_regen++;
@@ -1781,10 +1817,14 @@ static void settex_now(GLMipmap_t *TexInfo)
 		hw_limit(HW_MISSING, "a texture could not be made resident in the GS pool (or its data was purged); its draws are skipped");
 		H.cur_tex = NOREC;
 		H.cur_missing = 1;
+		skip_tex = TexInfo;
+		skip_why = tex_fail_why ? tex_fail_why : "upload failed";
 		return;
 	}
 	H.cur_tex = ri;
 	H.cur_missing = 0;
+	if (TexInfo->ps2_nup < 255)
+		TexInfo->ps2_nup++;
 	if (batch_phase == 2)
 		H.rec[ri].done = H.frame_no + 1;
 }

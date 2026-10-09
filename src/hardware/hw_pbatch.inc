@@ -75,6 +75,7 @@ static int pb_tab_dirty;
 static UINT32 pb_xk[HWR_PB_XSLOTS][2]; // (hi, texture) of the order of the textures: the first polygon of the texture in the batch
 static UINT16 pb_xv[HWR_PB_XSLOTS];
 static int pb_x_dirty;
+static UINT32 pb_nogrow, pb_nfail; // PS2-HW-445: the pool could not grow (for the rest of the level); the batches cut for want of room (HWPROF50)
 static UINT32 pb_ngen, pb_nslow, pb_nfind, pb_ncreate, pb_nbuckets, pb_npolys, pb_nflush, pb_nbatches, pb_nplanned; // HWPROF50 (per window)
 
 static inline int HWR_PBOn(void)
@@ -142,6 +143,7 @@ static void HWR_PBAlloc(void)
 	pb_bk = HWR_BatchAlloc((size_t)pb_bcap * sizeof(hwr_pbk_t));
 	pb_sk = HWR_BatchAlloc((size_t)pb_bcap * sizeof(unsigned long long));
 	pb_wr = pb_n = pb_nplan = pb_nb = 0;
+	pb_nogrow = 0;
 	memset(pb_tab, 0, sizeof pb_tab);
 	memset(pb_xv, 0, sizeof pb_xv);
 	memset(pb_cache, 0, sizeof pb_cache);
@@ -182,20 +184,39 @@ static void HWR_PBReset(void)
 }
 
 // the pool is full (a few times a level): grow it by half; the polygon arrays hold one entry for every 8 quadwords of the pool (a triangle takes 8)
-static void __attribute__((noinline)) HWR_PBGrow(UINT32 need)
+// PS2-HW-445 (OPT12 HWDRV): `soft` = the caller can draw what is collected and start again. The pool is then asked for with Z_TryReallocAlign: at the edge of the zone the arena is in
+// pieces (DEMO_003 frame 584: 3.2 MB free, the largest block 456 KB, the pool wanted 663 552 B for its fourth step: "Out of memory allocating 663552 bytes", the run ended), and a bigger
+// pool is not worth the run. Returns 0 when it did not grow (the pool then keeps its size for the rest of the level: pb_nogrow, no new attempt, every attempt walks the arena).
+static int __attribute__((noinline)) HWR_PBGrow(UINT32 need, int soft)
 {
 	if (pb_wr + need > pb_cap)
 	{
 		const UINT32 c = (UINT32)HWR_BatchCapacity((int)pb_cap, (int)(pb_wr + need), sizeof(hwr_qw_t) + (sizeof(hwr_pbe_t) + sizeof(hwr_pbp_t) + sizeof(UINT32)) / 8);
 		const UINT32 e = (c + 7) / 8;
 
-		pb_pool = HWR_BatchResize(pb_pool, (size_t)c * sizeof(hwr_qw_t));
+		if (soft)
+		{
+			hwr_qw_t *np;
+
+			if (pb_nogrow || (hwr_geo_off & 0x1000000u)) // (-hwgo 16777216: the pool never grows: the cut is exercised without a shortage of memory)
+				return 0;
+			np = Z_TryReallocAlign(pb_pool, (size_t)c * sizeof(hwr_qw_t), PU_HWRBATCH, NULL, 4);
+			if (!np)
+			{
+				pb_nogrow = 1;
+				return 0;
+			}
+			pb_pool = np;
+		}
+		else
+			pb_pool = HWR_BatchResize(pb_pool, (size_t)c * sizeof(hwr_qw_t));
 		pb_ent = HWR_BatchResize(pb_ent, (size_t)e * sizeof(hwr_pbe_t));
 		pb_plan = HWR_BatchResize(pb_plan, (size_t)e * sizeof(hwr_pbp_t));
 		pb_walk = HWR_BatchResize(pb_walk, (size_t)e * sizeof(UINT32));
 		pb_cap = c;
 		pb_ecap = e;
 	}
+	return 1;
 }
 
 static void __attribute__((noinline)) HWR_PBGrowB(void)
@@ -459,8 +480,14 @@ static void __attribute__((noinline)) HWR_PBAdd(const FSurfaceInfo *s, const FOu
 	}
 	else
 		bi = HWR_PBNew(s, tex, flags, ex, shader_target, 0, 0, spr);
-	if (pb_wr + need > pb_cap)
-		HWR_PBGrow(need);
+	if (pb_wr + need > pb_cap && !HWR_PBGrow(need, pb_wr != 0))
+	{
+		// PS2-HW-445: no room for a bigger pool: what is collected is drawn, collecting starts again (the order across the cut is lost, as with too many states)
+		pb_nfail++;
+		HWR_PBFlushEarly();
+		HWR_PBAdd(s, v, n, flags, shader_target, horizon); // (the buckets are gone: the state is looked for again; the pool is empty, so the polygon fits or the pool grows the old way)
+		return;
+	}
 	HWR_PBPut(&pb_bk[bi], bi, s, v, n, need);
 }
 
@@ -749,7 +776,8 @@ void HWR_PBProf(unsigned int frames)
 {
 	if (!frames)
 		frames = 1;
-	I_OutputMsg("HWPROF50 collection: polygons=%u in %u batches (%u buckets) | general path=%u (cache missed: slow=%u found=%u created=%u) | batches drawn=%u | planned polygons=%u\n", pb_npolys / frames, pb_nflush / frames, pb_nbuckets / frames, pb_ngen / frames,
-		pb_nslow / frames, pb_nfind / frames, pb_ncreate / frames, pb_nbatches / frames, pb_nplanned / frames);
+	I_OutputMsg("HWPROF50 collection: polygons=%u in %u batches (%u buckets) | general path=%u (cache missed: slow=%u found=%u created=%u) | batches drawn=%u | planned polygons=%u | pool %u quadwords, cut for room=%u\n", pb_npolys / frames, pb_nflush / frames, pb_nbuckets / frames, pb_ngen / frames,
+		pb_nslow / frames, pb_nfind / frames, pb_ncreate / frames, pb_nbatches / frames, pb_nplanned / frames, pb_cap, pb_nfail);
+	pb_nfail = 0;
 	pb_nplanned = pb_ngen = pb_nslow = pb_nfind = pb_ncreate = pb_nbuckets = pb_npolys = pb_nflush = pb_nbatches = 0;
 }

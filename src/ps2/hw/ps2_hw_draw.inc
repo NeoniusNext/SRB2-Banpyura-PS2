@@ -573,7 +573,14 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		imm_prepare(NULL, 0); // a draw that did not go through hw_DrawPolygon (the sky dome): the geometry is unknown, the texture is made resident at full size
 	if (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing)
 	{
+		static unsigned skip_reports;
+
 		H.st.tex_skipped++;
+		if (skip_reports < 40 && H.frame_no > 20 && skip_tex && !(skip_why && skip_why[0] == 'n' && skip_why[1] == 'o' && skip_why[3] == 'p')) // (the plan's "invisible" ones are the normal case: only real losses are listed)
+		{
+			skip_reports++;
+			CONS_Printf("HWSKIP f=%u draw skipped: texture %s %ux%u fmt=%d: %s\n", (unsigned)H.frame_no, HWR_PS2_TexName(skip_tex), (unsigned)skip_tex->width, (unsigned)skip_tex->height, (int)skip_tex->format, skip_why ? skip_why : "?");
+		}
 		return 0;
 	}
 	frame_prepare(0);

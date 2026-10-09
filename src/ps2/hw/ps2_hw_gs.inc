@@ -427,6 +427,11 @@ static void do_flip(void)
 	H.pend = 0;
 	H.pend_done = 0;
 	H.flips++;
+	{
+		const u32 dv = H.vbl - H.flip_vbl; // PS2-HW-440: how long the previous picture stayed on the screen, in vblanks
+
+		H.st.flip_hist[dv > 4u ? 4u : dv]++;
+	}
 	H.flip_vbl = H.vbl;
 	dma_start_locked(); // the buffers of the next frame, held until now
 }

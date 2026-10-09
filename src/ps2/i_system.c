@@ -182,6 +182,11 @@ void I_StartupTimer(void)
 	elapsed_frames = 0.0;
 }
 
+#ifdef PS2_PROFILE
+extern unsigned long long ps2prof_sleep_cyc; // ps2_prof.c (OPT12 HWDRV, PS2-HW-440): the working cycles printed by HWPROF0 are the wall minus these sleeps and the waits of the driver
+static inline unsigned int sleep_cyc_now(void) { unsigned int v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
+#endif
+
 // PS2-NET-3 (OPT12): the game thread never sleeps with DelayThread. DelayThread is built on the SDK's alarm library (SetTimerAlarm on EE timer 2, software list of alarms),
 // which shares its list with lwIP's WaitSemaEx time-outs and with every other DelayThread; under the network threads' traffic an alarm of the game thread was lost for good
 // (docs/GATES/g1/opt12-NET.md: the guest sat in the EE idle loop, the game thread in WaitSema of its own DelayThread semaphore, no alarm left for it in the library's list; seen in
@@ -189,6 +194,9 @@ void I_StartupTimer(void)
 // thread (audio, netman, lwIP, the SDK's own) is above that priority and runs first; nothing but the clock register is needed to wake up.
 void PS2_SleepUs(UINT32 us)
 {
+#ifdef PS2_PROFILE
+	const unsigned int t0 = sleep_cyc_now();
+#endif
 	ee_thread_status_t st;
 	const s32 self = GetThreadId();
 	const precise_t dest = GetTimerSystemTime() + (precise_t)((UINT64)us * (PS2_PRECISION / 1000) / 1000);
@@ -203,6 +211,9 @@ void PS2_SleepUs(UINT32 us)
 		;
 	if (prio >= 0)
 		ChangeThreadPriority(self, prio);
+#ifdef PS2_PROFILE
+	ps2prof_sleep_cyc += (unsigned int)(sleep_cyc_now() - t0);
+#endif
 }
 
 void I_Sleep(UINT32 ms)

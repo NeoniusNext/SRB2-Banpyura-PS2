@@ -64,10 +64,12 @@ extern void PS2Models_Stats(unsigned int *out); // OPT11 MODEL (ps2_models.c)
 extern void HWR_PBProf(unsigned int frames); // OPT11 round 2 VU2: HWPROF50, the collection of the batch (hardware/hw_pbatch.inc)
 extern void HWR_FrProf(unsigned int frames); // OPT12 HWFRONT (hardware/hw_front.inc)
 extern void HWR_GCacheProf(unsigned int frames); // OPT11 GEOM: HWPROF32, the geometry cache (hardware/hw_gcache.inc)
+static void keep_prof(unsigned int frames); // ps2_hw_tex.inc (PS2-HW-442)
 void PS2HWD_ProfExtra(unsigned int frames)
 {
 	if (!frames)
 		frames = 1;
+	keep_prof(frames);
 	I_OutputMsg("HWPROF3 batches=%u fans=%u single=%u vu=%u fast=%u lit=%u cut=%u water=%u begin=%u/%u tris=%u vuchunks=%u planhit=%u planmiss=%u\n", G.batches / frames, G.fans / frames, G.single / frames,
 		G.p_vu / frames, G.p_fast / frames, G.p_lit / frames, G.p_cut / frames, G.p_water / frames, G.begin_n / frames, G.begin_cyc / frames, G.tri_n / frames, G.vu_chunks / frames, G.plan_hit / frames, G.plan_miss / frames);
 	I_OutputMsg("HWPROF51 batches that needed a plan: %u of %u (%u cycles) | key differs in: flags=%u colour=%u tint=%u fade=%u ltable=%u texkind=%u rest(light, texture, view)=%u plan-invalid=%u\n", G.bb_n / frames, G.batches / frames, G.bb_cyc / frames,

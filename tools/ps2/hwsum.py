@@ -40,11 +40,14 @@ def main():
         if not boot.exists():
             print(name, 'no boot.txt')
             continue
-        prof, prof2, tex = {}, {}, {}
+        prof, prof2, tex, prof0 = {}, {}, {}, {}
         for line in boot.read_text(errors='replace').splitlines():
             if line.startswith('HWPROF2 '):
                 d = kv(line)
                 prof2[int(d['win'])] = d
+            elif line.startswith('HWPROF0 '):  # OPT12 HWDRV: work cycles and flip cadence
+                d = kv(line)
+                prof0[int(d['win'])] = d
             elif line.startswith('HWPROF '):
                 d = kv(line)
                 prof[int(d['win'])] = d
@@ -79,6 +82,14 @@ def main():
             print('mean ' + ' '.join(f(c, v) for c, v in zip(cols, mean)))
             print('max  ' + ' '.join(f(c, v) for c, v in zip(cols, mx)))
             print(f'FPS at mean wall: {294.912e6 / mean[0]:.1f}')
+        if prof0:
+            ws = [w for w in sorted(prof0) if w >= skip]
+            works = [num(prof0[w].get('work', 0)) for w in ws]
+            walls = [num(prof0[w].get('wall', 0)) for w in ws]
+            print('work (wall without waits and sleep), M cycles per frame: ' + ' '.join(f'{x / 1e6:.2f}' for x in works))
+            if works:
+                print(f'WORK mean {sum(works) / len(works) / 1e6:.2f} max {max(works) / 1e6:.2f} | wall mean {sum(walls) / len(walls) / 1e6:.2f} | FPS at mean work {294.912e6 / (sum(works) / len(works)):.1f}')
+            print('cadence (flips by vblanks on screen 0/1/2/3/4+): ' + ' | '.join(prof0[w].get('cad', '?') for w in ws))
         if tex:
             print('HWTEX:')
             for w in sorted(tex):
