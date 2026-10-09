@@ -175,7 +175,12 @@ def compat_refcli(name, tics=2100):
               files={'pad.txt': walk(1, 500, n), 'cmd.txt': punches(5030, 120, 3000)}, cfg=CFG_SYNC)
     cli = dict(id='cli', kind='pc', exe=REF, cwd=PCDIR, args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-home', HOME2],
                start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6})
-    mine(name, {'timeout': 900, 'nodes': [srv, cli], 'abort_on': [{'node': 'srv', 'text': 'left the game'}], 'until': [{'node': 'srv', 'text': 'NETSYNC gametic=', 'min': tics}], 'grace': 3})
+    # an original client has no NETSYNC_AUTOENTER: tools/ps2/x_enter.py presses Return on its join screens (XTEST); the proof that it joined is "players=2" in the server's NETSYNC line
+    xen = {'id': 'xenter', 'kind': 'pc', 'exe': S.PY, 'cwd': S.BASE, 'xvfb': False,
+           'args': ['-u', (ROOT / 'tools/ps2/x_enter.py').as_posix(), '--match', 'srb2-ps2-optimization', '--match', '-clientport', '--every', '3', '--for', '70'],
+           'start_when': {'node': 'srv', 'text': 'PS2 net: address', 'delay': 9}}
+    mine(name, {'timeout': 900, 'nodes': [srv, cli, xen], 'abort_on': [{'node': 'srv', 'text': 'left the game'}],
+                'until': [{'node': 'srv', 'text': 'players=2'}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': tics}], 'grace': 3})
 
 
 compat_refcli('compat-ps2srv-refcli')
