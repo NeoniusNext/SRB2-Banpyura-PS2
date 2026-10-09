@@ -2467,6 +2467,10 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 	return r;
 }
 
+#ifdef PS2_PROFILE
+static struct { UINT16 wad, lump; size_t size; UINT8 *data; } inflcache; // PS2-LOAD-16
+#endif
+
 static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t size, size_t offset)
 {
 #if defined(PS2_PROFILE) && !defined(PS2_FULLLOADER)
@@ -2623,8 +2627,31 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 			unsigned long rawSize = l->disksize;
 			unsigned long decSize = l->size;
 
+#ifdef PS2_PROFILE
+			// PS2-LOAD-16: every partial read of a deflated lump (the sublumps of a map WAD inside a pk3: header, directory, TEXTMAP, nodes, ...) inflated the whole lump
+			// again. The last one stays as an evictable cache block; a read of the whole lump inflates straight into the caller's buffer.
+			if (inflcache.data && inflcache.wad == wad && inflcache.lump == lump && inflcache.size == decSize)
+			{
+				M_Memcpy(dest, inflcache.data + offset, size);
+				return size;
+			}
+			if (offset == 0 && size == decSize)
+			{
+				decData = dest;
+				rawData = Z_Malloc(rawSize, PU_STATIC, NULL);
+			}
+			else
+			{
+				if (inflcache.data)
+					Z_Free(inflcache.data); // (the user pointer is cleared by Z_Free)
+				inflcache.data = NULL;
+				rawData = Z_Malloc(rawSize, PU_STATIC, NULL);
+				decData = Z_Malloc(decSize, PU_CACHE, &inflcache.data);
+			}
+#else
 			rawData = Z_Malloc(rawSize, PU_STATIC, NULL);
 			decData = Z_Malloc(decSize, PU_STATIC, NULL);
+#endif
 
 			if (fread(rawData, 1, rawSize, handle) < rawSize)
 				I_Error("wad %d, lump %d: cannot read compressed data", wad, lump);
@@ -2646,7 +2673,13 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 				if (zErr == Z_STREAM_END)
 				{
 #ifdef PS2_PROFILE
-					M_Memcpy(dest, decData + offset, size); // PS2-103: see the seek above
+					if (decData != dest)
+					{
+						M_Memcpy(dest, decData + offset, size); // PS2-103: see the seek above
+						inflcache.wad = wad;
+						inflcache.lump = lump;
+						inflcache.size = decSize;
+					}
 #else
 					M_Memcpy(dest, decData, size);
 #endif
@@ -2655,6 +2688,13 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 				{
 					size = 0;
 					zerr(zErr);
+#ifdef PS2_PROFILE
+					if (decData != dest && inflcache.data)
+					{
+						Z_Free(inflcache.data);
+						inflcache.data = NULL;
+					}
+#endif
 				}
 
 				(void)inflateEnd(&strm);
@@ -2666,9 +2706,13 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 			}
 
 			Z_Free(rawData);
+#ifdef PS2_PROFILE
+			return size; // (decData is the caller's buffer, or the cache block that stays)
+#else
 			Z_Free(decData);
 
 			return size;
+#endif
 		}
 #endif
 	default:

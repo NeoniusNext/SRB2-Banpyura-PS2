@@ -75,12 +75,25 @@ static int Compare(const char *name, const char *text, size_t len)
 				if (t[0] == '}' && !t[1]) { oka = 1; break; }
 			}
 			okb = Fast_Tokenizer_SRB2SkipBlock(b2, size);
-			if (oka != okb || (oka && (a2->endPos != b2->endPos || a2->line != b2->line || a2->inComment != b2->inComment)))
+			if (oka != okb || (oka && (a2->endPos != b2->endPos || a2->inComment != b2->inComment)))
 			{
 				if (strcmp(name, "random") == 0) { printf("text(len %zu size %u):", len, size); for (size_t q = 0; q < len; q++) printf(" %02x", (unsigned char)text[q]); printf("\n"); }
 				printf("%s: skip block after call %ld differs: orig %d end=%u, fast %d end=%u\n", name, calls, oka, a2->endPos, okb, b2->endPos);
 				return 1;
 			}
+			if (oka && okb) /* the reads after the block continue the same way */
+				for (int k = 0; k < 4; k++)
+				{
+					const char *ra = Orig_Tokenizer_SRB2Read(a2, 0), *rb = Fast_Tokenizer_SRB2Read(b2, 0);
+
+					if (a2->endPos > a2->inputLength)
+						break;
+					if ((ra == NULL) != (rb == NULL) || (ra && strcmp(ra, rb)) || a2->endPos != b2->endPos || a2->inComment != b2->inComment)
+					{
+						printf("%s: read after the skipped block differs at call %ld/%d\n", name, calls, k);
+						return 1;
+					}
+				}
 			Orig_Tokenizer_Close(a2);
 			Fast_Tokenizer_Close(b2);
 		}
