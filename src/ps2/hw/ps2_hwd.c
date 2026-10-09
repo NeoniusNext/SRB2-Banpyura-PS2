@@ -662,7 +662,7 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		FSurfaceInfo surf;
 		unsigned int i, rng = seed * 2654435761u + 12345u;
 		float xs = 0.0f;
-		static FOutVector pts[4096];
+		FOutVector *pts; // OPT13 RDRV: was `static FOutVector pts[4096]` = 80 KB of .bss in the product for the -hwvu0bench measurement only
 		u32 c0;
 
 #define TRND() (rng = rng * 1664525u + 1013904223u, (float)((rng >> 8) & 0xFFFF) * (1.0f / 65536.0f))
@@ -686,6 +686,9 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 			return;
 		if (ps2hwd_dbg_flags & 256) // negative control of tools/ps2/hw_test.c: a wrong scale in VU0
 			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx * 1.01f, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		pts = malloc((size_t)n * sizeof *pts);
+		if (!pts)
+			return;
 		for (i = 0; i < n; i++)
 		{
 			// vertices around the camera: mostly in front of it, some beside and behind
@@ -773,6 +776,7 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		}
 		if (xs == 12345.678f)
 			out->n++; // keeps the compiler from dropping the clip results
+		free(pts);
 #undef TRND
 	}
 #endif
