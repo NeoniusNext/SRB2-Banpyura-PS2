@@ -176,3 +176,34 @@
 * `-showmem` (`SHOWMEM now`, конец 700 кадров реального времени, `--cfg 'showmem "On"'`), КБ: VRAM `used / tex pool / working set`: D1 4022 / 2934 / 2540 -> 3990 / 2902 / 1819, D2 3784 / 2696 / 1974 -> 3788 / 2700 / 1293, D4 3969 / 2881 / 1335 -> 3921 / 2833 / 1531 (база -> новое; последний кадр
   двух прогонов не совпадает по состоянию игры: реальное время). **Свободная память зоны** падает (D1 1400 -> 222 КБ, D2 1746 -> 248, D4 2118 -> 1701): кэш данных текстур LRU держит данные, которые раньше выбрасывались; это память, которую зона отдаёт при первой
   нужде (`PU_HWRCACHE_LRU` вытесняется), `showmem` показывает её занятой.
+
+## 11. Правки в чужих файлах и конфликты слияния (раздел 5 структуры брифа)
+* `src/hardware/hw_cache.c` (HWFRONT; точечно): `ps2hwt_patchtag` и макрос `HWR_PATCH_UNLOCKED` (4 места данных мипмапов патчей), `HWR_PS2_UnlockData/StealData/AllocData` берут тег через `Z_ChangeTag(.., PU_HWRCACHE_UNLOCKED)` / `Z_HWCacheTag(bytes)`, `Z_FreeTag(PU_HWRCACHE_LRU)` в двух местах сброса
+  (PS2-HW-442); `HWR_LoadMapTextures`: нехватка памяти идёт в `Z_GuardThrow` (PS2-HW-446) и ключ `-hwfbtex N`.
+* `src/hardware/hw_data.h` (HWFRONT): поля `GLMipmap_t.ps2_nup/ps2_drop/ps2_cost` под `PS2_PROFILE` (диагностика `HWREGEN`; +3 байта на текстуру, два массива `gl_textures`/`gl_flats`).
+* `src/hardware/hw_pbatch.inc` (HWFRONT): `HWR_PBGrow(need, soft)`, ветка разреза в `HWR_PBAdd`, поля `pb_nogrow/pb_nfail`, строка `HWPROF50` (PS2-HW-445); `-hwgo 16777216`.
+* `src/z_zone.c`, `src/z_zone.h`, `src/ps2/ps2_mem.c` (CORE): тег `PU_HWRCACHE_LRU` = 27, `Z_SetHWCacheLRU/Z_HWCacheTag/Z_HWCacheStats`, порядок в `Z_AllocBlock` (`Z_EvictLRU` -> один сброс `PU_HWRCACHE_LRU` -> `Z_MakeRoom` -> `Z_Reclaim`), реестр кандидатов и `Z_ChangeTag` учитывают тег. Поведение при выключенном LRU (по умолчанию в software: `zhwcache_lru` = false до запуска драйвера) прежнее.
+* `src/ps2/i_system.c`, `src/ps2/ps2_prof.c`, `src/ps2/i_video.c` (показ/flip — моя область): `ps2prof_sleep_cyc` (суммирует сон `I_Sleep`/`I_SleepDuration` под `PS2_PROFILE`), `HWPROF0`.
+* `src/ps2/hw/ps2_hw_plan.inc` (общий с HWFRONT): проход верности в `PS2HWD_PlanEnd`, `PLAN_FID_PCT/AREA`, `plan_nofid`.
+* **Конфликт слияния, проверенный `git merge-tree`**: с `opt12-hwfront`, `opt12-core`, `opt12-load` — чисто; **с `opt12-net` — конфликт в `src/ps2/i_system.c`**: NET заменил тела `I_Sleep`/`I_SleepDuration` (`PS2_SleepUs`: сон снижением приоритета без `DelayThread`), мои две вставки (`ps2prof_sleep_cyc += ...` вокруг тел) лежат в тех же строках.
+  Разрешение: взять версию NET целиком, а мои строки перенести в `PS2_SleepUs`:
+  `#ifdef PS2_PROFILE` / `const unsigned int t0 = sleep_cyc_now();` в начале и `ps2prof_sleep_cyc += (unsigned int)(sleep_cyc_now() - t0);` в конце (с `extern unsigned long long ps2prof_sleep_cyc;` и `sleep_cyc_now()` = `mfc0 $9` из моей версии); без этого `work` в `HWPROF0` не вычитает сон.
+
+## 12. Реестр отличий PS2-HW-440..446, что не проверено и что застряло
+| № | что | где | выкл. | отличие от ПК / прежнего HW |
+|---|---|---|---|---|
+| 440 | `HWPROF0` (work, sleep, cad, vbl, flips), `flip_hist` | `i_video.c`, `i_system.c`, `ps2_prof.c`, `ps2_hw_gs.inc` | только `PS2_PROFILE` | диагностика, картинка та же |
+| 441 | `HWREGEN`, `HWSKIP`, поля диагностики | `ps2_hwd.c`, `ps2_hw_tex.inc`, `ps2_hw_draw.inc`, `hw_data.h` | только `PS2_PROFILE` | диагностика |
+| 442 | `PU_HWRCACHE_LRU` (данные текстур — кэш LRU) | `z_zone.c/h`, `ps2_mem.c`, `hw_cache.c`, `ps2_hwd.c` | `-hwkeep 1` (+ `-hwkeepfree KB`, `-hwkeepcap KB`) | картинка та же; память зоны занята кэшем (его вытесняет первое требование) |
+| 443 | проход верности плана (полный размер, пока бюджет < 85 %) | `ps2_hw_plan.inc` | `-hwfid 1` | ближе к ПК на картах 1, 4, 8, 16 (MAD 2.60 -> 1.79, 1.77 -> 0.86, 2.32 -> 0.78, 1.61 -> 0.78); **дальше от ПК на карте 10** (14.2 -> 17.2: шум одной природы, меньше дисперсия у сглаженного уровня); +0.6 М на D3 `-zreserve 1536` в паре с 442 (раздел 5.3) |
+| 444 | `-hwnowait` | — | **снят**: написан, не запускался, из дерева убран | — |
+| 445 | рост пула пакетов без места режет пачку | `hw_pbatch.inc` | `-hwgo 16777216` проверяет разрез (обратного ключа нет: срабатывает только при нехватке места) | при разрезе порядок полигонов через границу теряется: D1, кадр 600 при пуле, который не растёт: MAD 0.63, 2.7 % пикселей отличаются (края тексельной сетки стены), кадры 100 и 300 идентичны; цена разреза D4 +0.18 М на кадр (1.4 разреза на кадр) |
+| 446 | `HWR_LoadMapTextures` без памяти — в защиту (`ps2_hwfb`), software для карты | `hw_cache.c` | — | вместо `I_Error` (`hwfb` цепочка на ELF до OPT12 падала на карте 23 один раз из двух прогонов — нестабильно; `-hwfbtex 1` проверяет путь) |
+**Не проверено / не закрыто**
+* Реальное железо: PCSX2 (программный GS, без модели кэша EE) не показывает ни заполнение GS, ни цену промахов кэша данных EE; оценка заполнения ниже (раздел 13) — расчётная, не измерение. Scratchpad драйвер не использует (в PCSX2 выигрыша не видно, на железе возможен у `PS2HWD_DrawBlocks`: копия блоков в кольцо).
+* Тыл драйвера 1.0 М: не достигнут (раздел 7). Вода: VU1-программы ряби нет (0.21 М на D1).
+* D3 `-zreserve 1536`: +0.6 М против прежнего правила (раздел 5.3, лотерея раскладки); проверить можно только на слитой сборке (CORE освобождает память).
+* Чтение лумпы из PAK 4 М тактов (патчи 100 М на составную текстуру в D2 при первом показе новой зоны): не мой код (LOAD/cooker: готовые составные текстуры или кэш блоков PAK); спрайт-патчи (`regen_kind 0`) не имеют пути пересборки: при выгрузке рисование пропускается на кадр (`HWSKIP`: 0 на D1..D4 в итоговой ELF, 1–8 в базе).
+* `evaluation`, `continue`, `gameend`, `intro-cmd`, soak 20 мин, `inject` (инъекция OOM), `interp` (интерпретатор) в этом раунде не гонялись.
+* MAP11 (CEZ2): не помещается ни в HW («map with 15942 subsectors is too big»), ни в software (`Not enough memory to draw map MAP11`) — память, CORE.
+* Раньше времени на ≈ 6 минут работали два моих эмулятора из-за недобитой цепочки скриптов (`t9c chainhw` вместе с `t10 hwfb`); оба прогона прерваны, на числа не влияет (проверка/зачистка замков своих pid выполнена).
