@@ -30,6 +30,16 @@
 #include "../p_setup.h"
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
+
+// OPT12 HWDRV (PS2-HW-442): the data of a patch mipmap (sprites, HUD) between two selections: a cache block of the LRU kind (PU_CACHE, stamped with the frame by the tag change: it cannot go before the
+// batch that collected the polygon has been drawn). PU_HWRCACHE_UNLOCKED goes at the next allocation that does not fit, and a patch has no way to be made again at draw time ("no data (purged)":
+// the sprite is missing for the frame). ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old rule, A/B).
+#ifdef PS2_PROFILE
+INT32 ps2hwt_patchtag = PU_HWRCACHE_LRU;
+#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), ps2hwt_patchtag)
+#else
+#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), PU_HWRCACHE_UNLOCKED)
+#endif
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
 static inline unsigned int ps2hwt_now(void)
@@ -1418,15 +1428,11 @@ void HWR_PS2_LockData(void *data)
 	Z_ChangeTag(data, PU_HWRCACHE);
 }
 
-// OPT12 HWDRV (PS2-HW-442): the tag of the driver's data cache blocks (the full size texels of a map texture the driver took over, its coarser levels) between two uses.
-// PU_HWRCACHE_UNLOCKED is "purgable whenever needed": the zone frees every such block at the start of every 3D view (Z_EnsureFree) and whenever an allocation
-// does not fit at once, so the cache lived for the rest of one frame. PU_CACHE (with the owner pointer the driver passes) is evicted least recently used first, under pressure only.
-// ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old behaviour, A/B).
-INT32 ps2hwt_dctag = PU_CACHE;
-
+// OPT12 HWDRV (PS2-HW-442): the tag of the driver's data cache blocks between two uses is Z_HWCacheTag(bytes): PU_CACHE (evicted least recently used first, under pressure) while the arena has
+// room, else the old PU_HWRCACHE_UNLOCKED (freed by the next allocation that does not fit). -hwkeep 1 (ps2_hwd.c) is the old rule everywhere.
 void HWR_PS2_UnlockData(void *data)
 {
-	Z_ChangeTag(data, ps2hwt_dctag);
+	Z_ChangeTag(data, PU_HWRCACHE_UNLOCKED); // (Z_ChangeTag makes it a cache block while Z_HWCacheTag allows)
 }
 
 void HWR_PS2_FreeData(void *data)
@@ -1437,7 +1443,7 @@ void HWR_PS2_FreeData(void *data)
 // a purgable zone block owned by *newuser (the driver's data cache: decimated levels of a texture); NULL when the zone has no room
 void *HWR_PS2_AllocData(size_t bytes, void **newuser)
 {
-	return Z_TryMallocAlign(bytes, ps2hwt_dctag, newuser, 6);
+	return Z_TryMallocAlign(bytes, Z_HWCacheTag(bytes), newuser, 6);
 }
 
 // The driver takes the texels of a mipmap over (its data cache): the block stays a purgable zone block, owned by *newuser from now on, and
@@ -1448,7 +1454,7 @@ void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser)
 
 	m->data = NULL;
 	Z_SetUser(p, newuser);
-	Z_ChangeTag(p, ps2hwt_dctag);
+	Z_ChangeTag(p, PU_HWRCACHE_UNLOCKED);
 	return p;
 }
 
@@ -1525,7 +1531,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap);
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(grMipmap->data);
 }
 
 #endif
@@ -1545,7 +1551,7 @@ static void HWR_LoadPatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(grMipmap->data);
 }
 
 // ----------------------+
@@ -1565,7 +1571,7 @@ static void HWR_UpdatePatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(grMipmap->data);
 }
 
 // -----------------+
@@ -1638,7 +1644,7 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
 	if (!gpatch)
 		return;
 
-	Z_ChangeTag(gpatch->mipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_PATCH_UNLOCKED(gpatch->mipmap->data);
 }
 
 patch_t *HWR_GetCachedGLPatchPwad(UINT16 wadnum, UINT16 lumpnum)
@@ -1809,6 +1815,9 @@ void HWR_SetPalette(RGBA_t *palette)
 		{
 			Z_FreeTag(PU_HWRCACHE);
 			Z_FreeTag(PU_HWRCACHE_UNLOCKED);
+#ifdef PS2_PROFILE
+			Z_FreeTag(PU_HWRCACHE_LRU); // OPT12 HWDRV (PS2-HW-442)
+#endif
 		}
 	}
 }
@@ -1883,6 +1892,9 @@ void HWR_SetMapPalette(void)
 		{
 			Z_FreeTag(PU_HWRCACHE);
 			Z_FreeTag(PU_HWRCACHE_UNLOCKED);
+#ifdef PS2_PROFILE
+			Z_FreeTag(PU_HWRCACHE_LRU); // OPT12 HWDRV (PS2-HW-442)
+#endif
 		}
 	}
 }

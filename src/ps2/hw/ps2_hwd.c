@@ -65,6 +65,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
+extern INT32 ps2hwt_patchtag; // hardware/hw_cache.c (PS2-HW-442)
 static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
@@ -326,8 +327,16 @@ boolean PS2HWD_Init(void)
 	keep_off = 0;
 	if (M_CheckParm("-hwkeep") && M_IsNextParm())
 		keep_off = atoi(M_GetNextParm()); // PS2-HW-442: 0 = the data of the textures is an LRU cache (the default), 1 = as before (freed at the next allocation that does not fit), 2 = LRU cache without the keep list
-	Z_SetHWCacheLRU(keep_off != 1);
-	ps2hwt_dctag = keep_off == 1 ? PU_HWRCACHE_UNLOCKED : PU_CACHE; // PS2-HW-442: the data cache of the driver survives the start of the next frame (hw_cache.c)
+	{
+		size_t freemin = 128u << 10, cap = 0; // -hwkeepfree KB / -hwkeepcap KB: the arena that must stay free / the bytes of big blocks a frame may make LRU cache blocks, 0 = no limit (Z_HWCacheTag)
+
+		if (M_CheckParm("-hwkeepfree") && M_IsNextParm())
+			freemin = (size_t)atoi(M_GetNextParm()) << 10;
+		if (M_CheckParm("-hwkeepcap") && M_IsNextParm())
+			cap = (size_t)atoi(M_GetNextParm()) << 10;
+		Z_SetHWCacheLRU(keep_off != 1, freemin, cap);
+		ps2hwt_patchtag = keep_off == 1 ? PU_HWRCACHE_UNLOCKED : PU_HWRCACHE_LRU;
+	}
 	if (M_CheckParm("-hwbench"))
 		PS2HWD_Bench();
 	if (M_CheckParm("-hwplan") && M_IsNextParm())
@@ -1760,8 +1769,6 @@ static void settex_now(GLMipmap_t *TexInfo)
 		skip_why = "selected while collecting";
 		return;
 	}
-	if (TexInfo->ps2_keep && TexInfo->data)
-		keep_hits++; // PS2-HW-442: the data is there because it was kept alive: no make-again
 	if (!TexInfo->data && !(TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && (u32)TexInfo->width * TexInfo->height >= 2048
 		&& (dc_find(dc_key(TexInfo), TexInfo->width, TexInfo->height, 0) || (want && dc_find(dc_key(TexInfo), TexInfo->width >> want, TexInfo->height >> want, want))
 			|| (want && TexInfo->regen_kind == 2) || (want > 1 && dc_find_finer(dc_key(TexInfo), TexInfo->width, TexInfo->height, want, &(u32){0}))))) // PS2-HW-38/39: a level of a flat needs no copy of the flat (tex_upload pins the engine's)
@@ -1777,7 +1784,6 @@ static void settex_now(GLMipmap_t *TexInfo)
 			const u32 dc = cyc() - c0;
 
 			TexInfo->ps2_cost = (u8)(dc >> 18 > 255u ? 255u : dc >> 18);
-			keep_add(TexInfo, dc);
 		}
 		TX.regen_cyc += cyc() - c0;
 		TX.regen_n++;
@@ -1895,7 +1901,6 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		H.imm_tex = NULL;
 	if (H.up)
 		plan_forget(TexInfo);
-	keep_forget(TexInfo);
 	if (H.up && (r = rec_of(TexInfo)) != NULL)
 	{
 		ov_flush_all();
@@ -1922,7 +1927,6 @@ static void hw_ClearMipMapCache(void)
 	dma_fence();
 	H.imm_tex = NULL;
 	plan_reset();
-	keep_clear();
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)

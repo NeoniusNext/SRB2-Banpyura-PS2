@@ -1057,7 +1057,6 @@ extern const u8 *HWR_PS2_FlatPin(const GLMipmap_t *m);
 extern boolean HWR_PS2_FlatStreamable(const GLMipmap_t *m);
 extern boolean HWR_PS2_FlatRows(const GLMipmap_t *m, UINT32 row0, UINT32 nrows, UINT8 *dest);
 extern unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // hw_cache.c
-extern INT32 ps2hwt_dctag; // hw_cache.c (PS2-HW-442)
 extern void HWR_PS2_FlatUnpin(const u8 *p, size_t bytes);
 static const u8 *tex_flatpin; // PS2-HW-38: the engine's flat pinned by the last tex_upload (the caller unpins it)
 
@@ -1172,125 +1171,23 @@ static void dc_flush(void)
 			dc_drop(&dc[i]);
 }
 
-// ---- PS2-HW-442 (OPT12 HWDRV): keep-alive of the data of textures that are dear to make again ----
-// A map texture of the hardware renderer is composed from patches that the engine reads from the pack (HWR_GenerateTexture): about 4 M cycles for every lump that is not in the
-// zone's cache (the read of one lump costs the same for 2 KB and for 60 KB). The composite is released to the zone right after the upload (PU_HWRCACHE_UNLOCKED), and the zone
-// purges the oldest cache first: when the VRAM image is dropped (evicted, or made again at another level of the plan) the composite is gone as well and the 81 patches of THROCK4
-// are read again: DEMO_002 lost 260..320 M cycles (one second) at a time, six times in 700 frames. Here the composites whose first make-again cost KEEP_MIN_CYC and more are
-// stamped as used every frame (Z_Touch): the zone's room cost halves with every frame of age (z_zone.c Z_RoomCost) and the LRU walk takes the oldest first, so the patches,
-// which nothing needs any more, go first. Nothing is locked: a zone that is short of memory still takes them (no touch below KEEP_FREE_MIN of free arena), and the engine's
-// owner pointer is cleared by the zone as before. The list is bounded (KEEP_BUDGET bytes, KEEP_MAX entries; the cheapest goes first). -hwkeep 1 switches it off.
-#define KEEP_MAX 48
-#define KEEP_BUDGET (1280u * 1024u)
-#define KEEP_ONE_MAX (192u * 1024u) // bytes of one texture
-#define KEEP_MIN_CYC 1000000u
-#define KEEP_FREE_MIN (512u * 1024u)
-static int keep_off; // -hwkeep N (0 = on, the default; 1 = the old behaviour; 2 = the LRU cache without the keep list): A/B on one ELF (the bits of -hwdbg belong to several files)
-static struct
-{
-	GLMipmap_t *m;
-	u32 bytes, cyc;
-} keep[KEEP_MAX];
-static int keep_n;
-static u32 keep_bytes, keep_adds, keep_touches, keep_dropped, keep_hits;
-
-static void keep_remove(int i)
-{
-	keep[i].m->ps2_keep = 0;
-	keep_bytes -= keep[i].bytes;
-	keep[i] = keep[--keep_n];
-}
-
-static void keep_forget(const GLMipmap_t *m)
-{
-	int i;
-
-	if (!m->ps2_keep)
-		return;
-	for (i = 0; i < keep_n; i++)
-		if (keep[i].m == m)
-		{
-			keep_remove(i);
-			return;
-		}
-}
-
-static void keep_clear(void)
-{
-	while (keep_n)
-		keep_remove(keep_n - 1);
-}
-
-// m was made again in `cyc` cycles and its data is at hand: keep it alive when that was dear
-static void keep_add(GLMipmap_t *m, u32 cyc)
-{
-	const u32 bytes = (u32)m->width * m->height * (m->format == GL_TEXFMT_P_8 || m->format == GL_TEXFMT_ALPHA_8 || m->format == GL_TEXFMT_INTENSITY_8 ? 1u : m->format == GL_TEXFMT_RGBA ? 4u : 2u);
-
-	if (keep_off == 1 || keep_off == 2 || cyc < KEEP_MIN_CYC || !m->data || bytes > KEEP_ONE_MAX || bytes == 0)
-		return;
-	if (m->ps2_keep)
-	{
-		int i;
-
-		for (i = 0; i < keep_n; i++)
-			if (keep[i].m == m)
-				keep[i].cyc = cyc;
-		return;
-	}
-	while (keep_n && (keep_n >= KEEP_MAX || keep_bytes + bytes > KEEP_BUDGET))
-	{
-		int i, lo = 0;
-
-		for (i = 1; i < keep_n; i++)
-			if (keep[i].cyc < keep[lo].cyc)
-				lo = i;
-		if (keep[lo].cyc > cyc)
-			return; // everything kept is dearer than this one
-		keep_remove(lo);
-		keep_dropped++;
-	}
-	if (keep_bytes + bytes > KEEP_BUDGET)
-		return;
-	keep[keep_n].m = m;
-	keep[keep_n].bytes = bytes;
-	keep[keep_n].cyc = cyc;
-	keep_n++;
-	keep_bytes += bytes;
-	keep_adds++;
-	m->ps2_keep = 1;
-}
-
-// once a frame (frame_end): the data that is still there is stamped as used; what the zone purged is forgotten
-static void keep_touch(void)
-{
-	int i;
-
-	if (!keep_n)
-		return;
-	for (i = 0; i < keep_n;)
-	{
-		GLMipmap_t *m = keep[i].m;
-
-		if (!m->data)
-		{
-			keep_remove(i);
-			keep_dropped++;
-			continue;
-		}
-		i++;
-	}
-	if (Z_ArenaFree() < KEEP_FREE_MIN)
-		return;
-	for (i = 0; i < keep_n; i++)
-		Z_ChangeTag(keep[i].m->data, ps2hwt_dctag); // (the engine made it PU_HWRCACHE_UNLOCKED again when it selected the texture in this frame: that frees it at the next view)
-	keep_touches += (u32)keep_n;
-}
+// ---- PS2-HW-442 (OPT12 HWDRV): the data of the textures between two uses ----
+// A map texture of the hardware renderer is composed from patches that the engine reads from the pack (HWR_GenerateTexture): about 4 M cycles for every lump that is not in the zone's cache
+// (the read of one lump costs the same for 2 KB and for 60 KB). The composite is released to the zone right after the upload (PU_HWRCACHE_UNLOCKED), and that tag is "purgable whenever
+// needed": any allocation that does not fit frees it. When the VRAM image is dropped (evicted, or made again at another level of the plan) the composite is gone as well and the 81 patches of
+// THROCK4 are read again: DEMO_002 lost 260..320 M cycles (one second) at a time, six times in 700 frames. z_zone.c turns the tag into PU_HWRCACHE_LRU (-hwkeep 0, the default; -hwkeep 1
+// is the old rule): an LRU cache block that goes when the room is needed. keep_off is the A/B switch of the whole.
+static int keep_off; // -hwkeep N (0 = on, the default; 1 = the old behaviour): A/B on one ELF (the bits of -hwdbg belong to several files)
 
 #ifdef __mips__
+extern void Z_HWCacheStats(unsigned int *conv, unsigned int *flushes);
 static void keep_prof(unsigned int frames)
 {
-	I_OutputMsg("HWPROF46 keep-alive (PS2-HW-442): n=%d bytes=%u added=%u dropped=%u uploads from kept data=%u touched/frame=%u (zone free %u K)\n", keep_n, (unsigned)keep_bytes, (unsigned)keep_adds, (unsigned)keep_dropped, (unsigned)keep_hits, (unsigned)(keep_touches / frames), (unsigned)(Z_ArenaFree() >> 10));
-	keep_adds = keep_dropped = keep_touches = keep_hits = 0;
+	unsigned int conv, flushes;
+
+	(void)frames;
+	Z_HWCacheStats(&conv, &flushes);
+	I_OutputMsg("HWPROF46 texture data cache (PS2-HW-442): %s, blocks made LRU cache blocks=%u, freed at once by an allocation nothing else could serve=%u (zone free %u K)\n", keep_off ? "off (-hwkeep)" : "on", conv, flushes, (unsigned)(Z_ArenaFree() >> 10));
 }
 #endif
 
@@ -2759,8 +2656,6 @@ static void tx_report(void)
 static void tex_free_all(void)
 {
 	int i;
-
-	keep_clear();
 
 	for (i = 0; i < H.rec_n; i++)
 		if (H.rec[i].used)

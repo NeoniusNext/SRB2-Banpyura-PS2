@@ -10,7 +10,6 @@ static void tex_cap_control(void);
 static void tx_report(void);
 static void lod_frame_end(void);
 static void plan_frame_end(void); // ps2_hw_plan.inc
-static void keep_touch(void); // ps2_hw_tex.inc (PS2-HW-442)
 static void ov_flush_all(void); // draws queued by the light overlay (ps2_hw_draw.inc); every frame boundary and read-back first
 static void rel_poll(void); // OPT9: engine data referenced by DMA is unlocked when the transfer is done (ps2_hw_tex.inc)
 static void rel_release_buf(int i);
@@ -649,7 +648,6 @@ static void frame_end(void)
 	H.frame_open = 0;
 	H.imm_tex = NULL;
 	plan_frame_end();
-	keep_touch(); // PS2-HW-442: the data of the textures that are dear to make again stays a cache block (not freed at the next 3D view) until the zone needs the room
 	tex_cap_control();
 	{
 		// PS2-HW-37: the room the frame plan leaves for the textures it does not plan: what this frame drew of them (+15 %), falling slowly
