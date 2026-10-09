@@ -22,9 +22,11 @@ def find_display(matches):
             cmd = open(p, 'rb').read().replace(b'\0', b' ').decode(errors='replace')
             if 'x_enter.py' in cmd or not all(m in cmd for m in matches):
                 continue
-            for item in open(f'/proc/{pid}/environ', 'rb').read().split(b'\0'):
-                if item.startswith(b'DISPLAY='):
-                    return item[8:].decode(), pid
+            env = dict(i.split(b'=', 1) for i in open(f'/proc/{pid}/environ', 'rb').read().split(b'\0') if b'=' in i)
+            if b'DISPLAY' in env:
+                if b'XAUTHORITY' in env:  # xvfb-run keeps the display behind an authority file
+                    os.environ['XAUTHORITY'] = env[b'XAUTHORITY'].decode()
+                return env[b'DISPLAY'].decode(), pid
         except OSError:
             continue
     return None, None
