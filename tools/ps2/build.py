@@ -292,6 +292,11 @@ def main():
         for fn in (() if LTO else ('G_Ticker', 'P_Ticker', 'R_RenderPlayerView', 'R_RenderBSPNode', 'R_DrawPlanes', 'R_DrawMasked', 'ST_Drawer',
                    'HU_Drawer', 'M_Drawer', 'CON_Drawer', 'I_UpdateSound', 'S_UpdateSounds', 'I_FinishUpdate', 'I_Sleep', 'I_SleepDuration')):
             LDFLAGS.append('-Wl,--wrap=' + fn)
+    if os.environ.get('SRB2_PS2_IOLOG') == '1':  # OPT13-IO: device-level I/O journal (src/ps2/ps2_iolog.c: "IO R/W/S/O/C" lines in the emulator log); never in the release ELF
+        EXTRA_SOURCES.append('src/ps2/ps2_iolog.c')
+        for fn in ('_read', '_write', '_lseek', '_open', '_close'):
+            LDFLAGS.append('-Wl,--wrap=' + fn)
+        CFLAGS.append('-DPS2_IOLOG')
     OBJ.mkdir(parents=True, exist_ok=True)
     gen_config()
     flags = ' '.join(CFLAGS + INCS) + ''.join('|%s %s' % (k, ' '.join(v)) for k, v in sorted(UNIT_FLAGS.items()))
