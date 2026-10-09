@@ -1,0 +1,42 @@
+sampler: 10660 kcyc/frame covered (functions listed: 8910); model hw: 18019 kcyc/frame = x1.69 (scale 1.0)
+class                emu K      hw K       x
+traverse              1833      4399   2.40x
+tick                  1501      2771   1.85x
+build                 1843      2764   1.50x
+driver                1851      2591   1.40x
+rest(unlisted)        1750      2450   1.40x
+sprite                 940      1879   2.00x
+decode                 738       960   1.30x
+wait                   205       205   1.00x
+
+hw#  function                       class        emu K     hw K      x  emu#  basis
+1    HWR_Subsector                  traverse     786.5   1887.6  2.40x     1  class 2.40
+2    P_MobjThinker                  tick         567.0   1089.3  1.92x     3  host-measured
+3    HWR_ProcessPolygon             build        581.6    872.4  1.50x     2  class 1.50
+4    HWR_ProjectPlain               sprite       379.4    758.8  2.00x     5  class 2.00
+5    PS2HWD_DrawBlocks              driver       504.5    706.3  1.40x     4  class 1.40
+6    HWR_ProcessSegC                traverse     234.2    562.1  2.40x     8  class 2.40
+7    HWR_RenderPlane                build        357.3    536.0  1.50x     6  class 1.50
+8    HWR_FrPlaneCulled              traverse     217.9    523.0  2.40x     9  class 2.40
+9    HWR_DrawSprite                 sprite       253.5    507.0  2.00x     7  class 2.00
+10   HWR_AddLine                    traverse     179.9    431.8  2.40x    13  class 2.40
+11   PIT_DoCheckThing               tick         185.6    410.8  2.21x    10  host-measured
+12   HWR_AddLineSeen                traverse     131.3    315.1  2.40x    17  class 2.40
+13   HWR_RenderBSPNode              traverse     122.6    294.2  2.40x    19  class 2.40
+14   HWR_PBAdd                      build        181.0    271.5  1.50x    12  class 1.50
+15   tex_upload                     driver       182.8    255.9  1.40x    11  class 1.40
+16   R_PointToAngle64               tick         167.4    246.7  1.47x    14  host-measured
+17   HWR_Lighting                   build        155.6    233.4  1.50x    15  class 1.50
+18   HWR_DrawDropShadowGen          sprite       109.1    218.2  2.00x    23  class 2.00
+19   begin_draw_inner               driver       135.6    189.8  1.40x    16  class 1.40
+20   vu_plan_setup                  driver       130.4    182.6  1.40x    18  class 1.40
+21   P_CheckPosition                tick         112.8    180.9  1.60x    21  host-measured
+22   HWR_DrawSprites                sprite        86.2    172.4  2.00x    29  class 2.00
+23   hw_RenderSkyDome               build        109.3    163.9  1.50x    22  class 1.50
+24   HWR_PS2_SideTexWord            traverse      66.6    159.8  2.40x    37  class 2.40
+25   fill_ap88                      decode       119.6    155.5  1.30x    20  class 1.30
+26   gld_clipper_IsRangeVisible     traverse      62.8    150.7  2.40x    41  class 2.40
+27   HWR_FX_SpriteHiddenCheap       sprite        69.9    139.8  2.00x    36  class 2.00
+28   P_PlayerThink                  tick          42.9    137.1  3.20x    56  host-measured
+29   vc_split                       decode        90.9    118.2  1.30x    25  class 1.30
+30   R_PointInSubsector             tick          63.2    116.6  1.84x    39  host-measured

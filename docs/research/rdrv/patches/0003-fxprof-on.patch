@@ -1,0 +1,13 @@
+diff --git a/src/ps2/hw/ps2_hw_water.inc b/src/ps2/hw/ps2_hw_water.inc
+index e0b03c8..16f5a1d 100644
+--- a/src/ps2/hw/ps2_hw_water.inc
++++ b/src/ps2/hw/ps2_hw_water.inc
+@@ -443,7 +443,7 @@ static inline void ripple_off_plane(rtab_t *t, int j, float *ds, float *dt)
+ 	*dt = t->dt[j];
+ }
+ 
+-/* #define HW_FXPROF 1 -- cycles per phase of water_sweep (HWFX3 lines every 105 frames) */
++#define HW_FXPROF 1 /* OPT13 RDRV trial: cycles per phase of water_sweep (HWFX3 lines every 105 frames) */
+ #ifdef HW_FXPROF
+ static u32 fx_c[8], fx_n[8], fx_frame = 0xFFFFFFFFu;
+ #define FXT(i) do { const u32 t_ = cyc(); fx_c[i] += t_ - fx_t; fx_t = t_; } while (0)
