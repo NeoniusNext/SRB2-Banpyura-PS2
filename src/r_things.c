@@ -226,10 +226,14 @@ static void R_InstallSpriteLump(UINT16 wad,            // graphics patch
 		maxframe = frame;
 
 #ifdef ROTSPRITE
+#ifdef PS2_PROFILE
+	sprtemp[frame].rotated = NULL;
+#else
 	for (r = 0; r < 16; r++)
 	{
 		sprtemp[frame].rotated[r] = NULL;
 	}
+#endif
 #endif
 
 	if (rotation == 0)
@@ -619,6 +623,10 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 			if (frame2 != -1)
 				R_InstallSpriteLump(wadnum, l, numspritelumps, frame2, rotation2, 1);
 
+#ifdef PS2_PROFILE
+			if (numspritelumps >= 0xFFFE) // PS2-506: spriteframe_t.lumpid is 16 bits
+				I_Error("R_AddSingleSpriteDef: more than 65534 sprite lumps");
+#endif
 			if (++numspritelumps >= max_spritelumps)
 			{
 				max_spritelumps *= 2;

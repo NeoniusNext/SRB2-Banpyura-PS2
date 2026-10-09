@@ -1176,13 +1176,21 @@ typedef struct
 
 	// Lump to use for view angles 0-7/15.
 	lumpnum_t lumppat[16]; // lump number 16 : 16 wad : lump
+#ifdef PS2_PROFILE
+	UINT16 lumpid[16]; // id in the spriteoffset, spritewidth, etc. tables (PS2-506: 16 bits, R_InstallSpriteLump refuses more sprite lumps than that)
+#else
 	size_t lumpid[16]; // id in the spriteoffset, spritewidth, etc. tables
+#endif
 
 	// Flip bits (1 = flip) to use for view angles 0-7/15.
 	UINT16 flip;
 
 #ifdef ROTSPRITE
+#ifdef PS2_PROFILE
+	rotsprite_t **rotated; // Rotated patches: NULL, or the 16 pointers, allocated by the first rotated sprite of the frame (PS2-506: 64 bytes of every frame, 3 350 frames on MAP11)
+#else
 	rotsprite_t *rotated[16]; // Rotated patches
+#endif
 #endif
 } spriteframe_t;
 
