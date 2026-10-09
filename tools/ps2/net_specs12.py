@@ -105,8 +105,9 @@ def impaired(name, netem_args, tics=2100, extra_cli=None, cmds='', long_timeout=
     if long_timeout:
         cfg = 'resynchattempts "0"\nblamecfail "On"\n'  # the default nettimeout (350 tics): the client must give up by itself when the line is gone
     cli_args = ['-skipintro', '-connect', f'{H}:{NETEM_PORT}', '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'] + (['-renderer', renderer] if renderer != 'Software' else []) + (extra_cli or [])
-    # late_crosses: Enter on the server info screen of a second connect. They come AFTER the walk steps (the script runs its steps in order): the held stick keeps the title menu open
-    # (an idle title screen starts an attract-mode demo after 22 s, and "connect" is refused while a demo plays)
+    # late_crosses: Enter on the server info screen of a second connect. They come AFTER the walk steps (the script runs its steps in order). The pad's count of polls runs faster than
+    # the frame counter of -netcmd on an idle title screen (about 1.4 times: the first version, Cross from poll 3030, opened the menu and started the tutorial before "connect" at
+    # frame 3000 was typed, and "connect" is refused in a game), so they start well after the command
     files = {'pad.txt': pad(*crosses(200, 600, 60)) + ',' + walk(1, 700, pad_to or tics * 3, seed=2) + (',' + pad(*late_items, *crosses(*late_crosses)) if late_crosses else '')}
     if cmds:
         files['cmd.txt'] = cmds
@@ -126,7 +127,7 @@ impaired('delay-150', ['--delay', '150', '--jitter', '20'], tics=1400)
 # the cable is pulled for 4 s (shorter than the 10 s time-out): the game goes on, the state stays equal
 impaired('cable-short', ['--schedule', '40:blackhole=4'], tics=2800)
 # the cable is pulled for 25 s: the client gives up (server timeout -> title), no hang; then it connects again ("connect" typed at displayed frame 3000)
-impaired('cable-long', ['--schedule', '40:blackhole=25'], long_timeout=True, abort=False, cmds=f'3000:connect {H}:{NETEM_PORT}', tics=0, late_crosses=(3030, 3900, 60), late_items=((1700, 'start'),),
+impaired('cable-long', ['--schedule', '40:blackhole=25'], long_timeout=True, abort=False, cmds=f'3000:connect {H}:{NETEM_PORT}', tics=0, late_crosses=(4500, 6500, 60),
          until=[{'node': 'cli', 'text': 'PS2 net: server timeout'}, {'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 4200}], timeout=1500)
 
 # ---- soak: 10 minutes of game time (21000 tics) with both ends walking, the state hash compared afterwards (net_batch.py) ----
