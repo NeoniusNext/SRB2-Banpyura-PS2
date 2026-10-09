@@ -9106,6 +9106,9 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 #endif
 	LP_RESTART(lpl);
 	LP_SAMPLE(8);
+#ifdef PS2_PROFILE
+	R_PrefetchLevel(); // OPT13-IO (RS-02): the lumps of the level in one sorted pass (only with -pkprefetch)
+#endif
 	if (precache || dedicated)
 		R_PrecacheLevel();
 	LP_SAMPLE(9);
