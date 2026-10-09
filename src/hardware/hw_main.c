@@ -63,6 +63,7 @@ static boolean HWR_PS2_NoCull(void);
 static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 extern int PS2HWD_QuadVisibleRef(const void *quad); // OPT13 IQ-7c: the reference of the cull checks: can a pixel centre be inside the view after the quad is clipped to it? (ps2_hw_plan.inc)
+extern double ps2hwd_qref_dbg[8];
 static boolean HWR_PS2_SpriteHiddenOld(float x1, float x2, float z1, float z2, float gz, float gzt, INT32 dispoffset, float basey, boolean aim); // (below, for the cull check)
 #else
 #define HWP_LOCAL ((void)0)
@@ -5184,9 +5185,10 @@ static void HWR_DrawSprite(gl_vissprite_t *spr)
 					const boolean aim = cv_glspritebillboarding.value && fabsf(gl_viewludcos) > 1.0e-6f;
 					const float basey = spr->ps2_iok ? (P_MobjFlip(spr->mobj) == -1 ? FIXED_TO_FLOAT(spr->ps2_iz + spr->ps2_ih) : FIXED_TO_FLOAT(spr->ps2_iz)) : 0.0f;
 
-					CONS_Printf("HWC sprite cull MISMATCH %u of %u (sprite %s, by %s, exact-again %d, quadhidden %d, iok %d, aim %d, disp %d, view %u)\n", bad, chk,
+					CONS_Printf("HWC sprite cull MISMATCH %u of %u (sprite %s, by %s, exact-again %d, quadhidden %d, iok %d, aim %d, disp %d, view %u; ref: n %d box x %.2f..%.2f y %.2f..%.2f w %.2f %.2f %.2f)\n", bad, chk,
 						spr->mobj && (UINT32)spr->mobj->sprite < NUMSPRITES ? sprnames[spr->mobj->sprite] : "?", by == 1 ? "exact" : "sphere",
-						(int)HWR_PS2_SpriteHiddenOld(spr->x1, spr->x2, spr->z1, spr->z2, spr->gz, spr->gzt, spr->dispoffset, basey, aim), PS2HWD_QuadHidden(wallVerts), (int)spr->ps2_iok, (int)aim, (int)spr->dispoffset, (unsigned)hwr_fx_view);
+						(int)HWR_PS2_SpriteHiddenOld(spr->x1, spr->x2, spr->z1, spr->z2, spr->gz, spr->gzt, spr->dispoffset, basey, aim), PS2HWD_QuadHidden(wallVerts), (int)spr->ps2_iok, (int)aim, (int)spr->dispoffset, (unsigned)hwr_fx_view,
+						(int)ps2hwd_qref_dbg[0], ps2hwd_qref_dbg[1], ps2hwd_qref_dbg[2], ps2hwd_qref_dbg[3], ps2hwd_qref_dbg[4], ps2hwd_qref_dbg[5], ps2hwd_qref_dbg[6], ps2hwd_qref_dbg[7]);
 				}
 				else
 					CONS_Printf("HWC sprite cull MISMATCH %u of %u\n", bad, chk);

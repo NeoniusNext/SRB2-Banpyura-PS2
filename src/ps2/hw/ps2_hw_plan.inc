@@ -1324,6 +1324,8 @@ int PS2HWD_QuadHidden(const void *vp)
 // that were no error (the pictures with and without the cull do not differ). This is a reference that does not give up near the eye: the quad is clipped to the view volume
 // (all six planes in clip space, Sutherland-Hodgman in doubles: a point behind the eye is outside the near plane) and what is left is looked at as PS2HWD_QuadHidden looks at a
 // quad (an integer point, a pixel centre, in the box widened by QUAD_MARGIN). 1 = a pixel centre may be inside (a culled sprite for which this is 1 is a real error of the cull).
+double ps2hwd_qref_dbg[8]; // the last call: clipped vertices, the screen box, the smallest w of the corners (for the line of the cull check)
+
 int PS2HWD_QuadVisibleRef(const void *vp)
 {
 	const FOutVector *v = (const FOutVector *)vp;
@@ -1344,6 +1346,7 @@ int PS2HWD_QuadVisibleRef(const void *vp)
 		in[i][1] = c.y;
 		in[i][2] = c.z;
 		in[i][3] = c.w;
+		ps2hwd_qref_dbg[5 + (i < 3 ? i : 2)] = i == 0 ? c.w : (c.w < ps2hwd_qref_dbg[5 + (i < 3 ? i : 2)] ? c.w : ps2hwd_qref_dbg[5 + (i < 3 ? i : 2)]);
 	}
 	for (pl = 0; pl < 6 && n > 0; pl++)
 	{
@@ -1384,6 +1387,7 @@ int PS2HWD_QuadVisibleRef(const void *vp)
 		out = t;
 		n = m;
 	}
+	ps2hwd_qref_dbg[0] = n;
 	if (n == 0)
 		return 0; // nothing of the quad is inside the view volume
 	hx = (double)H.vpw * 0.5;
@@ -1403,6 +1407,11 @@ int PS2HWD_QuadVisibleRef(const void *vp)
 	// (a margin a hair under the driver's: the driver rounds in floats, a centre that is within the rounding of the edge of its widened box must not be called an error of the cull)
 	{
 		const double mg = (double)QUAD_MARGIN - 0.01;
+
+		ps2hwd_qref_dbg[1] = x0;
+		ps2hwd_qref_dbg[2] = x1;
+		ps2hwd_qref_dbg[3] = y0;
+		ps2hwd_qref_dbg[4] = y1;
 
 		return !(ceil(x0 - mg) > floor(x1 + mg) || ceil(y0 - mg) > floor(y1 + mg));
 	}
