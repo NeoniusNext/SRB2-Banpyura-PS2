@@ -523,6 +523,7 @@ static UINT8 HWR_CeilingLightLevel(sector_t *sector, INT16 base_lightlevel)
 #ifdef PS2_PROFILE
 // OPT11 (GEOM, PS2-HW-80): the geometry cache of the BSP walk replaces the plane cache of PS2-HW-55 (hw_gcache.inc)
 static INT32 hwr_gc_src, hwr_gc_tnum; // the side (number + 1) whose midtexture the polygons being made take (3D floors), and the translated texture number: set by HWR_ProcessSeg, read by the records of the cache
+#include "hw_front.inc" // OPT12 HWFRONT (PS2-HW-400..439)
 #include "hw_gcache.inc"
 
 static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
@@ -1010,7 +1011,15 @@ static void HWR_RenderPlaneTimed(subsector_t *subsector, extrasubsector_t *xsub,
 {
 	HWP_SPAN_BEGIN(t);
 	HWC_ADD(HWC_PLANES);
+#ifdef PS2_HWDETAIL
+	HWR_FrCensusBegin();
+	hwr_fr_src = FRC_PLANE;
+#endif
 	HWR_RenderPlane(subsector, xsub, isceiling, fixedheight, PolyFlags, lightlevel, levelflat, FOFsector, alpha, planecolormap);
+#ifdef PS2_HWDETAIL
+	hwr_fr_src = FRC_OTHER;
+	HWR_FrCensusPlane(ps2hwp_now() - t);
+#endif
 	HWP_SPAN_END(t, HWP_PLANE);
 }
 #define HWR_RenderPlane HWR_RenderPlaneTimed
@@ -2290,10 +2299,51 @@ static void HWR_ProcessSeg(void)
 }
 
 #ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the wall builder (HWPROF2 "seg"); OPT11 PS2-HW-80: it is served from the geometry cache when it can be
+// OPT12 PS2-HW-402 (hw_front.inc): a seg whose azimuth arc does not touch the arc of the view volume has no wall on the screen. It is not left out when it can put a wall into the list of translucent nodes
+// (HWR_AddTransparentWall: the draw nodes, whose runs of planes are sorted by height): the list, and with it the order of the translucent planes between two such walls, stays what it was. Those segs
+// are: a translucent / fog / blended 3D floor on either side, a middle texture on a two sided line, a top, middle or bottom texture with holes (TF_TRANSPARENT, known once the driver made the texture resident).
+static boolean HWR_FrSegExempt(const seg_t *sg)
+{
+	const side_t *sd = sg->sidedef;
+	const line_t *ld = sg->linedef;
+	int i;
+
+	if ((ld->backsector && sd->midtexture) || ((HWR_PS2_SideTexWord(sd->toptexture) | HWR_PS2_SideTexWord(sd->midtexture) | HWR_PS2_SideTexWord(sd->bottomtexture)) & 0x80000000u))
+		return true;
+	for (i = 0; i < 2; i++)
+	{
+		const ffloor_t *r;
+		const sector_t *x = i ? ld->backsector : ld->frontsector;
+
+		if (!x)
+			continue;
+		for (r = x->ffloors; r; r = r->next)
+			if ((r->fofflags & FOF_EXISTS) && ((r->fofflags & (FOF_FOG | FOF_TRANSLUCENT)) || r->blend))
+				return true;
+	}
+	return false;
+}
+
+#ifdef PS2_HWDETAIL
+static void HWR_ProcessSegC0(void);
 static void HWR_ProcessSegC(void)
+{
+	const unsigned int t0 = ps2hwp_now();
+
+	HWR_FrCensusBegin();
+	hwr_fr_src = FRC_WALL;
+	HWR_ProcessSegC0();
+	hwr_fr_src = FRC_OTHER;
+	HWR_FrCensusSeg(ps2hwp_now() - t0);
+}
+static void HWR_ProcessSegC0(void)
+#else
+static void HWR_ProcessSegC(void)
+#endif
 {
 	HWP_SPAN_BEGIN(t);
 	seg_t *sg = gl_curline;
+
 
 	HWC_ADD(HWC_SEGS);
 	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
@@ -2393,6 +2443,28 @@ static void HWR_ProcessSegC(void)
 	HWP_SPAN_END(t, HWP_SEG);
 }
 #define HWR_ProcessSeg HWR_ProcessSegC
+#endif
+
+#ifdef PS2_PROFILE
+// the call of HWR_ProcessSeg from HWR_AddLine, with the cull by the azimuth arc
+static inline void HWR_FrProcessSeg(seg_t *line, angle_t angle2, angle_t angle1)
+{
+	if (HWR_FrArcOut(angle2, angle1) && FR_GATE() && !(hwr_fr_off & HWFR_NOSEGCULL))
+	{
+		frs.aout++;
+		if (!HWR_FrSegExempt(line))
+		{
+			frs.shit++;
+			if (FR_DBG())
+				I_OutputMsg("HWFRC seg=%d line=%d f=%d b=%d x=%.1f,%.1f..%.1f,%.1f ang=%08x..%08x arc=%08x+%08x\n", (int)(line - segs), (int)(line->linedef - lines), (int)(gl_frontsector - sectors), gl_backsector ? (int)(gl_backsector - sectors) : -1,
+					line->pv1 ? ((polyvertex_t *)line->pv1)->x : 0.0f, line->pv1 ? ((polyvertex_t *)line->pv1)->y : 0.0f, line->pv2 ? ((polyvertex_t *)line->pv2)->x : 0.0f, line->pv2 ? ((polyvertex_t *)line->pv2)->y : 0.0f,
+					(unsigned)angle2, (unsigned)angle1, (unsigned)fra.fl, (unsigned)fra.fspan);
+			return;
+		}
+		frs.aexempt++;
+	}
+	HWR_ProcessSeg();
+}
 #endif
 
 #ifdef PS2_PROFILE
@@ -2669,7 +2741,11 @@ static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle
 					|| Tag_Compare(&gl_frontsector->tags, &gl_backsector->tags)))
 				return; // line is empty, don't even bother
 			// treat like wide open window instead
+#ifdef PS2_PROFILE
+			HWR_FrProcessSeg(line, angle2, angle1);
+#else
 			HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+#endif
 			return;
 		}
 
@@ -2689,7 +2765,11 @@ static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle
 		}
     }
 
+#ifdef PS2_PROFILE
+	HWR_FrProcessSeg(line, angle2, angle1);
+#else
 	HWR_ProcessSeg(); // Doesn't need arguments because they're defined globally :D
+#endif
 }
 
 // HWR_CheckBBox
@@ -3011,6 +3091,52 @@ static boolean HWR_DoCulling(line_t *cullheight, line_t *viewcullheight, float v
 //                  : Draw one or more line segments.
 // Notes            : Sets gl_cursectorlight to the light of the parent sector, to modulate wall textures
 // -----------------+
+#ifdef PS2_PROFILE
+// OPT12 PS2-HW-400 (hw_front.inc): the plane of the subsector at this height has no pixel on the screen: it is not built (nothing else about it changes). A sloped plane, a subsector with a horizon line and a view the driver
+// has no volume for are built as before.
+static inline boolean HWR_FrPlaneCulled(subsector_t *sub, size_t num, fixed_t height, boolean sloped)
+{
+	const extrasubsector_t *xs;
+
+	if (!FR_GATE() || sloped || (hwr_fr_off & HWFR_NOPLANECULL))
+		return false;
+	xs = &extrasubsectors[num];
+	if (!xs->planepoly || xs->planepoly->numpts < 3)
+		return false;
+	frs.ptest++;
+	if (!HWR_FrPlaneHidden(xs->planepoly->pts, xs->planepoly->numpts, FixedToFloat(height)))
+		return false;
+	if (HWR_PlaneHasHorizon(sub))
+		return false;
+	frs.phit++;
+	if (FR_DBG())
+		I_OutputMsg("HWFRC plane sub=%d n=%d h=%.1f p0=%.1f,%.1f\n", (int)num, (int)xs->planepoly->numpts, FixedToFloat(height), xs->planepoly->pts[0].x, xs->planepoly->pts[0].y);
+	return true;
+}
+
+// OPT12 PS2-HW-401: none of the planes of the subsector (floor, ceiling, 3D floors: all between the floor and the ceiling of the sector, over the polygon of the subsector) can put a pixel on the
+// screen: the loop over its 3D floors (heights, light, the translucent list) and the plane tests are not made. Not for a sloped sector or 3D floor, a horizon line, a height sector.
+static boolean HWR_FrLeafPlanesCulled(subsector_t *sub, size_t num)
+{
+	const extrasubsector_t *xs = &extrasubsectors[num];
+	const sector_t *f = gl_frontsector;
+	const ffloor_t *r;
+
+	if (!f->ffloors || !FR_GATE() || (hwr_fr_off & HWFR_NOLEAFCULL) || !xs->planepoly || xs->planepoly->numpts < 3) // (only a sector with 3D floors: the test replaces the loop over them; for the others the two plane tests are cheaper)
+		return false;
+	frs.ltest++;
+	if (!HWR_FrPrismHidden(xs->planepoly->pts, xs->planepoly->numpts, FixedToFloat(f->floorheight), FixedToFloat(f->ceilingheight)))
+		return false;
+	if (f->f_slope || f->c_slope || sub->sector->heightsec != -1 || HWR_PlaneHasHorizon(sub))
+		return false;
+	for (r = f->ffloors; r; r = r->next)
+		if ((r->t_slope && *r->t_slope) || (r->b_slope && *r->b_slope) || r->master->frontsector->f_slope || r->master->frontsector->c_slope)
+			return false;
+	frs.lhit++;
+	return true;
+}
+#endif
+
 static void HWR_Subsector(size_t num)
 {
 	INT16 count;
@@ -3026,6 +3152,7 @@ static void HWR_Subsector(size_t num)
 	extracolormap_t *floorcolormap;
 	extracolormap_t *ceilingcolormap;
 	ffloor_t *rover;
+	boolean fr_planes_out = false; // OPT12 PS2-HW-401
 
 #ifdef PARANOIA //no risk while developing, enough debugging nights!
 	if (num >= addsubsector)
@@ -3063,10 +3190,21 @@ static void HWR_Subsector(size_t num)
 
 	floorcolormap = ceilingcolormap = gl_frontsector->extra_colormap;
 
+#ifdef PS2_PROFILE
+	// OPT12 PS2-HW-404: a sector without slopes (nearly all of them) has its heights in the sector: the four calls (P_GetSector*ZAt: a call, a test of the slope, a load) are the loads and two tests
+	if (!(hwr_fr_off & HWFR_NOINLINEZ) && !gl_frontsector->f_slope && !gl_frontsector->c_slope)
+	{
+		cullFloorHeight = locFloorHeight = gl_frontsector->floorheight;
+		cullCeilingHeight = locCeilingHeight = gl_frontsector->ceilingheight;
+	}
+	else
+#endif
+	{
 	cullFloorHeight   = P_GetSectorFloorZAt  (gl_frontsector, viewx, viewy);
 	cullCeilingHeight = P_GetSectorCeilingZAt(gl_frontsector, viewx, viewy);
 	locFloorHeight    = P_GetSectorFloorZAt  (gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
 	locCeilingHeight  = P_GetSectorCeilingZAt(gl_frontsector, gl_frontsector->soundorg.x, gl_frontsector->soundorg.y);
+	}
 
 #ifdef PS2_PROFILE
 	if (gl_frontsector->ffloors || (hwr_geo_off & 1024)) // OPT11 (PS2-HW-200): the function does nothing for a sector without 3D floors
@@ -3075,13 +3213,20 @@ static void HWR_Subsector(size_t num)
 
 	sub->sector->extra_colormap = gl_frontsector->extra_colormap;
 
+#ifdef PS2_PROFILE
+	fr_planes_out = sub->validcount != validcount && HWR_FrLeafPlanesCulled(sub, num); // OPT12 PS2-HW-401
+#endif
 	// render floor ?
 	// yeah, easy backface cull! :)
-	if (cullFloorHeight < viewz)
+	if (cullFloorHeight < viewz && !fr_planes_out)
 	{
 		if (gl_frontsector->floorpic != skyflatnum)
 		{
-			if (sub->validcount != validcount)
+			if (sub->validcount != validcount
+#ifdef PS2_PROFILE
+				&& !HWR_FrPlaneCulled(sub, num, locFloorHeight == cullFloorHeight ? locFloorHeight : gl_frontsector->floorheight, gl_frontsector->f_slope != NULL) // OPT12 PS2-HW-400
+#endif
+				)
 			{
 				HWR_PlaneFlat(&levelflats[gl_frontsector->floorpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], false,
@@ -3093,11 +3238,15 @@ static void HWR_Subsector(size_t num)
 		}
 	}
 
-	if (cullCeilingHeight > viewz)
+	if (cullCeilingHeight > viewz && !fr_planes_out)
 	{
 		if (gl_frontsector->ceilingpic != skyflatnum)
 		{
-			if (sub->validcount != validcount)
+			if (sub->validcount != validcount
+#ifdef PS2_PROFILE
+				&& !HWR_FrPlaneCulled(sub, num, locCeilingHeight == cullCeilingHeight ? locCeilingHeight : gl_frontsector->ceilingheight, gl_frontsector->c_slope != NULL) // OPT12 PS2-HW-400
+#endif
+				)
 			{
 				HWR_PlaneFlat(&levelflats[gl_frontsector->ceilingpic], false);
 				HWR_RenderPlane(sub, &extrasubsectors[num], true,
@@ -3113,7 +3262,7 @@ static void HWR_Subsector(size_t num)
 	if (gl_frontsector->ceilingpic == skyflatnum || gl_frontsector->floorpic == skyflatnum)
 		drawsky = true;
 
-	if (gl_frontsector->ffloors)
+	if (gl_frontsector->ffloors && !fr_planes_out)
 	{
 		/// \todo fix light, xoffs, yoffs, extracolormap ?
 		for (rover = gl_frontsector->ffloors;
@@ -3142,7 +3291,11 @@ static void HWR_Subsector(size_t num)
 			if (centerHeight <= locCeilingHeight &&
 			    centerHeight >= locFloorHeight &&
 			    ((viewz < bottomCullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
-			     (viewz > bottomCullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
+			     (viewz > bottomCullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES)))
+#ifdef PS2_PROFILE
+			    && !HWR_FrPlaneCulled(sub, num, *rover->bottomheight, rover->master->frontsector->f_slope != NULL) // OPT12 PS2-HW-400
+#endif
+			    )
 			{
 				if (rover->fofflags & FOF_FOG)
 				{
@@ -3188,7 +3341,11 @@ static void HWR_Subsector(size_t num)
 			if (centerHeight >= locFloorHeight &&
 			    centerHeight <= locCeilingHeight &&
 			    ((viewz > topCullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
-			     (viewz < topCullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES))))
+			     (viewz < topCullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES)))
+#ifdef PS2_PROFILE
+			    && !HWR_FrPlaneCulled(sub, num, *rover->topheight, rover->master->frontsector->c_slope != NULL) // OPT12 PS2-HW-400
+#endif
+			    )
 			{
 				if (rover->fofflags & FOF_FOG)
 				{
@@ -3325,7 +3482,13 @@ static void HWR_RenderBSPNode(INT32 bspnum)
 		{
 			//*(gl_drawsubsector_p++) = bspnum&(~NF_SUBSECTOR);
 			HWP_SPAN_BEGIN(tsub);
+#ifdef PS2_HWDETAIL
+			hwr_fr_subpolys = hwr_fr_subvis = 0; // OPT12 census
 			HWR_Subsector(bspnum&(~NF_SUBSECTOR));
+			HWR_FrCensusSub();
+#else
+			HWR_Subsector(bspnum&(~NF_SUBSECTOR));
+#endif
 			HWP_SPAN_END(tsub, HWP_SUBSEC);
 		}
 		return;
@@ -5385,6 +5548,7 @@ static void HWR_SortVisSprites(void)
 		// transparent sprites are moved behind the opaque ones (a stable partition).
 		static UINT32 dkey[MAXVISSPRITES], dix[MAXVISSPRITES], tk[MAXVISSPRITES], ti[MAXVISSPRITES], k2[MAXVISSPRITES];
 		static UINT8 trn[MAXVISSPRITES];
+		static gl_vissprite_t *copy[MAXVISSPRITES]; // gl_vsprorder is rewritten from a copy of itself (PS2-HW-408: the translucent sprites wait in it)
 		boolean plain = true, anydisp = false;
 		UINT32 n = gl_visspritecount;
 
@@ -5511,10 +5675,50 @@ static void HWR_SortVisSprites(void)
 			}
 			else
 			{
+				if (!(hwr_fr_off & HWFR_NOSPRUNSORT))
+				{
+					// OPT12 PS2-HW-408: the opaque sprites are not sorted: they are drawn as a batch in the order of the texture and of the first appearance of the state anyway (PS2-HW-52), and the z buffer
+					// decides what is in front, so the picture does not depend on their order (only exact ties of depth do, and the batch does not keep the order of the traversal for different textures
+					// either). The translucent sprites, which blend in the order they are drawn, are sorted far to near as before (equal keys in the traversal order) and stay behind the opaque ones.
+					// They are taken from the last: the traversal is near to far, so this is the order of the sort (a step of the insertion for a sprite that is out of place); more than 16 steps a
+					// sprite: the radix sort of all of them below.
+					UINT32 nt = 0, steps = 0;
+					const UINT32 lim = 16u * n + 256u;
+
+					for (i = n; i-- > 0 && steps <= lim;)
+					{
+						if (trn[i])
+						{
+							const UINT32 key = dkey[i];
+							UINT32 j = nt;
+
+							while (j > 0 && tk[j - 1] >= key) // (the ones that are in already have the larger traversal numbers: they go after an equal key)
+							{
+								tk[j] = tk[j - 1];
+								copy[j] = copy[j - 1];
+								j--;
+								steps++;
+							}
+							tk[j] = key;
+							copy[j] = gl_vsprorder[i];
+							nt++;
+						}
+					}
+					if (steps <= lim)
+					{
+						UINT32 o = 0, c;
+
+						for (i = 0; i < n; i++)
+							if (!trn[i])
+								gl_vsprorder[o++] = gl_vsprorder[i];
+						for (c = 0; c < nt; c++)
+							gl_vsprorder[o++] = copy[c];
+						return;
+					}
+				}
 				res = HWR_RadixSort32(dkey, dix, tk, ti, n) ? dix : ti;
 			}
 			{
-				static gl_vissprite_t *copy[MAXVISSPRITES]; // gl_vsprorder is rewritten from a copy of itself
 				UINT32 o = 0;
 
 				memcpy(copy, gl_vsprorder, n * sizeof copy[0]);
@@ -5900,6 +6104,9 @@ static void HWR_CreateDrawNodes(void)
 // --------------------------------------------------------------------------
 
 // added the stransform so they can be switched as drawing happenes so MD2s and sprites are sorted correctly with each other
+#ifdef PS2_PROFILE
+int hwr_ph_spr; // 1 while HWR_DrawSprites runs (-hwpolyhash 3 / -hwphvis leave the sprites and shadows out: the cheap tests that drop a sprite depend on which pictures are resident)
+#endif
 static void HWR_DrawSprites(void)
 {
 	UINT32 i;
@@ -5912,6 +6119,9 @@ static void HWR_DrawSprites(void)
 		HWC_ADD(HWC_SPR_ON);
 #endif
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, cv_glmodellighting.value);
+#ifdef PS2_PROFILE
+	hwr_ph_spr = 1;
+#endif
 	for (i = 0; i < gl_visspritecount; i++)
 	{
 		gl_vissprite_t *spr = gl_vsprorder[i];
@@ -6054,6 +6264,9 @@ static void HWR_DrawSprites(void)
 	}
 #endif
 	HWD.pfnSetSpecialState(HWD_SET_MODEL_LIGHTING, 0);
+#ifdef PS2_PROFILE
+	hwr_ph_spr = 0;
+#endif
 
 	// At the end of sprite drawing, draw shapes of linkdraw sprites to z-buffer, so they
 	// don't get drawn over by transparent surfaces.
@@ -8035,6 +8248,9 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 	if (cv_glbatching.value)
 		HWR_StartBatching();
 
+#ifdef PS2_PROFILE
+	HWR_FrViewSetup(); // OPT12 PS2-HW-400: the volume of this view for the culls before building
+#endif
 	HWR_RenderBSPNode((INT32)numnodes-1);
 	HWP_SPAN_END(tk2, HWP_K_BSP);
 	}
@@ -8197,6 +8413,9 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	if (cv_glbatching.value)
 		HWR_StartBatching();
 
+#ifdef PS2_PROFILE
+	HWR_FrViewSetup(); // OPT12 PS2-HW-400: the volume of this view for the culls before building
+#endif
 	HWR_RenderBSPNode((INT32)numnodes-1);
 
 	PS_STOP_TIMING(ps_bsptime);
@@ -8250,6 +8469,9 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 	if (HWR_IsWireframeMode())
 		HWD.pfnSetSpecialState(HWD_SET_WIREFRAME, 0);
 
+#ifdef PS2_PROFILE
+	HWR_FrViewEnd();
+#endif
 	HWD.pfnSetTransform(NULL);
 	HWD.pfnUnSetShader();
 
