@@ -16,9 +16,11 @@
 #define HWFR_NOSEGCULL 0x2 // PS2-HW-402: walls not culled (the azimuth arc of the seg against the arc of the view)
 #define HWFR_NOPLANECULL 0x4 // PS2-HW-400: planes (floors, ceilings, 3D floors) not culled
 #define HWFR_NOLEAFCULL 0x8 // PS2-HW-401: no test of the whole subsector (the box of its planes) before the planes are looked at one by one
+#define HWFR_NOSPRBATCH 0x40 // PS2-HW-403: the sprite polygons of the sprite batch go through the general HWR_ProcessPolygon (hw_batching.c) again
+#define HWFR_NOINLINEZ 0x80 // PS2-HW-404: the four P_GetSector*ZAt calls of HWR_Subsector for a sector without slopes again
+#define HWFR_NOSPRUNSORT 0x800 // PS2-HW-408: the opaque sprites are sorted far to near again (HWR_SortVisSprites)
 
 unsigned int hwr_fr_off; // -hwfr: OPT12 front paths switched off (see the HWFR_NO* bits)
-static UINT32 hwr_fr_level; // counts the levels (HWR_PlaneCacheReset): what is kept per level is not valid in the next one
 static UINT32 hwr_fr_dbg_lo = 1, hwr_fr_dbg_hi; // -hwfrdbg LO HI: the segs and planes the culls leave out in the frames LO..HI (the numbers of the HWPH lines) are printed (HWFRC lines)
 
 static void HWR_FrInit(void)

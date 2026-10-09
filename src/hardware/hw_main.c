@@ -532,7 +532,6 @@ static size_t subhoriz_n;
 // a new level: nothing of the cache and of the horizon flags is valid
 static void HWR_PlaneCacheReset(void)
 {
-	hwr_fr_level++; // OPT12: what is kept per level (the table of vertex angles)
 	free(subhoriz);
 	subhoriz = NULL;
 	subhoriz_n = 0;
@@ -2620,25 +2619,6 @@ static inline angle_t HWR_VertAngle(const vertex_t *v, fixed_t x, fixed_t y)
 #endif
 
 #ifdef PS2_PROFILE
-// OPT12 PS2-HW-407: the angle of a vertex of the subsectors (a polyvertex: shared by the segs of the subsectors around it, and by the planes) once per view, kept in a table of 256 places by the
-// address of the vertex (R_PointToAngle64 is a function of the point and the eye; the places of the neighbours in the walk are the places that are still there). -hwfr 1024: calculated as before.
-static struct { const void *p; UINT32 view, lvl; angle_t a; } hwr_va[256];
-
-static inline angle_t HWR_PvAngle(const void *pv, fixed_t x, fixed_t y)
-{
-	const UINT32 k = (((UINT32)(uintptr_t)pv >> 2) * 2654435761u) >> 24;
-
-	if (hwr_va[k].p == pv && hwr_va[k].view == (UINT32)validcount && hwr_va[k].lvl == hwr_fr_level)
-	{
-		HWD_ADD(HWC_AL_VHIT);
-		return hwr_va[k].a;
-	}
-	hwr_va[k].p = pv;
-	hwr_va[k].view = (UINT32)validcount;
-	hwr_va[k].lvl = hwr_fr_level;
-	return hwr_va[k].a = R_PointToAngle64(x, y);
-}
-
 // OPT11 round 2 (PS2-HW-214): half of the calls of HWR_AddLine are segs that face away: they are rejected after the two angles, and the function saved and restored ten registers for
 // the part that follows. The rest is a function of its own; the front keeps what the rejected seg needs.
 static void HWR_AddLineSeen(seg_t *line, angle_t angle1, angle_t angle2);
@@ -2691,14 +2671,9 @@ static void HWR_AddLine(seg_t * line)
 
 		if (al_valid && !(hwr_geo_off & 1) && v1x == al_x && v1y == al_y && viewx == al_vx && viewy == al_vy)
 			angle1 = al_angle;
-		else if (gl_curline->pv1 && !(hwr_fr_off & 1024u))
-			angle1 = HWR_PvAngle(gl_curline->pv1, v1x, v1y);
 		else
 			angle1 = HWR_VertAngle(gl_curline->pv1 ? NULL : gl_curline->v1, v1x, v1y);
-		if (gl_curline->pv2 && !(hwr_fr_off & 1024u))
-			angle2 = HWR_PvAngle(gl_curline->pv2, v2x, v2y);
-		else
-			angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
+		angle2 = HWR_VertAngle(gl_curline->pv2 ? NULL : gl_curline->v2, v2x, v2y);
 		al_x = v2x;
 		al_y = v2y;
 		al_vx = viewx;
@@ -3217,7 +3192,7 @@ static void HWR_Subsector(size_t num)
 
 #ifdef PS2_PROFILE
 	// OPT12 PS2-HW-404: a sector without slopes (nearly all of them) has its heights in the sector: the four calls (P_GetSector*ZAt: a call, a test of the slope, a load) are the loads and two tests
-	if (!(hwr_fr_off & 128u) && !gl_frontsector->f_slope && !gl_frontsector->c_slope)
+	if (!(hwr_fr_off & HWFR_NOINLINEZ) && !gl_frontsector->f_slope && !gl_frontsector->c_slope)
 	{
 		cullFloorHeight = locFloorHeight = gl_frontsector->floorheight;
 		cullCeilingHeight = locCeilingHeight = gl_frontsector->ceilingheight;
@@ -5573,6 +5548,7 @@ static void HWR_SortVisSprites(void)
 		// transparent sprites are moved behind the opaque ones (a stable partition).
 		static UINT32 dkey[MAXVISSPRITES], dix[MAXVISSPRITES], tk[MAXVISSPRITES], ti[MAXVISSPRITES], k2[MAXVISSPRITES];
 		static UINT8 trn[MAXVISSPRITES];
+		static gl_vissprite_t *copy[MAXVISSPRITES]; // gl_vsprorder is rewritten from a copy of itself (PS2-HW-408: the translucent sprites wait in it)
 		boolean plain = true, anydisp = false;
 		UINT32 n = gl_visspritecount;
 
@@ -5697,78 +5673,52 @@ static void HWR_SortVisSprites(void)
 					tk[i] = dkey[p1[i]]; // the depth keys in that order
 				res = HWR_RadixSort32(tk, p1, k2, sc, n) ? p1 : sc;
 			}
-			else if (!(hwr_fr_off & 2048u))
-			{
-				// OPT12 PS2-HW-408: the opaque sprites are not sorted: they are drawn as a batch in the order of the texture and of the first appearance of the state anyway (PS2-HW-52), and the z buffer decides
-				// what is in front, so the picture does not depend on their order (only exact ties of depth do, and the batch does not keep the order of the traversal for different textures either). The
-				// translucent sprites, which blend in the order they are drawn, are sorted far to near as before and stay behind the opaque ones.
-				static gl_vissprite_t *tr[MAXVISSPRITES];
-				static UINT32 trk[MAXVISSPRITES];
-				UINT32 o = 0, nt = 0, a;
-
-				for (i = 0; i < n; i++)
-				{
-					if (!trn[i])
-						gl_vsprorder[o++] = gl_vsprorder[i];
-					else
-					{
-						// insertion into the translucent list, far to near (keys ascending), equal keys in the traversal order
-						const UINT32 key = dkey[i];
-						UINT32 j = nt;
-
-						while (j > 0 && trk[j - 1] > key)
-						{
-							trk[j] = trk[j - 1];
-							tr[j] = tr[j - 1];
-							j--;
-						}
-						trk[j] = key;
-						tr[j] = gl_vsprorder[i];
-						nt++;
-					}
-				}
-				for (a = 0; a < nt; a++)
-					gl_vsprorder[o++] = tr[a];
-				return;
-			}
-			else if (!(hwr_fr_off & 512u) && n <= MAXVISSPRITES)
-			{
-				// OPT12 PS2-HW-406: the sprites come in the traversal order, which is the depth order near to far in the main (the BSP walk is front to back): an insertion sort of the reversed order, by (depth key, index) -
-				// the order of the stable radix sort, ties keep the traversal order - costs the sprites and the few that are out of place. (The radix sort clears and adds up three tables of 2048 counters for 250 sprites.)
-				// More than 16 steps a sprite: the radix sort.
-				static UINT64 srt[MAXVISSPRITES];
-				UINT32 m = 0, steps = 0;
-				const UINT32 lim = 16u * n + 256u;
-
-				for (i = n; i-- > 0 && steps <= lim;)
-				{
-					const UINT64 v = ((UINT64)dkey[i] << 32) | i;
-					UINT32 j = m;
-
-					while (j > 0 && srt[j - 1] > v)
-					{
-						srt[j] = srt[j - 1];
-						j--;
-						steps++;
-					}
-					srt[j] = v;
-					m++;
-				}
-				if (m == n)
-				{
-					for (i = 0; i < n; i++)
-						dix[i] = (UINT32)srt[i];
-					res = dix;
-				}
-				else
-					res = HWR_RadixSort32(dkey, dix, tk, ti, n) ? dix : ti;
-			}
 			else
 			{
+				if (!(hwr_fr_off & HWFR_NOSPRUNSORT))
+				{
+					// OPT12 PS2-HW-408: the opaque sprites are not sorted: they are drawn as a batch in the order of the texture and of the first appearance of the state anyway (PS2-HW-52), and the z buffer
+					// decides what is in front, so the picture does not depend on their order (only exact ties of depth do, and the batch does not keep the order of the traversal for different textures
+					// either). The translucent sprites, which blend in the order they are drawn, are sorted far to near as before (equal keys in the traversal order) and stay behind the opaque ones.
+					// They are taken from the last: the traversal is near to far, so this is the order of the sort (a step of the insertion for a sprite that is out of place); more than 16 steps a
+					// sprite: the radix sort of all of them below.
+					UINT32 nt = 0, steps = 0;
+					const UINT32 lim = 16u * n + 256u;
+
+					for (i = n; i-- > 0 && steps <= lim;)
+					{
+						if (trn[i])
+						{
+							const UINT32 key = dkey[i];
+							UINT32 j = nt;
+
+							while (j > 0 && tk[j - 1] >= key) // (the ones that are in already have the larger traversal numbers: they go after an equal key)
+							{
+								tk[j] = tk[j - 1];
+								copy[j] = copy[j - 1];
+								j--;
+								steps++;
+							}
+							tk[j] = key;
+							copy[j] = gl_vsprorder[i];
+							nt++;
+						}
+					}
+					if (steps <= lim)
+					{
+						UINT32 o = 0, c;
+
+						for (i = 0; i < n; i++)
+							if (!trn[i])
+								gl_vsprorder[o++] = gl_vsprorder[i];
+						for (c = 0; c < nt; c++)
+							gl_vsprorder[o++] = copy[c];
+						return;
+					}
+				}
 				res = HWR_RadixSort32(dkey, dix, tk, ti, n) ? dix : ti;
 			}
 			{
-				static gl_vissprite_t *copy[MAXVISSPRITES]; // gl_vsprorder is rewritten from a copy of itself
 				UINT32 o = 0;
 
 				memcpy(copy, gl_vsprorder, n * sizeof copy[0]);
