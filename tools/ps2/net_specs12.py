@@ -198,6 +198,11 @@ mine('menu-browse-blackhole', {'timeout': 400, 'nodes': [ps2('cli', EMU1, ['-ski
                                'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
 
 
+mine('menu-browse-blackhole-cancel', {'timeout': 400, 'nodes': [ps2('cli', EMU1, ['-skipintro', '-netdebug', '-padscript', 'file:pad.txt', '-vidshot', 'f850,f1100'],
+                                                                   files={'pad.txt': pad((250, 'start'), (330, 'down'), (400, 'cross'), (540, 'cross'), (790, 'circle'))},
+                                                                   cfg='masterserver "http://10.255.255.1:8090/MS/0"\nmasterserver_debug "On"\n', start=0, may_exit=True)],
+                                      'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
+
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]
     for n, s in MINE.items():
