@@ -424,10 +424,6 @@ static void R_CreateFadeColormaps(void)
 	FadeInputs(&in);
 	if (fadeinputs_valid && fadecolormap && !memcmp(&in, &fadeinputs, sizeof in))
 		return;
-#ifdef PS2_PROFILE
-	if (ps2lp_on)
-		I_OutputMsg("LPDBG fade inputs changed: valid=%d fc=%d row0=%d rgb=%d black=%d/%d white=%d/%d\n", fadeinputs_valid, fadecolormap != NULL, memcmp(in.row0, fadeinputs.row0, 256), memcmp(in.rgb, fadeinputs.rgb, sizeof in.rgb), (int)in.black, (int)fadeinputs.black, (int)in.white, (int)fadeinputs.white);
-#endif
 	if (fadecolormap)
 		Z_Free(fadecolormap);
 	fadecolormap = NULL; // PS2-173: the allocation below can jump out
