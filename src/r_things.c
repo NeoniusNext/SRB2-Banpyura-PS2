@@ -629,10 +629,21 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 	UINT16 scand = 0; // the next candidate of the index: lump - start + 1
 #endif
 
+#ifdef PS2_PROFILE
+#ifdef PS2_DYNLIMITS
+#define SPRTEMP_CLEAR() memset(sprtemp, 0xFF, sizeof (spriteframe_t) * LIMIT_MAXFRAMENUM)
+#else
+#define SPRTEMP_CLEAR() memset(sprtemp, 0xFF, sizeof (sprtemp))
+#endif
+	// PS2-LOAD-23: the scratch table (10 KB) is cleared when the first frame is installed or an earlier definition is copied into it, not for every one of the 1500 sprite names
+	// of every file (an add-on finds frames for a handful of them: 75 MB of memset at the start-up). Nothing reads it before that: a sprite without frames returns below.
+	boolean tempinit = false;
+#else
 #ifdef PS2_DYNLIMITS
 	memset(sprtemp, 0xFF, sizeof (spriteframe_t) * LIMIT_MAXFRAMENUM);
 #else
 	memset(sprtemp,0xFF, sizeof (sprtemp));
+#endif
 #endif
 	maxframe = (size_t)-1;
 
@@ -642,6 +653,10 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 	// if so, it might patch only certain frames, not all
 	if (spritedef->numframes) // (then spriteframes is not null)
 	{
+#ifdef PS2_PROFILE
+		SPRTEMP_CLEAR();
+		tempinit = true;
+#endif
 		// copy the already defined sprite frames
 		M_Memcpy(sprtemp, spritedef->spriteframes,
 		 spritedef->numframes * sizeof (spriteframe_t));
@@ -655,7 +670,7 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 		endlump = wadfiles[wadnum]->numlumps;
 
 #ifdef PS2_PROFILE
-	if (!longname && endlump > startlump && endlump - startlump >= 256 && strlen(sprname) == 4)
+	if (!longname && endlump > startlump && endlump - startlump >= 16 && strlen(sprname) == 4) // (PS2-LOAD-23: was 256; an add-on with 200 sprite lumps scanned them 1500 times, 90 M cycles)
 	{
 		sidx = R_GetSpriteIndex(wadnum, startlump, endlump);
 		scand = sidx->bucket[(SprKey4(sprname) >> 16) & sidx->mask];
@@ -725,6 +740,13 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 
 			//----------------------------------------------------
 
+#ifdef PS2_PROFILE
+			if (!tempinit)
+			{
+				SPRTEMP_CLEAR();
+				tempinit = true;
+			}
+#endif
 			R_InstallSpriteLump(wadnum, l, numspritelumps, frame, rotation, 0);
 			if (frame2 != -1)
 				R_InstallSpriteLump(wadnum, l, numspritelumps, frame2, rotation2, 1);
