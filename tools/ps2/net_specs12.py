@@ -191,6 +191,13 @@ _rc['until'] = [{'node': 'srv', 'text': 'rejoined the game'}]
 mine('reconnect-fakedown', _rc)
 
 
+# the server browser with a master server that does not answer (10.255.255.1 is not routed): the waiting screen of PS2-NET-9 comes up after 0.4 s, Circle (frame 900) cancels it
+mine('menu-browse-blackhole', {'timeout': 400, 'nodes': [ps2('cli', EMU1, ['-skipintro', '-netdebug', '-padscript', 'file:pad.txt', '-vidshot', 'f600,f800,f1100'],
+                                                           files={'pad.txt': pad((250, 'start'), (330, 'down'), (400, 'cross'), (540, 'cross'), (900, 'circle'))},
+                                                           cfg='masterserver "http://10.255.255.1:8090/MS/0"\nmasterserver_debug "On"\n', start=0, may_exit=True)],
+                               'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
+
+
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]
     for n, s in MINE.items():

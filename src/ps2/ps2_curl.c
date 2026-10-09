@@ -5,6 +5,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -266,13 +267,21 @@ static int ConnectBegin(const url_t *u, sock_t *out, int *done, char *errbuf, si
 		fcntl(s, F_SETFL, fl | O_NONBLOCK);
 #ifdef _EE
 		{
-			// PS2-NET-9 (OPT12): through libcglue the fcntl flag did not make connect() return (a host that does not answer held the game for lwIP's whole SYN retry time, 19 s, see
-			// docs/GATES/g1/opt12-NET.md); lwIP's own FIONBIO ioctl (the value of lwip/sockets.h: _IOW('f', 126, unsigned long)) is asked for too
+			// PS2-NET-9 (OPT12): through libcglue the fcntl flag did not make connect() return (a host that does not answer held the game for lwIP's whole SYN retry time, 18..19 s, see
+			// docs/GATES/g1/opt12-NET.md). The first try (lwip_ioctl FIONBIO on the descriptor that socket() returned) did nothing: libcglue's descriptor is not lwIP's socket number
+			// (connect() looks the descriptor up and passes the info's userdata on). So lwIP's own FIONBIO ioctl (the value of lwip/sockets.h: _IOW('f', 126, unsigned long)) gets the
+			// userdata of the descriptor, which is lwIP's number (checked: it must be a small number, else nothing is done).
+			struct fdinfo { void *userdata; void *ops; };
+			extern struct fdinfo *libcglue_get_fd_info(int fd); // ps2sdkapi.h (not included: it pulls the whole libcglue API in)
 			extern int lwip_ioctl(int s, long cmd, void *argp) __attribute__((weak)); // (weak: nothing is pulled out of the library for it)
+			struct fdinfo *fi = libcglue_get_fd_info(s);
 			unsigned long nb = 1;
+			const long ls = fi ? (long)(intptr_t)fi->userdata : -1;
 
-			if (lwip_ioctl)
-				lwip_ioctl(s, (long)0x8004667eUL, &nb);
+			if (lwip_ioctl && ls >= 0 && ls < 64)
+				lwip_ioctl((int)ls, (long)0x8004667eUL, &nb);
+			printf("PS2 http: descriptor %d is lwIP socket %ld\n", (int)s, ls);
+			fflush(stdout);
 		}
 #endif
 	}
@@ -284,7 +293,10 @@ static int ConnectBegin(const url_t *u, sock_t *out, int *done, char *errbuf, si
 
 		rc = connect(s, (struct sockaddr *)&sa, sizeof sa);
 		if (NowMs() - t0 > 200)
+		{
 			printf("PS2 http: connect() to %s took %ld ms (returned %d, errno %d)\n", u->host, NowMs() - t0, rc, errno);
+			fflush(stdout);
+		}
 	}
 #else
 	rc = connect(s, (struct sockaddr *)&sa, sizeof sa);
