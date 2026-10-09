@@ -67,6 +67,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
 extern INT32 ps2hwt_patchtag; // hardware/hw_cache.c (PS2-HW-442)
+extern boolean ps2hwt_comp_old; // hardware/hw_cache.c (OPT13 RDRV: -hwcomp 0 = the composition of a texture as before)
 static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
@@ -349,6 +350,7 @@ boolean PS2HWD_Init(void)
 	if (vu_nocut && M_CheckParm("-hwnocut") && M_IsNextParm())
 		vu_nocut = atoi(M_GetNextParm()) != 0;
 	pk_oldtail = M_CheckParm("-hwoldtail") != 0;
+	ps2hwt_comp_old = M_CheckParm("-hwcomp") && M_IsNextParm() && atoi(M_GetNextParm()) == 0; // OPT13 RDRV: 0 = the original composition (A/B on one ELF)
 	if (M_CheckParm("-hwvudump") && M_IsNextParm())
 		vu_dump_frame = (u32)atoi(M_GetNextParm());
 	if (M_CheckParm("-hwvustop") && M_IsNextParm())

@@ -274,6 +274,9 @@ void *W_CachePatchName(const char *name, INT32 tag);
 void *W_CachePatchLongName(const char *name, INT32 tag);
 
 void *W_CachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag);
+#ifdef PS2_PROFILE
+void *W_CachePatchNumPwadNoGL(UINT16 wad, UINT16 lump, INT32 tag); // OPT13 RDRV
+#endif
 #ifdef PS2
 void *W_TryCachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag); // PS2-140: NULL when there is no room
 #endif
