@@ -1361,11 +1361,45 @@ void FileReceiveTicker(void)
 	}
 }
 
+#ifdef PS2_PROFILE
+// OPT13-IO (RS-08): the fragments of a download are 1 KB each; on a memory card or a stick every fseek + fwrite of one is a command of the medium (3..10 ms on USB 1.1, 10..20 ms on a
+// card: 2000 fragments of a 2 MB add-on = 6..40 s against 3.9 s of network). The stream gets a 32 KB buffer and the seek is left out when the fragment follows the one written
+// before (the server sends them in order), so the C library writes them in pieces of 32 KB; a fragment out of order seeks as before (the buffer is written first). Every close
+// flushes. On by default for the media that are slow to write (mc, mass, mx4sio, hdd); -dlbuf 0|1 forces it.
+static FILE *ps2_dl_stream;  // the stream whose write position ps2_dl_pos is
+static UINT32 ps2_dl_pos;
+static INT32 ps2_dl_buffered = -1;
+
+static void PS2_DLOpened(FILE *f)
+{
+	ps2_dl_stream = NULL; // a FILE can come back at the same address: its position is not the old one
+	if (ps2_dl_buffered < 0)
+	{
+		const char *dir = downloaddir;
+
+		ps2_dl_buffered = !strncasecmp(dir, "mc", 2) || !strncasecmp(dir, "mass", 4) || !strncasecmp(dir, "mx4sio", 6) || !strncasecmp(dir, "hdd", 3) || !strncasecmp(dir, "usb", 3);
+		if (M_CheckParm("-dlbuf") && M_IsNextParm())
+			ps2_dl_buffered = atoi(M_GetNextParm()) != 0;
+	}
+	if (f && ps2_dl_buffered)
+		setvbuf(f, NULL, _IOFBF, 32768); // directly after fopen: nothing was done to the stream yet
+}
+
+static void PS2_DLClosing(FILE *f)
+{
+	if (ps2_dl_stream == f)
+		ps2_dl_stream = NULL;
+}
+#endif
+
 static void OpenNewFileForDownload(fileneeded_t *file, const char *filename)
 {
 	file->file = fopen(filename, "wb");
 	if (!file->file)
 		I_Error("Can't create file %s: %s", filename, strerror(errno));
+#ifdef PS2_PROFILE
+	PS2_DLOpened(file->file);
+#endif
 
 	file->currentsize = 0;
 	file->totalsize = LONG(netbuffer->u.filetxpak.filesize);
@@ -1379,6 +1413,7 @@ static void OpenNewFileForDownload(fileneeded_t *file, const char *filename)
 #ifdef PS2_PROFILE
 static UINT64 ps2_dl_write_cycles;
 static UINT32 ps2_dl_fragments;
+
 #endif
 
 void PT_FileFragment(SINT8 node, INT32 netconsole)
@@ -1446,6 +1481,9 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 		if (CL_CanResumeDownload(file))
 		{
 			file->file = fopen(file->filename, "r+b");
+#ifdef PS2_PROFILE
+			PS2_DLOpened(file->file);
+#endif
 			if (!file->file)
 			{
 				CONS_Alert(CONS_ERROR, "Couldn't reopen file %s: %s\n", file->filename, strerror(errno));
@@ -1492,9 +1530,16 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 #ifdef PS2_PROFILE
 			const precise_t ps2_w0 = I_GetPreciseTime(); // PS2-NET-10: what the write of a fragment costs (-netlat); a 16 KB stage that wrote them in one piece halved this and changed nothing in the time of the download: removed
 #endif
+#ifdef PS2_PROFILE
+			if (!ps2_dl_buffered || ps2_dl_stream != file->file || ps2_dl_pos != fragmentpos)
+#endif
 			fseek(file->file, fragmentpos, SEEK_SET);
 			if (fragmentsize && fwrite(netbuffer->u.filetxpak.data, boundedfragmentsize, 1, file->file) != 1)
 				I_Error("Can't write to %s: %s\n",file->filename, M_FileError(file->file));
+#ifdef PS2_PROFILE
+			ps2_dl_stream = file->file;
+			ps2_dl_pos = fragmentpos + boundedfragmentsize;
+#endif
 #ifdef PS2_PROFILE
 			ps2_dl_write_cycles += I_GetPreciseTime() - ps2_w0;
 			ps2_dl_fragments++;
@@ -1506,7 +1551,13 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 			// Finished?
 			if (file->currentsize == file->totalsize)
 			{
+#ifdef PS2_PROFILE
+				PS2_DLClosing(file->file);
+				if (fclose(file->file) != 0) // OPT13-IO (RS-08): the last buffered piece did not reach the medium
+					I_Error("Can't write to %s: %s\n", file->filename, strerror(errno));
+#else
 				fclose(file->file);
+#endif
 				file->file = NULL;
 				free(file->receivedfragments);
 				free(file->ackpacket);
@@ -1611,6 +1662,9 @@ void CloseNetFile(void)
 		for (INT32 i = 0; i < fileneedednum; i++)
 			if (fileneeded[i].status == FS_DOWNLOADING && fileneeded[i].file)
 			{
+#ifdef PS2_PROFILE
+				PS2_DLClosing(fileneeded[i].file);
+#endif
 				fclose(fileneeded[i].file);
 				free(fileneeded[i].ackpacket);
 

@@ -32,6 +32,11 @@
 #include "dehacked.h"
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-1
 #ifdef PS2_PROFILE
+#include "w_pack.h" // OPT13-IO (RS-02): WPack_Prefetch*
+#include "netcode/d_clisrv.h" // NetKeepAlive
+#include "r_skins.h"
+#endif
+#ifdef PS2_PROFILE
 #include "ps2/ps2_nearest.h" // PS2-LOAD-14
 #include "m_argv.h" // -loadhash (the check of the light table steps)
 #endif
@@ -1483,6 +1488,130 @@ void R_InitData(void)
 	LP_SAMPLE(27);
 	LP_END(R_COLORMAPS, lp0);
 }
+#ifdef PS2_PROFILE
+// OPT13-IO (RS-02): the lumps a level will probably need, in one sorted pass over the packs (w_pack.c, WPack_PrefetchRun). Off unless -pkprefetch [KB] (default budget 2048 KB of
+// stored bytes, PU_CACHE: the zone takes the block back under pressure). The list is the one R_PrecacheLevel walks (the patches of every texture on a side, of every flat of the
+// level and of the sky; every frame of every sprite a mobj of the level uses) plus the sprites of the skins in the game.
+static void R_PrefetchSprite(lumpnum_t lump)
+{
+	if (lump != LUMPERROR)
+		W_PrefetchLump(WADFILENUM(lump), LUMPNUM(lump));
+}
+
+static void R_PrefetchSpriteDef(const spritedef_t *def)
+{
+	size_t j, k;
+
+	if (!def || !def->spriteframes)
+		return;
+	for (j = 0; j < def->numframes; j++)
+	{
+		const spriteframe_t *sf = &def->spriteframes[j];
+
+		switch (sf->rotate)
+		{
+		case SRF_SINGLE:
+			R_PrefetchSprite(sf->lumppat[0]);
+			break;
+		case SRF_2D:
+			R_PrefetchSprite(sf->lumppat[2]);
+			R_PrefetchSprite(sf->lumppat[6]);
+			break;
+		default:
+			for (k = (sf->rotate & SRF_3DGE ? 16 : 8); k--;)
+				R_PrefetchSprite(sf->lumppat[k]);
+			break;
+		}
+	}
+}
+
+static void R_PrefetchPump(void)
+{
+	if (netgame)
+		NetKeepAlive(); // RS-09: a long pass over the medium must not make the server drop the node
+}
+
+void R_PrefetchLevel(void)
+{
+	static INT32 enabled = -1;
+	static UINT32 budget = 2048 * 1024;
+	char *texturepresent, *spritepresent;
+	size_t i, j;
+	thinker_t *th;
+
+	if (enabled < 0)
+	{
+		enabled = M_CheckParm("-pkprefetch") != 0;
+		if (enabled && M_IsNextParm())
+		{
+			const INT32 kb = atoi(M_GetNextParm());
+
+			if (kb > 0)
+				budget = (UINT32)kb * 1024;
+		}
+	}
+	if (!enabled || dedicated)
+		return;
+	texturepresent = calloc(numtextures, sizeof (*texturepresent));
+	spritepresent = calloc(numsprites, sizeof (*spritepresent));
+	if (!texturepresent || !spritepresent)
+	{
+		free(texturepresent);
+		free(spritepresent);
+		return;
+	}
+	WPack_PrefetchBegin();
+	for (j = 0; j < numsides; j++)
+	{
+		if (sides[j].toptexture >= 0 && sides[j].toptexture < numtextures)
+			texturepresent[sides[j].toptexture] = 1;
+		if (sides[j].midtexture >= 0 && sides[j].midtexture < numtextures)
+			texturepresent[sides[j].midtexture] = 1;
+		if (sides[j].bottomtexture >= 0 && sides[j].bottomtexture < numtextures)
+			texturepresent[sides[j].bottomtexture] = 1;
+	}
+	if (skytexture >= 0 && skytexture < numtextures)
+		texturepresent[skytexture] = 1;
+	for (j = 0; j < numlevelflats; j++)
+		if (levelflats[j].type == LEVELFLAT_TEXTURE && levelflats[j].texture_id >= 0 && levelflats[j].texture_id < numtextures)
+			texturepresent[levelflats[j].texture_id] = 1;
+	for (j = 0; j < (size_t)numtextures; j++)
+	{
+		INT32 k;
+
+		if (!texturepresent[j] || !textures[j])
+			continue;
+		for (k = 0; k < textures[j]->patchcount; k++)
+			W_PrefetchLump(textures[j]->patches[k].wad, textures[j]->patches[k].lump);
+	}
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+		if (th->function != (actionf_p1)P_RemoveThinkerDelayed && ((mobj_t *)th)->sprite < numsprites)
+			spritepresent[((mobj_t *)th)->sprite] = 1;
+	for (i = 0; i < numsprites; i++)
+		if (spritepresent[i])
+			R_PrefetchSpriteDef(&sprites[i]);
+	for (j = 0; j < MAXPLAYERS; j++) // the skins in the game: their frames are met the first time the player moves
+	{
+		const skin_t *sk;
+		INT32 k;
+
+		if (!playeringame[j] || players[j].skin >= numskins || !(sk = skins[players[j].skin]))
+			continue;
+		for (k = 0; k < LIMIT_NUMPLAYERSPRITES; k++)
+			R_PrefetchSpriteDef(&sk->sprites[k]);
+	}
+	free(texturepresent);
+	free(spritepresent);
+	{
+		const UINT32 kept = WPack_PrefetchRun(budget, R_PrefetchPump);
+		UINT32 hits, hitbytes, ranges, held;
+
+		WPack_PrefetchStats(&hits, &hitbytes, &ranges, &held);
+		CONS_Printf("Prefetch: %u KB of stored lumps in %u reads (budget %u KB)\n", (unsigned)(kept >> 10), (unsigned)ranges, (unsigned)(budget >> 10));
+	}
+}
+#endif
+
 
 //
 // R_PrecacheLevel

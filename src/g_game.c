@@ -4809,7 +4809,12 @@ void G_SaveGameData(gamedata_t *data)
 		}
 	}
 
+#ifdef PS2_PROFILE
+	if (!FIL_WriteFile(va(pandf, srb2home, gamedatafilename), savebuffer.buf, savebuffer.pos)) // OPT13-IO (RS-08): nobody told the player that the progress was not saved
+		CONS_Alert(CONS_ERROR, "Could not save the game data (%s): is the memory card or the stick full?\n", gamedatafilename);
+#else
 	FIL_WriteFile(va(pandf, srb2home, gamedatafilename), savebuffer.buf, savebuffer.pos);
+#endif
 	free(savebuffer.buf);
 }
 

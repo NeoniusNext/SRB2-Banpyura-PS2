@@ -35,6 +35,9 @@
 #include "../netcode/d_netfil.h"
 
 #include "ps2_boot.h"
+#ifdef HAS_ADDONS
+#include "ps2_addons.h"
+#endif
 #include "ps2_sys.h"
 #include "ps2_mem.h"
 #include "ps2_kbd.h"
@@ -610,7 +613,21 @@ INT32 I_mkdir(const char *dirname, INT32 unixright)
 char *I_GetEnv(const char *name)
 {
 	if (!strcmp(name, "HOME"))
+	{
+#ifdef HAS_ADDONS
+		// OPT13-IO (S-02): booted from a disc the home is the memory card, whose IOP drivers nobody had loaded: the config, gamedata.dat and the saves were silently lost.
+		// The drivers are IRX files in <data>/modules (ps2_addons.h; make_dist puts them on the disc); the first use of the home loads them.
+		static boolean prepared;
+
+		if (!prepared)
+		{
+			prepared = true;
+			if (!PS2Addons_Prepare(ps2boot.homedir))
+				CONS_Alert(CONS_WARNING, "PS2: the home device %s is not usable: the config and the saves cannot be kept\n", ps2boot.homedir);
+		}
+#endif
 		return ps2boot.homedir;
+	}
 	return getenv(name);
 }
 

@@ -18,6 +18,7 @@
 #include "ps2_boot.h"
 #include "ps2_addons.h"
 #include "ps2_usb.h"
+#include "ps2_sys.h" // PS2_SleepUs
 
 // 0 = not tried, 1 = usable, -1 = failed (never retried: a failed IRX load can leave the IOP in a state a second try does not fix)
 static int mc_state, usb_state;
@@ -85,7 +86,7 @@ static boolean PrepareUSB(void)
 			int i;
 
 			for (i = 0; i < 20 && !DeviceUp("mass:/"); i++) // a stick needs a moment to be detected: up to ~10 s
-				DelayThread(500 * 1000);
+				PS2_SleepUs(500 * 1000); // OPT13-IO (RS-06)
 			ok = i < 20;
 		}
 		usb_state = ok ? 1 : -1;
