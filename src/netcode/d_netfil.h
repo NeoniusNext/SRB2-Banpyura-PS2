@@ -91,10 +91,6 @@ typedef struct
 	UINT32 currentsize;
 	UINT32 totalsize;
 	UINT32 ackresendposition; // Used when resuming downloads
-#ifdef PS2
-	UINT8 *stage; // PS2-NET-10: fragments waiting for their write (see DL_Write in d_netfil.c)
-	UINT32 stagepos, stagelen;
-#endif
 } fileneeded_t;
 
 #define FILENEEDEDSIZE 23
