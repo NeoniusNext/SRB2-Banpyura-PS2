@@ -27,6 +27,8 @@
 #include "i_system.h"
 #include "r_fps.h"
 #include "r_things.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-23
+#include "m_argv.h"
 #include "r_translation.h"
 #include "r_patch.h"
 #include "r_patchrotation.h"
@@ -469,6 +471,19 @@ static void MirrorMissingRotations(void)
 	}
 }
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-23: the text of "SPRITE frame 3 (D)" was formatted (newlib sprintf, ~1500 cycles) for every frame of every one of the 1500 sprites at the start-up,
+// 18 M cycles, to be used by an error message that never comes: it is made where it is printed
+static const char *FrameDescription(char *buf, const char *sprname, UINT32 frame)
+{
+	if (frame < 64)
+		sprintf(buf, "%s frame %d (%c)", sprname, frame, R_Frame2Char(frame));
+	else
+		sprintf(buf, "%s frame %d", sprname, frame);
+	return buf;
+}
+#endif
+
 // Some checks to help development
 static void CheckFrame(const char *sprname)
 {
@@ -477,16 +492,21 @@ static void CheckFrame(const char *sprname)
 		spriteframe_t *spriteframe = &sprtemp[frame];
 
 		char framedescription[256];
+#ifdef PS2_PROFILE
+#define FRAMEDESC FrameDescription(framedescription, sprname, frame)
+#else
+#define FRAMEDESC framedescription
 		if (frame < 64)
 			sprintf(framedescription, "%s frame %d (%c)", sprname, frame, R_Frame2Char(frame));
 		else
 			sprintf(framedescription, "%s frame %d", sprname, frame);
+#endif
 
 		switch (spriteframe->rotate)
 		{
 		case SRF_NONE:
 			// no rotations were found for that frame at all
-			CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: No patches found for %s\n", framedescription);
+			CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: No patches found for %s\n", FRAMEDESC);
 			break;
 
 		case SRF_SINGLE:
@@ -497,7 +517,7 @@ static void CheckFrame(const char *sprname)
 			// we test to see whether the left and right slots are present
 			if ((spriteframe->lumppat[2] == LUMPERROR) || (spriteframe->lumppat[6] == LUMPERROR))
 				CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: Sprite %s is missing rotations (L-R mode)\n",
-					framedescription);
+					FRAMEDESC);
 			break;
 
 		default:
@@ -510,13 +530,15 @@ static void CheckFrame(const char *sprname)
 					// if it was not loaded the two are LUMPERROR
 					if (spriteframe->lumppat[rotation] == LUMPERROR)
 						CONS_Alert(CONS_ERROR, "R_AddSingleSpriteDef: Sprite %s is missing rotations (1-%c mode)\n",
-								framedescription, ((spriteframe->rotate & SRF_3DGE) ? 'G' : '8'));
+								FRAMEDESC, ((spriteframe->rotate & SRF_3DGE) ? 'G' : '8'));
 				}
 			}
 			break;
 		}
 	}
 }
+
+#undef FRAMEDESC
 
 // Install a single sprite, given its identifying name (4 chars)
 //
@@ -901,6 +923,45 @@ static vissprite_t *visspritechunks[MAXVISSPRITES >> VISSPRITECHUNKBITS] = {NULL
 // R_InitSprites
 // Called at program start.
 //
+#ifdef PS2_PROFILE
+// PS2-LOAD-23 (-loadprof -loadhash): a hash of the sprite tables R_InitSprites built: every sprite's frames (rotation type, the lump of each angle, the id, flip) and the cached
+// width / offsets of every sprite lump; printed as "LHASH spr.all"
+static void R_SpritesHash(void)
+{
+	ps2lp_hash_t hs = { { 2166136261u, 0x811C9DC5u ^ 0xA5A5A5A5u } };
+	size_t i, j, k;
+
+	if (!ps2lp_on || !M_CheckParm("-loadhash"))
+		return;
+	PS2LP_H32(&hs, (UINT32)numsprites);
+	PS2LP_H32(&hs, (UINT32)numspritelumps);
+	for (i = 0; i < numsprites; i++)
+	{
+		PS2LP_H32(&hs, (UINT32)sprites[i].numframes);
+		for (j = 0; j < sprites[i].numframes; j++)
+		{
+			const spriteframe_t *sf = &sprites[i].spriteframes[j];
+
+			PS2LP_H32(&hs, sf->rotate);
+			PS2LP_H32(&hs, sf->flip);
+			for (k = 0; k < 16; k++)
+			{
+				PS2LP_H32(&hs, (UINT32)sf->lumppat[k]);
+				PS2LP_H32(&hs, (UINT32)sf->lumpid[k]);
+			}
+		}
+	}
+	for (i = 0; i < numspritelumps; i++)
+	{
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].width);
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].offset);
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].topoffset);
+		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].height);
+	}
+	PS2LP_HashPrint("spr.all", &hs);
+}
+#endif
+
 void R_InitSprites(void)
 {
 	size_t i;
@@ -940,22 +1001,47 @@ void R_InitSprites(void)
 #endif
 
 	// find sprites in each -file added pwad
-	for (i = 0; i < numwadfiles; i++)
-		R_AddSpriteDefs((UINT16)i);
+	{
+		LP_BEGIN(lps);
+
+		for (i = 0; i < numwadfiles; i++)
+			R_AddSpriteDefs((UINT16)i);
+		LP_END(R_SPRDEFS, lps);
+	}
 
 	//
 	// now check for skins
 	//
 
 	// it can be is do before loading config for skin cvar possible value
-	R_InitSkins();
+	{
+		LP_BEGIN(lps);
+
+		R_InitSkins();
+		LP_END(R_SKINS, lps);
+	}
 	for (i = 0; i < numwadfiles; i++)
 	{
+		LP_BEGIN(lps);
+
 		R_AddSkins((UINT16)i, true);
+		LP_END(R_ADDSKINS, lps);
+		LP_RESTART(lps);
 		R_PatchSkins((UINT16)i, true);
+		LP_END(R_PATCHSKINS, lps);
+		LP_RESTART(lps);
 		R_LoadSpriteInfoLumps(i, wadfiles[i]->numlumps);
+		LP_END(R_SPRINFO, lps);
 	}
-	ST_ReloadSkinFaceGraphics();
+	{
+		LP_BEGIN(lps);
+
+		ST_ReloadSkinFaceGraphics();
+		LP_END(R_FACEGFX, lps);
+	}
+#ifdef PS2_PROFILE
+	R_SpritesHash();
+#endif
 
 #ifdef HWRENDER
 	if (rendermode == render_opengl)

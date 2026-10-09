@@ -99,6 +99,11 @@
 	X(R_SPRITES, "R_InitSprites") \
 	X(R_COLORMAPS, "R_InitColormaps / R_InitTranslationTables") \
 	X(R_SKINS, "R_InitSkins") \
+	X(R_SPRDEFS, "R_InitSprites: R_AddSpriteDefs of every file") \
+	X(R_ADDSKINS, "R_InitSprites: R_AddSkins of every file") \
+	X(R_PATCHSKINS, "R_InitSprites: R_PatchSkins of every file") \
+	X(R_SPRINFO, "R_InitSprites: R_LoadSpriteInfoLumps of every file") \
+	X(R_FACEGFX, "R_InitSprites: ST_ReloadSkinFaceGraphics") \
 	X(R_OTHER, "R_Init other (tables, view, HUD patches)") \
 	X(R_LIGHTGEN, "R_GenerateLightTable (computed, not the cached default)") \
 	X(OTHER1, "other 1") \

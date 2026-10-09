@@ -808,6 +808,9 @@ lighttable_t *R_CreateLightTable(extracolormap_t *extra_colormap)
 #ifdef PS2_PROFILE
 // PS2-LOAD-13: the light table of the default colormap (no tint, fade to black) is rebuilt at every level (R_ClearColormaps): 8704 colours through soft-double
 // arithmetic, ~40 M cycles. It depends on the colours of the master palette only, so the table of the last time is kept while they are the same.
+static double cbright_cache[256];
+static UINT8 cbright_pal[256][3];
+static boolean cbright_valid;
 static UINT8 deflight_table[256 * 34];
 static UINT8 deflight_pal[256][3];
 static boolean deflight_valid;
@@ -984,12 +987,36 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 		//  which is then converted to SRB2's palette later
 		// deltas[i] stores a corresponding fade delta between the RGB color and the final fade color;
 		//  map[i]'s values are decremented by after each use
+#ifdef PS2_PROFILE
+		// PS2-LOAD-22: the 256 square roots (14 000 cycles each in the soft double sqrt of newlib) only depend on the palette: kept while it is the same
+		{
+			UINT8 sig[256][3];
+
+			DefLightSig(sig);
+			if (!cbright_valid || memcmp(sig, cbright_pal, sizeof sig))
+			{
+				for (i = 0; i < 256; i++)
+				{
+					r = sig[i][0];
+					g = sig[i][1];
+					b = sig[i][2];
+					cbright_cache[i] = sqrt((r*r) + (g*g) + (b*b));
+				}
+				memcpy(cbright_pal, sig, sizeof sig);
+				cbright_valid = true;
+			}
+		}
+#endif
 		for (i = 0; i < 256; i++)
 		{
 			r = pMasterPalette[i].s.red;
 			g = pMasterPalette[i].s.green;
 			b = pMasterPalette[i].s.blue;
+#ifdef PS2_PROFILE
+			cbrightness = cbright_cache[i];
+#else
 			cbrightness = sqrt((r*r) + (g*g) + (b*b));
+#endif
 
 			map[i][0] = (cbrightness * cmaskr) + (r * othermask);
 			if (map[i][0] > 255.0l)

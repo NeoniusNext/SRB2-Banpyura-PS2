@@ -2673,8 +2673,15 @@ size_t W_ReadLumpHeaderPwad(UINT16 wad, UINT16 lump, void *dest, size_t size, si
 	r = W_ReadLumpHeaderPwad_(wad, lump, dest, size, offset);
 	LP_END(W_READLUMP, lp0);
 #ifdef PS2_PROFILE
-	if (ps2lp_on && M_CheckParm("-lpreads"))
-		I_OutputMsg("RD %u %u %u %u %s\n", (unsigned)wad, (unsigned)lump, (unsigned)size, (unsigned)offset, wadfiles[wad]->lumpinfo[lump].fullname);
+	if (ps2lp_on)
+	{
+		static int lpreads = -1; // (the argument list was searched for every lump read: 5% of the profile of R_InitSprites)
+
+		if (lpreads < 0)
+			lpreads = M_CheckParm("-lpreads") != 0;
+		if (lpreads)
+			I_OutputMsg("RD %u %u %u %u %s\n", (unsigned)wad, (unsigned)lump, (unsigned)size, (unsigned)offset, wadfiles[wad]->lumpinfo[lump].fullname);
+	}
 #endif
 	return r;
 }
