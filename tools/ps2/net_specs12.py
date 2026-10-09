@@ -140,6 +140,38 @@ for _name, _files, _extra in (('dl-nsk', ['NSK.pk3'], []), ('dl-both', ['NSK.pk3
               files={'pad.txt': pad(*crosses(200, 4000))}, cfg=CFG_SYNC, start=10)
     mine(_name, {'timeout': 900, 'nodes': [srv, cli], 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 1400}], 'grace': 3})
 
+# ---- compatibility with the ORIGINAL netcode: build/pc-ref is the PC build of the main tree (no OPT12 code, no -netsync/-netlat hooks, so no NETSYNC lines of its own).
+# PS2 client (all the OPT12 changes on) <-> original PC dedicated server; original PC client <-> PS2 server. "blamecfail" makes the server kick a client whose player state
+# disagrees (consistency check of the original protocol), so a finished run without "Consistency failure"/"left the game" is the proof of equal state.
+REF = __import__('net_env').pc_exe('pc-ref')
+
+
+def compat_refsrv(name, renderer='Software', tics=2100, extra_cli=None):
+    srv = pcsrv(extra=[], start=0, exe=REF)
+    cli_args = ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt'] + (['-renderer', renderer] if renderer != 'Software' else []) + (extra_cli or [])
+    cli = ps2('cli', EMU1, cli_args, files={'pad.txt': pad(*crosses(200, 600, 60)) + ',' + walk(1, 700, tics * 3, seed=2)},
+              cfg=CFG_SYNC + ('fpscap "Match refresh rate"\n' if renderer == 'Hardware' else ''), start=8)
+    mine(name, {'timeout': 900, 'nodes': [srv, cli], 'abort_on': [{'node': 'srv', 'text': 'left the game'}, {'node': 'srv', 'text': 'Consistency failure'}],
+                'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': tics}], 'grace': 3})
+
+
+compat_refsrv('compat-refsrv-ps2cli')
+compat_refsrv('compat-refsrv-ps2cli-hw', 'Hardware', tics=1400)
+compat_refsrv('compat-refsrv-ps2cli-old', extra_cli=OLD)
+
+
+def compat_refcli(name, tics=2100):
+    n = tics * 3
+    srv = ps2('srv', EMU1, ['-server', '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'], map='MAP01',
+              files={'pad.txt': walk(1, 500, n), 'cmd.txt': punches(5030, 120, 3000)}, cfg=CFG_SYNC)
+    cli = dict(id='cli', kind='pc', exe=REF, cwd=PCDIR, args=['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-home', HOME2],
+               start_when={'node': 'srv', 'text': 'PS2 net: address', 'delay': 6})
+    mine(name, {'timeout': 900, 'nodes': [srv, cli], 'abort_on': [{'node': 'srv', 'text': 'left the game'}], 'until': [{'node': 'srv', 'text': 'NETSYNC gametic=', 'min': tics}], 'grace': 3})
+
+
+compat_refcli('compat-ps2srv-refcli')
+
+
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]
     for n, s in MINE.items():

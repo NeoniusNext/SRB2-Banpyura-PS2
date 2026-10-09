@@ -19,7 +19,7 @@ BASE = 'build/opt12-net'
 
 def pc_exe(kind='pc-net'):
     """the PC engine binary of build/<kind>/bin (its name carries the branch name)"""
-    hits = sorted(x for x in glob.glob(str(ROOT / 'build' / kind / 'bin' / '*')) if Path(x).is_file())
+    hits = sorted(x for x in glob.glob(str(ROOT / 'build' / kind / 'bin' / '**'), recursive=True) if Path(x).is_file())  # build/pc-ref keeps it one folder deeper
     if not hits:
         raise SystemExit(f'no PC engine in build/{kind}/bin: see tools/ps2/net_env.py')
     return Path(hits[0]).relative_to(ROOT).as_posix() if Path(hits[0]).is_relative_to(ROOT) else hits[0]
