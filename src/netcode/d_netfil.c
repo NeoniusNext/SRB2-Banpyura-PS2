@@ -1553,9 +1553,11 @@ void PT_FileFragment(SINT8 node, INT32 netconsole)
 			{
 #ifdef PS2_PROFILE
 				PS2_DLClosing(file->file);
-#endif
 				if (fclose(file->file) != 0) // OPT13-IO (RS-08): the last buffered piece did not reach the medium
 					I_Error("Can't write to %s: %s\n", file->filename, strerror(errno));
+#else
+				fclose(file->file);
+#endif
 				file->file = NULL;
 				free(file->receivedfragments);
 				free(file->ackpacket);
