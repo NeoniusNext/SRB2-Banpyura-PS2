@@ -100,6 +100,7 @@
 	X(R_COLORMAPS, "R_InitColormaps / R_InitTranslationTables") \
 	X(R_SKINS, "R_InitSkins") \
 	X(R_OTHER, "R_Init other (tables, view, HUD patches)") \
+	X(R_LIGHTGEN, "R_GenerateLightTable (computed, not the cached default)") \
 	X(OTHER1, "other 1") \
 	X(OTHER2, "other 2") \
 	X(OTHER3, "other 3")

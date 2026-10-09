@@ -33,6 +33,7 @@
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-1
 #ifdef PS2_PROFILE
 #include "ps2/ps2_nearest.h" // PS2-LOAD-14
+#include "m_argv.h" // -loadhash (the check of the light table steps)
 #endif
 
 #ifdef HWRENDER
@@ -324,7 +325,7 @@ static void R_CreateFadeColormaps(void)
 	size_t len, i;
 #ifdef PS2_PROFILE
 	static ps2nearest_t fadectx; // (the original asked NearestColor, i.e. the master palette, 16384 times)
-	const ps2nearest_t *nearest = &fadectx;
+	ps2nearest_t *nearest = &fadectx;
 
 	PS2Nearest_Build(&fadectx, pMasterPalette);
 #endif
@@ -844,6 +845,54 @@ static void DefLightPut(const UINT8 *src)
 }
 #endif
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-22: the 34 x 256 x 3 channel steps of R_GenerateLightTable on the bit patterns of the doubles (src/ps2/ps2_dbl.h: exact IEEE subtraction, comparison
+// and M_RoundUp in 64-bit integer arithmetic; the soft double of the EE did 40 M cycles of this per table). Gives the bytes the double code gives, or returns false
+// (a value that is not a zero or a normal finite number) and the double loop below runs. With -loadhash both run and are compared: a difference is an error.
+#include "ps2/ps2_dbl.h"
+
+typedef struct { UINT8 (*f)(UINT8, UINT8, UINT8); } lightnear_t;
+
+static uint8_t LightNearestCall(void *ctx, uint8_t r, uint8_t g, uint8_t b)
+{
+	return ((lightnear_t *)ctx)->f(r, g, b);
+}
+
+static UINT8 lightcheck_buf[256 * 34];
+static boolean lightcheck_pending;
+
+static boolean R_LightStepsFast(UINT8 *dest, double cdestr, double cdestg, double cdestb, UINT8 fadestart, UINT8 (*nearestf)(UINT8, UINT8, UINT8))
+{
+	dblbits_t mb[256][3], db[256][3], destb[3];
+	lightnear_t ln;
+	int i, c;
+	boolean check = ps2lp_on && M_CheckParm("-loadhash");
+
+	for (i = 0; i < 256; i++)
+		for (c = 0; c < 3; c++)
+		{
+			mb[i][c] = Dbl_Bits(map[i][c]);
+			db[i][c] = Dbl_Bits(deltas[i][c]);
+		}
+	destb[0] = Dbl_Bits(cdestr);
+	destb[1] = Dbl_Bits(cdestg);
+	destb[2] = Dbl_Bits(cdestb);
+	ln.f = nearestf;
+	if (!Dbl_LightSteps(mb, db, destb, fadestart, check ? lightcheck_buf : dest, LightNearestCall, &ln))
+	{
+		if (check)
+			I_OutputMsg("LCHECK light table: the double code ran (a value was not a normal number)\n");
+		return false;
+	}
+	if (check)
+	{
+		lightcheck_pending = true; // the double loop runs too; R_GenerateLightTable compares afterwards
+		return false;
+	}
+	return true;
+}
+#endif
+
 void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 {
 	double cmaskr, cmaskg, cmaskb, cdestr, cdestg, cdestb;
@@ -869,6 +918,8 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 	if (defparams && DefLightGet((UINT8 *)extra_colormap->colormap))
 		return;
 #endif
+
+	LP_BEGIN(lpg);
 
 	/////////////////////
 	// Calc the RGBA mask
@@ -962,6 +1013,9 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 
 		// Calculate the palette index for each palette index, for each light level
 		// (as well as the two unused colormap lines we inherited from Doom)
+#ifdef PS2_PROFILE
+		if (!R_LightStepsFast((UINT8 *)colormap_p, cdestr, cdestg, cdestb, fadestart, NearestColorFunc))
+#endif
 		for (p = 0; p < 34; p++)
 		{
 			for (i = 0; i < 256; i++)
@@ -993,9 +1047,18 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 		}
 	}
 #ifdef PS2_PROFILE
+	if (lightcheck_pending)
+	{
+		lightcheck_pending = false;
+		if (memcmp(lightcheck_buf, extra_colormap->colormap, 256 * 34))
+			I_Error("R_GenerateLightTable: the integer steps give a different table than the double code (rgba %08x fade %08x)", (unsigned)extra_colormap->rgba, (unsigned)extra_colormap->fadergba);
+		I_OutputMsg("LCHECK light table rgba %08x fade %08x start %u end %u: integer steps == double code\n", (unsigned)extra_colormap->rgba, (unsigned)extra_colormap->fadergba,
+			(unsigned)extra_colormap->fadestart, (unsigned)extra_colormap->fadeend);
+	}
 	if (defparams)
 		DefLightPut((const UINT8 *)extra_colormap->colormap);
 #endif
+	LP_END(R_LIGHTGEN, lpg);
 }
 
 void R_UpdateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
@@ -1385,7 +1448,9 @@ void R_InitData(void)
 
 	CONS_Printf("R_InitColormaps()...\n");
 	LP_RESTART(lp0);
+	LP_SAMPLE(26);
 	R_InitColormaps();
+	LP_SAMPLE(27);
 	LP_END(R_COLORMAPS, lp0);
 }
 
