@@ -200,4 +200,4 @@
 
 * `netup-ha` (Hardware, подъём сети до «PS2 net: address», сторож `-netwd`): **10 из 10 без зависания** (`elf-e13`); вместе с прежними 14/14 (`e1`) и 8/8 (`e7`) — 32 из 32 против 7 зависаний на 22 у базовой сборки. `netup-so` (Software): 3 из 3.
 * `reconnect` (`exitgame`, `connect`, сеть поднята): `connect` → «rejoined» за 3.8 с.
-* `reconnect-fakedown` (проверка линка при повторном `connect`, `-netfakedown` выдаёт «линка нет»): «the Ethernet link is gone, bringing the network up again», сеть заново за 0.07 с (модули и аренда на месте), экран «Network ready», `connect` → «rejoined» за 5.8 с, `NETSYNC` без отличий. Это проверяет **действие** PS2-NET-8 в эмуляторе; настоящий выдернутый кабель на железе не проверялся.
+* `reconnect-fakedown` (проверка линка при повторном `connect`, `-netfakedown` выдаёт «линка нет»): «the Ethernet link is gone, bringing the network up again», сеть заново за 0.07 с (модули и аренда на месте), экран «Network ready», `connect` → «rejoined» за 5.8 с, `NETSYNC` 61 общий отсчёт, 0 отличий (у `reconnect` так же: 61, 0). Это проверяет **действие** PS2-NET-8 в эмуляторе; настоящий выдернутый кабель на железе не проверялся.
