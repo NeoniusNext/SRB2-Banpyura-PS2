@@ -816,6 +816,7 @@ void *WPack_SetupHandleEx(FILE *handle, const char *path)
 	void *buf;
 
 	StreamDrop(handle); // a slot of an earlier stream with the same address
+	pf.n = 0;           // and the prefetch list: its items are keyed by the address of the stream
 	s = StreamNew(handle, path);
 	if (PeekMagic(s))
 	{
@@ -986,6 +987,15 @@ int WPack_VerifyNMUS(FILE *handle)
 	if (!ReadHeader(handle, "pack", &h, &ext))
 		return -1;
 	return (h.flags & SRP2_FLAG_NONMUSIC) ? 0 : 1;
+}
+
+static boolean AllocBuffers(void)
+{
+	if (!cbuf)
+		cbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+	if (!sbuf)
+		sbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+	return cbuf && sbuf;
 }
 
 lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, void **poolp, boolean *nonmusic, wpack_t **packp)
@@ -1173,19 +1183,21 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
 		*packp = pk;
 	}
 
+	{
+		// The window is allocated now, while the heap is empty (like the stdio buffer it replaces), not at the first miss while playing: there the arena has no room to spare
+		// and the buffer would push cache blocks out or fragment the free space.
+		pkstream_t *s = StreamFor(handle);
+
+		if (!s->buf)
+			s->buf = WPACK_ALIGNED_ALLOC(s->pol->cap);
+		AllocBuffers(); // the decode buffers and the bounce buffer too (a failure shows at the first read that needs them)
+		if (!iobuf)
+			iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+	}
 	*nlmp = (UINT16)n;
 	*poolp = pool;
 	*nonmusic = (h.flags & SRP2_FLAG_NONMUSIC) != 0;
 	return lumpinfo;
-}
-
-static boolean AllocBuffers(void)
-{
-	if (!cbuf)
-		cbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
-	if (!sbuf)
-		sbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
-	return cbuf && sbuf;
 }
 
 void WPack_Shutdown(void)
