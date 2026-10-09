@@ -9,6 +9,10 @@
   (≈ 50 с на DEMO_001, 1.5 мин на остальные; `build/run.sh NAME ELF DEMO_00n [арг.]`). Таблица: `python3 tools/ps2/hwsum.py --skip 1 N`, стоимость драйвера: `python3 tools/ps2/hwdrv_sum.py N`.
 * Реальное время с интерполяцией: `opt_run.py ... --playdemo --cfg 'fpscap "Match refresh rate"' --until "HWPROF win=12 "` (тестовый `reference.cfg` ставит `fpscap "35"`: без `--cfg` интерполяции нет).
 
+* Скрипты раунда (в git, `tools/ps2/`): `hwdrv_runz.sh NAME ELF DEMO ZRESERVE [арг.]` (один прогон демо, HW, `-ps2prof`), `hwdrv_abnew.sh TAG ELF "1 2 3 4"` (пары `TAG_dN_new` (умолчания) / `TAG_dN_old` (`-hwkeep 1 -hwfid 1`)), `hwdrv_ab.py RUN...` (одна строка на прогон),
+  `hwdrv_sum.py RUN` (по окнам: драйвер, планировщик, `settex`), `hwdrv_vram.py RUN...` (заливки, рабочее множество, пул), `hwdrv_showmem.sh NAME ELF DEMO КАДРОВ` (строка `SHOWMEM now` в конце), `hwdrv_uicmp.py TAG СЦЕНАРИЙ` / `hwdrv_sheet.py` / `hwdrv_ppmdiff.py` (сравнение снимков).
+  Прогоны запускать строго по одному (`run_pcsx2.py` берёт слот и замок `/tmp/srb2ps2-locks`; убитый прогон оставляет замок до 15 минут: удалять только свой, по pid внутри файла).
+
 ## 1. Исходные числа (ELF HEAD `455b669` + `--prof`, `build/base.ELF`, прогон `b_d1..b_d4`)
 | демо | wall среднее / максимум (окна 1..9), М | FPS по среднему | `timed ... realtics` | `drv draw` | драйвер всего + планировщик (HWPROF23), М |
 |---|---:|---:|---:|---:|---:|
