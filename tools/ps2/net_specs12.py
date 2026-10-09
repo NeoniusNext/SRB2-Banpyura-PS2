@@ -61,6 +61,9 @@ lat_pair('lat-hw-old', 'Hardware', extra_cli=OLD)
 lat_pair('lat-sw-trace-old', 'Software', tics=1100, extra_cli=OLD + ['-netlattrace'])
 lat_pair('lat-sw-trace-noearly', 'Software', tics=1100, extra_cli=['-netlattrace', '-netnoearly'])
 lat_pair('lat-sw-trace-buf0', 'Software', tics=1100, extra_cli=['-netlattrace', '-netearlybuf', '0'])
+# the receive thread at lwIP's priority (6), as before the add-on download finding (PS2-NET-5)
+lat_pair('lat-sw-p6', 'Software', extra_cli=['-netsvcprio', '6'])
+lat_pair('lat-hw-p6', 'Hardware', extra_cli=['-netsvcprio', '6'])
 lat_pair('lat-hw-trace', 'Hardware', tics=1100, extra_cli=['-netlattrace'])
 lat_pair('lat-hw-trace-noearly', 'Hardware', tics=1100, extra_cli=['-netlattrace', '-netnoearly'])
 lat_pair('lat-hw-trace-buf0', 'Hardware', tics=1100, extra_cli=['-netlattrace', '-netearlybuf', '0'])
@@ -212,6 +215,14 @@ mine('menu-browse-blackhole-cancel', {'timeout': 400, 'nodes': [ps2('cli', EMU1,
 # the ORIGINAL server (build/pc-ref, no OPT12 code) with a PS2 client over a lossy line: the early acknowledgements and the resend requests must work with the unchanged server too
 impaired('compat-refsrv-loss15', ['--loss', '15', '--delay', '30', '--jitter', '10'], tics=1400, srv_exe=REF,
          until=[{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}], abort=False)
+
+# priority of the receive thread against lwIP's threads (6): above them it takes every datagram out of lwIP's small mailbox as it arrives (-netsvcprio, a test parameter)
+for _pr in (4, 5):
+    for _ds in (8, 16, 32):
+        srv = pcsrv(extra=['-netlat', '-file'] + [f'{ADDONS}/{f}' for f in ('NSK.pk3', 'ZT.pk3')] + ([] if _ds == 16 else ['+downloadspeed', str(_ds)]), start=3)
+        cli = ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-netlat', '-padscript', 'file:pad.txt', '-netsvcprio', str(_pr)],
+                  files={'pad.txt': pad(*crosses(200, 4000))}, cfg=CFG_SYNC, start=10)
+        mine(f'dl-both-p{_pr}-ds{_ds}', {'timeout': 900, 'nodes': [srv, cli], 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': 1400}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': 1400}], 'grace': 3})
 
 if __name__ == '__main__':
     names = [n for n in ARGS_NAMES if not n.startswith('-') and n in MINE]

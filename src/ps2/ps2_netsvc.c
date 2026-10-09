@@ -4,9 +4,15 @@
 // datagrams per socket (the receive buffer cannot be enlarged: SO_RCVBUF is not supported), so a server that sends a burst (16 file fragments per tic, the join) lost most of it
 // while the game thread was drawing, and a tic of the server waited for the next pass of the loop before the game even saw it, let alone acknowledged it.
 //
-// Now: a thread of its own (priority 6, above the game thread) sits in a blocking recvfrom() on the socket (no time-out: nothing of the SDK's alarm library is involved, see
-// PS2_SleepUs), takes every datagram at once, stamps it with the time of arrival and queues it in a ring of NSV_SLOTS packets. The game thread's SOCK_Get takes the packets out of
-// the ring, in order, exactly as it took them from the socket. Nothing of the game's state is touched by the thread, with one exception:
+// Now: a thread of its own (priority 5: above lwIP's threads at 6 and the game thread at 8) sits in a blocking recvfrom() on the socket (no time-out: nothing of the SDK's alarm
+// library is involved, see PS2_SleepUs), takes every datagram at once, stamps it with the time of arrival and queues it in a ring of NSV_SLOTS packets. The game thread's SOCK_Get
+// takes the packets out of the ring, in order, exactly as it took them from the socket. Nothing of the game's state is touched by the thread, with one exception:
+//
+//   Why above lwIP (found with the add-on download: ZT.pk3, 2 MB, 12.1 s at priority 6, 3.9 s at 5 and at 4): at lwIP's own priority the thread was not woken until the tcpip
+//   thread had finished the burst it was processing (a server sends 16 fragments of 1 KB in one go), and the UDP mailbox of an lwIP socket holds a handful of datagrams: the rest
+//   of the burst was dropped (6415 fragments sent for 2023 needed, 68 % lost). Above it, every datagram is taken out of the mailbox as it arrives.
+//
+//   (-netsvcprio N sets another priority for a test.)
 //
 //   Early acknowledgement. A joined client answers every PT_SERVERTICS packet that brings the tics it was waiting for with a PT_NODEKEEPALIVE packet whose resendfrom is the new first tic
 //   it needs (what the next PT_CLIENTCMD would say, 10 bytes, no ticcmd): the server learns at once that the tics have arrived, instead of after the client's next tic and next frame
@@ -33,7 +39,7 @@
 #include "ps2_sys.h"
 
 #define NSV_SLOTS 64 // a power of two; 1.4 KiB each (the heap, not the bss): 1.8 s of tics, or 90 KiB of file fragments
-#define NSV_PRIO 6
+#define NSV_PRIO 5 // above lwIP's threads (6)
 #define NSV_STACK 16384
 #define NSV_MAIN_ALIVE_MS 150
 
@@ -184,6 +190,8 @@ boolean PS2NetSvc_Start(int fd)
 	t.stack_size = NSV_STACK;
 	t.gp_reg = &_gp;
 	t.initial_priority = NSV_PRIO;
+	if (M_CheckParm("-netsvcprio") && M_IsNextParm())
+		t.initial_priority = atoi(M_GetNextParm()); // a test: the priority of the thread against lwIP's (6), see docs/GATES/g1/opt12-NET.md
 	nsv.tid = CreateThread(&t);
 	if (nsv.tid < 0)
 		return false;
