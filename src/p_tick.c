@@ -480,10 +480,8 @@ static inline void P_RunThinkers(void)
 			{
 				const char *nx = (const char *)currentthinker->next;
 
-				__builtin_prefetch(nx, 0, 3);
-				__builtin_prefetch(nx + 64, 0, 3);
-				__builtin_prefetch(nx + 192, 0, 3);
-				__builtin_prefetch(nx + 256, 0, 3);
+				// (`pref 0` = load: the R5900 knows hint 0 and 1; __builtin_prefetch with locality 3 emits hint 6)
+				__asm__ volatile("pref 0, 0(%0)\n\tpref 0, 64(%0)\n\tpref 0, 192(%0)\n\tpref 0, 256(%0)" : : "r"(nx));
 			}
 #endif
 #ifdef PARANOIA
