@@ -969,10 +969,25 @@ static void R_SpritesHash(void)
 	PS2LP_H32(&hs, (UINT32)numspritelumps);
 	for (i = 0; i < numsprites; i++)
 	{
+		const boolean detail = M_CheckParm("-loadhash-detail"); // (one "LHSPR" line per sprite: where two runs differ)
+		ps2lp_hash_t hd = { { 2166136261u, 0x811C9DC5u ^ 0xA5A5A5A5u } };
+
 		PS2LP_H32(&hs, (UINT32)sprites[i].numframes);
+		PS2LP_H32(&hd, (UINT32)sprites[i].numframes);
 		for (j = 0; j < sprites[i].numframes; j++)
 		{
 			const spriteframe_t *sf = &sprites[i].spriteframes[j];
+
+			if (detail)
+			{
+				PS2LP_H32(&hd, sf->rotate);
+				PS2LP_H32(&hd, sf->flip);
+				for (k = 0; k < 16; k++)
+				{
+					PS2LP_H32(&hd, (UINT32)sf->lumppat[k]);
+					PS2LP_H32(&hd, (UINT32)sf->lumpid[k]);
+				}
+			}
 
 			PS2LP_H32(&hs, sf->rotate);
 			PS2LP_H32(&hs, sf->flip);
@@ -982,9 +997,13 @@ static void R_SpritesHash(void)
 				PS2LP_H32(&hs, (UINT32)sf->lumpid[k]);
 			}
 		}
+		if (detail && sprites[i].numframes)
+			I_OutputMsg("LHSPR %u %s %08x%08x\n", (unsigned)i, sprnames[i], (unsigned)hd.h[0], (unsigned)hd.h[1]);
 	}
 	for (i = 0; i < numspritelumps; i++)
 	{
+		if (M_CheckParm("-loadhash-detail"))
+			I_OutputMsg("LHSLUMP %u %d %d %d %d\n", (unsigned)i, (int)spritecachedinfo[i].width, (int)spritecachedinfo[i].offset, (int)spritecachedinfo[i].topoffset, (int)spritecachedinfo[i].height);
 		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].width);
 		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].offset);
 		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].topoffset);

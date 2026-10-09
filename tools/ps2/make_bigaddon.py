@@ -36,6 +36,15 @@ def png(w, h, rnd, alpha=True):
     return b.getvalue()
 
 
+def grab(png_bytes, xoff, yoff):
+    """PNG with a grAb chunk (the offsets of a sprite) right after IHDR: without it the engine leaves the offsets of the sprite unset (Picture_PNGDimensions) and the
+    cached sprite info of the add-on holds whatever the stack held, so two builds cannot be compared by a hash of it"""
+    ihdr_end = 8 + 8 + 13 + 4  # signature, IHDR length+type, IHDR data, IHDR crc
+    body = struct.pack('>ii', xoff, yoff)
+    chunk = struct.pack('>I', len(body)) + b'grAb' + body + struct.pack('>I', zlib.crc32(b'grAb' + body) & 0xFFFFFFFF)
+    return png_bytes[:ihdr_end] + chunk + png_bytes[ihdr_end:]
+
+
 def lua_script(n, rnd, entries=None):
     names = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel']
     tag = 'MOD%03d' % n
@@ -131,6 +140,8 @@ def main():
     ap.add_argument('--soc', type=int, default=150)
     ap.add_argument('--entries', type=int, default=None, help='entries of the table each script builds when it runs (default 150..320: a lot of data; 5 for a mod that is mostly hooks)')
     ap.add_argument('--seed', type=int, default=1)
+    ap.add_argument('--grab', action='store_true', help='give the sprite PNGs a grAb chunk (offsets): the add-on is then deterministic for the hash of the sprite tables')
+    ap.add_argument('--name', default='BIG', help='base name of the pk3')
     a = ap.parse_args()
     rnd = random.Random(a.seed)
     out = Path(a.out)
@@ -145,18 +156,19 @@ def main():
         entries.append(('Graphics/BIGG%03d.png' % i, png(40 + (i % 5) * 8, 40, rnd)))
     for i in range(a.sprites):
         # sprite lumps: four letters of sprite name + frame + rotation (BG00 .. BG99 / frames A..)
-        entries.append(('Sprites/BG%02dA0.png' % (i % 100) if i < 100 else 'Sprites/BG%02dB0.png' % (i % 100), png(48, 48, rnd)))
+        sp = png(48, 48, rnd)
+        entries.append(('Sprites/BG%02dA0.png' % (i % 100) if i < 100 else 'Sprites/BG%02dB0.png' % (i % 100), grab(sp, 24, 44) if a.grab else sp))
     for i in range(30):
         pcm = bytes(rnd.randrange(256) for _ in range(6000))
         entries.append(('Sounds/DSBIG%02d' % i, struct.pack('<HHI', 3, 11025, len(pcm) + 32) + b'\x80' * 16 + pcm + b'\x80' * 16))
-    path = out / 'BIG.pk3'
+    path = out / (a.name + '.pk3')
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as z:
         for name, data in entries:
             z.writestr(name, data)
     exp = {'file': path.name, 'size': path.stat().st_size, 'lumps': len(entries),
            'scripts': a.scripts, 'lua_bytes': sum(len(d) for n, d in entries if n.endswith('.lua')),
            'crc': {n: zlib.crc32(d) & 0xFFFFFFFF for n, d in entries}}
-    (out / 'BIG.expected.json').write_text(json.dumps(exp, indent=1))
+    (out / (a.name + '.expected.json')).write_text(json.dumps(exp, indent=1))
     print('wrote %s: %d bytes, %d lumps, %d Lua bytes' % (path, exp['size'], exp['lumps'], exp['lua_bytes']))
 
 
