@@ -56,7 +56,7 @@ hook("MobjMoveBlocked", "player", MT_PLAYER)
 hook("MobjFuse", "all")
 hook("BossThinker", "all")
 
-local nextprint = 100
+local nextprint, finished = 100, false
 local function summary()
 	local names = {}
 	for k in pairs(cnt) do names[#names+1] = k end
@@ -66,7 +66,7 @@ local function summary()
 	return table.concat(parts, " ")
 end
 addHook("ThinkFrame", function()
-	if leveltime == nextprint then
+	if not finished and leveltime == nextprint then
 		local n, h = 0, 17
 		for mo in mobjs.iterate() do
 			n = n + 1
@@ -75,7 +75,7 @@ addHook("ThinkFrame", function()
 		P("tic", leveltime, "mobjs", n, h)
 		P("hooks", summary())
 		nextprint = nextprint + 100
-		if leveltime >= 700 then P("DONE_HOOKS3") end
+		if leveltime >= 700 then finished = true P("DONE_HOOKS3") end -- (nothing is printed after the DONE line: the PC build runs on a little before the harness stops it)
 	end
 end)
 P("registered", "ok")
