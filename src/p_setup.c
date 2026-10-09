@@ -4064,7 +4064,7 @@ static boolean P_LoadBlockMap(UINT8 *data, size_t count)
 
 	// haleyjd 2/22/06: setup polyobject blockmap
 #ifdef PS2_PROFILE
-	polyblocklinks = NULL; // PS2-88: allocated by the first polyobject that is linked (p_polyobj.c)
+	Polyobj_ResetCells(); // PS2-88, 508: the polyobject blockmap exists only in a level that has polyobjects (p_polyobj.c)
 	PS2_POLYCELLS_RESET(); // PS2-200
 #else
 	count = sizeof(*polyblocklinks) * bmapwidth * bmapheight;
@@ -4447,7 +4447,7 @@ static void P_CreateBlockMap(void)
 
 		// haleyjd 2/22/06: setup polyobject blockmap
 #ifdef PS2_PROFILE
-		polyblocklinks = NULL; // PS2-88
+		Polyobj_ResetCells(); // PS2-88, 508
 		PS2_POLYCELLS_RESET(); // PS2-200
 #else
 		count = sizeof(*polyblocklinks) * bmapwidth * bmapheight;
