@@ -1419,7 +1419,7 @@ static boolean SOCK_OpenSocket(void)
 	if (!UDP_Socket())
 		return false;
 	if (mysocketses == 1 && mysockets[0] != (SOCKET_TYPE)ERRSOCKET && PS2NetSvc_Start(mysockets[0]))
-		CONS_Printf("PS2 net: receive thread started\n"); // PS2-NET-5; without it the game thread reads the socket itself, as before
+		CONS_Printf("PS2 net: receive thread started (%u KiB of heap)\n", (unsigned)(PS2NetSvc_HeapUse() >> 10)); // PS2-NET-5; without it the game thread reads the socket itself, as before
 	return true;
 #else
 	return UDP_Socket();

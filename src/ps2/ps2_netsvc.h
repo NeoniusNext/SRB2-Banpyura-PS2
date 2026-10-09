@@ -20,6 +20,8 @@ boolean PS2NetSvc_Start(int fd);
 // Ends the thread (before the socket is closed).
 void PS2NetSvc_Stop(void);
 boolean PS2NetSvc_Running(void);
+// bytes of the C heap the ring and the stack take while the thread exists (for the memory budget)
+UINT32 PS2NetSvc_HeapUse(void);
 
 // The oldest datagram that has not been taken yet (NULL: none); Pop() releases it.
 const nsv_packet_t *PS2NetSvc_Peek(void);

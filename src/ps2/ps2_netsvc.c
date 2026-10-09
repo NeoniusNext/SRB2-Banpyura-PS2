@@ -220,6 +220,11 @@ void PS2NetSvc_Stop(void)
 	}
 }
 
+UINT32 PS2NetSvc_HeapUse(void)
+{
+	return (nsv.ring ? (UINT32)(sizeof(nsv_packet_t) * NSV_SLOTS) : 0) + (nsv_stack ? NSV_STACK : 0);
+}
+
 boolean PS2NetSvc_Running(void)
 {
 	return nsv.tid >= 0;
