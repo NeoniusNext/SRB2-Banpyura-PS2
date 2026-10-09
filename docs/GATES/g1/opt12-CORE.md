@@ -73,3 +73,17 @@ MAP11 software, `-warp MAP11 -zquit 35 -zck`, `--prof` ELF (теги арены)
 * **Точность** (PS2REF ELF после PS2-505..508 и ещё раз после PS2-510/511, `build/gold.sh build/out-ref/SRB2.ELF g2 DEMO_001..004`): для всех 4 демо `tics identical over 1050 rows` против `golden/phase0-v2/run1`, `30 reference, 0 differ`
   против `golden/ps2-head`, `ALLHASH identical (1050 frames)`.
 * ПК-сборка (`cmake -S . -B build/pc-wt -G Ninja -DCMAKE_BUILD_TYPE=Release -DSRB2_CONFIG_PS2REF=ON -DSRB2_CONFIG_HWRENDER=ON ...; ninja -C build/pc-wt -j2`, 170 единиц): собирается без ошибок (правки под `PS2` / `PS2_PROFILE`).
+
+## 4. PS2-177 (двухпроходный цикл стен, `tools/ps2/sw_segloop2.patch.py`): применён, проверен, НЕ оставлен
+
+Патч применён на HEAD `1a91182` (+368 строк в `src/r_segs.c`), собран `--prof` (`build/out-prof177`) и `--ps2ref` (`build/out-ref177`), код возвращён `git checkout src/r_segs.c` (остаётся только сам скрипт).
+* Точность (побитно): хост (x86, `host_variant.sh s177`): `tics.csv` и FNV каждого из 1050 кадров всех 4 демо равны базе; EE (`build/gold.sh build/out-ref177/SRB2.ELF`): DEMO_001..004 — `tics identical over 1050 rows` против `golden/phase0-v2/run1`,
+  `30 reference, 0 differ` против `golden/ps2-head`, `ALLHASH identical (1050 frames)`.
+* Скорость (две ELF `--prof` — с патчем и без, повтор ×2, результаты повторяются до последнего знака; М тактов на кадр / FPS = 294.912 / М):
+| демо | без патча | с патчем | разница |
+|---|---:|---:|---:|
+| DEMO_001 | 8.29 (35.6) | 8.25 (35.7) | −0.5 % |
+| DEMO_002 | 8.42 (35.0) | 8.41 (35.1) | −0.1 % |
+| DEMO_004 | 11.79 (25.0) | 11.79 (25.0) | 0 |
+Итог: цель «≥ 35 FPS на D1/D2» достигнута и без патча (35.6 / 35.0 по тактам EE; запас на D2 нулевой), патч даёт +0.1 FPS при 368 строках кода в самом горячем цикле; вывод OPT11-CORE подтверждён на нынешнем HEAD.
+По правилу «не оставлять код без выигрыша» не принят. `sw_segloop2.patch.py` остаётся в `tools/ps2/` с пометкой «применён и проверен, выигрыша нет».
