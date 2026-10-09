@@ -908,8 +908,12 @@ static void D_RunFrame(void)
 #ifdef PS2_PROF_DIRECT
 			{
 				const UINT32 pc0 = PS2Prof_Cyc();
+				UINT32 pcd;
 				TryRunTics(realtics);
-				ps2prof_c_tick += PS2Prof_Cyc() - pc0;
+				pcd = PS2Prof_Cyc() - pc0;
+				ps2prof_c_tick += pcd;
+				if (pcd > ps2prof_c_tickmax) // OPT13 IQ: the longest TryRunTics call of the window (a spike of one tic is invisible in the window sum)
+					ps2prof_c_tickmax = pcd;
 			}
 #else
 			TryRunTics(realtics);
