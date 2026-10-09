@@ -24,8 +24,7 @@
 #define HWR_GO_NOPB 0x10000u
 #define HWR_PB_END 0xFFFFFFFFu
 #define HWR_PB_BMAX 4096u // buckets (states) of one batch: more flush what is collected (a frame with more distinct states than that is not seen)
-#define HWR_PB_CBITS 11 // OPT13 IS (PS2-HW-704): 2048 slots of the direct mapped state cache (512 before: a frame of D1 has 170 states, sprites of one picture in different lights share a slot, and a third of the polygons that missed the cache found their bucket again through the slow path)
-#define HWR_PB_CSLOTS (1u << HWR_PB_CBITS)
+#define HWR_PB_CSLOTS 512u
 #define HWR_PB_TSLOTS 2048u
 #define HWR_PB_XSLOTS 1024u
 
@@ -70,7 +69,6 @@ static UINT32 pb_n, pb_ecap, pb_nplan;
 static hwr_pbk_t *pb_bk;
 static unsigned long long *pb_sk;
 static UINT32 pb_nb, pb_bcap;
-static UINT32 pb_cshift = 32 - HWR_PB_CBITS; // the index of the cache is the top bits of the hash (-hwfx 536870912 = FX4_NOPBC: 9 bits as before OPT13 IS)
 static UINT16 pb_cache[HWR_PB_CSLOTS]; // bucket + 1; never cleared (the entry is verified by comparing the state)
 static UINT16 pb_tab[HWR_PB_TSLOTS]; // bucket + 1, open addressing; cleared after a batch that used it
 static int pb_tab_dirty;
@@ -149,7 +147,6 @@ static void HWR_PBAlloc(void)
 	memset(pb_tab, 0, sizeof pb_tab);
 	memset(pb_xv, 0, sizeof pb_xv);
 	memset(pb_cache, 0, sizeof pb_cache);
-	pb_cshift = (ps2hwd_fx2 & FX4_NOPBC) ? 23u : 32u - HWR_PB_CBITS;
 	pb_tab_dirty = pb_x_dirty = 0;
 }
 
@@ -473,7 +470,7 @@ static void __attribute__((noinline)) HWR_PBAdd(const FSurfaceInfo *s, const FOu
 		I_Error("Got a null FSurfaceInfo in batching");// nulls should not come in the stuff that batching currently applies to
 	if (!(flags & PF_NoTexture) && !horizon)
 	{
-		const UINT32 h1 = HWR_PBH1(tex, flags, s->PolyColor.rgba), ci = h1 >> pb_cshift;
+		const UINT32 h1 = HWR_PBH1(tex, flags, s->PolyColor.rgba), ci = h1 >> 23;
 		const UINT32 e = pb_cache[ci];
 
 		if (e && e <= pb_nb && HWR_PBMatch(&pb_bk[e - 1], s, tex, flags, ex))
@@ -505,7 +502,7 @@ static inline __attribute__((always_inline)) int HWR_PBFast(const FSurfaceInfo *
 	if ((flags & PF_NoTexture) || horizon || !s)
 		return 0;
 	h1 = HWR_PBH1(tex, flags, s->PolyColor.rgba);
-	e = pb_cache[h1 >> pb_cshift];
+	e = pb_cache[h1 >> 23];
 	if (e - 1u >= pb_nb || pb_wr + need > pb_cap)
 		return 0;
 	{

@@ -12,7 +12,7 @@ def main():
         if a[i] == '--first': first = int(a[i+1]); i += 2
         elif a[i] == '--last': last = int(a[i+1]); i += 2
         else: names.append(a[i]); i += 1
-    print(f'{"run":<16}{"wall":>8}{"addspr":>8}{"sprsort":>8}{"sprdraw":>8}{"SUM":>8}{"bsp":>8}{"sprites":>8}{"tics":>6}')
+    print(f'{"run":<16}{"wall":>8}{"addspr":>8}{"sprsort":>8}{"sprdraw":>8}{"SUM":>8}{"bsp":>8}{"sprites":>8}{"tics":>6}   | medians of the windows: {"wall":>7}{"addspr":>8}{"sprdraw":>8}{"SUM":>8}')
     for n in names:
         boot = ROOT / 'build/runs' / n / 'boot.txt'
         if not boot.exists(): print(n, 'missing'); continue
@@ -29,5 +29,12 @@ def main():
         def mean2(k): return sum(float(l2[x][k]) for x in ws) / len(ws) / 1e6
         wall = mean(w, 'wall'); bsp = mean(w, 'bsp'); sp = mean(w, 'sprites')
         ad, so, dr = mean2('addspr'), mean2('sprsort'), mean2('sprdraw')
-        print(f'{n:<16}{wall:8.3f}{ad:8.3f}{so:8.3f}{dr:8.3f}{ad+so+dr:8.3f}{bsp:8.3f}{sp:8.3f}{tm:>6}')
+        def med(vals):
+            v = sorted(vals)
+            return v[len(v) // 2]
+        mw = med([float(w[x]['wall']) / 1e6 for x in ws])
+        ma = med([float(l2[x]['addspr']) / 1e6 for x in ws])
+        md = med([float(l2[x]['sprdraw']) / 1e6 for x in ws])
+        msu = med([(float(l2[x]['addspr']) + float(l2[x]['sprsort']) + float(l2[x]['sprdraw'])) / 1e6 for x in ws])
+        print(f'{n:<16}{wall:8.3f}{ad:8.3f}{so:8.3f}{dr:8.3f}{ad+so+dr:8.3f}{bsp:8.3f}{sp:8.3f}{tm:>6}   {"":>22}{mw:7.3f}{ma:8.3f}{md:8.3f}{msu:8.3f}')
 main()
