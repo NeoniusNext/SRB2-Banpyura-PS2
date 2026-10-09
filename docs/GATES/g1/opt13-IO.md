@@ -211,6 +211,7 @@ D4 ×4.6); **для DVD байты не уменьшаются** (+2…3 %, по
 | физика = ПК | да: те же 1050 строк `tics.csv` | см. выше |
 | инъекция ошибок чтения | **проходит без `I_Error`** (ошибки ≤ 3 подряд): MAP01 `-pkioerr 150,1`, `200,3`; D2 HW usb `500,2`; D2 HW usb+prefetch `200,3`; 4 подряд — `I_Error` с именем пака, лампы, смещения, errno (раздел 3) | `opt_run`, лог `trying again (n of 4)` |
 | сеть PS2 ↔ ПК-сервер (`net_batch.py`, сравнение `NETSYNC`, ELF `out-io6/io7` без журнала) | `pcsrv-ps2cli` 43 отсчёта, `hw-net-coop` (PS2-клиент **Hardware**) 67, `ps2srv-pccli` (**PS2-сервер**) 40, `reconnect` 72, `dl-both` 43 (NSK.pk3 0.8 с, ZT.pk3 3.7 с, md5 файлов = исходным), `ka-stall` 63 — **везде 0 отличий состояния** | `python3 tools/ps2/net_batch.py … ` |
+| файлы не-паки (zip add-on) через новый `WPack_SetupHandleEx` | скачанные `NSK.pk3` (514 лумп) и `ZT.pk3` (35) загружены после скачивания (`Added file host:/.srb2/DOWNLOAD/…`, сценарий `dl-both`, 0 отличий состояния) | `build/opt12-net/run/dl-both/cli/boot.txt` |
 | ПК-сборка (общие файлы правились под `PS2_PROFILE`) | `ninja -C build/pc-wt -j2` (`-DSRB2_CONFIG_PS2REF=ON`, HW) собирается и линкуется | первая сборка нашла непрозащищённую правку в `w_wad.c`, исправлена |
 | обычная release-сборка HW без `--prof` | линкуется (S-00): ELF `out-io6`, `out-io7` | `SRB2_PS2_HW=1 python3 tools/ps2/build.py` |
 | хост-тест сейвов | `safefile host test: 0 failures` (+ мутация ловится) | `tools/ps2/safefile_hosttest.c` |
