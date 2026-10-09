@@ -141,8 +141,8 @@ static void LoadKeepAlive(const nsv_packet_t *p, const struct sockaddr_in *from)
 	nsv.ka_t = p->t;
 	if (sendto(nsv.fd, &a, BASEPACKETSIZE, 0, (const struct sockaddr *)from, sizeof *from) < 0)
 		nsv.st.early_ack_errors++;
-	else
-		nsv.st.load_keepalives++;
+	else if (++nsv.st.load_keepalives <= 3)
+		printf("NETSVC load keep-alive %u sent (the game thread has not polled for %u ms)\n", (unsigned)nsv.st.load_keepalives, (unsigned)((p->t - nsv.main_beat) / 147456));
 }
 
 static void SvcThread(void *arg)
@@ -174,6 +174,7 @@ static void SvcThread(void *arg)
 		if (full)
 		{
 			nsv.st.dropped++;
+			LoadKeepAlive(p, &from); // OPT13-IO (RS-09): a load fills the ring within 2 s (64 slots); the keep-alive must go on while the datagrams are dropped
 			continue;
 		}
 		BARRIER();
