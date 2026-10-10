@@ -123,9 +123,9 @@ static boolean PadLib(void)
 	if (ms > 1300)
 		ms = 1300;
 	for (; ms < 1000 && padGetState(0, 0) != PAD_STATE_STABLE; ms += 10)
-		DelayThread(10000);
+		PS2_SleepUs(10000); // OPT13-IO (RS-06): not DelayThread (lost wake-ups, see PS2_SleepUs)
 	for (; ms < 1300 && padGetState(1, 0) != PAD_STATE_STABLE; ms += 10)
-		DelayThread(10000);
+		PS2_SleepUs(10000); // OPT13-IO (RS-06): not DelayThread (lost wake-ups, see PS2_SleepUs)
 	CONS_Printf("PS2 pad: ports %d/%d (state 6 = ready) after %d ms\n", padGetState(0, 0), padGetState(1, 0), (int)ms);
 
 	// switch whatever is plugged in to analog mode now, so the pad names and the first read are right
@@ -136,11 +136,11 @@ static boolean PadLib(void)
 			if (padGetState(p, 0) == PAD_STATE_STABLE)
 				ConfigurePort(p);
 			if (!ports[p].configured)
-				DelayThread(10000);
+				PS2_SleepUs(10000); // OPT13-IO (RS-06): not DelayThread (lost wake-ups, see PS2_SleepUs)
 		}
 		// the last command (analog mode, motor alignment) is still executing: wait for state 6
 		for (ms = 0; ms < 500 && PortPresent(p) && padGetState(p, 0) != PAD_STATE_STABLE; ms += 10)
-			DelayThread(10000);
+			PS2_SleepUs(10000); // OPT13-IO (RS-06): not DelayThread (lost wake-ups, see PS2_SleepUs)
 	}
 	return true;
 }
@@ -505,7 +505,7 @@ void PS2Joy_WaitStart(void)
 				return;
 		if (PS2Boot_PowerRequested())
 			return;
-		DelayThread(20000);
+		PS2_SleepUs(20000);
 	}
 }
 

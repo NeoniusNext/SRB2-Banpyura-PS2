@@ -1079,6 +1079,45 @@ static void W_LoadTrnslateLumps(UINT16 w)
 }
 
 #ifdef PS2_PROFILE
+// OPT13-IO (RS-01, RS-07, RS-16): the options of the pack reader. -pkmedium dvd|usb|sd|hdd|auto (the window policy of the medium the packs are on; auto: by the device name),
+// -pkwin cap,minreq,ahead,gap (bytes; experiments), -pkioerr at[,count] (fail device reads, a test of the retries), -iostat (print the device command counters when the packs close)
+static void W_PackConfigure(void)
+{
+	static boolean done;
+	INT32 p;
+
+	if (done)
+		return;
+	done = true;
+	if ((p = M_CheckParm("-pkmedium")) && M_IsNextParm())
+	{
+		const char *m = M_GetNextParm();
+
+		if (!WPack_SetMedium(m))
+			CONS_Alert(CONS_WARNING, "-pkmedium %s: unknown medium (dvd, usb, sd, hdd, auto)\n", m);
+	}
+	if ((p = M_CheckParm("-pkwin")) && M_IsNextParm())
+	{
+		unsigned a = 0, b = 0, c = 0, d = 0;
+
+		if (sscanf(M_GetNextParm(), "%u,%u,%u,%u", &a, &b, &c, &d) == 4)
+			WPack_SetWindow(a, b, c, d);
+		else
+			CONS_Alert(CONS_WARNING, "-pkwin: expected cap,minreq,ahead,gap\n");
+	}
+	if ((p = M_CheckParm("-pkioerr")) && M_IsNextParm())
+	{
+		unsigned at = 0, count = 1;
+
+		if (sscanf(M_GetNextParm(), "%u,%u", &at, &count) >= 1)
+			WPack_InjectErrors(at, count);
+	}
+	if (M_CheckParm("-iostat"))
+		WPack_PrintStats(true);
+}
+#endif
+
+#ifdef PS2_PROFILE
 // -verifypack: decodes every lump of a pack that was just opened and compares its CRC32 (docs/PACK_FORMAT.md); a damaged pack stops the start with the lump named
 static const lumpinfo_t *verify_lumps;
 static void W_VerifyPackReport(UINT32 lump, const char *what)
@@ -1167,11 +1206,18 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 		return W_InitFileError(filename, startup);
 
 #ifdef PS2_PROFILE
-	iobuf = WPack_SetupHandle(handle); // setvbuf must precede every operation on this stream
+	W_PackConfigure();
+	iobuf = WPack_SetupHandleEx(handle, filename); // setvbuf must precede every operation on this stream
 	if (!iobuf)
 		I_Error("Cannot allocate resource I/O buffer");
+	if (WPack_Detect(handle)) // OPT13-IO (RS-01): a cooked pack is checked through the stream that is open (W_VerifyNMUSlumps opened the file a second time and parsed the header again)
+	{
+		important = WPack_VerifyNMUS(handle);
+		if (important == -1)
+			W_InitFileError(filename, startup);
+	}
+	else
 #endif
-
 	important = W_VerifyNMUSlumps(filename, startup);
 
 	if (important == -1)
@@ -1313,8 +1359,15 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	if (pool)
 		W_VerifyPackFile(filename, pack, handle, lumpinfo, numlumps);
 #endif
-	fseek(handle, 0, SEEK_END);
-	wadfile->filesize = (unsigned)ftell(handle);
+#ifdef PS2_PROFILE
+	if (pool && WPack_FileSize(handle) >= 0)
+		wadfile->filesize = (unsigned)WPack_FileSize(handle); // known since the stream was prepared (no seek on the device)
+	else
+#endif
+	{
+		fseek(handle, 0, SEEK_END);
+		wadfile->filesize = (unsigned)ftell(handle);
+	}
 	wadfile->type = type;
 	wadfile->startfolders = M_AATreeAlloc(0);
 	wadfile->endfolders = M_AATreeAlloc(0);
@@ -1592,7 +1645,8 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	if ((handle = W_OpenWadFile(&filename, true)) == NULL)
 		return W_InitFileError(filename, startup);
 
-	iobuf = WPack_SetupHandle(handle); // setvbuf must precede every operation on this stream
+	W_PackConfigure();
+	iobuf = WPack_SetupHandleEx(handle, filename); // setvbuf must precede every operation on this stream
 	if (!iobuf)
 		I_Error("Cannot allocate resource I/O buffer");
 
@@ -1635,8 +1689,13 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
 	wadfile->pack = pack;
 	if (pack)
 		WPack_Register(pack);
-	fseek(handle, 0, SEEK_END);
-	wadfile->filesize = (unsigned)ftell(handle);
+	if (WPack_FileSize(handle) >= 0)
+		wadfile->filesize = (unsigned)WPack_FileSize(handle);
+	else
+	{
+		fseek(handle, 0, SEEK_END);
+		wadfile->filesize = (unsigned)ftell(handle);
+	}
 	wadfile->startfolders = M_AATreeAlloc(0);
 	wadfile->endfolders = M_AATreeAlloc(0);
 	memset(wadfile->md5sum, 0, sizeof wadfile->md5sum); // not computed on this profile
@@ -1678,9 +1737,31 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
   *
   * \param filenames A null-terminated list of files to use.
   */
+#ifdef PS2_PROFILE
+// OPT13-IO (RS-07): a read of a pack that fails after all the retries ends the game with a message that names the pack; the reader of a thing the game can do without (a sound
+// effect) asks for the short read instead: W_SoftReads(true) around that read
+static boolean w_softreads;
+void W_SoftReads(boolean on)
+{
+	w_softreads = on;
+}
+
+// OPT13-IO (RS-02): lists a lump of a cooked pack for the prefetch pass (w_pack.c); a lump of any other file is ignored
+void W_PrefetchLump(UINT16 wad, UINT16 lump)
+{
+	if (wad >= numwadfiles || !wadfiles[wad] || !wadfiles[wad]->pool || lump >= wadfiles[wad]->numlumps)
+		return;
+	WPack_PrefetchAdd(wadfiles[wad]->handle, &wadfiles[wad]->lumpinfo[lump]);
+}
+#endif
+
 void W_InitMultipleFiles(addfilelist_t *list)
 {
 	size_t i = 0;
+
+#ifdef PS2_PROFILE
+	W_PackConfigure();
+#endif
 
 	for (; i < list->numfiles; i++)
 	{
@@ -2706,8 +2787,11 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 	if (!size || size > l->size - offset)
 		size = l->size - offset;
 	bytesread = WPack_ReadLumpN((wpack_t *)wadfiles[wad]->pack, wadfiles[wad]->handle, lump, l, dest, size, offset);
+	if (bytesread != size && w_softreads)
+		return bytesread; // OPT13-IO (RS-07): the caller can do without this lump (a sound effect): it sees the short read
 	if (bytesread != size)
-		I_Error("wad %d, lump %d: cannot read pack data", wad, lump);
+		I_Error("%s, lump %d (%s): cannot read pack data (%u of %u bytes at offset %u)\n%s", wadfiles[wad]->filename, lump, l->fullname, (unsigned)bytesread, (unsigned)size, (unsigned)offset,
+			WPack_LastError()[0] ? WPack_LastError() : "the pack is damaged (run -verifypack)");
 	return bytesread;
 #else
 	size_t lumpsize, bytesread;
@@ -2776,8 +2860,11 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 	if (wadfiles[wad]->pool) // cooked pack: all reads use the aligned bounce path, including raw lumps
 	{
 		bytesread = WPack_ReadLumpN((wpack_t *)wadfiles[wad]->pack, handle, lump, l, dest, size, offset);
+		if (bytesread != size && w_softreads)
+			return bytesread;
 		if (bytesread != size)
-			I_Error("wad %d, lump %d: cannot read pack data", wad, lump);
+			I_Error("%s, lump %d (%s): cannot read pack data (%u of %u bytes at offset %u)\n%s", wadfiles[wad]->filename, lump, l->fullname, (unsigned)bytesread, (unsigned)size, (unsigned)offset,
+				WPack_LastError()[0] ? WPack_LastError() : "the pack is damaged (run -verifypack)");
 		return bytesread;
 	}
 #endif
@@ -3663,7 +3750,7 @@ static int W_VerifyFile(const char *filename, lumpchecklist_t *checklist,
 		return -1;
 
 #ifdef PS2_PROFILE
-	iobuf = WPack_SetupHandle(handle);
+	iobuf = WPack_SetupHandleEx(handle, filename);
 	if (!iobuf)
 		I_Error("Cannot allocate verification I/O buffer");
 	if (WPack_Detect(handle)) // cooked pack: the cooker already ran this check on the pk3 (header flag)
@@ -3811,7 +3898,7 @@ int W_VerifyNMUSlumps(const char *filename, boolean exit_on_error)
 
 	if ((handle = W_OpenWadFile(&filename, false)) != NULL)
 	{
-		iobuf = WPack_SetupHandle(handle);
+		iobuf = WPack_SetupHandleEx(handle, filename);
 		if (!iobuf)
 			I_Error("Cannot allocate verification I/O buffer");
 		if (WPack_Detect(handle))

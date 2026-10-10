@@ -8,6 +8,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import struct
 import subprocess
 import sys
@@ -216,6 +217,91 @@ def v2_tests(exe, out, report):
     return bad
 
 
+def io_tests(exe, out, report, pakdir):
+    """OPT13-IO (RS-01, RS-07): the window reader under every medium policy and odd window sizes gives the same table as the default policy; a device error is retried and
+    only the fourth failure in a row stops (the message names the pack); the open of a pack reads its index once (the stdio reader read it three times)."""
+    bad = 0
+    env0 = dict(os.environ)
+
+    def run(pak, tag, **env):
+        tsv = out / f'io-{pak}-{tag}.tsv'
+        e = dict(env0)
+        e.update(env)
+        p = subprocess.run([str(exe), str(Path(pakdir) / pak), str(tsv)], capture_output=True, text=True, env=e)
+        info = {}
+        for line in p.stderr.splitlines():
+            for key in ('open:', 'iostat'):
+                if line.startswith(key):
+                    info[key] = dict(kv.split('=') for kv in line.split()[1:] if '=' in kv)
+        return p, tsv, info
+
+    base = {}
+    for pak in ('ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+        p, tsv, info = run(pak, 'dvd')
+        base[pak] = tsv.read_bytes() if tsv.exists() else b''
+        if p.returncode:
+            report(f'io: {pak} default policy failed: {p.stderr[-300:]}')
+            bad += 1
+    policies = [('usb', {'PACK_TEST_MEDIUM': 'usb'}), ('sd', {'PACK_TEST_MEDIUM': 'sd'}), ('hdd', {'PACK_TEST_MEDIUM': 'hdd'}),
+                ('w8k', {'PACK_TEST_WIN': '8192,2048,4096,0'}), ('w4k', {'PACK_TEST_WIN': '4096,2048,2048,0'}), ('w64k', {'PACK_TEST_WIN': '65536,2048,65536,4294967295'})]
+    for tag, env in policies:
+        for pak in ('ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+            p, tsv, info = run(pak, tag, **env)
+            same = tsv.exists() and tsv.read_bytes() == base[pak]
+            if p.returncode or not same:
+                report(f'io: {pak} policy {tag}: exit {p.returncode}, table {"equal" if same else "DIFFERENT"}: {p.stderr[-300:]}')
+                bad += 1
+        report(f'io: policy {tag}: ZONES/CHARS/MUSIC read through the window, tables equal to the default policy')
+    if (Path(pakdir) / 'SRB2.PAK').exists():
+        p, tsv, info = run('SRB2.PAK', 'usb', PACK_TEST_MEDIUM='usb')
+        report(f'io: SRB2.PAK policy usb: exit {p.returncode}; open {info.get("open:")}, whole run {info.get("iostat")}')
+        bad += 1 if p.returncode else 0
+    # RS-02: a prefetch pass over every 3rd lump (and over all of them): the table is the same, the reads of the listed lumps are served from the block, and after the block is
+    # taken back (the zone's eviction) the window reads them as before
+    for pak in ('ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+        for tag, env in (('pf3', {'PACK_TEST_PREFETCH': '3', 'PACK_TEST_MEDIUM': 'usb'}), ('pf1', {'PACK_TEST_PREFETCH': '1'}),
+                         ('pf3drop', {'PACK_TEST_PREFETCH': '3', 'PACK_TEST_PREFETCH_DROP': '1', 'PACK_TEST_MEDIUM': 'usb'})):
+            p, tsv, info = run(pak, tag, **env)
+            same = tsv.exists() and tsv.read_bytes() == base[pak]
+            m = re.search(r'prefetchstat hits=(\d+) bytes=(\d+) ranges=(\d+) kept=(\d+)', p.stderr)
+            hits = int(m.group(1)) if m else -1
+            ok = p.returncode == 0 and same and (hits == 0 if tag == 'pf3drop' else hits > 0)
+            report(f'io: prefetch {tag} on {pak}: exit {p.returncode}, table {"equal" if same else "DIFFERENT"}, {hits} reads from the block: {"ok" if ok else "WRONG"}')
+            bad += 0 if ok else 1
+    # the open of a pack: header parsed once, index read once (sizes of the index area from the pack itself)
+    for pak in ('SRB2.PAK', 'ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+        data = (Path(pakdir) / pak).read_bytes()[:4096]
+        h = struct.unpack_from('<4s11I', data, 0)
+        numlumps, tableoffset, pooloffset, poolsize, dataoffset = h[4], h[5], h[6], h[7], h[8]
+        indexbytes = numlumps * 24 + poolsize
+        if h[1] >= 2 and h[3] & 2:
+            ext = struct.unpack_from('<8I', data, 64)
+            indexbytes += numlumps * ext[2]  # head table
+        _p, _tsv, info = run(pak, 'open', PACK_TEST_MEDIUM='dvd')
+        ob = int(info.get('open:', {}).get('bytes', 0))
+        # sector rounding of the 3 sections plus the first sector
+        limit = indexbytes + 40960
+        ok = 0 < ob <= limit
+        report(f'io: {pak} open reads {ob} bytes of an index area of {indexbytes} (limit {limit}): {"ok" if ok else "TOO MUCH"}')
+        bad += 0 if ok else 1
+    # RS-07: device errors
+    cases = [('one error at read 3', '3,1', 0, 1), ('error at the first read', '1,1', 0, 1), ('three in a row', '40,3', 0, 3), ('four in a row', '40,4', 1, 3)]
+    for name, inj, expect_fail, expect_retries in cases:
+        p, tsv, info = run('CHARS.PAK', 'inj', PACK_TEST_MEDIUM='usb', PACK_TEST_INJECT=inj)
+        st = info.get('iostat', {})
+        fails = int(st.get('failures', -1))
+        retries = int(st.get('retries', -1))
+        ok = fails == expect_fail and retries == expect_retries
+        if expect_fail:
+            ok = ok and 'CHARS.PAK' in p.stderr and 'failed 4 times' in p.stderr and p.returncode != 0
+        else:
+            ok = ok and p.returncode == 0 and tsv.exists() and tsv.read_bytes() == base['CHARS.PAK']
+        report(f'io: injected error ({name}): failures {fails}, retries {retries}, exit {p.returncode}: {"ok" if ok else "WRONG"}')
+        bad += 0 if ok else 1
+    report(f'io tests: {bad} failures')
+    return bad
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--lz4-src', default=str(ROOT / 'build/scratch/lz4src/lz4-4.4.5/lz4libs'), help='Windows only; Linux uses tools/ps2/host_lz4_shim.c')
@@ -288,6 +374,7 @@ def main():
         total_bad += bad
     total_bad += validation_tests(exe, out, report)
     total_bad += v2_tests(exe, out, report)
+    total_bad += io_tests(exe, out, report, a.pak)
     changed = [str(p) for p in inputs if sha256(p) != before[str(p)]]
     total_bad += len(changed)
     report(f'Input preservation: {len(inputs)} packs/archives/sidecars hashed before and after, {len(changed)} changed')

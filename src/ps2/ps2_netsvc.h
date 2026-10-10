@@ -29,12 +29,14 @@ void PS2NetSvc_Pop(void);
 
 // The game thread tells the thread whether it is a joined client (acknowledgements of the tics of the server may go out at once) and that it is alive.
 void PS2NetSvc_SetClient(boolean joined);
+// OPT13-IO (RS-09): the client is connected to a server (in any game state): while the game thread loads and does not poll, the thread sends the keep-alive of a fade
+void PS2NetSvc_SetConnected(boolean connected);
 void PS2NetSvc_MainBeat(void);
 
 // Counters (-netdebug / NETLAT)
 typedef struct
 {
-	UINT32 received, dropped, early_acks, early_ack_errors, max_depth, early_mis;
+	UINT32 received, dropped, early_acks, early_ack_errors, max_depth, early_mis, load_keepalives; // load_keepalives: OPT13-IO RS-09
 } nsv_stats_t;
 void PS2NetSvc_GetStats(nsv_stats_t *out);
 
