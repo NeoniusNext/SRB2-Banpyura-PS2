@@ -57,10 +57,23 @@ typedef struct { UINT8 op, n, ext, fl; UINT16 size, state; INT32 bb[6]; UINT32 l
 typedef struct { INT32 a, b, c, nd; UINT32 ox, oy, oz; } hwr_fbox_t; // a plane of the view volume (hw_front.inc) made for the integer test of a box x0 x1 y0 y1 z0 z1: a, b, c in 1/16384, nd: minus the distance of the origin with the margins, in the same unit; ox, oy, oz: the indices of the corner that is nearest the inside
 extern hwr_fbox_t hwr_fbox[5];
 extern int hwr_fbox_on;
+// is the box x0 x1 y0 y1 z0 z1 (whole map units, |coordinate| < 32768) wholly outside one plane of the view volume? The number of the plane + 1, 0 when it cannot be said. (Integer arithmetic: a float
+// multiplication is 4 cycles on this machine and nothing overlaps; the box and the planes are whole numbers, see HWR_FrViewSetup.)
+static inline UINT32 HWR_FboxOut(const INT32 *bb)
+{
+	UINT32 k;
+
+	for (k = 0; k < 5; k++)
+	{
+		const hwr_fbox_t *const p = &hwr_fbox[k];
+
+		if (p->a * bb[p->ox] + p->b * bb[p->oy] + p->c * bb[p->oz] > p->nd)
+			return k + 1u;
+	}
+	return 0;
+}
 #define GCOP_BLK 4 // the op of a polygon block in a record (2 and 3 are the earlier polygon call and the translucent wall: hw_gcache.inc)
-#define GCBX_HDR 32u // the header of an op that holds the block of a plane (fl bit 1): op n ext fl size state and the box, then the block (two quadwords and two a vertex) on a 16 byte boundary
-#define GCBX_SIZE(n) (GCBX_HDR + 16u * (2u + 2u * (UINT32)(n)))
-#define GCBK_SIZE(n) ((UINT32)sizeof(gcbk_t) + 20u * (UINT32)(n)) // (rounded up to 16 in the record)
+#define GCBK_SIZE(n) ((UINT32)sizeof(gcbk_t) + 20u * (UINT32)(n))
 const UINT8 *HWR_GCReplayRun(const UINT8 *p, const UINT8 *end, UINT32 view, GLMipmap_t **lasttex); // the replay of the polygon blocks that follow each other from p; returns the first op that is not one
 boolean HWR_PBRoomFor(UINT32 npoly, UINT32 nvert); // the pool and the buckets have room for that many more polygons and vertices (false: the replay of a record is not started); may grow the pool
 UINT32 HWR_PBCount(void); // the number of polygons collected in the batch so far

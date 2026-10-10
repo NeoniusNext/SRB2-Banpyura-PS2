@@ -719,7 +719,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		{
 			if (hit)
 				HWR_GCVerifyBegin(gccheck, gc.ar + gce->off, (UINT32)gce->len, &gcva, &gcvb);
-			gc_rec_begin(gccheck, gckey, gckn, true);
+			gc_rec_begin(gccheck, gckey, gckn);
 		}
 		else
 		{
@@ -2440,7 +2440,7 @@ static void HWR_ProcessSegC(void)
 
 			if (hit)
 				HWR_GCVerifyBegin(check, gc.ar + e->off, (UINT32)e->len, &va, &vb);
-			gc_rec_begin(check, gckey, kn, false);
+			gc_rec_begin(check, gckey, kn);
 			HWR_ProcessSeg();
 			gc_rec_end(e, id * 2u, 0, check, "seg", id);
 			HWR_GCVerifyEnd(check, va, vb, "seg", id);

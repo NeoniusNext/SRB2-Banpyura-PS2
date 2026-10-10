@@ -989,21 +989,7 @@ UINT32 HWR_PBCount(void)
 	return pb_n;
 }
 
-// is the box of a polygon wholly outside the view volume? The number of the plane + 1 that says so, 0 when it cannot be said. (Integer arithmetic: a float multiplication is 4 cycles on this
-// machine and nothing overlaps; the box and the planes are whole numbers, see HWR_FrViewSetup.)
-static inline UINT32 HWR_PBBoxOut(const INT32 *bb)
-{
-	UINT32 k;
-
-	for (k = 0; k < 5; k++)
-	{
-		const hwr_fbox_t *const p = &hwr_fbox[k];
-
-		if (p->a * bb[p->ox] + p->b * bb[p->oy] + p->c * bb[p->oz] > p->nd)
-			return k + 1u;
-	}
-	return 0;
-}
+#define HWR_PBBoxOut HWR_FboxOut // (hw_batching.h)
 
 // the extent of s, t of the n vertices of a record (x y z s t): the words PBPut makes
 static void HWR_PBExtent(const UINT32 *w, UINT32 n, float *o)
@@ -1035,22 +1021,6 @@ static void HWR_PBOpPoly(const gcbk_t *h, const hwr_pbs_t *st, FSurfaceInfo *s, 
 	UINT32 k;
 
 	*s = st->surf;
-	if (h->fl & 2)
-	{
-		const hwr_qw_t *q = (const hwr_qw_t *)(const void *)((const UINT8 *)h + GCBX_HDR);
-
-		c.u = q[0].w[1];
-		s->LightInfo.light_level = (FUINT)(INT32)c.f;
-		for (k = 0; k < h->n; k++)
-		{
-			v[k].x = q[2 + 2 * k].f[0];
-			v[k].y = q[2 + 2 * k].f[1];
-			v[k].z = q[2 + 2 * k].f[2];
-			v[k].s = q[3 + 2 * k].f[0];
-			v[k].t = q[3 + 2 * k].f[1];
-		}
-		return;
-	}
 	c.u = h->light;
 	s->LightInfo.light_level = (FUINT)(INT32)c.f;
 	for (k = 0; k < h->n; k++)
@@ -1063,31 +1033,6 @@ static void HWR_PBOpPoly(const gcbk_t *h, const hwr_pbs_t *st, FSurfaceInfo *s, 
 		v[k].s = w[5 * k + 3];
 		v[k].t = w[5 * k + 4];
 	}
-}
-
-// 2 + 2n quadwords from a record into the pool (lq / sq: the record is on 16 bytes, so is the pool)
-static inline void HWR_PBQCopy(hwr_qw_t *dst, const hwr_qw_t *src, UINT32 cnt)
-{
-#ifdef __mips__
-	while (cnt >= 4)
-	{
-		__asm__ volatile(
-			"lq $8, 0(%1)\n lq $9, 16(%1)\n lq $10, 32(%1)\n lq $11, 48(%1)\n"
-			"sq $8, 0(%0)\n sq $9, 16(%0)\n sq $10, 32(%0)\n sq $11, 48(%0)\n"
-			: : "r"(dst), "r"(src) : "$8", "$9", "$10", "$11", "memory");
-		dst += 4;
-		src += 4;
-		cnt -= 4;
-	}
-	while (cnt--)
-	{
-		__asm__ volatile("lq $8, 0(%1)\n sq $8, 0(%0)\n" : : "r"(dst), "r"(src) : "$8", "memory");
-		dst++;
-		src++;
-	}
-#else
-	memcpy(dst, src, (size_t)cnt * sizeof(hwr_qw_t));
-#endif
 }
 
 // The polygons of a record that follow each other from p, as HWR_ProcessPolygon would have collected them (see above). Returns the first op that is not one. `view`: the view of the cache.
@@ -1129,8 +1074,7 @@ const UINT8 *HWR_GCReplayRun(const UINT8 *p, const UINT8 *end, UINT32 view, GLMi
 		const gcbk_t *const h = (const gcbk_t *)p;
 		hwr_pbs_t *const st = &pb_st[h->state];
 		const UINT32 n = h->n, need = 2u + 2u * n;
-		const hwr_qw_t *const xq = (const hwr_qw_t *)(const void *)(p + GCBX_HDR); // (a plane: the block itself)
-		const UINT32 lightbits = (h->fl & 2) ? xq[0].w[1] : h->light;
+		const UINT32 lightbits = h->light;
 		hwr_pbk_t *b;
 		UINT32 bi;
 
@@ -1202,34 +1146,6 @@ const UINT8 *HWR_GCReplayRun(const UINT8 *p, const UINT8 *end, UINT32 view, GLMi
 			typedef UINT32 __attribute__((may_alias)) hwr_word_t;
 			const hwr_word_t *const w = (const hwr_word_t *)(const void *)(h + 1);
 
-			if (h->fl & 2)
-			{
-				// the block of a plane: moved whole, the header lanes included (the light level, the extent of s, t as it was)
-				HWR_PBQCopy(o, xq, need);
-				if (b->needext != (UINT32)h->ext)
-				{
-					if (b->needext)
-					{
-						float e4[4];
-						UINT32 k;
-						UINT32 tmp[250 * 5];
-
-						for (k = 0; k < n; k++)
-						{
-							tmp[5 * k + 3] = xq[3 + 2 * k].w[0];
-							tmp[5 * k + 4] = xq[3 + 2 * k].w[1];
-						}
-						HWR_PBExtent(tmp, n, e4);
-						o[1].f[0] = e4[0];
-						o[1].f[1] = e4[1];
-						o[1].f[2] = e4[2];
-						o[1].f[3] = e4[3];
-					}
-					else
-						o[1].f[0] = o[1].f[1] = o[1].f[2] = o[1].f[3] = 0.0f;
-				}
-				goto linked;
-			}
 #define HWR_PBBAR2 __asm__ volatile("" ::: "memory")
 #define HWR_PBR(i) do { const hwr_word_t *q_ = w + 5 * (i); hwr_qw_t *e_ = d + 2 * (i); const UINT32 x_ = q_[0], y_ = q_[1], z_ = q_[2], s_ = q_[3], t_ = q_[4]; \
 		e_[0].w[0] = x_; HWR_PBBAR2; e_[0].w[1] = y_; HWR_PBBAR2; e_[0].w[2] = z_; HWR_PBBAR2; e_[1].w[0] = s_; HWR_PBBAR2; e_[1].w[1] = t_; HWR_PBBAR2; } while (0)
@@ -1271,7 +1187,6 @@ const UINT8 *HWR_GCReplayRun(const UINT8 *p, const UINT8 *end, UINT32 view, GLMi
 			}
 			else
 				o[1].f[0] = o[1].f[1] = o[1].f[2] = o[1].f[3] = 0.0f;
-linked:
 			pb_ent[pidx].blk = blk;
 			pb_ent[pidx].next = HWR_PB_END;
 			if (b->cnt)
