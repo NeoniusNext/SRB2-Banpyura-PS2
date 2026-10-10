@@ -62,6 +62,9 @@ extern float Cubepal[2][2][2][3];
 static boolean HWR_PS2_NoCull(void);
 extern UINT32 hwr_plkey, hwr_plhit, hwr_plhitn; // OPT13 IR: HWPROF72, the planes the cache served
 static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
+#ifdef IR_CENSUS
+static void HWR_CensusPolyobj(void);
+#endif
 static boolean HWR_GCArraysOK(const void *rh); // OPT13 IR: room in the batch arrays (or the pool of the block collection, which this grows) for the replay of a record
 static void HWR_GCVerifyBegin(boolean check, const void *rh, UINT32 len, UINT32 *a, UINT32 *b); // OPT13 IR: -hwgv 4, check mode: a hit is replayed for real before it is calculated again
 static void HWR_GCVerifyEnd(boolean check, UINT32 a, UINT32 b, const char *what, UINT32 id);
@@ -8234,6 +8237,9 @@ static void HWR_SetupView(player_t *player, INT32 viewnumber, float fpov, boolea
 			R_SkyboxFrame(player);
 		else
 			R_SetupFrame(player);
+#ifdef IR_CENSUS
+		HWR_CensusPolyobj();
+#endif
 		HWP_SPAN_END(tfr, HWP_S_FRAME);
 	}
 
@@ -8412,26 +8418,37 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 // ==========================================================================
 #ifdef IR_CENSUS
 #include "../p_polyobj.h"
-// (measurement build only, -hwcenpo: every 25 frames the player is put 192 units from the centre of the next polyobject of the level and looks at it, to have polyobjects in the view of the checks)
-static void HWR_CensusPolyobj(player_t *player)
+// (measurement build only, -hwcenpo: every 25 frames the view is put 192 units from the centre of the next polyobject of the level, looking at it, to have polyobjects in the view of the checks;
+// the game itself is not touched: only the view variables the renderer reads, right after R_SetupFrame)
+static void HWR_CensusPolyobj(void)
 {
 	static int frn = -1;
+	static const polyobj_t *po;
 
 	if (frn == -1)
 		frn = M_CheckParm("-hwcenpo") ? 0 : -2;
-	if (frn < 0 || !player || !player->mo || numPolyObjects <= 0)
+	if (frn < 0 || numPolyObjects <= 0)
 		return;
 	frn++;
 	if (frn >= 30 && (frn % 25) == 0)
 	{
-		const polyobj_t *po = &PolyObjects[(frn / 25) % numPolyObjects];
+		po = &PolyObjects[(frn / 25) % numPolyObjects];
+		I_OutputMsg("HWCENPO frame %d polyobject %d of %d at %d,%d segs %d\n", frn, (int)((frn / 25) % numPolyObjects), (int)numPolyObjects, (int)(po->centerPt.x >> FRACBITS), (int)(po->centerPt.y >> FRACBITS), (int)po->segCount);
+	}
+	if (po)
+	{
 		const fixed_t cx = po->centerPt.x, cy = po->centerPt.y;
 		const fixed_t px = cx - 192 * FRACUNIT, py = cy;
 		subsector_t *ss = R_PointInSubsector(px, py);
 
-		P_SetOrigin(player->mo, px, py, ss ? ss->sector->floorheight : player->mo->z);
-		player->mo->angle = R_PointToAngle2(px, py, cx, cy);
-		I_OutputMsg("HWCENPO frame %d polyobject %d of %d at %d,%d segs %d\n", frn, (int)((frn / 25) % numPolyObjects), (int)numPolyObjects, (int)(cx >> FRACBITS), (int)(cy >> FRACBITS), (int)po->segCount);
+		viewx = px;
+		viewy = py;
+		viewz = (ss ? ss->sector->floorheight : 0) + 41 * FRACUNIT;
+		viewangle = R_PointToAngle2(px, py, cx, cy);
+		viewsin = FINESINE(viewangle >> ANGLETOFINESHIFT);
+		viewcos = FINECOSINE(viewangle >> ANGLETOFINESHIFT);
+		if (ss)
+			viewsector = ss->sector;
 	}
 }
 #endif
@@ -8439,9 +8456,6 @@ static void HWR_CensusPolyobj(player_t *player)
 void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 {
 	HWP_LOCAL;
-#ifdef IR_CENSUS
-	HWR_CensusPolyobj(player);
-#endif
 	HWP_SPAN_BEGIN(hwp_tsetup);
 	const float fpov = FixedToFloat(R_GetPlayerFov(player));
 
