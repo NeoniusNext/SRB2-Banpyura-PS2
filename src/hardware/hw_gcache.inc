@@ -87,8 +87,6 @@ static struct
 	UINT32 vmask;
 	size_t nvert;
 	UINT32 *bver, *fver; // ... and a number that changes when the fingerprint does (what the keys of segs and planes hold: one word for a sector)
-	UINT32 *texw, *texws; // OPT13 IR: per raw texture number HWR_PS2_SideTexWord and the hwr_texsig it was made at; texn: the size of the tables
-	UINT32 texn;
 	UINT32 vctr;
 	UINT32 nsec, view, scan;
 	UINT8 *ar;
@@ -116,21 +114,26 @@ static struct
 
 // OPT13 IR: the word of a side texture of the key (HWR_PS2_SideTexWord: the translated number, the TF_TRANSPARENT bit of its mipmap) kept per raw texture number, valid while hwr_texsig has not changed
 // (it changes where the translation is written - the animation - and where TF_TRANSPARENT is set or cleared). Three calls of the function (45 cycles each) were a quarter of the key of a seg.
+// A direct mapped table of 512 places (6 KB, static): the first version had a place for every texture of the game (4700 of them: 37 KB of the cache's block, and D2 / D3 are at the zone's edge).
+#define GC_TW_N 512u
+static struct { INT32 raw; UINT32 sig, word; } gc_twt[GC_TW_N];
+
 static UINT32 gc_tw_slow(INT32 raw)
 {
 	const UINT32 w = HWR_PS2_SideTexWord(raw);
 
-	gc.texw[raw] = w;
-	gc.texws[raw] = hwr_texsig;
+	gc_twt[(UINT32)raw & (GC_TW_N - 1u)].raw = raw;
+	gc_twt[(UINT32)raw & (GC_TW_N - 1u)].word = w;
+	gc_twt[(UINT32)raw & (GC_TW_N - 1u)].sig = hwr_texsig;
 	return w;
 }
 
 static inline UINT32 gc_tw(INT32 raw)
 {
-	if ((UINT32)raw >= gc.texn)
-		return HWR_PS2_SideTexWord(raw);
-	if (gc.texws[raw] == hwr_texsig)
-		return gc.texw[raw];
+	const UINT32 i = (UINT32)raw & (GC_TW_N - 1u);
+
+	if (gc_twt[i].raw == raw && gc_twt[i].sig == hwr_texsig)
+		return gc_twt[i].word;
 	return gc_tw_slow(raw);
 }
 
@@ -529,6 +532,7 @@ static void HWR_GCacheLevel(void)
 	gc.bypass = gc.bypass_len = gc.w_views = gc.w_q = gc.w_hit = gc.w_full = 0;
 	gc.dead = false;
 	gc.blk = NULL;
+	HWR_PBStDetach(); // (the table of states was in the block)
 	gc.on = false;
 	if (!gc.kb_user)
 		gc.kb = GC_DEFAULT_KB; // (a level starts with the small arena)
@@ -594,9 +598,9 @@ static size_t HWR_GCacheReclaim(size_t want)
 	gc.rec_fail = true;
 	hwr_grec_on = false;
 	gc.s_reclaim++;
+	HWR_PBStDetach(); // (OPT13 IR: its table of states is in the block)
 	Z_Free(gc.blk); // (sets gc.blk to NULL)
 	gc.blk = NULL;
-	HWR_PBStateFlush();
 	return got;
 }
 
@@ -631,7 +635,6 @@ static boolean gc_alloc_block(void)
 {
 	size_t tab_b, seg_b, pl_b, vert_b, ar_b, total;
 	const size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32));
-	const size_t tex_b = (size_t)(numtextures > 0 ? numtextures : 0) * 2 * sizeof(UINT32); // OPT13 IR: gc_tw
 	const boolean dseg = (UINT32)numsegs <= GC_DIRECT_MAX; // a small level: a place of its own for every seg and plane (8 bytes: no hashing, no ways, nothing to evict but by the arena),
 	const boolean dpl = !(gc.mode & 4) && (UINT32)addsubsector * 2u <= GC_DIRECT_MAX; // a big one: the hashed table (the memory of the tables does not grow with the level)
 	UINT32 want = (dseg && ((gc.mode & 4) || dpl)) ? 1024u : 4096u; // sets of the hashed table (2 ways, 16 bytes an entry): the planes of 3D floors, or all
@@ -647,7 +650,7 @@ static boolean gc_alloc_block(void)
 	seg_b = dseg ? (((size_t)numsegs * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
 	pl_b = dpl ? (((size_t)addsubsector * 2u * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
 	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
-	total = tab_b + seg_b + pl_b + sec_b + vert_b + tex_b + ar_b + 64;
+	total = tab_b + seg_b + pl_b + sec_b + vert_b + HWR_PBStBytes() + ar_b + 64;
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
 #ifdef PS2
@@ -694,15 +697,11 @@ static boolean gc_alloc_block(void)
 	gc.vtag = (UINT32 *)p;
 	p += (size_t)vsize * sizeof(UINT32);
 	gc.vmask = vsize - 1u;
-	gc.texw = (UINT32 *)p;
-	p += (size_t)(numtextures > 0 ? numtextures : 0) * sizeof(UINT32);
-	gc.texws = (UINT32 *)p;
-	p += (size_t)(numtextures > 0 ? numtextures : 0) * sizeof(UINT32);
-	gc.texn = (UINT32)(numtextures > 0 ? numtextures : 0);
-	memset(gc.texws, 0, (size_t)gc.texn * sizeof(UINT32));
 	gc.nvert = numvertexes;
 	memset(gc.vst, 0, (size_t)vsize * sizeof(UINT32));
 	memset(gc.vtag, 0, (size_t)vsize * sizeof(UINT32));
+	HWR_PBStAttach(p); // (OPT13 IR: the table of the interned states of the block collection lives in the cache's block)
+	p += HWR_PBStBytes();
 	gc.ar = p;
 	gc.hsize = gc.kb * 512u & ~15u;
 	gc.hbase = 0;
@@ -767,6 +766,7 @@ static boolean HWR_GCacheFrame(void)
 			{
 				gc.kb = nkb;
 				gc.grow_n++;
+				HWR_PBStDetach();
 				Z_Free(gc.blk); // (nothing of it is in use: the frame has not started; the tables start empty)
 				gc.blk = NULL;
 				if (!gc_alloc_block())

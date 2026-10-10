@@ -83,6 +83,9 @@ void HWR_PBCullView(void); // once per view: the gate of the box test
 extern UINT32 hwr_gv_off; // -hwgv: OPT13 IR switches (hw_gcache.inc)
 boolean HWR_GCRecBlkOk(FBITFIELD flags, boolean horizon); // gcache: may the polygon the walk is making be recorded as a block?
 void HWR_PBStateFlush(void); // the interned states are dropped (the cache was flushed)
+size_t HWR_PBStBytes(void); // the memory the table of states needs: part of the block of the geometry cache
+void HWR_PBStAttach(void *mem);
+void HWR_PBStDetach(void);
 void HWR_GCRecBlk(UINT32 state, UINT32 light, const float *ex, UINT32 ext, const FOutVector *verts, FUINT n); // gcache: appends the record of a polygon block
 void HWR_GCBatchReserve(int npoly, int nvert); // room in the batch arrays of the old collection for that many more polygons and vertices (it may allocate: the cache asks before it replays)
 void HWR_GCReplayPoly(const gcphdr_t *h, UINT32 view); // HWR_ProcessPolygon of such a record (the texture is made current and touched once per view)

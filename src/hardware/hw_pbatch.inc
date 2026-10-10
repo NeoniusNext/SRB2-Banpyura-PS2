@@ -805,7 +805,6 @@ typedef struct
 	UINT16 bucket, bcare; // bcare: the bucket tells polygons of another light level apart (the VU1 program does not light them by rows)
 } hwr_pbs_t;
 
-static void *pb_stblk;
 static hwr_pbs_t *pb_st;
 static UINT16 *pb_sth;
 static UINT32 pb_nst;
@@ -813,44 +812,43 @@ static int pb_v3_nocull; // the check mode replays without the box test
 static UINT32 pb_v3_cyc, pb_v3_cyc_cull, pb_v3_polys, pb_v3_culled, pb_v3_resolve, pb_v3_rec, pb_v3_recfail, pb_v3_cull[5], pb_v3_vchk, pb_v3_vbad, pb_v3_cullbad, pb_v3_runs, pb_v3_stfull, pb_v3_grow;
 
 
-static void HWR_PBStFree(void)
+// The memory of the table is a part of the block of the geometry cache (hw_gcache.inc: it goes when the cache's block goes, with the records that hold the state numbers); it is not a block of the zone
+// of its own: a block of 18 KB asked in the middle of a level, next to the cache's block, was enough to move D3 (memory edge) from 1178 to 1330 realtics in two runs of five.
+size_t HWR_PBStBytes(void)
 {
-	if (pb_stblk)
-		Z_Free(pb_stblk);
-	pb_stblk = NULL;
+	return (size_t)HWR_ST_CAP * sizeof(hwr_pbs_t) + (size_t)HWR_ST_SLOTS * sizeof(UINT16);
+}
+
+void HWR_PBStAttach(void *mem)
+{
+	pb_st = (hwr_pbs_t *)mem;
+	pb_sth = (UINT16 *)((UINT8 *)mem + (size_t)HWR_ST_CAP * sizeof(hwr_pbs_t));
+	memset(pb_sth, 0, (size_t)HWR_ST_SLOTS * sizeof(UINT16));
+	pb_nst = 0;
+}
+
+void HWR_PBStDetach(void) // (the cache's block is going or gone)
+{
 	pb_st = NULL;
 	pb_sth = NULL;
 	pb_nst = 0;
 }
 
-void HWR_PBStateFlush(void)
+static void HWR_PBStFree(void)
 {
-	HWR_PBStFree();
+	HWR_PBStDetach();
+}
+
+void HWR_PBStateFlush(void) // the states are dropped, the memory stays
+{
+	pb_nst = 0;
+	if (pb_sth)
+		memset(pb_sth, 0, (size_t)HWR_ST_SLOTS * sizeof(UINT16));
 }
 
 static int HWR_PBStAlloc(void)
 {
-	UINT8 *p;
-
-	if (!pb_stblk)
-	{
-		pb_st = NULL;
-		pb_sth = NULL;
-		pb_nst = 0;
-	}
-	if (pb_st)
-		return 1;
-	p = Z_TryMallocAlign((size_t)HWR_ST_CAP * sizeof(hwr_pbs_t) + (size_t)HWR_ST_SLOTS * sizeof(UINT16), PU_HWRPLANE, &pb_stblk, 4);
-	if (!p)
-	{
-		pb_stblk = NULL;
-		return 0;
-	}
-	pb_st = (hwr_pbs_t *)p;
-	pb_sth = (UINT16 *)(p + (size_t)HWR_ST_CAP * sizeof(hwr_pbs_t));
-	memset(pb_sth, 0, (size_t)HWR_ST_SLOTS * sizeof(UINT16));
-	pb_nst = 0;
-	return 1;
+	return pb_st != NULL;
 }
 
 static inline UINT32 HWR_StHash(const GLMipmap_t *tex, UINT32 flags, UINT32 ex, INT32 target, const FSurfaceInfo *s)

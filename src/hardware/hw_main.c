@@ -8410,9 +8410,38 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 // ==========================================================================
 //
 // ==========================================================================
+#ifdef IR_CENSUS
+#include "../p_polyobj.h"
+// (measurement build only, -hwcenpo: every 25 frames the player is put 192 units from the centre of the next polyobject of the level and looks at it, to have polyobjects in the view of the checks)
+static void HWR_CensusPolyobj(player_t *player)
+{
+	static int frn = -1;
+
+	if (frn == -1)
+		frn = M_CheckParm("-hwcenpo") ? 0 : -2;
+	if (frn < 0 || !player || !player->mo || numPolyObjects <= 0)
+		return;
+	frn++;
+	if (frn >= 30 && (frn % 25) == 0)
+	{
+		const polyobj_t *po = &PolyObjects[(frn / 25) % numPolyObjects];
+		const fixed_t cx = po->centerPt.x, cy = po->centerPt.y;
+		const fixed_t px = cx - 192 * FRACUNIT, py = cy;
+		subsector_t *ss = R_PointInSubsector(px, py);
+
+		P_SetOrigin(player->mo, px, py, ss ? ss->sector->floorheight : player->mo->z);
+		player->mo->angle = R_PointToAngle2(px, py, cx, cy);
+		I_OutputMsg("HWCENPO frame %d polyobject %d of %d at %d,%d segs %d\n", frn, (int)((frn / 25) % numPolyObjects), (int)numPolyObjects, (int)(cx >> FRACBITS), (int)(cy >> FRACBITS), (int)po->segCount);
+	}
+}
+#endif
+
 void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 {
 	HWP_LOCAL;
+#ifdef IR_CENSUS
+	HWR_CensusPolyobj(player);
+#endif
 	HWP_SPAN_BEGIN(hwp_tsetup);
 	const float fpov = FixedToFloat(R_GetPlayerFov(player));
 
