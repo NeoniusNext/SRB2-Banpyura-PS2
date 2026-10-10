@@ -72,8 +72,9 @@ end, MT_MARK)
 
 addHook("ThinkFrame", function()
 	S.n = S.n + 1
-	local p = players[0]
-	if p and p.mo and p.mo.valid then
+	local p
+	for i = 0, 31 do if players[i] and players[i].mo and players[i].mo.valid then p = players[i] break end end
+	if p then
 		if S.n % 20 == 0 and S.nobj < 12 then
 			local x = p.mo.x + P_RandomRange(-200, 200) * FRACUNIT
 			local y = p.mo.y + P_RandomRange(-200, 200) * FRACUNIT
@@ -96,7 +97,8 @@ addHook("ThinkFrame", function()
 			end
 		end
 		P("tic", S.n, "marks", n, h, ext, "state", hashtable(S), #S.log, S.nobj, S.removed, S.shared == S.nested, S.self == S, #S.nums, #S.bigstr)
-		P("ref", S.n, ref ~= nil and ref.valid or false, ref and ref.valid and ref.type == MT_MARK, ref and ref.valid and ref.lm_name or "-", S.hits.first, cvhits)
+		local live = ref ~= nil and ref.valid -- (a reference to a removed object is nil on a client that joined after the removal: the same thing)
+		P("ref", S.n, live, live and ref.type == MT_MARK, live and ref.lm_name or "-", S.hits.first, cvhits)
 	end
 end)
 

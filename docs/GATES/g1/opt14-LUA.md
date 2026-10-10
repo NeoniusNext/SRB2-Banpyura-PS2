@@ -38,3 +38,25 @@ Conclusion of step 1: the existing suite does not reproduce the complaint. Steps
 
 Each live userdata costs ~100 bytes of Lua heap (userdata + registry node + the script's own reference): 12 000 line userdata + 3000 mobjs on MAP11 end with "Not enough memory to draw map MAP11 (PU_RENDERWORK)" and a return to the title.
 Upstream has the same cost on the PC where it does not matter. Not changed (the script is an extreme; the PS2 handles 9000 + 600 with the renderer warnings "R_GenerateTexture: no room" that the PC does not have).
+
+## 3. The stand (what was written and what it found)
+
+All scripts are in `tools/ps2/luatests/` and are run by `tools/ps2/lua_equiv.py` (PC reference against the PS2 ELF); `lua_suite.sh` has them all. `lua_equiv.py` gained `--pc-only`, a cut of the lines after the end line,
+path normalisation of add-on lumps (`NAME.pk3|lump`), and it ignores the PS2 memory notices ("Low memory", "R_GenerateTexture: no room") in the alert lines.
+
+| script | what a mod does there | PC against PS2 (release ELF) |
+|---|---|---|
+| lm_data | 12 000-element arrays and sorts, hash tables of 8 000 keys, strings (gsub/gmatch/format/rep, base64, crc with `^^`), closures, metatables, weak tables, coroutines, pcall/error, recursion, a 4 000-record structure kept while garbage is made | 75 lines SAME |
+| lm_objects | 3 freeslot types, 6 states, hooks by type and generic, bombs circle the player and spawn sparks, `mo.lm_*` Lua fields, P_KillMobj/P_RemoveMobj, `mobjs.iterate()` every tic, event hash over 630 tics (14 000 events) | 32 lines SAME |
+| lm_world | sector waves (floor/ceiling/light/flat offsets, scales, flats), side textures/offsets, FOF edits, P_FloorzAtPos/P_CheckPosition/P_TeleportMove, error cases of read-only fields | 108 lines SAME |
+| lm_hud | ~150 draw calls per frame in every font/flag, patches kept in tables across a level change, hooks of every HUD type, hud.enable/disable | 13 lines SAME in Software and in `-renderer Hardware` |
+| lt_io | `io.openlocal` write/read/seek/lines/append/binary, denied names, `os.time/date/clock/difftime` | 30 lines SAME |
+| lt_pk3 (`make_luapk3.py`) | a pk3 whose Lua folder has nested folders, mixed case, CRLF, UTF-8 text, a 12 000-record script, a syntax error, a runtime error, `return`, empty, non-lua files in Lua/ | 20 lines SAME (run order = zip order, as on the PC) |
+| lt_stack, lt_stack2 | 200-level C recursion (pcall, metamethods, gsub, sort, coroutines, error handlers) and recursion through the engine (P_KillMobj <-> MobjDeath, P_SpawnMobj <-> MobjSpawn, P_RemoveMobj <-> MobjRemoved) | SAME incl. the stack tracebacks (79 lines) |
+| lt_coro | PS2-LUA-1 | was DIFFERENT (6 of 37 lines), SAME after the fix |
+| lt_udmany | PS2-LUA-2 | SAME; 28.7 s -> 0.1 s |
+| lt_math without FINEACON.DAT | acos/asin tables when the file is missing (`tables.c` computes them) | the 59 values are SAME, one extra WARNING "FINEACON.DAT not found: acos is computed" |
+
+The Lua suite of OPT12-LOAD (15 scripts) plus the new ones were also run on the `--debug` ELF (ZDEBUG red zones, RANGECHECK, PARANOIA; `SRB2_PS2_LTO=0 build.py --debug`): all SAME except lt_udmany,
+which does not fit the memory of MAP11 with the larger debug zone headers ("Not enough memory to draw map MAP11"), nothing else. (The `--debug` build did not compile: `I_Assert(sfx_id < LIMIT_NUMSFX)` in s_sound.c is a signed/unsigned
+comparison under -Werror; fixed with casts, two lines.)
