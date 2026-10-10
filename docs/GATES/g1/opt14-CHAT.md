@@ -67,7 +67,7 @@ PS2 заходит на ПК-сервер (`-connect`, Cross на экранах
 * Сплитскрин в сетевой игре оригинал не допускает («Splitscreen not supported in netplay», `SplitScreen_OnChange`) без `devmode`, а `devmode` в сети недоступен (`REQUIRE_SINGLEPLAYER`, `m_cheat.c`): такой игры нет, проверять нечего (`chat-netsplit-so` показал именно это сообщение). Если он включён, `OLDCHAT` оригинала (`|| splitscreen`) оставляет консольный чат (строка ввода вверху, сообщения строками консоли), а клавиатура для чата прежняя, внизу.
 
 ### 3.7 Релизная сборка с LTO (`build/out-lto`: `SRB2_PS2_OUT=$PWD/build/out-lto SRB2_PS2_NO= SRB2_PS2_HW=1 python3 tools/ps2/build.py --jobs 2`, 11 190 444 Б)
-Собирается и линкуется без предупреждений; `chat-all-srv` (раздел 3.1, шаги A..E) на этой ELF — Software: те же 7 строк `CHATLOG` (`hi there`, `don't stop, ok?`, `typed on usb`, `Said while the game is paused` и три сообщения истории), снимки те же (`build/opt14-chat-lto/run/chat-all-srv/srv`).
+Собирается и линкуется без предупреждений; `chat-all-srv` (раздел 3.1, шаги A..E) на этой ELF — Software и Hardware (`chat-all-srv-hw`): те же 8 строк `CHATLOG` (включая вход игрока) (`hi there`, `don't stop, ok?`, `typed on usb`, `Said while the game is paused` и три сообщения истории), снимки те же (`build/opt14-chat-lto/run/chat-all-srv/srv`).
 
 ## 4. Не сломано (проверено запуском)
 
