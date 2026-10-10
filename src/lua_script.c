@@ -94,10 +94,77 @@ static int lua_heap_after_collect; // KB (PS2-LOAD-18: see LUA_CollectAfterScrip
 typedef struct lpfree_s { struct lpfree_s *next; } lpfree_t;
 typedef struct lpslab_s { struct lpslab_s *next; UINT32 pad[3]; } lpslab_t; // 16 bytes: the blocks after it stay 16-byte aligned (the zone gives 16-byte aligned payloads)
 
+// OPT14 (PS2-LUA-4): the first version never gave a slab back. A freed block can only be reused for its own size, so a script that makes and drops many objects of one size and then many of
+// another kept the memory of the first for the rest of the run (measured: tools/ps2/luatests/lt_heap.lua, BIG.pk3 of 100 scripts, 3.6 MB of live objects, 6.65 MB of pool after
+// four rounds of garbage of different sizes; the original, one zone block per object, gave the memory back). The directory below lists the slabs by address and says how many bytes
+// of each were handed out; LUA_PoolTrim adds up the bytes of each slab that sit on the free lists and returns the slabs that are free in their whole used extent to the zone
+// (never the one being carved). It runs where nothing of the heap is in transit: after the full collection at the end of loading, every few seconds from LUA_Step when enough
+// is on the lists, and as a reclaim hook of the zone when an allocation would fail (the hook only frees).
+#define LPOOL_DIRMAX 1024 // slabs the trim knows (16 MB of Lua heap); a slab past that is only given back when the state is closed
+typedef struct
+{
+	lpslab_t *slab[LPOOL_DIRMAX]; // sorted by address
+	UINT32 used[LPOOL_DIRMAX]; // bytes handed out of the slab (set when the slab is no longer the one being carved)
+	UINT32 freed[LPOOL_DIRMAX]; // scratch of LUA_PoolTrim
+	UINT32 n;
+} lpdir_t;
+
 static lpfree_t *lpool_free[LPOOL_CLASSES];
 static lpslab_t *lpool_slabs;
+static lpslab_t *lpool_cur; // the slab lpool_bump points into
+static lpdir_t *lpool_dir; // PU_LUA block, made with the state
+static size_t lpool_freebytes; // bytes on the free lists
 static UINT8 *lpool_bump;
 static size_t lpool_left;
+static UINT32 lpool_trimmed; // slabs given back (statistics)
+
+#define LPOOL_DEAD 0xFFFFFFFFu
+
+// index of the slab of the directory that holds p, or d->n
+static UINT32 LUA_PoolSlabIndex(const lpdir_t *d, const void *p)
+{
+	UINT32 lo = 0, hi = d->n;
+
+	while (lo < hi) // the first slab above p
+	{
+		const UINT32 mid = (lo + hi) >> 1;
+
+		if ((const UINT8 *)d->slab[mid] <= (const UINT8 *)p)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	if (lo && (const UINT8 *)p < (const UINT8 *)d->slab[lo - 1] + LPOOL_SLAB)
+		return lo - 1;
+	return d->n;
+}
+
+static void LUA_PoolDirAdd(lpslab_t *slab)
+{
+	lpdir_t *d = lpool_dir;
+	UINT32 i, lo = 0, hi;
+
+	if (!d || d->n >= LPOOL_DIRMAX)
+		return;
+	hi = d->n;
+	while (lo < hi)
+	{
+		const UINT32 mid = (lo + hi) >> 1;
+
+		if ((UINT8 *)d->slab[mid] < (UINT8 *)slab)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	for (i = d->n; i > lo; i--)
+	{
+		d->slab[i] = d->slab[i - 1];
+		d->used[i] = d->used[i - 1];
+	}
+	d->slab[lo] = slab;
+	d->used[lo] = 0;
+	d->n++;
+}
 
 static void *LUA_PoolGet(size_t size) // size: 1..LPOOL_MAXSIZE
 {
@@ -107,15 +174,25 @@ static void *LUA_PoolGet(size_t size) // size: 1..LPOOL_MAXSIZE
 	if (f)
 	{
 		lpool_free[c] = f->next;
+		lpool_freebytes -= (c + 1) << 4;
 		return f;
 	}
 	size = (c + 1) << 4;
 	if (lpool_left < size)
 	{
-		lpslab_t *slab = Z_Malloc(LPOOL_SLAB, PU_LUA, NULL);
+		lpslab_t *slab = Z_Malloc(LPOOL_SLAB, PU_LUA, NULL); // (this may call the reclaim hook: LUA_PoolTrim, which leaves lpool_cur alone)
 
+		if (lpool_cur && lpool_dir)
+		{
+			const UINT32 i = LUA_PoolSlabIndex(lpool_dir, lpool_cur);
+
+			if (i < lpool_dir->n)
+				lpool_dir->used[i] = (UINT32)(lpool_bump - ((UINT8 *)lpool_cur + sizeof *lpool_cur));
+		}
 		slab->next = lpool_slabs;
 		lpool_slabs = slab;
+		lpool_cur = slab;
+		LUA_PoolDirAdd(slab);
 		lpool_bump = (UINT8 *)slab + sizeof *slab;
 		lpool_left = LPOOL_SLAB - sizeof *slab; // (what is left of the old slab, less than size, is not used)
 	}
@@ -132,10 +209,116 @@ static void LUA_PoolPut(void *ptr, size_t size)
 
 	f->next = lpool_free[c];
 	lpool_free[c] = f;
+	lpool_freebytes += (c + 1) << 4;
+}
+
+// Gives back the slabs whose whole used extent is on the free lists; returns the bytes freed. Allocates nothing (it may run inside an allocation of the zone).
+static size_t LUA_PoolTrim(size_t want)
+{
+	lpdir_t *d = lpool_dir;
+	lpslab_t *s, **pp;
+	UINT32 i, n, dead = 0;
+	size_t c, bytes = 0;
+	lpfree_t *f, **fp;
+
+	(void)want;
+	if (!d || d->n < 2 || lpool_freebytes < LPOOL_SLAB / 2)
+		return 0;
+	n = d->n;
+	for (i = 0; i < n; i++)
+		d->freed[i] = 0;
+	for (c = 0; c < LPOOL_CLASSES; c++)
+		for (f = lpool_free[c]; f; f = f->next)
+		{
+			i = LUA_PoolSlabIndex(d, f);
+			if (i < n)
+				d->freed[i] += (UINT32)((c + 1) << 4);
+		}
+	for (i = 0; i < n; i++)
+		if (d->slab[i] != lpool_cur && d->used[i] && d->freed[i] == d->used[i])
+		{
+			d->freed[i] = LPOOL_DEAD;
+			dead++;
+		}
+	if (!dead)
+		return 0;
+	for (c = 0; c < LPOOL_CLASSES; c++)
+	{
+		fp = &lpool_free[c];
+		while ((f = *fp) != NULL)
+		{
+			i = LUA_PoolSlabIndex(d, f);
+			if (i < n && d->freed[i] == LPOOL_DEAD)
+			{
+				*fp = f->next;
+				lpool_freebytes -= (c + 1) << 4;
+			}
+			else
+				fp = &f->next;
+		}
+	}
+	pp = &lpool_slabs;
+	while ((s = *pp) != NULL)
+	{
+		i = LUA_PoolSlabIndex(d, s);
+		if (i < n && d->freed[i] == LPOOL_DEAD)
+		{
+			*pp = s->next;
+			bytes += LPOOL_SLAB;
+			Z_Free(s);
+		}
+		else
+			pp = &s->next;
+	}
+	for (i = 0, c = 0; i < n; i++) // the directory without the slabs that went
+		if (d->freed[i] != LPOOL_DEAD)
+		{
+			d->slab[c] = d->slab[i];
+			d->used[c] = d->used[i];
+			c++;
+		}
+	d->n = (UINT32)c;
+	lpool_trimmed += dead;
+	return bytes;
+}
+
+void LUA_PoolTrimNow(void) // after a full collection (collectgarbage())
+{
+	LUA_PoolTrim(0);
+}
+
+static size_t LUA_PoolReclaim(size_t want) // the hook of the zone
+{
+	const size_t freebytes = lpool_freebytes;
+	const size_t got = LUA_PoolTrim(want);
+
+	if (got)
+		CONS_Printf("Lua heap: %lu KB of empty slabs went back to the zone (a request of %lu KB; %lu KB were on the free lists)\n", (unsigned long)(got >> 10), (unsigned long)(want >> 10), (unsigned long)(freebytes >> 10));
+	return got;
+}
+
+// (for the console command memfree)
+void LUA_PoolStats(size_t *slabs, size_t *freebytes, size_t *trimmed)
+{
+	size_t n = 0;
+	const lpslab_t *s;
+
+	for (s = lpool_slabs; s; s = s->next)
+		n++;
+	*slabs = n;
+	*freebytes = lpool_freebytes;
+	*trimmed = lpool_trimmed;
+}
+
+static void LUA_PoolInit(void) // a new state: the directory
+{
+	lpool_dir = Z_Calloc(sizeof *lpool_dir, PU_LUA, NULL);
+	Z_AddReclaimHook(LUA_PoolReclaim);
 }
 
 static void LUA_PoolRelease(void) // the state is closed: nothing points into the slabs any more
 {
+	Z_RemoveReclaimHook(LUA_PoolReclaim);
 	while (lpool_slabs)
 	{
 		lpslab_t *next = lpool_slabs->next;
@@ -143,9 +326,14 @@ static void LUA_PoolRelease(void) // the state is closed: nothing points into th
 		Z_Free(lpool_slabs);
 		lpool_slabs = next;
 	}
+	if (lpool_dir)
+		Z_Free(lpool_dir);
+	lpool_dir = NULL;
 	memset(lpool_free, 0, sizeof lpool_free);
 	lpool_bump = NULL;
 	lpool_left = 0;
+	lpool_cur = NULL;
+	lpool_freebytes = 0;
 }
 
 static void *LUA_PoolAlloc(void *ud, void *ptr, size_t osize, size_t nsize)
@@ -759,6 +947,7 @@ static void LUA_ClearState(void)
 	gL = NULL;
 #ifdef PS2_PROFILE
 	LUA_PoolRelease();
+	LUA_PoolInit();
 	lua_heap_after_collect = 0;
 #endif
 
@@ -841,6 +1030,7 @@ static void LUA_CollectAfterScript(boolean force)
 		return;
 	lua_gc(gL, LUA_GCCOLLECT, 0);
 	lua_heap_after_collect = lua_gc(gL, LUA_GCCOUNT, 0);
+	LUA_PoolTrim(0); // OPT14 (PS2-LUA-4): the garbage of the scripts just loaded is on the free lists now
 }
 
 // (the end of a batch of files: the garbage of the last scripts goes before the game starts)
@@ -2101,6 +2291,19 @@ void LUA_Step(void)
 		return;
 	lua_settop(gL, 0);
 	lua_gc(gL, LUA_GCSTEP, 1);
+#ifdef PS2_PROFILE
+	{
+		// OPT14 (PS2-LUA-4): every ~10 s (350 frames) give back the slabs of the pool that the collector emptied, when 256 KB or more sit on the free lists
+		static UINT32 trimtick;
+
+		if (++trimtick >= 350)
+		{
+			trimtick = 0;
+			if (lpool_freebytes >= 256*1024)
+				LUA_PoolTrim(0);
+		}
+	}
+#endif
 }
 
 void LUA_Archive(save_t *save_p)

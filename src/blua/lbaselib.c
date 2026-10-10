@@ -202,6 +202,12 @@ static int luaB_collectgarbage (lua_State *L) {
   int o = luaL_checkoption(L, 1, "collect", opts);
   int ex = luaL_optint(L, 2, 0);
   int res = lua_gc(L, optsnum[o], ex);
+#ifdef PS2_PROFILE
+  if (optsnum[o] == LUA_GCCOLLECT) {
+    extern void LUA_PoolTrimNow(void);  /* OPT14 (PS2-LUA-4): a full collection the script asked for: the slabs it emptied go back to the zone */
+    LUA_PoolTrimNow();
+  }
+#endif
   switch (optsnum[o]) {
     case LUA_GCCOUNT: {
       int b = lua_gc(L, LUA_GCCOUNTB, 0);

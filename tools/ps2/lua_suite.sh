@@ -25,6 +25,7 @@ run lt_local   --warp 1 --until "LQ DONE_LOCAL" "$W320" "--ps2-args=-ps2ref-mapt
 run lt_coro    --warp 1 --until "LQ DONE_CORO" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_coro.lua
 run lt_udmany  --warp 11 --until "LQ DONE_UDMANY" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_udmany.lua
 python3 tools/ps2/make_luapk3.py build/opt14-addons/LP.pk3 >/dev/null
+python3 tools/ps2/make_bigaddon.py --out build/opt14-addons >/dev/null
 run lt_pk3     --until "LQ DONE_PK3" build/opt14-addons/LP.pk3
 run lm_data    --until "LQ DONE_LMDATA" $T/lm_data.lua
 run lt_io      --until "LQ DONE_IO" $T/lt_io.lua
@@ -32,3 +33,9 @@ run lm_objects --demo DEMO_001 --timedemo --until "LQ DONE_LMOBJ" $T/lm_objects.
 run lm_world   --demo DEMO_001 --timedemo --until "LQ DONE_LMWORLD" $T/lm_world.lua
 run lm_hud     --warp 1 --until "LQ DONE_LMHUD" "$W320" "--ps2-args=-ps2ref-maptics" $T/lm_hud.lua
 run lm_hud_hw  --warp 1 --until "LQ DONE_LMHUD" "$W320" "--ps2-args=-ps2ref-maptics -renderer Hardware" $T/lm_hud.lua
+run lt_argorder --until "LQ DONE_ARGORDER" $T/lt_argorder.lua
+run lt_ops     --until "LQ DONE_OPS" $T/lt_ops.lua
+run lt_stack   --warp 1 --until "LQ DONE_STACK" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_stack.lua
+run lt_stack2  --warp 1 --until "LQ DONE_STACK2" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_stack2.lua
+run lt_poolstress --until "LQ DONE_POOLSTRESS" $T/lt_poolstress.lua
+run lt_heap    --warp 1 --until "LQ DONE_HEAP" "$W320" "--ps2-args=-ps2ref-maptics" build/opt14-addons/BIG.pk3 $T/lt_heap.lua

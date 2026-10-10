@@ -78,6 +78,7 @@ boolean LUA_LoadLump(UINT16 wad, UINT16 lump);
 void LUA_DoLump(UINT16 wad, UINT16 lump, boolean noresults);
 #ifdef PS2_PROFILE
 void LUA_CollectLoaded(void); // PS2-LOAD-18: the full collection after the scripts of a file
+void LUA_PoolStats(size_t *slabs, size_t *freebytes, size_t *trimmed); // OPT14 (PS2-LUA-4): the slab pool of the Lua heap (memfree)
 #endif
 #ifdef LUA_ALLOW_BYTECODE
 void LUA_DumpFile(const char *filename);
