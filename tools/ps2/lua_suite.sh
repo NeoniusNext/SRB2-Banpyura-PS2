@@ -39,4 +39,5 @@ run lt_stack   --warp 1 --until "LQ DONE_STACK" "$W320" "--ps2-args=-ps2ref-mapt
 run lt_stack2  --warp 1 --until "LQ DONE_STACK2" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_stack2.lua
 run lt_poolstress --until "LQ DONE_POOLSTRESS" $T/lt_poolstress.lua
 run lt_heap    --warp 1 --until "LQ DONE_HEAP" "$W320" "--ps2-args=-ps2ref-maptics" build/opt14-addons/BIG.pk3 $T/lt_heap.lua
+echo "lt_heap zone check: $(python3 tools/ps2/lua_heapcheck.py ${LUA_OUT:-build/lua-equiv}/lt_heap/ps2/boot.txt | tail -1)"
 run lt_actions --demo DEMO_001 --timedemo --until "LQ DONE_ACTIONS" $T/lt_actions.lua

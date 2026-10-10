@@ -20,7 +20,9 @@ addHook("ThinkFrame", function()
 		local n = #lines
 		local cap = n < 9000 and n or 9000
 		for i = 0, cap - 1 do held[i + 1] = lines[i] end
-		print("LT time " .. tostring((getTimeMicros() - t0) / 1000) .. " ms for " .. cap .. " line userdata of " .. n)
+		local ms = (getTimeMicros() - t0) / 1000
+		print("LT time " .. tostring(ms) .. " ms for " .. cap .. " line userdata of " .. n)
+		P("fast", ms < 5000) -- (PS2-LUA-2: 28 691 ms before the fix on the EE, 107 ms after, 3 ms on the PC)
 		P("held", #held, held[1].valid, held[#held].valid, #held >= 4200)
 		local s = 0
 		for i = 1, #held do s = s + (held[i].dx >> 16) + (held[i].dy >> 16) end

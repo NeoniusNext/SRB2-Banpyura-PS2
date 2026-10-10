@@ -12,3 +12,7 @@ for ctx in thinker playerthink prethink hud hudscores maploadhook mapchange chat
   python3 tools/ps2/ftest_run.py --name $ctx --elf $ELF --pak $PAK --files $f --until ZSTAT --timeout 900 --out $OUT -- -skipintro -warp 1 -file lt_stack3_$ctx.lua -zstack -zquit 700 -ps2ref-maptics "$@" > $OUT/$ctx.out 2>&1
   echo "$ctx: $(grep -a -o 'stackused=[0-9]*' $OUT/$ctx/boot.txt | head -1) $(grep -a 'LQ \(gsub\|sort\|format\)' $OUT/$ctx/boot.txt | cut -c1-80 | tr '\n' '|')"
 done
+# PS2-LUA-5: the same recursion with a margin that is reached (-luastackmargin 300 KB): Lua must refuse the call with the PC's message at a smaller depth and the stack must not go deeper than ~150 KB
+f=$OUT/lt_stack3_thinker.lua
+python3 tools/ps2/ftest_run.py --name guard --elf $ELF --pak $PAK --files $f --until ZSTAT --timeout 900 --out $OUT -- -skipintro -warp 1 -file lt_stack3_thinker.lua -zstack -zquit 700 -ps2ref-maptics -luastackmargin 300 "$@" > $OUT/guard.out 2>&1
+echo "guard (margin 300 KB): $(grep -a -o 'stackused=[0-9]*' $OUT/guard/boot.txt | head -1) $(grep -a 'LQ \(gsub\|sort\|format\)' $OUT/guard/boot.txt | cut -c1-80 | tr '\n' '|')"
