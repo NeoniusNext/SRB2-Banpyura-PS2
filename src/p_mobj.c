@@ -18,6 +18,7 @@
 #include "st_stuff.h"
 #include "hu_stuff.h"
 #include "p_local.h"
+#include "m_argv.h"
 #include "p_setup.h"
 #include "r_fps.h"
 #include "r_main.h"
@@ -61,11 +62,15 @@ mobj_t *P_AllocMobjBlock(void)
 // OPT14 (PS2-LUA-7): P_NetUnArchiveThinkers empties the thinker lists with P_RemoveSavegameMobj (upstream frees every object) and then builds the saved ones. Here the removed ones sit in
 // mobjcache, which only P_SpawnMobj reads, and every unarchived object was a new slice of a chunk: a client that joins holds the objects of the map it loaded and the ones the host sent
 // until the level ends (416 bytes each: 2.8 MB for the 6 768 objects of MAP11). The cache is read first; the memory is cleared as P_SpawnMobj does.
+// Not proven by a measurement yet (the join runs are equal to the PC with and without it; the 2.8 MB is computed): off unless -mobjreuse is given.
 mobj_t *P_AllocMobjBlockForLoad(void)
 {
+	static int reuse = -1;
 	mobj_t *mobj = mobjcache;
 
-	if (mobj == NULL)
+	if (reuse < 0)
+		reuse = M_CheckParm("-mobjreuse") ? 1 : 0;
+	if (mobj == NULL || !reuse)
 		return P_AllocMobjBlock();
 	mobjcache = mobj->hnext;
 	memset(mobj, 0, sizeof (*mobj));

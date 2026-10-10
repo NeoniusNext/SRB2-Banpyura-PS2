@@ -115,7 +115,7 @@ The Lua suite of OPT12-LOAD (15 scripts) plus the new ones were also run on the 
 which does not fit the memory of MAP11 with the larger debug zone headers ("Not enough memory to draw map MAP11"), nothing else. (The `--debug` build did not compile: `I_Assert(sfx_id < LIMIT_NUMSFX)` in s_sound.c is a signed/unsigned
 comparison under -Werror; fixed with casts, two lines.)
 
-## 4. The final ELF (release, HW + SW, sources of commit "PS2-LUA-7")
+## 4. The ELF before the merge (release, HW + SW; `build/out6`, `out-ref6`)
 
 Built `build/out6` (release), `build/out-ref6` (`--ps2ref`), `build/out-dbg6` (`--debug`); `ninja -C build/pc-net` builds (PC).
 
@@ -127,3 +127,44 @@ Built `build/out6` (release), `build/out-ref6` (`--ps2ref`), `build/out-dbg6` (`
 * **Renderer switch** (`tools/ps2/lua_renderswitch.sh`; `lt_renderswitch.lua`): a HUD script keeps 6 patches, 4 sprite patches and 6 colormaps in tables; the renderer is changed by injected console commands
   (Software -> Hardware -> Software -> Hardware) and a level change comes in between: at each check all 8 patches are valid and no draw call raised an error (`check ... 8 8 false`). (My first version of the script reloaded the map
   at tic 230 of every map and never finished: a script error, not an engine one; fixed.)
+
+## 5. The merged ELF (main branch with opt14-gif and opt14-chat merged in, `build/out7` release HW+SW, `build/out-ref7` --ps2ref; `ninja -C build/pc-net` builds)
+
+* Merge: `573f8b5` of the main branch. One conflict, `tools/ps2/net_specs14.py` (the chat agent made a file of the same name); mine is now `tools/ps2/net_specs14_lua.py`.
+* **Golden**: 4 demos, 0 differing frames against `golden/ps2-head`, tics identical to the PC golden (1050 rows each).
+* **Lua suite**: the same 31 scripts, every one `RESULT SAME`, `lua_heapcheck.py` OK. Renderer switch (`lua_renderswitch.sh`): 8/8 kept patches valid at every check, no draw error.
+* **Network** (`tools/ps2/net_specs14_lua.py`, `lua_net.py`; PC dedicated server + PS2 client with the mod `lm_net.lua`, the client joins a running game and takes the Lua state through NetVars): lua-join-dl (client downloads the
+  add-on), lua-join-hw (PS2 client in `-renderer Hardware`) and lua-join-rain on MAP32, a weather map, on the merged ELF: all `RESULT SAME` (82 and 54 keyed state lines of the mod, the driven events: a net cvar, a Lua command, a chat line;
+  0 differ between the PC server, a second PC client and the PS2 client).
+* The `--debug` ELF (ZDEBUG red zones) was built with PS2-LUA-6/7 (`build/out-dbg6`); the pre-fix debug ELF (`build/out-dbg`) and it were run on lua-join-rain: see the result below.
+
+## 6. Hypotheses of the task and what became of them (the user gave no error text)
+
+| hypothesis | result |
+|---|---|
+| 1. LOAD optimisations (slab heap, deferred GC, bit set of userdata, `LUA_RemapUserdata`/PS2_OOR) | two real defects in the bit set (PS2-LUA-1 stale userdata made in coroutines, PS2-LUA-2 O(n^2) stall above 4096 userdata), one memory defect of the slab pool (PS2-LUA-4). Deferred GC and `LUA_RemapUserdata`: nothing found (lt_slots 12 928 lines, lt_actions, lt_poolstress SAME) |
+| 2. CORE/IQ structure changes (hw fields, reordered line/sector/mobj, chunked pools PS2-511, IS-703, IQ-6) | one real defect: PS2-LUA-6 (chunked mobj pool x netgame load). Field order, the interpolation records and the hook mask: nothing found (lt_fields 428 lines, lt_hooks*, `lua_hook` mask reviewed against upstream `mobj_hook_available`) |
+| 3. PS2 profile (limits, `get_number`/`LUA_EvalMath`, FINEACON, stack, platform numbers) | the order in which the C code evaluates arguments (PS2-LUA-3), the stack of the EE under deep Lua recursion (measured, a guard added: PS2-LUA-5). Limits/`freeslot`/FINEACON/`LUA_EvalMath`: SAME. The 32-bit `long` of the PS2 (`strtol` of `2147483648`, `%x` of a negative number) is the platform's, the same as on Windows, printed by `lt_plat` and left as upstream |
+| 4. Network (NetVars, `LUA_Archive`, downloads, hooks on the client, HUD in Hardware) | PS2-LUA-6 (join on a weather map). NetVars/archive/downloaded add-on/pre-installed add-on/Hardware client: SAME |
+| 5. Render/objects (mobj/sector/line/side/player/skin read and write, P_* calls) | lt_fields, lt_api, lm_objects (14 000-event hash), lm_world, software frames of a demo with a content mod (`lua_frames.sh`): SAME |
+
+## 7. Open items and what was NOT verified
+
+* **Open, not explained: lt_maps on MAP02 as the second level.** `lt_maps_a` (`tools/ps2/luatests/lt_maps.lua`, a hash of every field of every sector/line/side/vertex/subsector/ffloor/slope/polyobject/mapthing/mobj of a level, then `map N -force`)
+  is SAME for MAP01 and MAP03, but MAP02 loaded after MAP01 differs in the hash of the lines and subsectors. Cause found by bisecting (`lt_maps_f.lua`: per-field hashes, `chk` lines): a few objects (lines 1676, 1680, 1684, 1732 and subsectors 880,
+  2512 in one run, subsector 880 alone in another) read `valid == false` on the PS2 although they are live, on the PC every one is valid. MAP02 as the first level (`-warp 2`, 831 lines) is SAME; `lt_stale.lua` (all 24 281 userdata of
+  the level kept across two level changes) finds nothing invalid. It needs the digest of the first level (the ffloor/slope/polyobject/mapthing/mobj part) to leave state behind. Which key is invalidated I did not find: no member of a
+  struct that Lua keys by address sits at offset 0 (checked with offsetof), the code of `LUA_InvalidateUserdata`/`LUA_RawPushUserdata` reads right. A/B on the baseline ELF (before this task) was started (`lt_maps_f4b`), see below.
+  This is the one Lua-visible difference between the builds that remains and the best candidate for "Lua errors on the PS2" (a script holding map objects across a level change would see `valid == false`).
+* lt_maps chunks b..e (84 maps): not run to the end. The digest keeps an index of every object (a MAP04-size map: 68 000 userdata, 8 MB of Lua heap), which the PS2 does not have next to the level: "Out of memory allocating 327680 bytes"
+  (a Lua allocation inside a call cannot be recovered: `PS2Lua_InCall`, same as upstream, where `Z_Malloc` failing is fatal too). A light mode (fingerprints instead of an index for maps above 20 000 lines+sides+vertexes) was added; MAP01 and MAP03 are SAME in it, the
+  rest was not completed.
+* lt_soak (8 level changes of 1500 tics, hooks + garbage + stale userdata kept): the PS2 completes it (spawned = removed = 3856, 8 level changes, no error); the PC and PS2 counters of `thinks` differ because single player seeds the RNG
+  from the clock (the script was changed to its own generator afterwards; `lt_soak2` with it is SAME on 80 lines; the full soak with the new script was not re-run: the coordinator stopped long runs).
+* A PS2 audio finding, not Lua: during lt_maps (a level change every few seconds, one of them failing with "Not enough memory to load map" and going back to the title) the music decoder thread did a NULL read
+  (`Decode` in `src/ps2/ps2_music.c`, `m == NULL`, PCSX2 "TLB Miss ... addr=0x0") and the emulator stayed in the exception. Not investigated.
+* A heavy mod (BIG.pk3: 100 scripts, 3.6 MB of live Lua objects) plus the heaviest map (MAP11) does not fit the 22.9 MB zone ("Not enough memory to load map MAP11"; Hardware renderer too). Inherent to the RAM, not changed.
+  Candidate, NOT done: a full collection of the Lua heap when a level starts (after `LUA_InvalidateLevel`/`Z_FreeTags(PU_LEVEL)` in `P_LoadLevel`) would hand the level the garbage of the last level's scripts; unproven.
+* Not verified at all: real hardware, the IOP, a network with more than two real PS2s, `http` library (the PS2 build has no curl thread: `http.*` raises the same error as a curl-less PC build), pixel comparison of the Hardware renderer.
+* Flags: PS2-LUA-7 (`-mobjreuse`, default OFF) is the only change that is not proven by a measurement (the benefit, 416 bytes per object of the level on a client that joins, is computed; the join runs are SAME with it on). The stack guard of PS2-LUA-5
+  is on by default (a margin of 40 KiB, `-luastackmargin KB`): it never fires in the stand and the guard run with a margin that is reached gives the same error as the 200th level.
