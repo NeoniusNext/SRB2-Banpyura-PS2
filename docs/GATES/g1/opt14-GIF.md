@@ -108,6 +108,9 @@
 | Hardware | `build/out-rel/SRB2.ELF` (релиз, LTO) | 5 (`gif-browse-oldcfg-hw-r1..r5`, `gif_batch.py`) | 5/5: то же, 105.8 с каждый |
 | Software / Hardware | релиз | 1 + 1 (`gif-osk-oldcfg-{sw,hw}-r1`: «Specify address» + экранная клавиатура) | чисто, 66.8 / 73.7 с; **контрольные**: тот же сценарий на ELF до исправления тоже чист (путь `connect` не затронут, раздел 1) |
 
+Управление по умолчанию (без `setcontrol`; `gif-browse-{sw,hw}`), релиз: до исправления — `PS2: screenshot key 0` 119 раз и один `Screen shot srb20000.pcx saved` (Software, `gif-browse-sw`); после — 0 строк, папки `screenshots` нет
+(`gif-browse-sw-r1`, `gif-browse-hw-r1`: чисто, `NETSYNC` 48 строк).
+
 Аудит мастер-сервера чист во всех прогонах (`real_master_server_contact` пуст; сервер регистрируется на mock через stdin, см. раздел 0).
 Первый прогон Hardware через `gif_repeat.py` (`gif-browse-oldcfg-hw-r1`, 925 с, `timeout`) к исправлению отношения не имеет: драйвер переименовал папку прогона, а mock-мастер-сервер писал журнал в старую (в этой
 сборке она не существовала): исключение в `log()`, клиент получил «Empty or malformed reply», списка серверов не было. Записи в нём тоже не было (0 строк `record key`). Исправлено в `gif_batch.py` (путь `run/<имя>/` в аргументах узлов следует за переименованием).
