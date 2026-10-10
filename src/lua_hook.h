@@ -184,16 +184,30 @@ int LUA_HookCharacterHUD
 );
 
 #ifdef PS2_OPT_PTICK
-// PS2-174: nothing but add_mobj_hook (lua_hooklib.c) makes a mobj hook available, and until the first script registers one all three hooks below
-// that every thinker and every collision test calls (~8000 calls per tic on a crowded map, each with its own Hook_State and a prepare/init call
-// chain) return their default: 0. lua_mobjhooks_any only ever goes from false to true.
-extern boolean lua_mobjhooks_any;
+// PS2-174, OPT13 IQ-6: nothing but add_mobj_hook (lua_hooklib.c) makes a mobj hook available, and the three hooks below that every thinker and every collision test calls
+// (~8000 calls per tic on a crowded map, each with its own Hook_State and a prepare/init call chain) return their default, 0, whenever no hook of that kind is registered for
+// the type of the object (or for every type, MT_NULL). PS2-174 turned them into stubs until the first script registers any mobj hook; one registered hook (of any kind, for any type)
+// then put every object of the level back on the slow path (+0.44 M cycles per tic on DSZ1, measured). The mask tells it per type and kind, the same answer as mobj_hook_available:
+// bit k of lua_mobjhookmask[type] is set when a hook of kind MOBJ_HOOK(k) was added for that type, row MT_NULL holds the hooks for every type; the masks only ever gain bits.
+extern UINT32 *lua_mobjhookmask; // [lua_mobjhooktypes], NULL until the first mobj hook is added
+extern INT32 lua_mobjhooktypes;
 int  LUA_HookMobjSlow(mobj_t *, int hook);
 int  LUA_Hook2MobjSlow(mobj_t *, mobj_t *, int hook);
 int  LUA_HookMobjLineCollideSlow(mobj_t *, line_t *);
-static inline int LUA_HookMobj(mobj_t *mo, int hook) { return lua_mobjhooks_any ? LUA_HookMobjSlow(mo, hook) : 0; }
-static inline int LUA_Hook2Mobj(mobj_t *mo1, mobj_t *mo2, int hook) { return lua_mobjhooks_any ? LUA_Hook2MobjSlow(mo1, mo2, hook) : 0; }
-static inline int LUA_HookMobjLineCollide(mobj_t *mo, line_t *line) { return lua_mobjhooks_any ? LUA_HookMobjLineCollideSlow(mo, line) : 0; }
+static inline boolean LUA_MobjHookWanted(const mobj_t *mo, int hook) // a hook of this kind exists for the type of mo (mo NULL: for every type only)
+{
+	UINT32 m;
+
+	if (!lua_mobjhookmask)
+		return false;
+	m = lua_mobjhookmask[MT_NULL];
+	if (mo && (UINT32)mo->type < (UINT32)lua_mobjhooktypes)
+		m |= lua_mobjhookmask[mo->type];
+	return ((m >> hook) & 1u) != 0;
+}
+static inline int LUA_HookMobj(mobj_t *mo, int hook) { return LUA_MobjHookWanted(mo, hook) ? LUA_HookMobjSlow(mo, hook) : 0; }
+static inline int LUA_Hook2Mobj(mobj_t *mo1, mobj_t *mo2, int hook) { return LUA_MobjHookWanted(mo1, hook) ? LUA_Hook2MobjSlow(mo1, mo2, hook) : 0; }
+static inline int LUA_HookMobjLineCollide(mobj_t *mo, line_t *line) { return LUA_MobjHookWanted(mo, MOBJ_HOOK(MobjLineCollide)) ? LUA_HookMobjLineCollideSlow(mo, line) : 0; }
 #else
 int  LUA_HookMobj(mobj_t *, int hook);
 int  LUA_Hook2Mobj(mobj_t *, mobj_t *, int hook);

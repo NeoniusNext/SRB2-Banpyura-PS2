@@ -67,6 +67,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
 extern INT32 ps2hwt_patchtag; // hardware/hw_cache.c (PS2-HW-442)
+extern boolean ps2hwt_comp_old; // hardware/hw_cache.c (OPT13 RDRV: -hwcomp 0 = the composition of a texture as before)
 static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
@@ -349,6 +350,7 @@ boolean PS2HWD_Init(void)
 	if (vu_nocut && M_CheckParm("-hwnocut") && M_IsNextParm())
 		vu_nocut = atoi(M_GetNextParm()) != 0;
 	pk_oldtail = M_CheckParm("-hwoldtail") != 0;
+	ps2hwt_comp_old = M_CheckParm("-hwcomp") && M_IsNextParm() && atoi(M_GetNextParm()) == 0; // OPT13 RDRV: 0 = the original composition (A/B on one ELF)
 	if (M_CheckParm("-hwvudump") && M_IsNextParm())
 		vu_dump_frame = (u32)atoi(M_GetNextParm());
 	if (M_CheckParm("-hwvustop") && M_IsNextParm())
@@ -662,7 +664,7 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		FSurfaceInfo surf;
 		unsigned int i, rng = seed * 2654435761u + 12345u;
 		float xs = 0.0f;
-		static FOutVector pts[4096];
+		FOutVector *pts; // OPT13 RDRV: was `static FOutVector pts[4096]` = 80 KB of .bss in the product for the -hwvu0bench measurement only
 		u32 c0;
 
 #define TRND() (rng = rng * 1664525u + 1013904223u, (float)((rng >> 8) & 0xFFFF) * (1.0f / 65536.0f))
@@ -686,6 +688,9 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 			return;
 		if (ps2hwd_dbg_flags & 256) // negative control of tools/ps2/hw_test.c: a wrong scale in VU0
 			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx * 1.01f, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		pts = malloc((size_t)n * sizeof *pts);
+		if (!pts)
+			return;
 		for (i = 0; i < n; i++)
 		{
 			// vertices around the camera: mostly in front of it, some beside and behind
@@ -773,6 +778,7 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		}
 		if (xs == 12345.678f)
 			out->n++; // keeps the compiler from dropping the clip results
+		free(pts);
 #undef TRND
 	}
 #endif

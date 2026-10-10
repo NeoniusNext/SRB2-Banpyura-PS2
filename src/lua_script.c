@@ -691,6 +691,7 @@ static int setglobals(lua_State *L)
 #define VALIDBITS 16384
 static UINT32 valid_bloom[VALIDBITS / 32];
 static UINT32 valid_marked;
+static int valid_ref = LUA_NOREF; // the registry reference of the LREG_VALID table (made in LUA_Load with the table)
 
 static inline UINT32 ValidHash(const void *p)
 {
@@ -759,10 +760,14 @@ static void LUA_ClearState(void)
 
 	// make LREG_VALID table for all pushed userdata cache.
 	lua_newtable(L);
-	lua_setfield(L, LUA_REGISTRYINDEX, LREG_VALID);
 #ifdef PS2_PROFILE
+	lua_pushvalue(L, -1);
+	lua_setfield(L, LUA_REGISTRYINDEX, LREG_VALID);
+	valid_ref = luaL_ref(L, LUA_REGISTRYINDEX); // OPT13 IQ-L2 (RTICK L-2): LUA_RawPushUserdata finds the table by this reference (no "LREG_VALID" string to intern and look up on every push)
 	memset(valid_bloom, 0, sizeof valid_bloom);
 	valid_marked = 0;
+#else
+	lua_setfield(L, LUA_REGISTRYINDEX, LREG_VALID);
 #endif
 
 	// make LREG_METATABLES table for all registered metatables
@@ -1094,7 +1099,11 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
 		return status;
 	}
 
+#ifdef PS2_PROFILE
+	lua_rawgeti(L, LUA_REGISTRYINDEX, valid_ref); // (the table of LREG_VALID, by its reference: OPT13 IQ-L2)
+#else
 	lua_getfield(L, LUA_REGISTRYINDEX, LREG_VALID);
+#endif
 	I_Assert(lua_istable(L, -1));
 
 	lua_pushlightuserdata(L, data);

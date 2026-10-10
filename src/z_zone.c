@@ -104,6 +104,7 @@ static zcost_t zcost_ensure, zcost_evict, zcost_room;
 #define ZCOST_BEGIN() const UINT32 zcost_t0 = PS2Mem_Cycles()
 #define ZCOST_END(c) do { (c).calls++; (c).cycles += (UINT32)(PS2Mem_Cycles() - zcost_t0); } while (0)
 static UINT32 zreport_interval, zreport_count; // -zreport N: memory report every N frames, level exits log a line
+static boolean zpoison;             // OPT13 IQ-2, -zpoison: every new block is filled with 0xA5 (what MALLOC_PERTURB_ does on the host): the arena of PCSX2 starts as zeros, the console's RAM does not, so a read of memory that was never written shows up here
 #if defined(_EE) && defined(__GNUC__)
 static size_t ztracemin; // -zcaller [bytes]: opt-in release diagnosis without a debug-sized arena; allocations and frees of at least that size (default 64 KiB)
 #define Z_TRACE_CALLER(kind) do { if (ztracemin && size >= ztracemin) \
@@ -1376,6 +1377,7 @@ static void Z_ArenaStart(void)
 	zheadroom = Z_KiBParm("-zheadroom", zheadroom);
 	if (M_CheckParm("-zredzone"))
 		za_redzone = 1;
+	zpoison = M_CheckParm("-zpoison") != 0;
 	if (M_CheckParm("-zsides") && M_IsNextParm())
 		za_twosided = atoi(M_GetNextParm()) >= 2;
 	if (M_CheckParm("-zprefer") && M_IsNextParm())
@@ -1839,6 +1841,8 @@ static void *Z_MallocInternal(size_t size, INT32 tag, void *user, INT32 alignbit
 			Z_OutOfMemory(size, tag, align);
 		return NULL;
 	}
+	if (zpoison)
+		memset(ptr, 0xA5, size);
 
 	block = ZA_BLOCK(ptr);
 	ZA_SetTag(block, tag);

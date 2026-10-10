@@ -746,6 +746,7 @@ void D_SRB2Loop(void)
 	oldentertics = I_GetTime();
 
 	// end of loading screen: CONS_Printf() will no more call FinishUpdate()
+	CON_EndStartup();
 	con_refresh = false;
 	con_startup = false;
 
@@ -908,8 +909,12 @@ static void D_RunFrame(void)
 #ifdef PS2_PROF_DIRECT
 			{
 				const UINT32 pc0 = PS2Prof_Cyc();
+				UINT32 pcd;
 				TryRunTics(realtics);
-				ps2prof_c_tick += PS2Prof_Cyc() - pc0;
+				pcd = PS2Prof_Cyc() - pc0;
+				ps2prof_c_tick += pcd;
+				if (pcd > ps2prof_c_tickmax) // OPT13 IQ: the longest TryRunTics call of the window (a spike of one tic is invisible in the window sum)
+					ps2prof_c_tickmax = pcd;
 			}
 #else
 			TryRunTics(realtics);
@@ -1741,10 +1746,12 @@ void D_SRB2Main(void)
 	LP_LAP(B_WADEXTRA);
 
 	CONS_Printf("HU_LoadGraphics()...\n");
+	CON_FlushStartup(); // OPT13 IQ-7b: the start-up screen shares a redraw between prints less than 40 ms apart; a print that precedes a long job is drawn first
 	HU_LoadGraphics();
 	LP_LAP(B_HULOAD);
 
 	//--------------------------------------------------------- CONFIG.CFG
+	CON_FlushStartup();
 	M_FirstLoadConfig(); // WARNING : this do a "COM_BufExecute()"
 	LP_LAP(B_CONFIG);
 
@@ -1807,6 +1814,7 @@ void D_SRB2Main(void)
 	LP_LAP(B_MINIT);
 
 	CONS_Printf("R_Init(): Init SRB2 refresh daemon.\n");
+	CON_FlushStartup();
 	LP_SAMPLE(4);
 	R_Init();
 	LP_LAP(B_RINIT);
@@ -1848,6 +1856,7 @@ void D_SRB2Main(void)
 	 ))
 	{
 		CONS_Printf("S_InitSfxChannels(): Setting up sound channels.\n");
+		CON_FlushStartup();
 		I_StartupSound();
 		I_InitMusic();
 		S_InitSfxChannels(cv_soundvolume.value);
@@ -1857,6 +1866,7 @@ void D_SRB2Main(void)
 	LP_LAP(B_SOUND);
 
 	CONS_Printf("ST_Init(): Init status bar.\n");
+	CON_FlushStartup();
 	ST_Init();
 	LP_LAP(B_STINIT);
 
@@ -1879,6 +1889,7 @@ void D_SRB2Main(void)
 
 	// init all NETWORK
 	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
+	CON_FlushStartup();
 	if (D_CheckNetGame())
 		autostart = true;
 

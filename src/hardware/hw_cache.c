@@ -38,6 +38,9 @@
 #include "../ps2/ps2_texc.h" // OPT13 IZ (PS2-602, R2): composites prebuilt by the cooker
 
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
+boolean ps2hwt_comp_old; // OPT13 RDRV: -hwcomp 0 = the composition as before (A/B): the raw lump read per patch use, the GL structures and the patch built and freed for every placement
+typedef struct { UINT16 wad, lump; patch_t *p; } ps2_cpatch_t;
+#define PS2_CPATCH_MAX 32 // distinct patches held while one texture is composed (a placement of the same patch again in the texture finds it)
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
 static inline unsigned int ps2hwt_now(void)
 {
@@ -673,6 +676,8 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 #endif
 #ifdef PS2_PROFILE
 	const unsigned int gt0 = ps2hwt_now(); // OPT13 IZ (PS2-603): what making this texture cost, for the eviction (Z_SetRebuildCost)
+	ps2_cpatch_t held[PS2_CPATCH_MAX]; // OPT13 RDRV: patches read for this texture, kept until it is composed
+	INT32 nheld = 0, h;
 #endif
 
 	INT32 i;
@@ -763,7 +768,13 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 			continue;
 		}
 #endif
+#ifdef PS2_PROFILE
+		// OPT13 RDRV: the raw lump is read here for a flat only (Picture_Convert below); for a Doom patch it was read in full (4 M cycles when the zone had dropped it) and never looked at
+		// (W_CachePatchNumPwad reads the lump again, and W_GetPatchPwad converts a PNG lump itself, with the same call as the branch below)
+		UINT8 *pdata = (ps2hwt_comp_old || texture->type == TEXTURETYPE_FLAT) ? W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE) : NULL;
+#else
 		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
+#endif
 		patch_t *realpatch = NULL;
 		boolean free_patch = true;
 #ifdef PS2_PROFILE
@@ -772,7 +783,7 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 
 #ifndef NO_PNG_LUMPS
 		size_t lumplength = W_LumpLengthPwad(wadnum, lumpnum);
-		if (Picture_IsLumpPNG(pdata, lumplength))
+		if (pdata && Picture_IsLumpPNG(pdata, lumplength))
 			realpatch = (patch_t *)Picture_PNGConvert(pdata, PICFMT_PATCH, NULL, NULL, NULL, NULL, lumplength, NULL, 0);
 		else
 #endif
@@ -787,9 +798,38 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 			// Otherwise, we load it here.
 			if (realpatch == NULL)
 			{
-				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
 #ifdef PS2_PROFILE
-				loaded_here = true;
+				if (!ps2hwt_comp_old)
+				{
+					// OPT13 RDRV: a patch placed again in the same texture is built once (THROCK4: 81 placements of 23 patches, SKY4: 151 placements), and no GL structure is made
+					// for a patch that is only composed (W_CachePatchNumPwad runs Patch_CreateGL, which allocates the GL patch and mipmap and Patch_Free frees them again)
+					for (h = 0; h < nheld; h++)
+						if (held[h].wad == wadnum && held[h].lump == lumpnum)
+						{
+							realpatch = held[h].p;
+							break;
+						}
+					if (!realpatch)
+					{
+						realpatch = W_CachePatchNumPwadNoGL(wadnum, lumpnum, PU_PATCH);
+						if (realpatch && nheld < PS2_CPATCH_MAX)
+						{
+							held[nheld].wad = wadnum;
+							held[nheld].lump = lumpnum;
+							held[nheld].p = realpatch;
+							nheld++;
+						}
+						else
+							loaded_here = true; // no room in the list: freed after this patch as before
+					}
+				}
+				else
+				{
+					realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
+					loaded_here = true;
+				}
+#else
+				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
 #endif
 			}
 		}
@@ -806,6 +846,10 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 			Patch_Free(realpatch);
 #endif
 	}
+#ifdef PS2_PROFILE
+	for (h = 0; h < nheld; h++)
+		Patch_Free(held[h].p); // OPT13 RDRV: the patches this texture was composed from are not kept (PS2-146: the arena would fill with the patches of every texture seen)
+#endif
 #ifdef PS2
 	if (missing)
 	{
@@ -841,9 +885,15 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 		GLMapTexture_t tmp = *grtex;
 
 		chk.data = NULL;
-		ps2_slow_composite = true;
-		HWR_GenerateTexture(texnum, &tmp, &chk);
-		ps2_slow_composite = false;
+		{
+			const boolean svold = ps2hwt_comp_old;
+
+			ps2_slow_composite = true;
+			ps2hwt_comp_old = true; // OPT13 RDRV: the check composes with the original patch handling as well
+			HWR_GenerateTexture(texnum, &tmp, &chk);
+			ps2hwt_comp_old = svold;
+			ps2_slow_composite = false;
+		}
 		checked++;
 		if (!chk.data || memcmp(chk.data, mipmap->data, (size_t)blocksize))
 		{

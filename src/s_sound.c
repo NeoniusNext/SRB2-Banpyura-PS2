@@ -318,7 +318,7 @@ static void SetChannelsNum(void)
 	}
 #endif
 	if (cv_numChannels.value)
-		channels = (channel_t *)Z_Malloc(cv_numChannels.value * sizeof (channel_t), PU_STATIC, NULL);
+		channels = (channel_t *)Z_Calloc(cv_numChannels.value * sizeof (channel_t), PU_STATIC, NULL);
 	numofchannels = cv_numChannels.value;
 
 	// Free all channels for use
