@@ -19,7 +19,7 @@ if [ ! -f $B/b/build.ninja ]; then
     -DSRB2_HOST_PROFILE_LZ4_INCLUDE_DIR=/opt/ps2dev-x/ps2dev/ps2sdk/ports/include "-DCMAKE_C_FLAGS=-DPS2_NOOPT_SLOPE -DPS2_NOOPT_SEGS -fwrapv" > /dev/null
 fi
 ninja -C $B/b -j${JOBS:-2} | tail -1
-EXE=$(ls $B/b/bin/*)
+EXE=$(realpath "$(ls -t $B/b/bin/* | head -1)")
 W=$ROOT/$B/work
 rm -rf "$W"; mkdir -p "$W/home/.srb2" "$OUT"
 (cd "$W" && SRB2WADDIR=$PAK SDL_AUDIODRIVER=dummy xvfb-run -a -s "-screen 0 800x600x24" timeout 600 "$EXE" -home "$W/home" -nolog -noendtxt -win -width 320 -height 200 -texcdump "$W/texc.dump" > stdout.log 2>&1) || { tail -5 "$W/stdout.log"; exit 1; }

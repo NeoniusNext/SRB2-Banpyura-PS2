@@ -1368,9 +1368,10 @@ end:
 
 size_t WPack_ReadRaw(FILE *handle, const lumpinfo_t *l, void *dest)
 {
-	if (!l->disksize || l->position > LONG_MAX || l->disksize > (unsigned long)LONG_MAX - l->position || fseek(handle, (long)l->position, SEEK_SET) != 0)
+	if (!l->disksize || !dest || l->position > LONG_MAX || l->disksize > (unsigned long)LONG_MAX - l->position)
 		return 0;
-	return ReadBytes(handle, dest, l->disksize) ? l->disksize : 0;
+	pk_err[0] = '\0';
+	return ReadAt(StreamFor(handle), (long)l->position, dest, l->disksize) ? l->disksize : 0; // through the window and the retry of the reader (OPT13-IO)
 }
 
 boolean WPack_DecodeMem(int compression, const void *src, UINT32 disksize, void *dest, UINT32 size)

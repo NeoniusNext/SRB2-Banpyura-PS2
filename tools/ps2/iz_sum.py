@@ -22,7 +22,7 @@ def summarize(run):
     nreg, sreg = 0, 0
     slow = [0, 0]
     lru = [0, 0]
-    front = [0, 0, 0]
+    front = [0, 0, 0, 0]
     gcs = []
     texc = [0, 0, 0, 0, 0]
     regen_dev = 0
@@ -45,13 +45,14 @@ def summarize(run):
         if m:
             nreg += 1
             sreg += int(m.group(1))
-        m = re.match(r'ZMODE cap=.*\| slow=(\d+) \((\d+) cyc\) front calls=(\d+) failed=(\d+) walked=(\d+) \((\d+) cyc\)', l)
+        m = re.match(r'ZMODE cap=.*\| slow=(\d+) \((\d+) cyc\) front calls=(\d+) failed=(\d+)(?: \((\d+) from memory\))? walked=(\d+) \((\d+) cyc\)', l)
         if m:
             slow[0] += int(m.group(1))
             slow[1] += int(m.group(2))
             front[0] += int(m.group(3))
             front[1] += int(m.group(4))
-            front[2] += int(m.group(6))
+            front[2] += int(m.group(7))
+            front[3] += int(m.group(5) or 0)
         m = re.search(r'lru last resort (\d+) \(partial (\d+)\)', l)
         if m and l.startswith('ZMODE'):
             lru[0] += int(m.group(1))
@@ -81,7 +82,7 @@ def summarize(run):
 
 
 def main():
-    print('%-22s %7s %7s %7s %7s %6s %9s | %5s %7s | %6s %9s | %5s %6s %7s | %-10s | %s' % ('run', 'realtic', 'avg M', 'win M', 'wmax M', '>15M', 'p50/90/99', 'regen', 'sum M', 'slow', 'cyc', 'fcall', 'ffail', 'fcyc', 'geom', 'lru fl/part  texc used/res/read/cyc'))
+    print('%-22s %7s %7s %7s %7s %6s %9s | %5s %7s | %6s %9s | %5s %6s %6s %7s | %-10s | %s' % ('run', 'realtic', 'avg M', 'win M', 'wmax M', '>15M', 'p50/90/99', 'regen', 'sum M', 'slow', 'cyc', 'fcall', 'ffail', 'fneg', 'fcyc', 'geom', 'lru fl/part  texc used/res/read/cyc'))
     for pat in sys.argv[1:]:
         runs = sorted(glob.glob(os.path.join('build/runs', pat)), key=key)
         for run in runs:
@@ -90,8 +91,8 @@ def main():
             r = summarize(run)
             if not r:
                 continue
-            print('%-22s %7s %7.3f %7.2f %7.1f %6d %9s | %5d %7.1f | %6d %9d | %5d %6d %7d | %-10s | %s' % (os.path.basename(run), r['rt'], r['avg'], r['mx'], r['wmax'], r['spikes'], '%d/%d/%d' % tuple(r['pct']), r['nreg'], r['sreg'],
-                  r['slow'][0], r['slow'][1], r['front'][0], r['front'][1], r['front'][2], r['gc'], '%d/%d  ' % tuple(r['lru']) + '/'.join(str(x) for x in r['texc'])))
+            print('%-22s %7s %7.3f %7.2f %7.1f %6d %9s | %5d %7.1f | %6d %9d | %5d %6d %6d %7d | %-10s | %s' % (os.path.basename(run), r['rt'], r['avg'], r['mx'], r['wmax'], r['spikes'], '%d/%d/%d' % tuple(r['pct']), r['nreg'], r['sreg'],
+                  r['slow'][0], r['slow'][1], r['front'][0], r['front'][1], r['front'][3], r['front'][2], r['gc'], '%d/%d  ' % tuple(r['lru']) + '/'.join(str(x) for x in r['texc'])))
 
 
 if __name__ == '__main__':

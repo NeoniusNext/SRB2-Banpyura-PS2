@@ -52,3 +52,5 @@ void NetLat_TicHole(void) {}
 void NetLat_Frame(void) {}
 void NetLat_Sent(INT32 t, INT32 b) { (void)t; (void)b; }
 #include "ps2/ps2_nearest.c"
+// IZ (OPT13): the host cooker links the reader and the level loader of main 02dc2a2 (OPT13-IO): PS2_SleepUs is EE-only (src/ps2/i_system.c)
+void PS2_SleepUs(UINT32 us) { (void)us; }
