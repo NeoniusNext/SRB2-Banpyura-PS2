@@ -1407,6 +1407,10 @@ void M_StartMovie(void)
 	if (moviemode)
 		return;
 
+#ifdef PS2_PROFILE // OPT14-GIF diagnostic: who starts a recording
+	CONS_Printf("PS2: M_StartMovie called from %p (mode %d)\n", __builtin_return_address(0), (int)cv_moviemode.value);
+#endif
+
 	if (cv_movie_option.value == 0)
 		strcpy(pathname, usehome ? srb2home : srb2path);
 	else if (cv_movie_option.value == 1)
@@ -1895,9 +1899,19 @@ boolean M_ScreenshotResponder(event_t *ev)
 		return false;
 
 	if (ch == KEY_F8 || ch == gamecontrol[GC_SCREENSHOT][0] || ch == gamecontrol[GC_SCREENSHOT][1]) // remappable F8
+	{
+#ifdef PS2_PROFILE // OPT14-GIF diagnostic
+		CONS_Printf("PS2: screenshot key %d (bound %d/%d, menu %d)\n", (int)ch, (int)gamecontrol[GC_SCREENSHOT][0], (int)gamecontrol[GC_SCREENSHOT][1], (int)menuactive);
+#endif
 		M_ScreenShot();
+	}
 	else if (ch == KEY_F9 || ch == gamecontrol[GC_RECORDGIF][0] || ch == gamecontrol[GC_RECORDGIF][1]) // remappable F9
+	{
+#ifdef PS2_PROFILE // OPT14-GIF diagnostic: which key toggled the recording
+		CONS_Printf("PS2: record key %d (F9 %d, bound %d/%d, menu %d)\n", (int)ch, (int)KEY_F9, (int)gamecontrol[GC_RECORDGIF][0], (int)gamecontrol[GC_RECORDGIF][1], (int)menuactive);
+#endif
 		((moviemode) ? M_StopMovie : M_StartMovie)();
+	}
 	else
 		return false;
 	return true;
