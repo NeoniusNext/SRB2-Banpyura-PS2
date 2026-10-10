@@ -56,6 +56,7 @@
 #include "lua_hook.h"
 
 #ifdef PS2
+#include "m_argv.h"
 #include "ps2/ps2_osk.h" // OPT14-CHAT: the on-screen keyboard comes up on the chat line
 #endif
 
@@ -383,6 +384,10 @@ static void HU_removeChatText_Log(void)
 
 void HU_AddChatText(const char *text, boolean playsound)
 {
+#ifdef PS2
+	if (M_CheckParm("-chatlog")) // OPT14-CHAT: every line that reaches the chat is written to the engine log (the tests read it; nothing on the screen)
+		I_OutputMsg("CHATLOG %s\n", text);
+#endif
 	if (playsound && cv_consolechat.value != 2) // Don't play the sound if we're using hidden chat.
 		S_StartSound(NULL, sfx_radio);
 	// reguardless of our preferences, put all of this in the chat buffer in case we decide to change from oldchat mid-game.

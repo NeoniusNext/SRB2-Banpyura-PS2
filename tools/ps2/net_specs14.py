@@ -154,17 +154,27 @@ pause_srv('chat-pause-srv-team', team=True, mode='ctf', mapname='MAPM0')
 
 
 # ---- 3. PC dedicated server <-> PS2 client
-def pc_client(name, renderer='Software', via='menu', team=False, text='hello from ps2', first=1500, srvsay='Hello from the PC server', say_at=None):
+def pc_client(name, renderer='Software', via='menu', team=False, text='hello from ps2', first=1700, ratio=None):
+    """The PS2 joins a PC dedicated server by pad (Cross on the join screens); a PC client (xvfb, build/pc-net, -diagsay: src/netcode/d_clisrv.c) and the server
+    itself talk at given game tics; the PS2 pad then opens the chat (the pause menu, or Select) and types TEXT. The engine log of the PS2 gets every chat line
+    (-chatlog), the server's out.txt every line it sees. RATIO: displayed PS2 frames per game tic (about 1 in Software, more in Hardware: PCSX2 runs it slower
+    than the game's 35 tics, the frame counter runs on at the display rate)."""
+    ratio = ratio or (1.0 if renderer == 'Software' else 1.35)
     items, end = chat_pad(first, text, via, team)
-    # the shots: the menu, the keyboard, the sent message, the message of the server
-    frames = [first + 40, first + 100, first + 200, end + 40, end + 120, end + 400]
-    cli_args = ['-skipintro', '-connect', H, '-netsync', '-padscript', 'file:pad.txt', '-vidshot', shots(*frames)] + (['-renderer', renderer] if renderer != 'Software' else [])
-    srv = pcsrv(start=0)
-    srv['stdin'] = [{'at': say_at or 150, 'text': f'say {srvsay}\n'}]
+
+    def tic(poll):
+        return max(100, int(poll / ratio) - 90)
+    say1, say2, say3 = tic(first - 300), tic(end + 120), tic(end + 700)
+    # the shots: the message of the PC client in the mini chat, the keyboard with the history under it, the sent message, the answers
+    frames = [first - 300 + 120, first - 300 + 220, first + 40, first + 100, first + 200, end + 40, end + 100, end + 120 + 80, end + 120 + 180, end + 700 + 80]
+    cli_args = ['-skipintro', '-connect', H, '-chatlog', '-padscript', 'file:pad.txt', '-vidshot', shots(*frames)] + (['-renderer', renderer] if renderer != 'Software' else [])
+    srv = pcsrv(start=0, extra=['-diagsay', f'{say3}:Server says goodbye'])
+    pcc = {'id': 'pcc', 'kind': 'pc', 'exe': S.PC, 'cwd': S.PCDIR, 'start': 6,
+           'args': ['-connect', H, '-nomusic', '-nosound', '-netsync', '-home', S.HOME2, '-diagsay', f'{say1}:Hello from the PC client|{say2}:Reply from the PC client']}
     cli = ps2('cli', EMU1, cli_args, files={'pad.txt': pad(*(crosses(200, first - 300, 60) + items))},
               cfg=CFG_SYNC + ('fpscap "Match refresh rate"\n' if renderer == 'Hardware' else ''), may_exit=True, start=8)
-    mine(name, {'timeout': 1500, 'nodes': [srv, cli],
-                'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}, {'node': 'srv', 'text': text, 'file': 'out.txt'}], 'grace': 3})
+    mine(name, {'timeout': 1800, 'nodes': [srv, pcc, cli],
+                'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}, {'node': 'srv', 'text': text, 'file': 'out.txt'}, {'node': 'cli', 'text': 'Reply from the PC client'}], 'grace': 3})
     return frames, end
 
 
