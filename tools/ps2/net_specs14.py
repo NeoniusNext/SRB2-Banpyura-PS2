@@ -192,6 +192,107 @@ for _r, _sfx in (('Software', '-so'), ('Hardware', '-ha')):
     local('chat-localsplit' + _sfx, ['-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'], {'pad.txt': pad((420, 'start', 5)), 'cmd.txt': '100:splitscreen 1'}, [400, 500], _r, timeout=600)
     local('chat-netsplit' + _sfx, ['-netcmd', 'file:cmd.txt'], {'cmd.txt': '200:debug 1|220:splitscreen 1|420:say Said in the split screen|700:say And a second line of it'}, [380, 500, 620, 800], _r, netgame=True, timeout=900)
 
+# ---- 4. a USB keyboard (the script of ps2_kbd.c): 't' opens the line, Enter sends; no on-screen keyboard comes up
+def kbd_script(first, text):
+    keys = {' ': 'space', '.': 'period', ',': 'comma'}
+    steps = [f'{first}:t']
+    t = first + 20
+    for ch in text:
+        steps.append(f'{t}:{keys.get(ch, ch)}')
+        t += 8
+    steps.append(f'{t + 10}:enter')
+    return ','.join(steps), t + 10
+
+
+# ---- 2d. everything on one timeline (one emulator session: the net lock is shared with other agents and a session waits for it). Console commands run with the shots
+# (-vidshot fN=command, '~' = space: the same frame counter as the pad script, which counts polls = frames in Software and at fpscap 35).
+class Timeline:
+    def __init__(self):
+        self.pad, self.kbd, self.shots = [], [], []
+
+    def shot(self, frame, cmd=None):
+        self.shots.append(f'f{frame}' + (f'={cmd.replace(" ", "~")}' if cmd else ''))
+
+    def say(self, frame, text):
+        self.shot(frame, 'say ' + text)
+
+    def vidshot(self):
+        return ','.join(self.shots)
+
+
+def history(tl, frame=400):
+    """three lines in the chat log (and the window) before the test starts"""
+    tl.say(frame, 'Welcome to the test')
+    tl.say(frame + 30, 'Second line of the history for the log')
+    tl.say(frame + 60, 'Third line of the history, long enough to wrap in the box')
+
+
+def all_srv(name, renderer='Software'):
+    tl = Timeline()
+    history(tl)
+    # A. the pause menu: the hints of "Chat", then Chat, the keyboard, a message
+    items, end = chat_pad(700, 'hi there', 'menu', False)
+    tl.pad += items
+    for f in (780, 845, 900, end + 40, end + 90):
+        tl.shot(f)
+    # B. the quick button (Select) and the symbols layer: apostrophe, comma and question mark
+    first = end + 150
+    items, end = chat_pad(first, "don't stop, ok?", 'select', False)
+    tl.pad += items
+    for f in (first + 60, end - 60, end + 40):
+        tl.shot(f)
+    # C. a long message wraps over the line (the log scrolls with L1 / R1) and is dropped with Circle
+    first = end + 150
+    items, end = chat_pad(first, 'the quick brown fox jumps over the lazy dog again and again', 'select', False, 8)
+    items = items[:-1]  # (without the final Start)
+    tl.pad += items
+    tl.pad += [(end - 10, 'l1', 5), (end + 15, 'l1', 5), (end + 40, 'r1', 5), (end + 70, 'circle', 5)]
+    for f in (end - 20, end + 30, end + 60, end + 120):
+        tl.shot(f)
+    # D. a USB keyboard (-kbdscript) while the pad is idle: 't' opens the line, no on-screen keyboard
+    first = end + 200
+    script, kend = kbd_script(first, 'typed on usb')
+    tl.kbd = script
+    for f in (first + 30, kend - 10, kend + 40):
+        tl.shot(f)
+    # E. the server pauses the game: the window goes on being drawn
+    first = kend + 120
+    tl.shot(first, 'pause')
+    tl.say(first + 30, 'Said while the game is paused')
+    tl.shot(first + 80)
+    tl.shot(first + 140)
+    tl.shot(first + 400, 'pause')
+    tl.shot(first + 460)
+    args = ['-server', '-padscript', 'file:pad.txt', '-kbdscript', 'file:kbd.txt', '-chatlog', '-vidshot', tl.vidshot()] + (['-renderer', renderer] if renderer != 'Software' else [])
+    node = ps2('srv', EMU1, args, map='MAP01', files={'pad.txt': pad(*tl.pad), 'kbd.txt': tl.kbd}, cfg='menuhints "On"\n', may_exit=True)
+    mine(name, {'timeout': 2400, 'nodes': [node], 'until': [{'node': 'srv', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
+
+
+all_srv('chat-all-srv')
+all_srv('chat-all-srv-hw', 'Hardware')
+
+
+def modes_srv(name, renderer='Software', modes=(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10), extra=None, block=300):
+    """every internal video mode (docs/VIDEO_MODES.md, vid_mode N): the keyboard on the chat line over the history; Select opens, two letters, Circle drops it"""
+    tl = Timeline()
+    history(tl)
+    pads = []
+    for k, m in enumerate(modes):
+        b = 700 + k * block
+        tl.shot(b, f'vid_mode {m}')
+        pads += [(b + 70, 'select', 5), (b + 115, 'cross', 5), (b + 130, 'right', 5), (b + 145, 'cross', 5)]
+        tl.shot(b + 200)
+        pads += [(b + 230, 'circle', 5)]
+    tl.shot(700 + len(modes) * block)
+    args = ['-server', '-padscript', 'file:pad.txt', '-vidshot', tl.vidshot()] + (['-renderer', renderer] if renderer != 'Software' else []) + (extra or [])
+    node = ps2('srv', EMU1, args, map='MAP01', files={'pad.txt': pad(*pads)}, may_exit=True)
+    mine(name, {'timeout': 3000, 'nodes': [node], 'until': [{'node': 'srv', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
+
+
+modes_srv('chat-modes-srv')
+modes_srv('chat-modes-srv-hw', 'Hardware')
+modes_srv('chat-modes-ntsc-srv', modes=(0, 2, 7), extra=['-ntsc'])
+
 # ---- 3. PC dedicated server <-> PS2 client
 # how the three counters of a PS2 run relate (fitted on chat-pc-sw / chat-pc-hw of this work): the pad script counts pad POLLS, -vidshot fN counts displayed FRAMES, the
 # game counts TICS (leveltime). Software: a poll is a frame, 29 frames a second against 35 tics a second. Hardware ("Match refresh rate", PCSX2 at ~0.75 of real time):
@@ -226,18 +327,6 @@ pc_client('chat-pc-sw')
 pc_client('chat-pc-hw', 'Hardware')
 pc_client('chat-select-sw', via='select', text='quick one')
 pc_client('chat-select-hw', 'Hardware', via='select', text='quick one')
-
-
-# ---- 4. a USB keyboard (the script of ps2_kbd.c): 't' opens the line, Enter sends; no on-screen keyboard comes up
-def kbd_script(first, text):
-    keys = {' ': 'space', '.': 'period', ',': 'comma'}
-    steps = [f'{first}:t']
-    t = first + 20
-    for ch in text:
-        steps.append(f'{t}:{keys.get(ch, ch)}')
-        t += 8
-    steps.append(f'{t + 10}:enter')
-    return ','.join(steps), t + 10
 
 
 def kbd_srv(name, renderer='Software', text='typed on usb'):
