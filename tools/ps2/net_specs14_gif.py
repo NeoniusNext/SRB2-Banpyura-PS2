@@ -68,6 +68,13 @@ for tag, r in RENDERERS:
                                                                                    (950, 'down'), (970, 'down'), (990, 'down'), (1010, 'down'), (1100, 'cross'), *crosses(1300, 3000, 100))},
                                                              cfg=f'masterserver "{MSURL}"\n' + S.CFG_SYNC + cfg, start=10, may_exit=True)],
                                'until': UNTIL, 'grace': 3})
+    # the same with the control table of an older config (and of the PC reference.cfg): Select (joy7) takes the screenshot, the second key of "recordgif" is free (0)
+    mine(f'gif-browse-oldcfg-{tag}', {'timeout': 900, 'nodes': [mock(f'gif-browse-oldcfg-{tag}'), pcsrv_ms(start=3),
+                                                                ps2('cli', EMU1, ['-skipintro', '-netdebug', '-netsync', '-padscript', 'file:pad.txt'] + rnd(r),
+                                                                    files={'pad.txt': pad((250, 'start'), (330, 'down'), (400, 'cross'), (540, 'cross'), (760, 'down'), (820, 'cross'),
+                                                                                          (950, 'down'), (970, 'down'), (990, 'down'), (1010, 'down'), (1100, 'cross'), *crosses(1300, 3000, 100))},
+                                                                    cfg=f'masterserver "{MSURL}"\nsetcontrol "screenshot" "f8" "joy7"\n' + S.CFG_SYNC + cfg, start=10, may_exit=True)],
+                                   'until': UNTIL, 'grace': 3})
     # explicit start/stop of the recording on the console
     mine(f'gif-rec-{tag}', {'timeout': 900, 'nodes': [pcsrv(start=0), ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] + rnd(r),
                                                                   files={'pad.txt': pad(*crosses(200, 1000, 60)), 'cmd.txt': '1300:startmovie|1500:stopmovie'}, cfg=S.CFG_SYNC + cfg, start=8)],

@@ -1407,10 +1407,6 @@ void M_StartMovie(void)
 	if (moviemode)
 		return;
 
-#ifdef PS2_PROFILE // OPT14-GIF diagnostic: who starts a recording
-	CONS_Printf("PS2: M_StartMovie called from %p (mode %d)\n", __builtin_return_address(0), (int)cv_moviemode.value);
-#endif
-
 	if (cv_movie_option.value == 0)
 		strcpy(pathname, usehome ? srb2home : srb2path);
 	else if (cv_movie_option.value == 1)
@@ -1895,20 +1891,34 @@ boolean M_ScreenshotResponder(event_t *ev)
 
 	ch = ev->key;
 
+#ifdef PS2
+	// OPT14-GIF: KEY_NULL is "no key": the second slot of a control that has none (Toggle GIF Recording has none by default, Screenshot has none on the console) is
+	// 0, and a keydown with key 0 (what a replayed, never written event slot looks like) would match it. Only a key that was really pressed starts a recording.
+	if (ch == KEY_NULL)
+		return false;
+#endif
+
 	if (ch >= KEY_MOUSE1 && menuactive) // If it's not a keyboard key, then don't allow it in the menus!
 		return false;
 
+#ifdef PS2
+	// OPT14-GIF: a held key (USB keyboard auto-repeat) is one press: it must not toggle the recording on and off again
+	if (ev->repeated && (ch == KEY_F8 || ch == gamecontrol[GC_SCREENSHOT][0] || ch == gamecontrol[GC_SCREENSHOT][1]
+		|| ch == KEY_F9 || ch == gamecontrol[GC_RECORDGIF][0] || ch == gamecontrol[GC_RECORDGIF][1]))
+		return true;
+#endif
+
 	if (ch == KEY_F8 || ch == gamecontrol[GC_SCREENSHOT][0] || ch == gamecontrol[GC_SCREENSHOT][1]) // remappable F8
 	{
-#ifdef PS2_PROFILE // OPT14-GIF diagnostic
-		CONS_Printf("PS2: screenshot key %d (bound %d/%d, menu %d)\n", (int)ch, (int)gamecontrol[GC_SCREENSHOT][0], (int)gamecontrol[GC_SCREENSHOT][1], (int)menuactive);
+#ifdef PS2_PROFILE // OPT14-GIF: the log says which key it was (tools/ps2/net_specs14_gif.py searches for these lines)
+		CONS_Printf("PS2: screenshot key %d\n", (int)ch);
 #endif
 		M_ScreenShot();
 	}
 	else if (ch == KEY_F9 || ch == gamecontrol[GC_RECORDGIF][0] || ch == gamecontrol[GC_RECORDGIF][1]) // remappable F9
 	{
-#ifdef PS2_PROFILE // OPT14-GIF diagnostic: which key toggled the recording
-		CONS_Printf("PS2: record key %d (F9 %d, bound %d/%d, menu %d)\n", (int)ch, (int)KEY_F9, (int)gamecontrol[GC_RECORDGIF][0], (int)gamecontrol[GC_RECORDGIF][1], (int)menuactive);
+#ifdef PS2_PROFILE
+		CONS_Printf("PS2: record key %d\n", (int)ch);
 #endif
 		((moviemode) ? M_StopMovie : M_StartMovie)();
 	}
