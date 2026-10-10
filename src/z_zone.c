@@ -2684,6 +2684,17 @@ static void Command_Memfree_f(void)
 	CONS_Printf(M_GetText("Locked cache           : %7s KB\n"), sizeu1(Z_TagUsage(PU_CACHE)>>10));
 	CONS_Printf(M_GetText("Level                  : %7s KB\n"), sizeu1(Z_TagUsage(PU_LEVEL)>>10));
 	CONS_Printf(M_GetText("Special thinker        : %7s KB\n"), sizeu1(Z_TagUsage(PU_LEVSPEC)>>10));
+#ifdef PS2
+	CONS_Printf(M_GetText("Lua heap               : %7s KB\n"), sizeu1(Z_TagUsage(PU_LUA)>>10)); // OPT14: the slabs and big blocks of the Lua state (PS2-LOAD-18)
+#ifdef HAS_LUA
+	{
+		size_t slabs, freebytes, trimmed;
+
+		LUA_PoolStats(&slabs, &freebytes, &trimmed);
+		CONS_Printf(M_GetText("Lua pool               : %7s slabs, %s KB on the free lists, %s given back\n"), sizeu1(slabs), sizeu2(freebytes>>10), sizeu3(trimmed));
+	}
+#endif
+#endif
 	CONS_Printf(M_GetText("All purgable           : %7s KB\n"),
 		sizeu1(Z_TagsUsage(PU_PURGELEVEL, INT32_MAX)>>10));
 

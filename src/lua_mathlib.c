@@ -105,7 +105,16 @@ static int lib_fixedacos(lua_State *L)
 
 static int lib_fixedmul(lua_State *L)
 {
+#ifdef PS2
+	// OPT14 (PS2-LUA-3): C leaves the order of evaluation of the arguments of a call open; the PC builds (x86 GCC, MSVC) take the last one first, the EE compiler the first one first, and
+	// with two bad arguments the error names a different one ("bad argument #2" on the PC). Right to left, as the PC.
+	const fixed_t b = luaL_checkfixed(L, 2);
+	const fixed_t a = luaL_checkfixed(L, 1);
+
+	lua_pushfixed(L, FixedMul(a, b));
+#else
 	lua_pushfixed(L, FixedMul(luaL_checkfixed(L, 1), luaL_checkfixed(L, 2)));
+#endif
 	return 1;
 }
 
@@ -144,7 +153,14 @@ static int lib_fixedsqrt(lua_State *L)
 
 static int lib_fixedhypot(lua_State *L)
 {
+#ifdef PS2
+	const fixed_t y = luaL_checkfixed(L, 2); // PS2-LUA-3: right to left like the PC builds, see lib_fixedmul
+	const fixed_t x = luaL_checkfixed(L, 1);
+
+	lua_pushfixed(L, R_PointToDist2(0, 0, x, y));
+#else
 	lua_pushfixed(L, R_PointToDist2(0, 0, luaL_checkfixed(L, 1), luaL_checkfixed(L, 2)));
+#endif
 	return 1;
 }
 

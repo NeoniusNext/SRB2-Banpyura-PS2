@@ -26,13 +26,20 @@ import opt_run  # noqa: E402
 DEFAULT_PC = 'build/pc-golden/bin/lsdlsrb2_claude/srb2-ps2-optimization-gk1x6k'
 
 
+def norm_path(l):
+    """the path of a script differs between the machines (PC: absolute, may be cut to the last LUA_IDSIZE characters with a leading '...'; PS2: host:): keep the file name
+    (OPT14: also of an add-on, NAME.pk3|lump)"""
+    l = re.sub(r'(?:\.\.\.)?(?:[\w.~-]*[:/\\])*(?=[\w.-]+\.(?:pk3|wad|soc|kart)\|)', '', l)
+    return re.sub(r'(?:[\w.~-]*[:/\\])+(?=[\w.-]+\.lua)', '', l)
+
+
 def lq(text):
     out = []
     for l in text.splitlines():
         l = l.rstrip('\r\n')
         i = l.find('LQ ')
         if i >= 0 and (i == 0 or not l[i - 1].isalnum()):
-            out.append(re.sub(r'(?:[\w.~-]*[:/\\])+(?=[\w.-]+\.lua)', '', l[i:]))   # the path of the script differs (PC: absolute, PS2: host:)
+            out.append(norm_path(l[i:]))   # the path of the script differs (PC: absolute, PS2: host:)
     return out
 
 
@@ -43,7 +50,7 @@ def alerts(text):
     for l in text.splitlines():
         l = l.rstrip('\r\n')
         if in_tb and re.match(r'^(\s+\S|stack traceback:)', l) and 'LQ ' not in l:
-            out.append('LA ' + re.sub(r'(?:[\w.~-]*[:/\\])+(?=[\w.-]+\.lua)', '', l))
+            out.append('LA ' + norm_path(l))
             continue
         in_tb = False
         m = re.match(r'^(WARNING|ERROR|NOTICE): ?(.*)$', l)
@@ -51,7 +58,9 @@ def alerts(text):
             m = True   # freeslot() messages
         if not m or 'Demo' in l or 'config' in l or 'Couldn' in l:
             continue
-        out.append('LA ' + re.sub(r'(?:[\w.~-]*[:/\\])+(?=[\w.-]+\.lua)', '', l))
+        if 'R_GenerateTexture: no room' in l or 'Low memory:' in l:
+            continue   # OPT14: the messages of the PS2 zone under memory pressure on a big level (MAP11), the PC has no such limit
+        out.append('LA ' + norm_path(l))
         in_tb = True
     return out
 
@@ -134,6 +143,7 @@ def main():
     ap.add_argument('--ps2-args', default='', help='extra PS2 parameters, one quoted string')
     ap.add_argument('--extra', type=Path, action='append', default=[], help='file the scripts load by name (addfile, addfilelocal): copied next to the PC game and to the PS2 data directory, not loaded with -file')
     ap.add_argument('--no-pc', action='store_true', help='reuse <out>/<name>/pc.out')
+    ap.add_argument('--pc-only', action='store_true', help='PS2-LUA (OPT14): run only the PC reference and print its LQ lines (script development)')
     a = ap.parse_args()
     a.pc_args = shlex.split(a.pc_args)
     a.ps2_args = shlex.split(a.ps2_args)
@@ -150,8 +160,17 @@ def main():
         for l in [x for x in pctext.splitlines() if re.search(r'Lua|lua|rror|WARNING', x)][-8:]:
             print('  PC  ', l[:200])
         return 2
+    if a.pc_only:
+        for l in lq(pctext) + alerts(pctext):
+            print(l)
+        return 0
     ps2state, ps2text = run_ps2(name, scripts, a, out)
-    pc, ps2 = lq(pctext) + alerts(pctext), lq(ps2text) + alerts(ps2text)
+    def upto(lines):   # OPT14: a run goes on for a moment after the end line (the PC one for a second): LQ lines after it are not compared
+        for i, l in enumerate(lines):
+            if a.until in l:
+                return lines[:i + 1]
+        return lines
+    pc, ps2 = upto(lq(pctext)) + alerts(pctext), upto(lq(ps2text)) + alerts(ps2text)
     (out / 'pc.lq').write_text('\n'.join(pc) + '\n')
     (out / 'ps2.lq').write_text('\n'.join(ps2) + '\n')
     diff = list(difflib.unified_diff(pc, ps2, 'pc', 'ps2', lineterm='', n=0))

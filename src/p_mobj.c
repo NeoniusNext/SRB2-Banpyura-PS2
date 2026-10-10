@@ -18,6 +18,7 @@
 #include "st_stuff.h"
 #include "hu_stuff.h"
 #include "p_local.h"
+#include "m_argv.h"
 #include "p_setup.h"
 #include "r_fps.h"
 #include "r_main.h"
@@ -56,6 +57,24 @@ static zlevelpool_t ps2_mobjpool;
 mobj_t *P_AllocMobjBlock(void)
 {
 	return Z_LevelPoolAlloc(&ps2_mobjpool, sizeof (mobj_t), 32);
+}
+
+// OPT14 (PS2-LUA-7): P_NetUnArchiveThinkers empties the thinker lists with P_RemoveSavegameMobj (upstream frees every object) and then builds the saved ones. Here the removed ones sit in
+// mobjcache, which only P_SpawnMobj reads, and every unarchived object was a new slice of a chunk: a client that joins holds the objects of the map it loaded and the ones the host sent
+// until the level ends (416 bytes each: 2.8 MB for the 6 768 objects of MAP11). The cache is read first; the memory is cleared as P_SpawnMobj does.
+// Not proven by a measurement yet (the join runs are equal to the PC with and without it; the 2.8 MB is computed): off unless -mobjreuse is given.
+mobj_t *P_AllocMobjBlockForLoad(void)
+{
+	static int reuse = -1;
+	mobj_t *mobj = mobjcache;
+
+	if (reuse < 0)
+		reuse = M_CheckParm("-mobjreuse") ? 1 : 0;
+	if (mobj == NULL || !reuse)
+		return P_AllocMobjBlock();
+	mobjcache = mobj->hnext;
+	memset(mobj, 0, sizeof (*mobj));
+	return mobj;
 }
 #else
 mobj_t *P_AllocMobjBlock(void)
@@ -11636,8 +11655,14 @@ void P_RemoveSavegameMobj(mobj_t *mobj)
 		thinker_t *next = thinker->next;
 		(next->prev = thinker->prev)->next = next;
 #ifdef PS2
-		((mobj_t *)thinker)->hnext = mobjcache; // PS2-511: a slice of a chunk (P_AllocMobjBlock), it cannot be freed alone
-		mobjcache = (mobj_t *)thinker;
+		if (thinker->function == (actionf_p1)P_NullPrecipThinker)
+			Z_Free(thinker); // OPT14 (PS2-LUA-6): a rain/snow object is its own zone block (P_SpawnPrecipMobj, smaller than a mobj_t): in mobjcache it would be reused as a mobj_t, whose memset overwrites the block after it
+		else
+		{
+			LUA_InvalidateUserdata(thinker); // OPT14 (PS2-LUA-6): Z_Free did this for the original, scripts must not keep a reference to an object the savegame replaced
+			((mobj_t *)thinker)->hnext = mobjcache; // PS2-511: a slice of a chunk (P_AllocMobjBlock), it cannot be freed alone
+			mobjcache = (mobj_t *)thinker;
+		}
 #else
 		Z_Free(thinker);
 #endif

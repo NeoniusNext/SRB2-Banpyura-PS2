@@ -962,6 +962,16 @@ static void PS2Mem_StackFill(void)
 	za_stack_size = (size_t)thread.stack_size;
 }
 
+// OPT14 (PS2-LUA-5): the lowest address of the main thread stack + margin (Lua refuses a call below it: ldo.c luaD_call)
+size_t PS2Mem_StackFloor(size_t margin)
+{
+	ee_thread_status_t thread;
+
+	if (ReferThreadStatus(GetThreadId(), &thread) < 0 || thread.stack_size <= 0 || (size_t)thread.stack_size <= margin)
+		return 0;
+	return (size_t)thread.stack + margin;
+}
+
 size_t PS2Mem_StackUsed(void) // 0 unless -zstack
 {
 	const uint8_t *p = (const uint8_t *)za_stack_lo;
@@ -977,6 +987,7 @@ size_t PS2Mem_StackUsed(void) // 0 unless -zstack
 unsigned PS2Mem_Ms(void) { return 0; }
 size_t PS2Mem_LibcPeak(void) { return 0; }
 size_t PS2Mem_StackUsed(void) { return 0; }
+size_t PS2Mem_StackFloor(size_t margin) { (void)margin; return 0; }
 #endif
 
 // PS2-73: -zsample [period]: statistical PC sampler over the level load (from "level-free-before" to "precache"), the same method as ps2_prof.c.
