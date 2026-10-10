@@ -17,6 +17,7 @@ run lt_soc     --until "LQ DONE_SOCREAD" $T/lt_soc.soc $T/lt_socread.lua
 run lt_fields  --demo DEMO_001 --timedemo --until "LQ DONE_FIELDS" $T/lt_fields.lua
 run lt_api     --demo DEMO_001 --timedemo --until "LQ DONE_API" $T/lt_api.lua
 run lt_hooks   --demo DEMO_001 --timedemo --until "LQ DONE_HOOKS" $T/lt_hooks.lua
+run lt_hooks3  --demo DEMO_001 --timedemo --until "LQ DONE_HOOKS3" $T/lt_hooks3.lua
 run lt_err     --warp 1 --until "LQ DONE_ERR" $T/lt_err.lua $T/lt_err0.lua
 run lt_hud     --warp 1 --until "LQ DONE_HUD" "$W320" $T/lt_hud.lua
 run lt_hooks2  --warp 1 --until "LQ DONE_HOOKS2" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_hooks2.lua

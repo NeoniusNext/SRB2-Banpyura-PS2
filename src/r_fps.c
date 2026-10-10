@@ -950,6 +950,7 @@ void R_AddMobjInterpolator(mobj_t *mobj)
 	}
 
 	interpolated_mobjs[interpolated_mobjs_len] = mobj;
+	mobj->interpidx = (UINT32)interpolated_mobjs_len;
 	interpolated_mobjs_len += 1;
 
 	R_ResetMobjInterpolationState(mobj);
@@ -962,6 +963,18 @@ void R_RemoveMobjInterpolator(mobj_t *mobj)
 
 	if (interpolated_mobjs_len == 0) return;
 
+	// OPT13 (RTICK): the index recorded by R_AddMobjInterpolator is a hint; it is used only when it still names this mobj (a stale value after
+	// a savegame load or a struct copy falls back to the original search). The swap with the last entry is the same, so the list stays identical.
+	i = mobj->interpidx;
+	if (i < interpolated_mobjs_len && interpolated_mobjs[i] == mobj)
+	{
+		mobj_t *last = interpolated_mobjs[interpolated_mobjs_len - 1];
+		interpolated_mobjs[i] = last;
+		last->interpidx = (UINT32)i;
+		interpolated_mobjs_len -= 1;
+		return;
+	}
+
 	for (i = 0; i < interpolated_mobjs_len; i++)
 	{
 		if (interpolated_mobjs[i] == mobj)
@@ -969,6 +982,7 @@ void R_RemoveMobjInterpolator(mobj_t *mobj)
 			interpolated_mobjs[i] = interpolated_mobjs[
 				interpolated_mobjs_len - 1
 			];
+			interpolated_mobjs[i]->interpidx = (UINT32)i;
 			interpolated_mobjs_len -= 1;
 			return;
 		}

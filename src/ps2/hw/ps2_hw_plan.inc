@@ -1317,3 +1317,102 @@ int PS2HWD_QuadHidden(const void *vp)
 #endif
 	return quad_hidden_ref(vp);
 }
+
+// OPT13 IQ-7c: the reference of the cull checks of HWR_DrawSprite and HWR_DrawPrecipitationSprite (-hwdbg 16777216). The check used to ask PS2HWD_QuadHidden for the quad of a sprite
+// that the projection had culled; that test answers "not hidden" for every quad with a corner near the eye or behind it ("the clipper decides"), while the cull of the front end
+// (the sphere test of OPT11 FX3, HWR_FX_SpriteHiddenCheap) rightly drops a sprite that lies wholly behind the eye or beside the view, so the check reported 2..67 % "differences"
+// that were no error (the pictures with and without the cull do not differ). This is a reference that does not give up near the eye: the quad is clipped to the view volume
+// (all six planes in clip space, Sutherland-Hodgman in doubles: a point behind the eye is outside the near plane) and what is left is looked at as PS2HWD_QuadHidden looks at a
+// quad (an integer point, a pixel centre, in the box widened by QUAD_MARGIN). 1 = a pixel centre may be inside (a culled sprite for which this is 1 is a real error of the cull).
+double ps2hwd_qref_dbg[8]; // the last call: clipped vertices, the screen box, the smallest w of the corners (for the line of the cull check)
+
+int PS2HWD_QuadVisibleRef(const void *vp)
+{
+	const FOutVector *v = (const FOutVector *)vp;
+	double a[16][4], b[16][4];
+	double (*in)[4] = a, (*out)[4] = b, (*t)[4];
+	int n = 4, m, i, pl;
+	double x0 = 1.0e30, x1 = -1.0e30, y0 = 1.0e30, y1 = -1.0e30, hx, hy, cx, cy;
+
+	if (!H.up || H.vpw < 1.0f || H.vph < 1.0f || (ps2hwd_dbg_flags & HWDBG_NOPLAN))
+		return 1; // (the driver draws nothing culled in such a state: nothing to check)
+	xf_update();
+	for (i = 0; i < 4; i++)
+	{
+		cv_t c;
+
+		xform_vertex(&v[i], NULL, &c);
+		in[i][0] = c.x;
+		in[i][1] = c.y;
+		in[i][2] = c.z;
+		in[i][3] = c.w;
+		ps2hwd_qref_dbg[5 + (i < 3 ? i : 2)] = i == 0 ? c.w : (c.w < ps2hwd_qref_dbg[5 + (i < 3 ? i : 2)] ? c.w : ps2hwd_qref_dbg[5 + (i < 3 ? i : 2)]);
+	}
+	for (pl = 0; pl < 6 && n > 0; pl++)
+	{
+		const int ax = pl >> 1; // 0 x, 1 y, 2 z
+		const double sg = (pl & 1) ? -1.0 : 1.0; // inside: w + sg * c >= 0 (c >= -w, then c <= w)
+
+		m = 0;
+		for (i = 0; i < n; i++)
+		{
+			const double *p = in[i], *q = in[(i + 1) % n];
+			const double dp = p[3] + sg * p[ax], dq = q[3] + sg * q[ax];
+
+			if (dp >= 0.0)
+			{
+				memcpy(out[m++], p, sizeof out[0]);
+				if (dq < 0.0)
+				{
+					const double f = dp / (dp - dq);
+					int k;
+
+					for (k = 0; k < 4; k++)
+						out[m][k] = p[k] + (q[k] - p[k]) * f;
+					m++;
+				}
+			}
+			else if (dq >= 0.0)
+			{
+				const double f = dp / (dp - dq);
+				int k;
+
+				for (k = 0; k < 4; k++)
+					out[m][k] = p[k] + (q[k] - p[k]) * f;
+				m++;
+			}
+		}
+		t = in;
+		in = out;
+		out = t;
+		n = m;
+	}
+	ps2hwd_qref_dbg[0] = n;
+	if (n == 0)
+		return 0; // nothing of the quad is inside the view volume
+	hx = (double)H.vpw * 0.5;
+	hy = (double)H.vph * 0.5;
+	cx = (double)H.vpx + hx - 0.5;
+	cy = (double)H.vpy + hy - 0.5;
+	for (i = 0; i < n; i++)
+	{
+		const double iw = in[i][3] > 1.0e-9 ? 1.0 / in[i][3] : 1.0e9;
+		const double sx = cx + in[i][0] * iw * hx, sy = cy - in[i][1] * iw * hy;
+
+		x0 = sx < x0 ? sx : x0;
+		x1 = sx > x1 ? sx : x1;
+		y0 = sy < y0 ? sy : y0;
+		y1 = sy > y1 ? sy : y1;
+	}
+	// (a margin a hair under the driver's: the driver rounds in floats, a centre that is within the rounding of the edge of its widened box must not be called an error of the cull)
+	{
+		const double mg = (double)QUAD_MARGIN - 0.01;
+
+		ps2hwd_qref_dbg[1] = x0;
+		ps2hwd_qref_dbg[2] = x1;
+		ps2hwd_qref_dbg[3] = y0;
+		ps2hwd_qref_dbg[4] = y1;
+
+		return !(ceil(x0 - mg) > floor(x1 + mg) || ceil(y0 - mg) > floor(y1 + mg));
+	}
+}

@@ -10342,15 +10342,15 @@ static void PS2_TypeStat(int w, mobjtype_t type)
 #define PS2_TYPESTAT_N(w, mo) ((void)0)
 #endif
 
-#if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK) // (PTICK: lua_mobjhooks_any)
+#if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK) // (PTICK: LUA_MobjHookWanted)
 // PS2-203 (OPT11-CORE): a decoration at rest (flowers, trees, spikes, kelp: 40..60 % of the thinker calls of a crowded level) goes through the thinker preamble
 // of P_MobjThinker, P_MobjSceneryThink (its type switch and the fuse test) and P_SceneryThinker and ends in P_CycleMobjState, with nothing changed on the way but
 // four fields and two globals. P_SceneryQuick tests every condition under which that is so and then does exactly that; whatever it cannot vouch for takes
 // the original path, which is untouched. The type list is the case list of P_MobjSceneryThink's switch (tools/ps2/core_scenery_types.py keeps it equal).
 #ifdef HAS_LUA
-#define PS2_MOBJHOOKS_ANY lua_mobjhooks_any // a script registered a mobj hook (lua_hooklib.c)
+#define PS2_MOBJHOOKS_ANY(mo) LUA_MobjHookWanted(mo, MOBJ_HOOK(MobjThinker)) // OPT13 IQ-6: a MobjThinker hook is registered for this type (lua_hooklib.c); the only hook the quick path would skip (no fuse, no movement)
 #else
-#define PS2_MOBJHOOKS_ANY false // no Lua VM: no hook can exist
+#define PS2_MOBJHOOKS_ANY(mo) false // no Lua VM: no hook can exist
 #endif
 static UINT8 ps2_scenery_plain[NUMMOBJTYPES]; // 1: no case in P_MobjSceneryThink for this type
 static boolean ps2_scenery_ready;
@@ -10400,7 +10400,7 @@ static boolean P_SceneryQuick(mobj_t *mobj)
 		|| mobj->scale != mobj->destscale
 		|| mobj->momx || mobj->momy || mobj->momz
 		|| mobj->fuse
-		|| PS2_MOBJHOOKS_ANY
+		|| PS2_MOBJHOOKS_ANY(mobj)
 		|| !(mobj->eflags & MFE_ONGROUND)
 		|| ((mobj->eflags & MFE_VERTICALFLIP) ? mobj->z + mobj->height != mobj->ceilingz : mobj->z != mobj->floorz))
 		return false;
