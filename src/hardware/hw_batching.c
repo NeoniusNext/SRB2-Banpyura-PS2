@@ -642,12 +642,14 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 // (currently_batching && hwr_sprite_batch): the geometry cache is not recording, no polygon hash is kept, the collection is the block collection, the sprite stream is off.
 boolean HWR_PBSprStatic(void)
 {
-	return !((UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB) | (hwr_fr_off & 64u)) && (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM));
+	return !((UINT32)hwr_grec_on | (hwr_geo_off & HWR_GO_NOPB) | (hwr_fr_off & 64u)) && (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM)); // (-hwpolyhash is no reason: HWR_PBSprQuad hashes the polygon as HWR_ProcessPolygon does)
 }
 
 void HWR_PBSprQuad(GLMipmap_t *tex, const FSurfaceInfo *s, const FOutVector *v, FBITFIELD flags, int shader_target)
 {
 	current_texture = tex;
+	if (hwr_ph_on > 0)
+		HWR_PolyHashAdd(s, v, 4, flags, shader_target, false); // (-hwpolyhash: the stream of the polygons includes those of the fused builders; the picture of such a run is not looked at)
 	if (!HWR_PBFast(s, v, 4, flags, shader_target, false, hwr_sprite_shadow ? 0u : 1u))
 		HWR_PBAdd(s, v, 4, flags, shader_target, false);
 }
