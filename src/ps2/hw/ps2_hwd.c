@@ -67,6 +67,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 #include "ps2_hw_plan.inc"
 #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
 extern INT32 ps2hwt_patchtag; // hardware/hw_cache.c (PS2-HW-442)
+extern boolean ps2hwt_comp_old; // hardware/hw_cache.c (OPT13 RDRV: -hwcomp 0 = the composition of a texture as before)
 static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
@@ -349,6 +350,7 @@ boolean PS2HWD_Init(void)
 	if (vu_nocut && M_CheckParm("-hwnocut") && M_IsNextParm())
 		vu_nocut = atoi(M_GetNextParm()) != 0;
 	pk_oldtail = M_CheckParm("-hwoldtail") != 0;
+	ps2hwt_comp_old = M_CheckParm("-hwcomp") && M_IsNextParm() && atoi(M_GetNextParm()) == 0; // OPT13 RDRV: 0 = the original composition (A/B on one ELF)
 	if (M_CheckParm("-hwvudump") && M_IsNextParm())
 		vu_dump_frame = (u32)atoi(M_GetNextParm());
 	if (M_CheckParm("-hwvustop") && M_IsNextParm())
@@ -662,7 +664,7 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		FSurfaceInfo surf;
 		unsigned int i, rng = seed * 2654435761u + 12345u;
 		float xs = 0.0f;
-		static FOutVector pts[4096];
+		FOutVector *pts; // OPT13 RDRV: was `static FOutVector pts[4096]` = 80 KB of .bss in the product for the -hwvu0bench measurement only
 		u32 c0;
 
 #define TRND() (rng = rng * 1664525u + 1013904223u, (float)((rng >> 8) & 0xFFFF) * (1.0f / 65536.0f))
@@ -686,6 +688,9 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 			return;
 		if (ps2hwd_dbg_flags & 256) // negative control of tools/ps2/hw_test.c: a wrong scale in VU0
 			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx * 1.01f, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		pts = malloc((size_t)n * sizeof *pts);
+		if (!pts)
+			return;
 		for (i = 0; i < n; i++)
 		{
 			// vertices around the camera: mostly in front of it, some beside and behind
@@ -773,6 +778,7 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		}
 		if (xs == 12345.678f)
 			out->n++; // keeps the compiler from dropping the clip results
+		free(pts);
 #undef TRND
 	}
 #endif
@@ -1797,7 +1803,16 @@ static void settex_now(GLMipmap_t *TexInfo)
 		tt_capture(TexInfo); // PS2-HW-69: the texels as the engine hands them over
 	if ((ps2hwd_dbg_flags & HWDBG_IMMDBG) && (u32)TexInfo->width * TexInfo->height >= PLAN_MIN_TEXELS)
 		CONS_Printf("HWIMM f=%u %s %ux%u want=%u UPLOAD imm=%d phase=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, imm_level, batch_phase);
-	ri = tex_upload(TexInfo);
+	{
+		// OPT13 IZ: an upload that takes the driver more than 2 M cycles (a sky, a big wall: level conversion, fill, DMA): the first 40 of a run, "HWUPSLOW"
+		const u32 u0 = cyc();
+		static unsigned upslow_reports;
+
+		ri = tex_upload(TexInfo);
+		if (cyc() - u0 > 2000000u && upslow_reports++ < 40)
+			CONS_Printf("HWUPSLOW f=%u %s %ux%u fmt=%d want=%u cycles %u (upload number %u of this texture, dropped by %u)\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo),
+				(unsigned)TexInfo->width, (unsigned)TexInfo->height, (int)TexInfo->format, (unsigned)want, (unsigned)(cyc() - u0), (unsigned)TexInfo->ps2_nup + 1u, (unsigned)TexInfo->ps2_drop);
+	}
 	if (tex_flatpin)
 	{
 		HWR_PS2_FlatUnpin(tex_flatpin, (size_t)TexInfo->width * TexInfo->height);

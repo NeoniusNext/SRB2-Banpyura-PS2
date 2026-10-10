@@ -3327,6 +3327,16 @@ void *W_TryCachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
 }
 #endif
 
+#ifdef PS2_PROFILE
+// OPT13 RDRV: W_CachePatchNumPwad without Patch_CreateGL, for a caller that only draws the patch into a composite texture (hw_cache.c HWR_GenerateTexture)
+void *W_CachePatchNumPwadNoGL(UINT16 wad, UINT16 lump, INT32 tag)
+{
+	if (!TestValidLump(wad, lump))
+		return NULL;
+	return (void *)W_GetPatchPwad(wad, lump, tag);
+}
+#endif
+
 void *W_CachePatchNum(lumpnum_t lumpnum, INT32 tag)
 {
 	return W_CachePatchNumPwad(WADFILENUM(lumpnum),LUMPNUM(lumpnum),tag);

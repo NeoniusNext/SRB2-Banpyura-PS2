@@ -9139,6 +9139,10 @@ static boolean P_LoadLevel_(boolean fromnetsave, boolean reloadinggamestate)
 	LP_SAMPLE(9);
 	ZCK("precache");
 	LP_END(LV_PRECACHE, lpl);
+#if defined(PS2) && defined(HWRENDER)
+	if (rendermode == render_opengl)
+		HWR_PS2_PrefetchLevel(); // OPT13 IZ (PS2-602, R2/RF-3): the textures of the level are read from TEXC.PAK now, not in the middle of the first frames
+#endif
 	LP_RESTART(lpl);
 
 	nextmapoverride = 0;
