@@ -189,8 +189,8 @@ def local(name, args, files, frames, renderer='Software', mapname='MAP01', netga
 
 for _r, _sfx in (('Software', '-so'), ('Hardware', '-ha')):
     local('chat-single' + _sfx, ['-padscript', 'file:pad.txt'], {'pad.txt': pad((300, 'start', 5))}, [280, 360], _r, timeout=600)
-    local('chat-localsplit' + _sfx, ['-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'], {'pad.txt': pad((420, 'start', 5)), 'cmd.txt': '100:splitscreen 1'}, [400, 500], _r, timeout=600)
-    local('chat-netsplit' + _sfx, ['-netcmd', 'file:cmd.txt'], {'cmd.txt': '200:debug 1|220:splitscreen 1|420:say Said in the split screen|700:say And a second line of it'}, [380, 500, 620, 800], _r, netgame=True, timeout=900)
+    local('chat-localsplit' + _sfx, ['-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'], {'pad.txt': pad((420, 'start', 5)), 'cmd.txt': '100:hf_split 1'}, [400, 500], _r, timeout=600)
+    local('chat-netsplit' + _sfx, ['-netcmd', 'file:cmd.txt'], {'cmd.txt': '200:debug 1|220:hf_split 1|420:say Said in the split screen|700:say And a second line of it'}, [380, 500, 620, 800], _r, netgame=True, timeout=900)
 
 # ---- 4. a USB keyboard (the script of ps2_kbd.c): 't' opens the line, Enter sends; no on-screen keyboard comes up
 def kbd_script(first, text):
