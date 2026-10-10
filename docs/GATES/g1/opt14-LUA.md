@@ -114,3 +114,16 @@ path normalisation of add-on lumps (`NAME.pk3|lump`), and it ignores the PS2 mem
 The Lua suite of OPT12-LOAD (15 scripts) plus the new ones were also run on the `--debug` ELF (ZDEBUG red zones, RANGECHECK, PARANOIA; `SRB2_PS2_LTO=0 build.py --debug`): all SAME except lt_udmany,
 which does not fit the memory of MAP11 with the larger debug zone headers ("Not enough memory to draw map MAP11"), nothing else. (The `--debug` build did not compile: `I_Assert(sfx_id < LIMIT_NUMSFX)` in s_sound.c is a signed/unsigned
 comparison under -Werror; fixed with casts, two lines.)
+
+## 4. The final ELF (release, HW + SW, sources of commit "PS2-LUA-7")
+
+Built `build/out6` (release), `build/out-ref6` (`--ps2ref`), `build/out-dbg6` (`--debug`); `ninja -C build/pc-net` builds (PC).
+
+* **Golden** (`tools/ps2/golden_full.sh build/out-ref6/SRB2.ELF lg6`, packs `build/pak2`): the four demos are 0 differing frames against `golden/ps2-head` (30 reference frames each), the tics are identical to the PC
+  golden (1050 rows identical on every demo; the PC golden has one row more at the end). Vanilla gameplay is unchanged by every fix of this report.
+* **Lua suite** (`LUA_OUT=build/lua-equiv-final sh tools/ps2/lua_suite.sh build/out6/SRB2.ELF build/pak2`): 31 scripts, every one `RESULT SAME` (0 differing lines): lt_vm, lt_math, lt_globals, lt_info (507 lines), lt_libs, lt_slots (12 928 lines),
+  lt_soc, lt_fields (428), lt_api, lt_hooks, lt_hooks2, lt_hooks3, lt_err, lt_hud, lt_local, lt_coro, lt_udmany, lt_pk3, lm_data, lt_io, lm_objects, lm_world, lm_hud (Software and `-renderer Hardware`), lt_argorder, lt_ops, lt_stack, lt_stack2,
+  lt_poolstress, lt_heap (601 lines; the zone check of `lua_heapcheck.py`: OK), lt_actions.
+* **Renderer switch** (`tools/ps2/lua_renderswitch.sh`; `lt_renderswitch.lua`): a HUD script keeps 6 patches, 4 sprite patches and 6 colormaps in tables; the renderer is changed by injected console commands
+  (Software -> Hardware -> Software -> Hardware) and a level change comes in between: at each check all 8 patches are valid and no draw call raised an error (`check ... 8 8 false`). (My first version of the script reloaded the map
+  at tic 230 of every map and never finished: a script error, not an engine one; fixed.)
