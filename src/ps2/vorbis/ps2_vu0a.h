@@ -7,7 +7,7 @@
 //
 // VU0 state and threads: the EE kernel does NOT save COP2 state at a thread switch (tools/ps2/ee_tests/vu0ctx.c: after the first
 // switch the other thread's vf1, ACC, I and Q were visible in the main thread). The hardware renderer keeps its constants in vf1..vf13
-// and uses vf14..vf18, ACC, Q and the clip flag on the game thread. A kernel section therefore (a) saves vf1..vf18 on entry and restores
+// and uses vf14..vf18, ACC, Q and the clip flag on the game thread (and, since PS2-HW-220, vf21..vf31, see below). A kernel section therefore (a) saves vf1..vf31 on entry and restores
 // them on exit (ps2a_vu0_enter / ps2a_vu0_leave), (b) uses no ACC form (vmula/vmadd/vmsub), no Q (vdiv), no clip (vclip) and no I
 // instruction, so those registers stay the renderer's, (c) sets a busy flag so that two audio users never overlap: the second one takes the C
 // path (identical result). The decoder thread (higher priority than the game thread) is never preempted by the game thread, and a
@@ -24,7 +24,11 @@
 #define PS2A_VU0 0
 #endif
 
-typedef struct { float r[18][4]; } ps2a_vu0_saved __attribute__((aligned(16)));
+// OPT13 IQ-7c: vf1..vf31 (it was vf1..vf18). The kernels use vf19..vf23, vf30 and vf31 as well (ps2a_conv keeps its constants in vf20..vf23, the clamp kernel uses vf30, vf31), and the
+// renderer keeps the matrix of its sprite test and its plans in vf21..vf24 for the whole frame (ps2_hw_plan.inc, vu0b_mvp: loaded only when the matrix changes) and its scratch values
+// in vf25..vf31 across a sequence of instructions. A decoder section that ran between two of those used to leave the renderer a matrix of PCM constants (the sprite test then culled
+// sprites that hold pixels: 2635 of the 3676 sprites that the exact test culled in DEMO_002, check of -hwdbg 16777216, 0 of 3676 with the registers saved) or a scratch register of its own.
+typedef struct { float r[31][4]; } ps2a_vu0_saved __attribute__((aligned(16)));
 
 #if PS2A_VU0
 extern volatile int ps2a_vu0_busy;
@@ -38,7 +42,10 @@ static inline int ps2a_vu0_enter(ps2a_vu0_saved *s)
 		"sqc2 $vf5, 0x40(%0)\n sqc2 $vf6, 0x50(%0)\n sqc2 $vf7, 0x60(%0)\n sqc2 $vf8, 0x70(%0)\n"
 		"sqc2 $vf9, 0x80(%0)\n sqc2 $vf10, 0x90(%0)\n sqc2 $vf11, 0xa0(%0)\n sqc2 $vf12, 0xb0(%0)\n"
 		"sqc2 $vf13, 0xc0(%0)\n sqc2 $vf14, 0xd0(%0)\n sqc2 $vf15, 0xe0(%0)\n sqc2 $vf16, 0xf0(%0)\n"
-		"sqc2 $vf17, 0x100(%0)\n sqc2 $vf18, 0x110(%0)\n"
+		"sqc2 $vf17, 0x100(%0)\n sqc2 $vf18, 0x110(%0)\n sqc2 $vf19, 0x120(%0)\n sqc2 $vf20, 0x130(%0)\n"
+		"sqc2 $vf21, 0x140(%0)\n sqc2 $vf22, 0x150(%0)\n sqc2 $vf23, 0x160(%0)\n sqc2 $vf24, 0x170(%0)\n"
+		"sqc2 $vf25, 0x180(%0)\n sqc2 $vf26, 0x190(%0)\n sqc2 $vf27, 0x1a0(%0)\n sqc2 $vf28, 0x1b0(%0)\n"
+		"sqc2 $vf29, 0x1c0(%0)\n sqc2 $vf30, 0x1d0(%0)\n sqc2 $vf31, 0x1e0(%0)\n"
 		: : "r"(s) : "memory");
 	return 1;
 }
@@ -50,7 +57,10 @@ static inline void ps2a_vu0_leave(const ps2a_vu0_saved *s)
 		"lqc2 $vf5, 0x40(%0)\n lqc2 $vf6, 0x50(%0)\n lqc2 $vf7, 0x60(%0)\n lqc2 $vf8, 0x70(%0)\n"
 		"lqc2 $vf9, 0x80(%0)\n lqc2 $vf10, 0x90(%0)\n lqc2 $vf11, 0xa0(%0)\n lqc2 $vf12, 0xb0(%0)\n"
 		"lqc2 $vf13, 0xc0(%0)\n lqc2 $vf14, 0xd0(%0)\n lqc2 $vf15, 0xe0(%0)\n lqc2 $vf16, 0xf0(%0)\n"
-		"lqc2 $vf17, 0x100(%0)\n lqc2 $vf18, 0x110(%0)\n"
+		"lqc2 $vf17, 0x100(%0)\n lqc2 $vf18, 0x110(%0)\n lqc2 $vf19, 0x120(%0)\n lqc2 $vf20, 0x130(%0)\n"
+		"lqc2 $vf21, 0x140(%0)\n lqc2 $vf22, 0x150(%0)\n lqc2 $vf23, 0x160(%0)\n lqc2 $vf24, 0x170(%0)\n"
+		"lqc2 $vf25, 0x180(%0)\n lqc2 $vf26, 0x190(%0)\n lqc2 $vf27, 0x1a0(%0)\n lqc2 $vf28, 0x1b0(%0)\n"
+		"lqc2 $vf29, 0x1c0(%0)\n lqc2 $vf30, 0x1d0(%0)\n lqc2 $vf31, 0x1e0(%0)\n"
 		: : "r"(s) : "memory");
 	ps2a_vu0_busy = 0;
 }

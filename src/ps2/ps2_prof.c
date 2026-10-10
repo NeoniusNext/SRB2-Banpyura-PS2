@@ -367,6 +367,7 @@ static void Report(void)
 #ifdef PS2_PROF_DIRECT
 // PS2-94: LTO profile build (no linker wrappers): I_FinishUpdate reports every displayed frame; everything is "other"
 UINT32 ps2prof_interp; // frames drawn with 0 < rendertimefrac < FRACUNIT (d_main.c counts them)
+UINT32 ps2prof_c_tickmax; // OPT13 IQ: the longest TryRunTics call (cycles) of the window
 UINT64 ps2prof_c_tick, ps2prof_c_disp, ps2prof_c_snd; // PS2-200: cycles in TryRunTics / D_Display / S_UpdateSounds+LUA_Step (d_main.c)
 UINT32 ps2prof_real; // tics the clock asked for (the sum of realtics handed to TryRunTics)
 UINT64 ps2prof_cyc[16]; // OPT12-CORE: PS2_CYC_* accumulators (p_local.h)
@@ -400,9 +401,9 @@ void PS2Prof_FrameEnd(void)
 		lasttic = gametic;
 		I_OutputMsg("INTERP win=%u frames=%u fractional=%u\n", (unsigned)windows, (unsigned)frames, (unsigned)ps2prof_interp);
 		// TICK: tic logic per window (cycles), tics run, tics the clock asked for (lost = real - run), the longest frame, frames over two tics
-		I_OutputMsg("TICK win=%u frames=%u tics=%u real=%u tickcyc=%llu dispcyc=%llu sndcyc=%llu maxframe=%u over5tics=%u p0=%u p1=%u p2=%u p3=%u isum=%llu isq=%llu\n", (unsigned)windows, (unsigned)frames,
+		I_OutputMsg("TICK win=%u frames=%u tics=%u real=%u tickcyc=%llu dispcyc=%llu sndcyc=%llu maxframe=%u over5tics=%u p0=%u p1=%u p2=%u p3=%u isum=%llu isq=%llu tickmax=%u\n", (unsigned)windows, (unsigned)frames,
 			(unsigned)tics, (unsigned)ps2prof_real, (unsigned long long)ps2prof_c_tick, (unsigned long long)ps2prof_c_disp, (unsigned long long)ps2prof_c_snd,
-			(unsigned)maxframe, (unsigned)over5t, (unsigned)bin[0], (unsigned)bin[1], (unsigned)bin[2], (unsigned)bin[3], (unsigned long long)isum, (unsigned long long)isq);
+			(unsigned)maxframe, (unsigned)over5t, (unsigned)bin[0], (unsigned)bin[1], (unsigned)bin[2], (unsigned)bin[3], (unsigned long long)isum, (unsigned long long)isq, (unsigned)ps2prof_c_tickmax);
 		I_OutputMsg("CNT win=%u c0=%u c1=%u c2=%u c3=%u c4=%u c5=%u c6=%u c7=%u\n", (unsigned)windows, (unsigned)ps2prof_cnt[0], (unsigned)ps2prof_cnt[1], (unsigned)ps2prof_cnt[2], (unsigned)ps2prof_cnt[3],
 			(unsigned)ps2prof_cnt[4], (unsigned)ps2prof_cnt[5], (unsigned)ps2prof_cnt[6], (unsigned)ps2prof_cnt[7]);
 		memset(ps2prof_cnt, 0, sizeof ps2prof_cnt);
@@ -413,6 +414,7 @@ void PS2Prof_FrameEnd(void)
 			(unsigned long long)ps2prof_cyc[15]);
 		memset(ps2prof_cyc, 0, sizeof ps2prof_cyc);
 		ps2prof_c_tick = ps2prof_c_disp = ps2prof_c_snd = 0;
+		ps2prof_c_tickmax = 0;
 		ps2prof_real = 0;
 		maxframe = over5t = 0;
 		bin[0] = bin[1] = bin[2] = bin[3] = 0;

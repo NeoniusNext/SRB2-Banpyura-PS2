@@ -1,6 +1,6 @@
 """Cook the SRB2 pk3 archives into SRP2 packs (format: docs/PACK_FORMAT.md).
 
-usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...] [--tool-dir DIR] [--keep-png] [--from-pak DIR] [--order FILE] [--version 1|2] [--no-dedup]
+usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...] [--tool-dir DIR] [--keep-png] [--from-pak DIR] [--order FILE | --no-order] [--version 1|2] [--no-dedup]
   --src       directory with srb2.pk3 zones.pk3 characters.pk3 music.pk3 (default srb2-assets)
   --out       output directory (default build/pak): SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK (+ <PACK>.pics.json)
   --tool-dir  where the host picture tool is built (default build/strip-pic-tool)
@@ -40,6 +40,7 @@ import zlib
 import lz4.block
 
 ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_ORDER = ROOT / 'tools/ps2/lump_order.txt'  # OPT13 RS-03 (PS2-LOAD-11 list): stored first, in this order
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import strip_pics  # noqa: E402  (PNG -> cooked picture, PS2-20)
 
@@ -451,7 +452,9 @@ def main():
     ap.add_argument('--tool-dir', default=str(ROOT / 'build/strip-pic-tool'))
     ap.add_argument('--keep-png', action='store_true')
     ap.add_argument('--from-pak', help='directory with existing SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK (v1 or v2): re-cook their lumps (no pk3, no PNG tool needed)')
-    ap.add_argument('--order', type=Path, help='lump full names, one per line: stored first, in this order (the start-up read order)')
+    ap.add_argument('--order', type=Path, default=DEFAULT_ORDER if DEFAULT_ORDER.is_file() else None,
+                    help='lump full names, one per line: stored first, in this order (the start-up read order); default tools/ps2/lump_order.txt (OPT13 RS-03: the start-up and the first map read ~42 %% fewer bytes and ~35 %% fewer commands with it)')
+    ap.add_argument('--no-order', action='store_true', help='directory order of the pk3 (what cook.py did before OPT13)')
     ap.add_argument('--version', type=int, default=VERSION, choices=[1, 2])
     ap.add_argument('--no-dedup', action='store_true', help='v2: store identical lumps more than once')
     ap.add_argument('--log', type=Path, help='save cooker output')
@@ -469,7 +472,7 @@ def main():
             a.log.parent.mkdir(parents=True, exist_ok=True)
             a.log.write_text('\n'.join(messages) + '\n', encoding='utf-8')
     order = None
-    if a.order:
+    if a.order and not a.no_order:
         order = [l.strip() for l in a.order.read_text().splitlines() if l.strip() and not l.startswith('#')]
         log(f'storage order list: {len(order)} lump names from {a.order}')
     tot = [0, 0, 0]

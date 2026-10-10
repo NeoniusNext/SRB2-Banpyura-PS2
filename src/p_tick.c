@@ -23,6 +23,7 @@
 #include "lua_hook.h"
 #include "m_perfstats.h"
 #include "i_system.h" // I_GetPreciseTime
+#include "m_argv.h" // -prefthink
 #include "r_main.h"
 #include "r_fps.h"
 #include "i_video.h" // rendermode
@@ -459,12 +460,30 @@ static void PS2_TypeCycDump(void)
 static inline void P_RunThinkers(void)
 {
 	size_t i;
+#ifdef PS2
+	// OPT13 IQ (RCACHE R3, RTICK D-b), -prefthink: the thinker that comes next is brought into the data cache of the EE (8 KiB, 64-byte lines, ~40 cycles a miss) while this one runs: the
+	// four lines of a mobj_t that every tic reads (thinker + position, frame, floorz..flags, type..), a hint that changes no value. PCSX2 does not model the cache (a `pref` is one cycle
+	// there): the effect can only be seen on the console, so it is off until somebody has measured it there.
+	static int prefthink = -1;
+
+	if (prefthink < 0)
+		prefthink = M_CheckParm("-prefthink") != 0;
+#endif
 	for (i = 0; i < NUM_THINKERLISTS; i++)
 	{
 		PS2_CYC_T0(t_list);
 		PS_START_TIMING(ps_thlist_times[i]);
 		for (currentthinker = thlist[i].next; currentthinker != &thlist[i]; currentthinker = currentthinker->next)
 		{
+#ifdef PS2
+			if (prefthink)
+			{
+				const char *nx = (const char *)currentthinker->next;
+
+				// (`pref 0` = load: the R5900 knows hint 0 and 1; __builtin_prefetch with locality 3 emits hint 6)
+				__asm__ volatile("pref 0, 0(%0)\n\tpref 0, 64(%0)\n\tpref 0, 192(%0)\n\tpref 0, 256(%0)" : : "r"(nx));
+			}
+#endif
 #ifdef PARANOIA
 			I_Assert(currentthinker->function != NULL);
 #endif

@@ -40,6 +40,7 @@ void PS2Prof_FrameEnd(void); // frame counter of LTO profile builds (called from
 // TICK = TryRunTics (the tic logic: G_Ticker/P_Ticker/Lua hooks/net), DISP = D_Display (render + HUD + I_FinishUpdate), SND = S_UpdateSounds/LUA_Step
 // after the display; the rest of the frame is "other" (idle wait, sleep). realtics = what the clock asked for, gametic delta = what ran: lost tics.
 extern UINT64 ps2prof_c_tick, ps2prof_c_disp, ps2prof_c_snd;
+extern UINT32 ps2prof_c_tickmax; // OPT13 IQ: longest single TryRunTics call of the window (TICK line, tickmax=)
 extern UINT32 ps2prof_real;
 static inline UINT32 PS2Prof_Cyc(void) { UINT32 v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
 #endif
