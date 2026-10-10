@@ -11,6 +11,7 @@
 #include "../i_system.h"
 
 #include "ps2_boot.h"
+#include "ps2_iobench.h"
 #include "ps2_loadprof.h"
 #include "ps2_sys.h"
 
@@ -60,6 +61,11 @@ int main(int argc, char **argv)
 	// startup SRB2
 	CONS_Printf("Setting up SRB2...\n");
 	D_SRB2Main();
+	if (M_CheckParm("-iobench")) // OPT13-RSYS research tool: measure the storage, show the numbers, end
+	{
+		PS2IoBench_Run();
+		I_Quit();
+	}
 	LP_SAMPLE(1);
 	LP_REPORT("boot");
 	CONS_Printf("Entering main game loop...\n");

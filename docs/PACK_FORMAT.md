@@ -147,3 +147,17 @@ asked for the first time or after the zone dropped its data (docs/research/rdrv/
   textures of its sidedefs, its sky and the animations they belong to, one read per run of nearby lumps, kept in one long-lived block), else one lump read; `WPack_DecodeMem` decodes it straight into
   the texture's data block. `-notexc` ignores the pack, `-texcmem KiB` limits the prefetch (default 1024), `-texccheck` compares every stored composite with the original composition at the first
   level load (`TEXC check: N textures checked, M differ`), `-hwdbg 16777216` checks each texture when it is made.
+
+## Читатель паков (OPT13-IO, `src/w_pack.c`; формат не менялся)
+
+Формат версий 1 и 2 тот же, нумерация ламп та же. Что изменилось в чтении (подробности и числа: `docs/GATES/g1/opt13-IO.md`):
+
+* Поток пака читается **ниже stdio** (`read()` на дескрипторе, начало и длина кратны сектору 2048, буфер выровнен на 64 байта); буфера stdio у пака нет. На поток — одно окно, размер и поведение
+  которого зависят от носителя (`-pkmedium dvd|usb|sd|hdd|auto`; `auto` смотрит на имя устройства пути: `mass:`/`usb` → usb, `mx4sio` → sd, `hdd`/`pfs` → hdd, всё остальное → dvd = окно 64 КБ).
+  На промахе читаются сектора, которые нужны (но не меньше `minreq` носителя), а промах, продолжающий последовательный пробег (старт читает пак в порядке хранения), читает вперёд с удвоением.
+* Заголовок и расширение разбираются один раз на поток; индекс (таблица, пул имён, голова-таблица) читается один раз крупными кусками.
+* Блок LZ4 разжимается прямо из окна. Сырые блоки и лампы читаются ровно по нужному диапазону.
+* Ошибка чтения устройства (ошибка `read`, короткое чтение внутри файла, блок, который не разжимается) повторяется до 4 раз (паузы 0/100/250/1000 мс, на 3-й и 4-й попытке поток открывается заново);
+  после 4-го сбоя `W_ReadLump*` заканчивает игру сообщением с именем пака, лампы, смещения и errno. Звуковые эффекты (`W_SoftReads`) при таком сбое пропускаются.
+* Опционально (`-pkprefetch`, по умолчанию выключено): список ламп уровня читается одним отсортированным проходом в блок `PU_CACHE`; все остальные чтения о нём не знают.
+* Проверка: `tools/ps2/test_pack_reader.py` (хост, паки v1 и v2, все политики окна, внедрённые ошибки чтения, предзагрузка), `tools/ps2/io_hosttests.sh`.

@@ -18,9 +18,38 @@
 // True if the file starts with the pack signature. This performs I/O: set up buffering before calling it.
 boolean WPack_Detect(FILE *handle);
 
-// Gives the stream a 64 KiB buffer (64-byte aligned on PS2). Returns the buffer, free() it after fclose().
-// Call before ANY I/O, including WPack_Detect; NULL if it could not be allocated. Does not replace driver cache sync.
+// Prepares a stream for the engine. A pack (the file starts with the signature) is read below stdio through a window whose size depends on the medium `path` is on
+// (OPT13-IO RS-01: docs/GATES/g1/opt13-IO.md; WPack_SetMedium), its stdio stream is unbuffered; any other file gets a 64 KiB stdio buffer (64-byte aligned on PS2).
+// Returns something free() accepts, to be freed after fclose(); NULL if memory is short.
+// Call before ANY I/O, including WPack_Detect. Does not replace driver cache sync. `path` (may be NULL) is the name the file was opened with.
+void *WPack_SetupHandleEx(FILE *handle, const char *path);
 void *WPack_SetupHandle(FILE *handle);
+// The size of the file of a pack stream (read once when the stream was prepared), -1 if it is not a pack stream or the size is not known.
+long WPack_FileSize(FILE *handle);
+
+// The medium the packs are on: "dvd", "usb", "sd", "hdd" fix the window policy; NULL or "auto" chooses by the device name of the path (mass:/usb -> usb, mx4sio -> sd,
+// hdd/pfs -> hdd, anything else -> dvd, whose 64 KiB window is never worse than the stdio buffer it replaced). False for an unknown name.
+boolean WPack_SetMedium(const char *name);
+// Experiments (-pkwin): one window for every medium (bytes: buffer size <= 64 KiB, smallest read of a miss, read of a miss in a sequential run, how far in front of the last read
+// a miss may be to count as sequential)
+void WPack_SetWindow(UINT32 cap, UINT32 minreq, UINT32 ahead, UINT32 gap);
+
+// Counters of the device commands of the pack reader (a command = one read() of the IOP; seeks are not counted)
+typedef struct { UINT32 cmds, hits, misses, bulk, retries, failures, injected; UINT64 bytes; } wpack_iostat_t;
+void WPack_GetStats(wpack_iostat_t *out);
+void WPack_PrintStats(boolean on); // print the counters when the packs are closed (-iostat)
+// RS-07 test: the `at`-th device read attempt (1 = the first one) and the `count` - 1 after it fail as if the device returned an error (0 = off; -pkioerr)
+void WPack_InjectErrors(UINT32 at, UINT32 count);
+// RS-02: the working set of a level in one sorted pass (docs/GATES/g1/opt13-IO.md). Begin; Add for every lump the level will probably use (the lumpinfo of a lump of the pack
+// whose stream is `handle`); Run reads them sorted by position into one PU_CACHE block (at most `budget` stored bytes; the zone takes the block back under pressure) and
+// returns the bytes kept; `pump` (may be NULL) is called between the device reads. Later reads of those lumps come from the block while it exists.
+void WPack_PrefetchBegin(void);
+void WPack_PrefetchAdd(FILE *handle, const lumpinfo_t *l);
+UINT32 WPack_PrefetchRun(UINT32 budget, void (*pump)(void));
+void WPack_PrefetchDrop(void); // frees the block (tests; the zone does it under pressure)
+void WPack_PrefetchStats(UINT32 *hits, UINT32 *hitbytes, UINT32 *ranges, UINT32 *kept);
+// Why the last WPack_ReadLump returned less than asked (pack name, offset, errno); empty if it did not fail
+const char *WPack_LastError(void);
 
 typedef struct wpack_s wpack_t; // an open pack of version 2 (head table); NULL for version 1
 
