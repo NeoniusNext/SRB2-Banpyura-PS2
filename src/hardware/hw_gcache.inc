@@ -618,9 +618,14 @@ static size_t HWR_GCacheReclaim(size_t want)
 {
 	size_t got = gc.blk_bytes;
 
-	(void)want;
 	if (!gc.blk)
 		return 0;
+#ifdef PS2
+	// (`want` is the request of the zone after its retries: it doubles every time the caches did not make the room)
+	I_OutputMsg("HWGC reclaim: the zone asks for %u KB (free %u KB, reclaimable %u KB), frame %u; the cache's block of %u KB goes\n", (unsigned)(want >> 10), (unsigned)(Z_ArenaFree() >> 10), (unsigned)(Z_ReclaimableBytes() >> 10), (unsigned)Z_FrameCount(), (unsigned)(got >> 10));
+#else
+	(void)want;
+#endif
 	gc_off();
 	gc.on = false;
 	gc.rec_fail = true;
