@@ -1,4 +1,4 @@
-"""OPT14: compare the LQ lines of the nodes of a network run made by net_session.py with a scenario of net_specs14.py.
+"""OPT14: compare the LQ lines of the nodes of a network run made by net_session.py with a scenario of net_specs14_lua.py.
 
 usage: lua_net.py <run dir> [--ref srv] [--logs srv=srv/out.txt pc=pc/out.txt cli=cli/boot.txt]
 The lines "LQ tic N ..." and "LQ ref N ..." (printed by lm_net.lua every 100 tics of the mod's own counter, which a joining client takes over through NetVars) are compared by N between the reference node

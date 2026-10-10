@@ -47,6 +47,8 @@ static struct
 	fr_plane_t p[5]; // right, left, top, bottom, near
 	int on;
 } frv;
+hwr_fbox_t hwr_fbox[5]; // OPT13 IR
+int hwr_fbox_on;
 
 #define FR_MARGIN 1.0f
 #define FR_GATE() (frv.on && !(hwr_fr_off & HWFR_NOCULL))
@@ -62,6 +64,7 @@ static void HWR_FrViewSetup(void)
 	int k;
 
 	frv.on = 0;
+	hwr_fbox_on = 0;
 	cs = PS2HWD_CullSetup();
 	if (!cs->valid)
 		return;
@@ -86,6 +89,30 @@ static void HWR_FrViewSetup(void)
 	}
 	frv.on = 1;
 	HWR_FrArc();
+	// OPT13 IR (hw_pbatch.inc, HWR_PBBoxOut): the same planes for the integer test of the box of a stored polygon. The order is that of the test: the planes that say "outside" most often first.
+	// The coefficients are rounded to 1/16384, a box coordinate is a whole number of map units of at most 32767: every product is at most 2^29 and the sum 1.6e9 (no overflow), and the rounding of
+	// the three coefficients moves the distance by at most 3.1 units: the margin of the test is the margin of the floats (1) and 4 more.
+	{
+		static const signed char ord[5] = {0, 1, 2, 3, 4}; // right, left, top, bottom, near (in a run of the demos the side planes say "outside" far more often than the others)
+		int j;
+
+		for (j = 0; j < 5; j++)
+		{
+			const fr_plane_t *pl = &frv.p[(int)ord[j]];
+			float nd = -(pl->d - FR_MARGIN - 4.0f) * 16384.0f;
+
+			hwr_fbox[j].a = (INT32)(pl->a * 16384.0f + (pl->a < 0.0f ? -0.5f : 0.5f));
+			hwr_fbox[j].b = (INT32)(pl->b * 16384.0f + (pl->b < 0.0f ? -0.5f : 0.5f));
+			hwr_fbox[j].c = (INT32)(pl->c * 16384.0f + (pl->c < 0.0f ? -0.5f : 0.5f));
+			if (nd > 2.0e9f) nd = 2.0e9f;
+			if (nd < -2.0e9f) nd = -2.0e9f;
+			hwr_fbox[j].nd = (INT32)nd;
+			hwr_fbox[j].ox = pl->a > 0.0f ? 0u : 1u; // x: the min when the plane's x is positive (the most inside corner)
+			hwr_fbox[j].oy = pl->b > 0.0f ? 2u : 3u;
+			hwr_fbox[j].oz = pl->c > 0.0f ? 4u : 5u;
+		}
+		hwr_fbox_on = 1;
+	}
 }
 
 // -hwpolyhash 3 (hw_batching.c): the polygons wholly outside the view volume (strictly, no margin) are left out of the hash: two runs of the same frames whose polygons differ only by what the
@@ -217,6 +244,7 @@ static inline int HWR_FrArcOut(angle_t a2, angle_t a1)
 static inline void HWR_FrViewEnd(void)
 {
 	frv.on = 0;
+	hwr_fbox_on = 0;
 }
 
 // All the vertices of a plane polygon (the points pts[0..n), polyvertex_t, at the height h) are outside one side of the volume
