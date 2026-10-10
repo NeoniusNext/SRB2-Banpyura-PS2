@@ -51,6 +51,8 @@ def alerts(text):
             m = True   # freeslot() messages
         if not m or 'Demo' in l or 'config' in l or 'Couldn' in l:
             continue
+        if 'R_GenerateTexture: no room' in l or 'Low memory:' in l:
+            continue   # OPT14: the messages of the PS2 zone under memory pressure on a big level (MAP11), the PC has no such limit
         out.append('LA ' + re.sub(r'(?:[\w.~-]*[:/\\])+(?=[\w.-]+\.lua)', '', l))
         in_tb = True
     return out

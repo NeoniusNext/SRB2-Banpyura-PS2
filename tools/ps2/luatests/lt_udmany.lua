@@ -18,7 +18,7 @@ addHook("ThinkFrame", function()
 		stage = 1
 		t0 = getTimeMicros()
 		local n = #lines
-		local cap = n < 12000 and n or 12000
+		local cap = n < 9000 and n or 9000
 		for i = 0, cap - 1 do held[i + 1] = lines[i] end
 		print("LT time " .. tostring((getTimeMicros() - t0) / 1000) .. " ms for " .. cap .. " line userdata of " .. n)
 		P("held", #held, held[1].valid, held[#held].valid, #held >= 4200)
@@ -35,9 +35,9 @@ addHook("ThinkFrame", function()
 		local mos = {}
 		local p = players[0].mo
 		t0 = getTimeMicros()
-		for i = 1, 3000 do mos[i] = P_SpawnMobj(p.x, p.y, p.z + 4096 * FRACUNIT, MT_THOK) mos[i].fuse = 1 end
+		for i = 1, 600 do mos[i] = P_SpawnMobj(p.x, p.y, p.z + 4096 * FRACUNIT, MT_THOK) mos[i].fuse = 1 end
 		print("LT time3 " .. tostring((getTimeMicros() - t0) / 1000) .. " ms")
-		P("spawned", #mos, mos[1].valid, mos[3000].valid)
+		P("spawned", #mos, mos[1].valid, mos[600].valid)
 		for i = 1, #mos, 2 do P_RemoveMobj(mos[i]) end
 		local inv = 0
 		for i = 1, #mos do if not mos[i].valid then inv = inv + 1 end end

@@ -688,14 +688,17 @@ static int setglobals(lua_State *L)
 // lua_getfield of the registry (interning the name "LREG_VALID" again each time) and a table lookup, ~1500 cycles per freed block, thousands per level and many per tic.
 // The pointers that got a userdata are also marked in a small bit set (16384 bits, no false negatives); a block that is not marked cannot be in the table. Marks are never
 // removed, so the set is rebuilt from the table when too many distinct pointers have been marked.
-#define VALIDBITS 16384
+#define VALIDBITS 65536
 static UINT32 valid_bloom[VALIDBITS / 32];
-static UINT32 valid_marked;
+static UINT32 valid_marked; // marks made since the last rebuild (a mark is never removed)
+static UINT32 valid_live; // OPT14 (PS2-LUA-2): the entries of the LREG_VALID table, exactly (+1 for a new userdata, -1 for an invalidated one)
+static boolean valid_pending; // OPT14: valid_off can end (the next LUA_RawPushUserdata rebuilds the set)
+static boolean valid_off; // OPT14 (PS2-LUA-2): more live entries than the set can tell apart (> VALIDBITS/8): the table is asked for every freed block, as in the original
 static int valid_ref = LUA_NOREF; // the registry reference of the LREG_VALID table (made in LUA_Load with the table)
 
 static inline UINT32 ValidHash(const void *p)
 {
-	return (UINT32)(((UINT32)(uintptr_t)p >> 3) * 0x9E3779B1u) >> (32 - 14);
+	return (UINT32)(((UINT32)(uintptr_t)p >> 3) * 0x9E3779B1u) >> (32 - 16);
 }
 
 static inline void ValidMark(const void *p)
@@ -710,7 +713,9 @@ static void ValidRebuild(lua_State *L)
 {
 	memset(valid_bloom, 0, sizeof valid_bloom);
 	valid_marked = 0;
-	lua_getfield(L, LUA_REGISTRYINDEX, LREG_VALID);
+	valid_off = false;
+	valid_pending = false;
+	lua_rawgeti(L, LUA_REGISTRYINDEX, valid_ref);
 	lua_pushnil(L);
 	while (lua_next(L, -2))
 	{
@@ -724,6 +729,19 @@ static void ValidRebuild(lua_State *L)
 		lua_pop(L, 1);
 	}
 	lua_pop(L, 1);
+	valid_live = valid_marked; // (one mark per entry: the exact count)
+}
+
+// OPT14 (PS2-LUA-2): the first version rebuilt the set whenever a quarter of its bits had been marked, whatever the number of live entries: with more live userdata than that
+// (a script that walks the 6 700 mobjs or the 25 000 lines of a big level keeps one for each) every new userdata rebuilt it, O(n) each, O(n^2) in all. The rebuild now happens
+// only when the live entries are few enough for the set to be worth it (<= 1/8 of the bits, a false positive rate of 12 % at most), otherwise the set is switched off until
+// invalidations bring the live entries under 1/16 of the bits.
+static void ValidRefresh(lua_State *L)
+{
+	if (valid_live > VALIDBITS / 8)
+		valid_off = true;
+	else
+		ValidRebuild(L);
 }
 #endif
 
@@ -766,6 +784,8 @@ static void LUA_ClearState(void)
 	valid_ref = luaL_ref(L, LUA_REGISTRYINDEX); // OPT13 IQ-L2 (RTICK L-2): LUA_RawPushUserdata finds the table by this reference (no "LREG_VALID" string to intern and look up on every push)
 	memset(valid_bloom, 0, sizeof valid_bloom);
 	valid_marked = 0;
+	valid_live = 0;
+	valid_off = valid_pending = false;
 #else
 	lua_setfield(L, LUA_REGISTRYINDEX, LREG_VALID);
 #endif
@@ -1100,6 +1120,11 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
 	}
 
 #ifdef PS2_PROFILE
+	if (valid_pending)
+	{
+		valid_pending = false;
+		ValidRebuild(L);
+	}
 	lua_rawgeti(L, LUA_REGISTRYINDEX, valid_ref); // (the table of LREG_VALID, by its reference: OPT13 IQ-L2)
 #else
 	lua_getfield(L, LUA_REGISTRYINDEX, LREG_VALID);
@@ -1121,12 +1146,14 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
 		lua_pushvalue(L, -2); // v (copy of the userdata)
 		lua_rawset(L, -4);
 #ifdef PS2_PROFILE
-		if (L == gL)
+		// (every lua_State: the registry, and with it LREG_VALID, is shared by the coroutines of a script; the first version marked the main state only, a userdata made
+		// inside a coroutine was then never invalidated: OPT14 PS2-LUA-1)
+		valid_live++;
+		if (!valid_off)
 		{
+			ValidMark(data);
 			if (valid_marked > VALIDBITS / 4)
-				ValidRebuild(L); // (the new pointer is in the table by now)
-			else
-				ValidMark(data);
+				ValidRefresh(L); // (the new pointer is in the table by now)
 		}
 #endif
 
@@ -1149,6 +1176,7 @@ void LUA_InvalidateUserdata(void *data)
 	if (!gL)
 		return;
 #ifdef PS2_PROFILE
+	if (!valid_off)
 	{
 		const UINT32 h = ValidHash(data);
 
@@ -1158,7 +1186,11 @@ void LUA_InvalidateUserdata(void *data)
 #endif
 
 	// fetch the userdata
+#ifdef PS2_PROFILE
+	lua_rawgeti(gL, LUA_REGISTRYINDEX, valid_ref);
+#else
 	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);
+#endif
 	I_Assert(lua_istable(gL, -1));
 		lua_pushlightuserdata(gL, data);
 		lua_rawget(gL, -2);
@@ -1185,6 +1217,12 @@ void LUA_InvalidateUserdata(void *data)
 		lua_pushnil(gL);
 		lua_rawset(gL, -3);
 	lua_pop(gL, 1); // pop LREG_VALID
+#ifdef PS2_PROFILE
+	if (valid_live)
+		valid_live--;
+	if (valid_off && valid_live <= VALIDBITS / 16)
+		valid_pending = true; // few enough again: the set is rebuilt by the next userdata that a script makes (this runs inside the zone, possibly inside an allocation of the Lua heap)
+#endif
 }
 
 #ifdef PS2_DYNLIMITS
@@ -1210,7 +1248,8 @@ void LUA_RemapUserdata(const void *oldp, void *newp)
 	lua_pushvalue(gL, -2);
 	lua_rawset(gL, -4);
 #ifdef PS2_PROFILE
-	ValidMark(newp);
+	if (!valid_off)
+		ValidMark(newp);
 #endif
 	lua_pushlightuserdata(gL, (void *)oldp);
 	lua_pushnil(gL);

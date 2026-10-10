@@ -22,3 +22,5 @@ run lt_err     --warp 1 --until "LQ DONE_ERR" $T/lt_err.lua $T/lt_err0.lua
 run lt_hud     --warp 1 --until "LQ DONE_HUD" "$W320" $T/lt_hud.lua
 run lt_hooks2  --warp 1 --until "LQ DONE_HOOKS2" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_hooks2.lua
 run lt_local   --warp 1 --until "LQ DONE_LOCAL" "$W320" "--ps2-args=-ps2ref-maptics" --extra $T/lt_local2.lua $T/lt_local.lua
+run lt_coro    --warp 1 --until "LQ DONE_CORO" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_coro.lua
+run lt_udmany  --warp 11 --until "LQ DONE_UDMANY" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_udmany.lua
