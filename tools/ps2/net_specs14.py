@@ -56,8 +56,9 @@ def scenario(name, mods, renderer='Software', predl=False, tics=4000, joinwait=4
 def ps2srv(name, mods, tics=3600, joindelay=50, pcfile=False, renderer='Software'):
     """the PS2 is the server (and a player: the pad script walks it), the mod builds up state; a PC client joins joindelay seconds after the PS2 server printed its address and takes the savegame
     that the PS2 wrote (LUA_Archive on the EE, read by the PC)."""
-    srv = ps2('srv', EMU1, ['-server', '-netsync', '-netdebug', '-padscript', 'file:pad.txt'] + sum([['-file', m] for m in mods], []) + (['-renderer', renderer] if renderer != 'Software' else []),
-              files={'pad.txt': walk(1, 500, tics * 3)}, cfg=CFG_SYNC, map='MAP01')
+    # (the PC client reaches the PS2 server through the emulator's NAT: the server sends "punch" packets to the client port before the client joins, net_specs.py)
+    srv = ps2('srv', EMU1, ['-server', '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] + sum([['-file', m] for m in mods], []) + (['-renderer', renderer] if renderer != 'Software' else []),
+              files={'pad.txt': walk(1, 500, tics * 3), 'cmd.txt': S.punches(5030, 120, tics * 3)}, cfg=CFG_SYNC, map='MAP01')
     srv['copy'] = {m: (TESTS / m).as_posix() for m in mods}
     cli = {'id': 'cli', 'kind': 'pc', 'exe': S.PC, 'cwd': S.PCDIR, 'args': ['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', S.HOME2, '+nettimeout', '2100', '+jointimeout', '2100']
            + (sum([['-file', (TESTS / m).as_posix()] for m in mods], []) if pcfile else []),

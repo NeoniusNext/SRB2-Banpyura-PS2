@@ -57,6 +57,20 @@ mobj_t *P_AllocMobjBlock(void)
 {
 	return Z_LevelPoolAlloc(&ps2_mobjpool, sizeof (mobj_t), 32);
 }
+
+// OPT14 (PS2-LUA-7): P_NetUnArchiveThinkers empties the thinker lists with P_RemoveSavegameMobj (upstream frees every object) and then builds the saved ones. Here the removed ones sit in
+// mobjcache, which only P_SpawnMobj reads, and every unarchived object was a new slice of a chunk: a client that joins holds the objects of the map it loaded and the ones the host sent
+// until the level ends (416 bytes each: 2.8 MB for the 6 768 objects of MAP11). The cache is read first; the memory is cleared as P_SpawnMobj does.
+mobj_t *P_AllocMobjBlockForLoad(void)
+{
+	mobj_t *mobj = mobjcache;
+
+	if (mobj == NULL)
+		return P_AllocMobjBlock();
+	mobjcache = mobj->hnext;
+	memset(mobj, 0, sizeof (*mobj));
+	return mobj;
+}
 #else
 mobj_t *P_AllocMobjBlock(void)
 {

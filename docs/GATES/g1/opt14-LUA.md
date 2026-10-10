@@ -82,8 +82,8 @@ if a user script recurses without bound through `gsub`/`sort` callbacks this is 
 ### PS2-LUA-6: a client that joins (or resyncs) a game on a weather map: rain/snow objects went into the mobj cache, the objects Lua held stayed "valid"
 
 * Cause: `P_RemoveSavegameMobj` (src/p_mobj.c) empties the thinker lists before a netgame savegame is read (`P_NetUnArchiveThinkers`: the join, a resync, a netgame load). PS2-511 made mobjs slices of
-  zone chunks, so the PS2 branch cannot `Z_Free` them and puts them on `mobjcache` instead. That branch did it for every thinker: the rain/snow objects (`precipmobj_t`, 120 bytes, each its own
-  `Z_Calloc` block) ended on the same list and were handed out by the next `P_SpawnMobj`, which does `memset(mobj, 0, sizeof(mobj_t))` (~500 bytes) over the block after them (a heap overwrite, only on weather maps).
+  zone chunks, so the PS2 branch cannot `Z_Free` them and puts them on `mobjcache` instead. That branch did it for every thinker: the rain/snow objects (`precipmobj_t`, 212 bytes, each its own
+  `Z_Calloc` block) ended on the same list and were handed out by the next `P_SpawnMobj`, which does `memset(mobj, 0, sizeof(mobj_t))` (416 bytes) over the 204 bytes after them (the zone header and the start of the next block) (a heap overwrite, only on weather maps).
   Second defect of the same lines: upstream's `Z_Free` invalidates the Lua userdata of the object, the cache branch did not, so a script that held a mobj of the old state kept `mo.valid == true` for
   an object the savegame had replaced and that was later reused as a different one.
 * Fix: precipitation -> `Z_Free` (as upstream); every other mobj -> `LUA_InvalidateUserdata` first, then the cache. No behaviour change outside the netgame load path.

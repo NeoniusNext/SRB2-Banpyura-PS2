@@ -537,6 +537,11 @@ void P_AddCachedAction(mobj_t *mobj, INT32 statenum);
 // check mobj against water content, before movement code
 void P_MobjCheckWater(mobj_t *mobj);
 mobj_t *P_AllocMobjBlock(void); // zeroed memory for a new mobj (PS2-511: a slice of a chunk)
+#ifdef PS2
+mobj_t *P_AllocMobjBlockForLoad(void); // OPT14 (PS2-LUA-7): the same, taken from mobjcache first (the objects P_RemoveSavegameMobj has just put there) so that a netgame load does not hold two copies of the level's objects
+#else
+#define P_AllocMobjBlockForLoad P_AllocMobjBlock
+#endif
 
 // Player spawn points
 void P_SpawnPlayer(INT32 playernum);

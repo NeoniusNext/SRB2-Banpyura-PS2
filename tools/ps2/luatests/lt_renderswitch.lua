@@ -39,7 +39,7 @@ addHook("ThinkFrame", function()
 	if t == last then return end
 	last = t
 	if gamemap == 1 or t > 5 then
-		if step[t] then COM_BufInsertText(server, step[t]) end
+		if step[t] and gamemap == 1 then COM_BufInsertText(server, step[t]) end -- (once: the next map is another one)
 		if rep[t] then
 			local n, tot = valid()
 			local es = {} for k in pairs(errset) do es[#es + 1] = k end table.sort(es)
