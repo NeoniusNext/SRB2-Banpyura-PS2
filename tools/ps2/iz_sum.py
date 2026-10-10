@@ -45,14 +45,14 @@ def summarize(run):
         if m:
             nreg += 1
             sreg += int(m.group(1))
-        m = re.match(r'ZMODE cap=.*\| slow=(\d+) \((\d+) cyc\) front calls=(\d+) failed=(\d+)(?: \((\d+) from memory\))? walked=(\d+) \((\d+) cyc\)', l)
+        m = re.match(r'ZMODE cap=.*\| slow=(\d+) \((\d+) cyc\) front calls=(\d+) failed=(\d+)(?: \((\d+) from memory\))? walked=(\d+) \((\d+) cyc\)(?: okmax=(\d+) cap=(\d+))?', l)
         if m:
             slow[0] += int(m.group(1))
             slow[1] += int(m.group(2))
             front[0] += int(m.group(3))
             front[1] += int(m.group(4))
             front[2] += int(m.group(7))
-            front[3] += int(m.group(5) or 0)
+            front[3] = max(front[3], int(m.group(8) or 0))
         m = re.search(r'lru last resort (\d+) \(partial (\d+)\)', l)
         if m and l.startswith('ZMODE'):
             lru[0] += int(m.group(1))
@@ -82,7 +82,7 @@ def summarize(run):
 
 
 def main():
-    print('%-22s %7s %7s %7s %7s %6s %9s | %5s %7s | %6s %9s | %5s %6s %6s %7s | %-10s | %s' % ('run', 'realtic', 'avg M', 'win M', 'wmax M', '>15M', 'p50/90/99', 'regen', 'sum M', 'slow', 'cyc', 'fcall', 'ffail', 'fneg', 'fcyc', 'geom', 'lru fl/part  texc used/res/read/cyc'))
+    print('%-22s %7s %7s %7s %7s %6s %9s | %5s %7s | %6s %9s | %5s %6s %6s %7s | %-10s | %s' % ('run', 'realtic', 'avg M', 'win M', 'wmax M', '>15M', 'p50/90/99', 'regen', 'sum M', 'slow', 'cyc', 'fcall', 'ffail', 'okmax', 'fcyc', 'geom', 'lru fl/part  texc used/res/read/cyc'))
     for pat in sys.argv[1:]:
         runs = sorted(glob.glob(os.path.join('build/runs', pat)), key=key)
         for run in runs:

@@ -172,12 +172,8 @@ static boolean zlevel_play;
 #define Z_FRONT_TOP_MAX (1u << 20)
 #define Z_FRONT_STEP (96u << 10)        // the frontier moves this much beyond the request, so that the next few requests need no move
 static UINT32 zfront_moves_down, zfront_moves_up, zfront_fallbacks;
-static boolean zroom_rebuild_cost = true;   // PS2-603: -zroomcost 0: the eviction cost of Z_MakeRoom is the size alone, as OPT12 (A/B on one ELF)
-static boolean zroom_partial = true;        // PS2-603: -zpartial 0: the last resort frees every PU_HWRCACHE_LRU block at once, as OPT12
-static UINT32 zfront_gen;                   // PS2-600: bumped by whatever can make a span of free and evictable blocks (a block freed, a block that got an owner or a cache tag)
-static INT32 zfront_neg_on = 1;             // PS2-600: -zfrontneg 0: every failed look for room is made again (A/B)
-static struct { const void *f; const uint8_t *front; UINT32 frame, gen; size_t need; boolean valid; } zfront_neg; // the last "no room above the frontier" and what it was made from
-static UINT32 zfront_negs;                  // calls answered by it
+static boolean zroom_rebuild_cost;          // PS2-603: -zroomcost 1: the eviction cost of Z_MakeRoom counts what making the block again cost (off: the size alone, as OPT12; it gained 0.7..0.9 % without TEXC.PAK and nothing with it)
+static boolean zroom_partial;               // PS2-603: -zpartial 1: the last resort frees the cheapest run of PU_HWRCACHE_LRU blocks first (off: all at once, as OPT12)
 static INT32 zfront_mode = 1;       // PS2-600: -zfront 0: Z_MoveFrontier walks the whole arena as in OPT12 (A/B on one ELF), 1: Z_MoveFrontierNear
 static UINT32 zslow_calls, zslow_cyc;  // PS2-600: allocations whose first try failed (the slow path of Z_AllocBlock) and the EE cycles they cost
 
@@ -362,7 +358,6 @@ static void Z_RegRebuild(void)
 // Every place that gives a used block a tag: keeps the array and the purge flag right.
 static void Z_NoteTag(zablock_t *block, INT32 oldtag, INT32 newtag)
 {
-	zfront_gen++;
 	if (oldtag != newtag)
 	{
 		if (Z_RegTag(oldtag))
@@ -378,8 +373,6 @@ static void Z_NoteTag(zablock_t *block, INT32 oldtag, INT32 newtag)
 static void *Z_FreeBlock(zablock_t *block)
 {
 	void *ptr = ZA_PAYLOAD(block);
-
-	zfront_gen++;
 
 	// anything that isn't by lua gets passed to lua just in case.
 	if (ZA_TAG(block) != PU_LUA)
@@ -459,8 +452,8 @@ void Z_SetRebuildCost(void **user, UINT32 cycles)
 	UINT32 h, k, units = cycles >> 9;
 	struct zcost_slot_s *victim = NULL;
 
-	if (!user)
-		return;
+	if (!user || !zroom_rebuild_cost)
+		return; // (off: no table, no cost)
 	if (units > 65535u)
 		units = 65535u;
 	if (!zcost_tab)
@@ -790,9 +783,9 @@ static boolean Z_MoveFrontierWalk(size_t size, size_t align, int side)
 // an allocation, and in the "bad" capacity modes of the lottery (docs/research/rcache/OPT13_RCACHE.md, section 6) 800..1300 times in a demo with a result of "no" nearly every time.
 // The block that holds the frontier is found from an anchor (ZA_FrontBlock), the span of free and evictable blocks around it is walked forward and backward (a block that stays
 // ends it: the free block before a block has its size in its last bytes, a cache block before it is the registry's neighbour when it ends where the block starts), and no more
-// than Z_FRONT_WALK_MAX blocks are looked at in a direction: a span the walk cannot see the end of is used as far as it was seen. The decision is the old one for the spans it sees.
-#define Z_FRONT_WALK_MAX 1024u
-static UINT32 zfront_calls, zfront_failed, zfront_walked;
+// than zfront_walk_max blocks are looked at in a direction: a span the walk cannot see the end of is used as far as it was seen. The decision is the old one for the spans it sees.
+static UINT32 zfront_walk_max = 1024u; // -zfrontwalk N: blocks looked at in a direction
+static UINT32 zfront_calls, zfront_failed, zfront_walked, zfront_okmax; // okmax: the most blocks a call that found room looked at (ZMODE okmax=: how far the cap can come down without changing a decision)
 static UINT32 zfront_cyc;           // EE cycles in Z_MoveFrontier (either implementation)
 
 static boolean Z_SpanOK(zablock_t *b)
@@ -838,18 +831,13 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 		return true;
 	}
 	// long-lived side: the span of free and evictable blocks that reaches the frontier (the first one, from the arena start, that ends at or above it)
-	if (zfront_neg_on && zfront_neg.valid && zfront_neg.frame == zframe && zfront_neg.gen == zfront_gen && zfront_neg.f == f && zfront_neg.front == front && need >= zfront_neg.need)
-	{
-		zfront_negs++; // nothing has freed or released a block since the last look in this frame, the same blocks stand where they stood: the same answer
-		return false;
-	}
 	first = NULL;
 	if (Z_SpanOK(f))
 		first = f;
 	else if ((uint8_t *)f == front && (b = Z_SpanPrev(f)) != NULL)
 		first = b; // the span below ends exactly at the frontier
 	else
-		for (b = ZA_Next(f); b && walked < Z_FRONT_WALK_MAX; b = ZA_Next(b), walked++)
+		for (b = ZA_Next(f); b && walked < zfront_walk_max; b = ZA_Next(b), walked++)
 			if (Z_SpanOK(b))
 			{
 				first = b; // a block that stays holds the frontier: the first span above it
@@ -858,13 +846,13 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 	if (!first)
 	{
 		zfront_walked += walked;
-		goto no_room;
+		return false;
 	}
-	for (last = first, b = ZA_Next(last); b && walked < Z_FRONT_WALK_MAX && Z_SpanOK(b); b = ZA_Next(b), walked++)
+	for (last = first, b = ZA_Next(last); b && walked < zfront_walk_max && Z_SpanOK(b); b = ZA_Next(b), walked++)
 		last = b;
 	ae = (uint8_t *)last + ZA_SIZE(last);
 	as = (uint8_t *)first;
-	while ((size_t)(ae - as) < need + Z_FRONT_STEP + 16u && walked < Z_FRONT_WALK_MAX && (b = Z_SpanPrev(first)) != NULL)
+	while ((size_t)(ae - as) < need + Z_FRONT_STEP + 16u && walked < zfront_walk_max && (b = Z_SpanPrev(first)) != NULL)
 	{
 		first = b;
 		as = (uint8_t *)b;
@@ -872,7 +860,9 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 	}
 	zfront_walked += walked;
 	if ((size_t)(ae - as) < need)
-		goto no_room;
+		return false;
+	if (walked > zfront_okmax)
+		zfront_okmax = walked;
 	x = (uint8_t *)(((uintptr_t)ae - need) & ~(uintptr_t)15); // the zone gets [x, ae): the request plus a step, but never more than the span has
 	if ((size_t)(x - as) >= Z_FRONT_STEP)
 		x -= Z_FRONT_STEP;
@@ -905,23 +895,6 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 		zfront_moves_down++;
 	}
 	return true;
-
-no_room:
-	if (zfront_neg.valid && zfront_neg.frame == zframe && zfront_neg.gen == zfront_gen && zfront_neg.f == f && zfront_neg.front == front)
-	{
-		if (need < zfront_neg.need)
-			zfront_neg.need = need;
-	}
-	else
-	{
-		zfront_neg.valid = true;
-		zfront_neg.f = f;
-		zfront_neg.front = front;
-		zfront_neg.frame = zframe;
-		zfront_neg.gen = zfront_gen;
-		zfront_neg.need = need;
-	}
-	return false;
 }
 
 static UINT32 zfront_checks, zfront_badanchor;
@@ -1392,8 +1365,8 @@ static void Z_ArenaStart(void)
 	Z_OomTestInit();
 	if (M_CheckParm("-zfront") && M_IsNextParm())
 		zfront_mode = atoi(M_GetNextParm());
-	if (M_CheckParm("-zfrontneg") && M_IsNextParm())
-		zfront_neg_on = atoi(M_GetNextParm()) != 0;
+	if (M_CheckParm("-zfrontwalk") && M_IsNextParm())
+		zfront_walk_max = (UINT32)max(8, atoi(M_GetNextParm()));
 	if (M_CheckParm("-zroomcost") && M_IsNextParm())
 		zroom_rebuild_cost = atoi(M_GetNextParm()) != 0;
 	if (M_CheckParm("-zpartial") && M_IsNextParm())
@@ -1546,19 +1519,18 @@ size_t Z_ReclaimableBytes(void)
 // try failed and the EE cycles they took (the frontier moves and the evictions included). front: calls of Z_MoveFrontier, the ones that found no room, the blocks looked at, its EE cycles.
 void Z_ModeProf(unsigned int frames)
 {
-	static UINT32 s_slow, s_slowc, s_calls, s_failed, s_negs, s_walked, s_cyc, s_down, s_up, s_fb, s_flush, s_part;
+	static UINT32 s_slow, s_slowc, s_calls, s_failed, s_walked, s_cyc, s_down, s_up, s_fb, s_flush, s_part;
 
 	if (!frames)
 		frames = 1;
-	I_OutputMsg("ZMODE cap=%luK free=%luK reclaimable=%luK front=%s mode=%d | slow=%u (%u cyc) front calls=%u failed=%u (%u from memory) walked=%u (%u cyc) down=%u up=%u zoneless=%u | lru last resort %u (partial %u) | anchor checks %u bad %u | registry %s %u\n",
+	I_OutputMsg("ZMODE cap=%luK free=%luK reclaimable=%luK front=%s mode=%d | slow=%u (%u cyc) front calls=%u failed=%u walked=%u (%u cyc) okmax=%u cap=%u down=%u up=%u zoneless=%u | lru last resort %u (partial %u) | anchor checks %u bad %u | registry %s %u\n",
 		(unsigned long)(ZA_Capacity() >> 10), (unsigned long)(ZA_FreeBytes() >> 10), (unsigned long)(Z_ReclaimableBytes() >> 10), ZA_Frontier() ? "on" : "off", (int)zfront_mode,
-		zslow_calls - s_slow, zslow_cyc - s_slowc, zfront_calls - s_calls, zfront_failed - s_failed, zfront_negs - s_negs, zfront_walked - s_walked, zfront_cyc - s_cyc,
+		zslow_calls - s_slow, zslow_cyc - s_slowc, zfront_calls - s_calls, zfront_failed - s_failed, zfront_walked - s_walked, zfront_cyc - s_cyc, zfront_okmax, zfront_walk_max,
 		zfront_moves_down - s_down, zfront_moves_up - s_up, zfront_fallbacks - s_fb, zlru_lastresort - s_flush, zhwlru_partial - s_part, zfront_checks, zfront_badanchor, zreg_ok ? "on" : "OFF", (unsigned)zreg_n);
 	s_slow = zslow_calls;
 	s_slowc = zslow_cyc;
 	s_calls = zfront_calls;
 	s_failed = zfront_failed;
-	s_negs = zfront_negs;
 	s_walked = zfront_walked;
 	s_cyc = zfront_cyc;
 	s_down = zfront_moves_down;
@@ -2611,7 +2583,6 @@ void Z_SetUser(void *ptr, void **newuser)
 	if (newuser)
 		*newuser = ptr;
 	ZA_SetStamp(block, zframe);
-	zfront_gen++;
 }
 #else
 #ifdef PARANOIA
