@@ -36,6 +36,9 @@
 #include "lua_libs.h"
 #include "lua_hook.h"
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-1
+#ifdef PS2_PROFILE
+#include "m_argv.h" // -luastackmargin
+#endif
 
 #include "doomstat.h"
 #include "g_state.h"
@@ -933,6 +936,20 @@ static void ValidRefresh(lua_State *L)
 }
 #endif
 
+#ifdef PS2_PROFILE
+size_t ps2lua_stackfloor; // PS2-LUA-5: see luaD_call (ldo.c)
+size_t PS2Mem_StackFloor(size_t margin); // ps2_mem.c: the bottom of the main thread stack + margin, 0 when unknown
+
+static void LUA_InitStackFloor(void)
+{
+	size_t margin = 40*1024; // (the worst recursion measured, 200 levels of gsub callbacks, leaves 52 KB: it does not meet the floor; what the engine needs below a call from Lua is far less)
+
+	if (M_CheckParm("-luastackmargin") && M_IsNextParm()) // the test: a larger margin makes the check fire at a depth we can reach
+		margin = (size_t)atoi(M_GetNextParm()) * 1024;
+	ps2lua_stackfloor = PS2Mem_StackFloor(margin);
+}
+#endif
+
 // Clear and create a new Lua state, laddo!
 // There's SCRIPTIN to be had!
 static void LUA_ClearState(void)
@@ -948,6 +965,7 @@ static void LUA_ClearState(void)
 #ifdef PS2_PROFILE
 	LUA_PoolRelease();
 	LUA_PoolInit();
+	LUA_InitStackFloor();
 	lua_heap_after_collect = 0;
 #endif
 
