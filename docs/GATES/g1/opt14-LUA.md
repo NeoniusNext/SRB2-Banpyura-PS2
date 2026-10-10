@@ -139,7 +139,7 @@ Built `build/out6` (release), `build/out-ref6` (`--ps2ref`), `build/out-dbg6` (`
 * **Network** (`tools/ps2/net_specs14_lua.py`, `lua_net.py`; PC dedicated server + PS2 client with the mod `lm_net.lua`, the client joins a running game and takes the Lua state through NetVars): lua-join-dl (client downloads the
   add-on), lua-join-hw (PS2 client in `-renderer Hardware`) and lua-join-rain on MAP32, a weather map, on the merged ELF: all `RESULT SAME` (82 and 54 keyed state lines of the mod, the driven events: a net cvar, a Lua command, a chat line;
   0 differ between the PC server, a second PC client and the PS2 client).
-* The `--debug` ELF (ZDEBUG red zones) was built with PS2-LUA-6/7 (`build/out-dbg6`); the pre-fix debug ELF (`build/out-dbg`) and it were run on lua-join-rain: see the result below.
+* `--debug` ELFs (ZDEBUG red zones on): lua-join-rain is SAME with the pre-fix ELF (`build/out-dbg`) and with the fixed one (`build/out-dbg6`), no trashed block. The final ELF `build/out8` (PS2-LUA-7 behind `-mobjreuse`, default off) joins lua-join-rain SAME as well; golden and the Lua suite above were run on `out7`, which differs from `out8` only in the netgame-load path of PS2-LUA-7.
 
 ## 6. Hypotheses of the task and what became of them (the user gave no error text)
 
@@ -157,7 +157,7 @@ Built `build/out6` (release), `build/out-ref6` (`--ps2ref`), `build/out-dbg6` (`
   is SAME for MAP01 and MAP03, but MAP02 loaded after MAP01 differs in the hash of the lines and subsectors. Cause found by bisecting (`lt_maps_f.lua`: per-field hashes, `chk` lines): a few objects (lines 1676, 1680, 1684, 1732 and subsectors 880,
   2512 in one run, subsector 880 alone in another) read `valid == false` on the PS2 although they are live, on the PC every one is valid. MAP02 as the first level (`-warp 2`, 831 lines) is SAME; `lt_stale.lua` (all 24 281 userdata of
   the level kept across two level changes) finds nothing invalid. It needs the digest of the first level (the ffloor/slope/polyobject/mapthing/mobj part) to leave state behind. Which key is invalidated I did not find: no member of a
-  struct that Lua keys by address sits at offset 0 (checked with offsetof), the code of `LUA_InvalidateUserdata`/`LUA_RawPushUserdata` reads right. A/B on the baseline ELF (before this task) was started (`lt_maps_f4b`), see below.
+  struct that Lua keys by address sits at offset 0 (checked with offsetof), the code of `LUA_InvalidateUserdata`/`LUA_RawPushUserdata` reads right. A/B on the baseline ELF (`build/out-base`, built from the commit this task started from, before any fix of this report) shows the same: `bad line 1684`, `bad line 1732` ... so it is NOT a regression of PS2-LUA-1..7; it is older (the OPT12 LOAD/CORE work, or the memory/address reuse of the PS2 zone against stale entries of the userdata table).
   This is the one Lua-visible difference between the builds that remains and the best candidate for "Lua errors on the PS2" (a script holding map objects across a level change would see `valid == false`).
 * lt_maps chunks b..e (84 maps): not run to the end. The digest keeps an index of every object (a MAP04-size map: 68 000 userdata, 8 MB of Lua heap), which the PS2 does not have next to the level: "Out of memory allocating 327680 bytes"
   (a Lua allocation inside a call cannot be recovered: `PS2Lua_InCall`, same as upstream, where `Z_Malloc` failing is fatal too). A light mode (fingerprints instead of an index for maps above 20 000 lines+sides+vertexes) was added; MAP01 and MAP03 are SAME in it, the
