@@ -789,8 +789,8 @@ static int HWR_PBRender(void)
 // done (PS2-HW-481): a polygon wholly outside one of its five planes is not collected (the driver would throw it away after the copy, the plan and the VU1 clip).
 // -hwgv N (hwr_gv_off): 1 the records are made the earlier way (calls of HWR_ProcessPolygon), 2 no box test, 4 the check mode of the cache replays a hit for real before it calculates it again.
 
-#define HWR_ST_CAP 1024u // interned states (64 bytes each)
-#define HWR_ST_SLOTS 4096u
+#define HWR_ST_CAP 256u // interned states (64 bytes each: 16 KB; the demos need 25..45, a state is texture + flags + colours, not a polygon; 1024 states cost 72 KB and took D3 over the memory edge)
+#define HWR_ST_SLOTS 1024u
 #define HWR_ST_NONE 0xFFFFu
 
 typedef struct
@@ -861,7 +861,7 @@ static inline UINT32 HWR_StHash(const GLMipmap_t *tex, UINT32 flags, UINT32 ex, 
 	h = (h ^ ex ^ ((UINT32)target << 12) ^ (s->PolyColor.rgba * 0x27D4EB2Fu)) * 0xC2B2AE35u;
 	if (flags & PF_ColorMapped)
 		h ^= (s->TintColor.rgba * 0x165667B1u) ^ (s->FadeColor.rgba * 0xD3A2646Cu) ^ (s->LightTableId * 0xFD7046C5u) ^ ((s->LightInfo.fade_start | (s->LightInfo.fade_end << 8)) * 0xB55A4F09u);
-	return (h * 0x9E3779B1u) >> 20; // (4096 slots)
+	return (h * 0x9E3779B1u) >> 22; // (1024 slots)
 }
 
 static inline int HWR_StEq(const hwr_pbs_t *t, const FSurfaceInfo *s, const GLMipmap_t *tex, UINT32 flags, UINT32 ex, INT32 target)

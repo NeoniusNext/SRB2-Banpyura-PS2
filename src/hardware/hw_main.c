@@ -692,7 +692,10 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 						|| (HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall) && HWR_GCArraysOK(rh)))
 					{
 						rh = gc_promote(gce, rh);
-						gc_replay(rh, (UINT32)gce->len);
+						if (rh->flags & 4)
+							gc_replay_blk(rh, (UINT32)gce->len);
+						else
+							gc_replay(rh, (UINT32)gce->len);
 						gc.s_pl_hit++;
 						gc.w_q++;
 						gc.w_hit++;
@@ -2404,7 +2407,10 @@ static void HWR_ProcessSegC(void)
 					gc_src_patch((gcrh_t *)rh, (UINT32)e->len);
 				gl_sidedef = sg->sidedef;
 				gl_linedef = sg->linedef;
-				gc_replay(rh, (UINT32)e->len);
+				if (rh->flags & 4)
+					gc_replay_blk(rh, (UINT32)e->len);
+				else
+					gc_replay(rh, (UINT32)e->len);
 				gc.s_seg_hit++;
 				gc.w_q++;
 				gc.w_hit++;

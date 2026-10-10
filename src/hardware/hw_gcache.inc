@@ -98,6 +98,7 @@ static struct
 	UINT32 epoch;
 	UINT32 rec_start, rec_pos, rec_limit, rec_np, rec_nv, rec_nw;
 	boolean rec_fail, rec_full, rec_lastset, rec_hassrc;
+	UINT32 rec_nblk; // OPT13 IR: the polygon blocks of the record being made (all its ops are blocks: flag 4 of the header)
 	GLMipmap_t *rec_last;
 	INT32 rec_lsrc, rec_ltnum;
 	// statistics of the window (HWPROF32)
@@ -1026,6 +1027,7 @@ void HWR_GCRecBlk(UINT32 state, UINT32 light, const float *ex, UINT32 ext, const
 	for (k = 0; k < 4; k++)
 		h->ex[k] = ext ? ex[k] : 0.0f;
 	gc_box(h->bb, &h->fl, verts, n);
+	gc.rec_nblk++;
 	d = (UINT32 *)(h + 1);
 	sp = (const UINT32 *)verts;
 	for (k = 0; k < n * 5u; k++)
@@ -1082,7 +1084,7 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	gc.rec_start = gc.rec_pos = scratch ? gc.ar_size : gc.ar_used;
 	gc.rec_limit = scratch ? gc.ar_size + GC_SCRATCH : gc.hbase + gc.hsize;
 	gc.rec_fail = gc.rec_full = false;
-	gc.rec_np = gc.rec_nv = gc.rec_nw = 0;
+	gc.rec_np = gc.rec_nv = gc.rec_nw = gc.rec_nblk = 0;
 	gc.rec_lastset = false;
 	gc.rec_hassrc = false;
 	gc.rec_lsrc = gc.rec_ltnum = 0;
@@ -1226,6 +1228,18 @@ static void gc_src_patch(gcrh_t *rh, UINT32 len)
 	}
 }
 
+// OPT13 IR: a record whose ops are all polygon blocks (flag 4): one call of the replay, none of the loop over the ops
+static inline void gc_replay_blk(const gcrh_t *rh, UINT32 len)
+{
+	GLMipmap_t *lt = NULL;
+
+	HWR_GCReplayRun((const UINT8 *)rh + rh->opsoff, (const UINT8 *)rh + len, gc.view, &lt);
+	if (rh->flags & 1)
+		current_texture = rh->last;
+	gc.n_rpoly += rh->npoly;
+	gc.s_rep_ops += rh->npoly;
+}
+
 // the records of what the function did: made again (the polygons go to the batch as HWR_ProcessPolygon would have put them, the transparent walls to their list)
 static void gc_replay(const gcrh_t *rh, UINT32 len)
 {
@@ -1358,7 +1372,7 @@ static void gc_rec_end(gcent_t *e, UINT32 id, UINT32 id2, boolean check, const c
 		rh->npoly = (UINT16)gc.rec_np;
 		rh->nvert = (UINT16)gc.rec_nv;
 		rh->nwall = (UINT16)gc.rec_nw;
-		rh->flags = (gc.rec_lastset ? 1 : 0) | (gc.rec_hassrc ? 2 : 0);
+		rh->flags = (gc.rec_lastset ? 1 : 0) | (gc.rec_hassrc ? 2 : 0) | ((gc.rec_nblk == gc.rec_np && gc.rec_nw == 0 && gc.rec_np) ? 4 : 0);
 		rh->last = gc.rec_lastset ? gc.rec_last : NULL;
 		rh->lsrc = gc.rec_lastset ? gc.rec_lsrc : 0;
 		rh->ltnum = gc.rec_lastset ? gc.rec_ltnum : 0;
