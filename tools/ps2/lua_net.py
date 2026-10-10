@@ -60,19 +60,18 @@ def main():
         if not common:
             print('  NO COMMON LINES: the node never joined the mod state')
             bad += 1
-        re_, ev = events(ref), events(lines)
-        # the later node saw a suffix of the events
-        if ev:
-            first = ev[0]
-            try:
-                at = re_.index(first, 0)
-            except ValueError:
-                at = -1
-            tail = re_[at:] if at >= 0 else []
-            print(f'  {name} events: {ev}')
-            if ev != tail[:len(ev)] and not (a.ref == 'srv' and name == 'pc' and ev == re_):
-                print(f'  EVENTS DIFFER: {a.ref} has {tail[:len(ev)]}')
-                bad += 1
+        # the events the server drives (lm_net.lua: a net cvar, a Lua command, a chat line, the cvar again) are seen by every node in the same order; what a node sees before (joins) and after (the
+        # reset of the net cvars when the node is stopped) is not part of the comparison
+        def driven(lines):
+            ev = events(lines)
+            start = next((i for i, l in enumerate(ev) if l.startswith('cv lm_scale 17')), None)
+            end = next((i for i, l in enumerate(ev) if start is not None and i > start and l.startswith('cv lm_scale 5')), None)
+            return ev[start:end + 1] if start is not None and end is not None else None
+        d_ref, d_node = driven(ref), driven(lines)
+        print(f'  {name} driven events: {d_node}')
+        if d_node != d_ref:
+            print(f'  EVENTS DIFFER: {a.ref} has {d_ref}')
+            bad += 1
     print('RESULT', 'SAME' if not bad else 'DIFFERENT')
     return 1 if bad else 0
 

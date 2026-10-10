@@ -87,6 +87,13 @@ addHook("ThinkFrame", function()
 		S.hits[S.n % 5] = (S.hits[S.n % 5] or 0) + 1
 	end
 	if S.n % 35 == 0 then S.log[#S.log + 1] = S.n end
+	-- the server (a node that is the server, dedicated or not) drives the events of the test: a net cvar, a Lua command (XD_LUACMD to every node), a chat line
+	if isserver then
+		if S.n == 2600 then COM_BufInsertText(server, "lm_scale 17")
+		elseif S.n == 2700 then COM_BufInsertText(server, "lm_cmd one two three")
+		elseif S.n == 2800 then COM_BufInsertText(server, "say !lm hello from the server")
+		elseif S.n == 2900 then COM_BufInsertText(server, "lm_scale 5") end
+	end
 	if S.n % 100 == 0 then
 		local n, h, ext = 0, 17, 0
 		for mo in mobjs.iterate() do

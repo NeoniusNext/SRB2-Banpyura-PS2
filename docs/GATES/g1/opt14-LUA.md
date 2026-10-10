@@ -34,6 +34,33 @@ Conclusion of step 1: the existing suite does not reproduce the complaint. Steps
   (no `lua_getfield` name lookup).
 * After the fix `lt_udmany`: SAME (8 LQ lines).
 
+### PS2-LUA-3: the order in which C evaluates the arguments of a call (FixedMul, FixedHypot): the error names another argument
+
+* Cause: `lib_fixedmul` and `lib_fixedhypot` read both arguments inside one call (`FixedMul(luaL_checkfixed(L, 1), luaL_checkfixed(L, 2))`). C does not say which is evaluated first: x86 GCC and MSVC (the PC builds) take the
+  last one first, the EE GCC the first one. With two bad arguments the PC says "bad argument #2 to '?'", the PS2 "#1". (The same class of problem was found for the RNG by OPT10-S, PS2-142, which scanned the engine but
+  not the Lua libraries; a scan of `lua_*.c` / `deh_lua.c` for statements with two `luaL_check*/luaL_opt*` calls finds exactly these two (plus `FixedRem` and `GETSECSPECIAL`, whose operands/macro are evaluated left to right on both).)
+* Test: `tools/ps2/luatests/lt_argorder.lua` (every function with two numeric arguments with every combination of bad ones): 2 of 20 lines differed.
+* Fix (`src/lua_mathlib.c`, `#ifdef PS2`): the arguments are read into locals right to left. After the fix `lt_argorder`: SAME.
+* Operators of the integer VM over a grid of 39 x 39 edge operands (shifts beyond 31 and negative, INT32 limits, pow, %, /, comparisons, concatenation, `string.format("%d")`): `lt_ops.lua` SAME. (The only differences are the
+  two known platform properties of `lt_plat`: the literal `2147483648` and `%x` of a negative number.)
+
+### The C stack of the EE under Lua (not a defect found; the margin measured)
+
+`tools/ps2/lua_stack.sh` runs the worst recursion a script can start (200 nested `string.gsub` callbacks; `table.sort` comparators that sort; `string.format` inside gsub; Lua stops at LUAI_MAXCCALLS with "C stack overflow")
+from eleven different hooks and prints the deepest the 384 KiB main stack went (`-zstack`, `stackused=` of ZSTAT):
+
+| started from | stack used (of 393 216 B) |
+|---|---:|
+| MobjThinker / PlayerThink / PreThinkFrame | 339 056 / 339 088 / 339 024 |
+| HUD hook (game) | 341 632 |
+| MapLoad hook / MapChange hook | 340 944 / 339 184 |
+| PlayerMsg (chat) / NetVars / AddonLoaded | 338 976 / 339 024 / 339 232 |
+| engine <-> Lua recursion (P_KillMobj <-> MobjDeath, P_SpawnMobj <-> MobjSpawn, P_RemoveMobj <-> MobjRemoved, 197-198 levels) | 228 696 |
+
+The worst case uses 86-87 % of the stack (about 1.5 KB of C stack per level: the 1 KiB `luaL_Buffer` of `gsub` plus frames); the engine alone peaks at 133 KB (PS2-77). The margin is 52 KB: no overflow, no change.
+The messages and depths (198 / 197 / 199 levels) are the PC's (`lt_stack`, `lt_stack2`, `lt_stack3` SAME). A different context (a debug build, a deeper engine call chain) could reach the end of the stack, which on the EE corrupts memory silently:
+if a user script recurses without bound through `gsub`/`sort` callbacks this is the place where the PS2 differs from the PC (8 MB stack).
+
 ### Memory note found on the way
 
 Each live userdata costs ~100 bytes of Lua heap (userdata + registry node + the script's own reference): 12 000 line userdata + 3000 mobjs on MAP11 end with "Not enough memory to draw map MAP11 (PU_RENDERWORK)" and a return to the title.

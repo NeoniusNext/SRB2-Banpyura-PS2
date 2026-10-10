@@ -30,7 +30,7 @@ def mine(name, spec):
     MINE14[name] = S.SPECS[name]
 
 
-def scenario(name, mods, renderer='Software', predl=False, tics=4800, joinwait=40, server_cmds=True):
+def scenario(name, mods, renderer='Software', predl=False, tics=4000, joinwait=40, server_cmds=False):
     srv_stdin = []
     if server_cmds:   # seconds after the server started; the client joins at about joinwait + 25
         base = joinwait + 45
@@ -53,12 +53,11 @@ def scenario(name, mods, renderer='Software', predl=False, tics=4800, joinwait=4
                 'until': [{'node': 'cli', 'text': 'NETSYNC gametic=', 'min': tics}, {'node': 'srv', 'text': 'NETSYNC gametic=', 'min': tics}], 'grace': 3})
 
 
-def ps2srv(name, mods, tics=3000, joindelay=50, pcfile=False, renderer='Software'):
+def ps2srv(name, mods, tics=3600, joindelay=50, pcfile=False, renderer='Software'):
     """the PS2 is the server (and a player: the pad script walks it), the mod builds up state; a PC client joins joindelay seconds after the PS2 server printed its address and takes the savegame
     that the PS2 wrote (LUA_Archive on the EE, read by the PC)."""
-    cmds = '|'.join(['3300:lm_scale 17', '3400:lm_cmd one two three', '3500:say !lm hello from the ps2', '3600:lm_scale 5'])
-    srv = ps2('srv', EMU1, ['-server', '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] + sum([['-file', m] for m in mods], []) + (['-renderer', renderer] if renderer != 'Software' else []),
-              files={'pad.txt': walk(1, 500, tics * 3), 'cmd.txt': cmds}, cfg=CFG_SYNC, map='MAP01')
+    srv = ps2('srv', EMU1, ['-server', '-netsync', '-netdebug', '-padscript', 'file:pad.txt'] + sum([['-file', m] for m in mods], []) + (['-renderer', renderer] if renderer != 'Software' else []),
+              files={'pad.txt': walk(1, 500, tics * 3)}, cfg=CFG_SYNC, map='MAP01')
     srv['copy'] = {m: (TESTS / m).as_posix() for m in mods}
     cli = {'id': 'cli', 'kind': 'pc', 'exe': S.PC, 'cwd': S.PCDIR, 'args': ['-connect', H, '-clientport', '5030', '-nomusic', '-nosound', '-netsync', '-home', S.HOME2, '+nettimeout', '2100', '+jointimeout', '2100']
            + (sum([['-file', (TESTS / m).as_posix()] for m in mods], []) if pcfile else []),
