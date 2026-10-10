@@ -134,6 +134,7 @@ def main():
     ap.add_argument('--ps2-args', default='', help='extra PS2 parameters, one quoted string')
     ap.add_argument('--extra', type=Path, action='append', default=[], help='file the scripts load by name (addfile, addfilelocal): copied next to the PC game and to the PS2 data directory, not loaded with -file')
     ap.add_argument('--no-pc', action='store_true', help='reuse <out>/<name>/pc.out')
+    ap.add_argument('--pc-only', action='store_true', help='PS2-LUA (OPT14): run only the PC reference and print its LQ lines (script development)')
     a = ap.parse_args()
     a.pc_args = shlex.split(a.pc_args)
     a.ps2_args = shlex.split(a.ps2_args)
@@ -150,6 +151,10 @@ def main():
         for l in [x for x in pctext.splitlines() if re.search(r'Lua|lua|rror|WARNING', x)][-8:]:
             print('  PC  ', l[:200])
         return 2
+    if a.pc_only:
+        for l in lq(pctext) + alerts(pctext):
+            print(l)
+        return 0
     ps2state, ps2text = run_ps2(name, scripts, a, out)
     pc, ps2 = lq(pctext) + alerts(pctext), lq(ps2text) + alerts(ps2text)
     (out / 'pc.lq').write_text('\n'.join(pc) + '\n')
