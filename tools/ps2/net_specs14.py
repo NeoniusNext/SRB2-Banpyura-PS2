@@ -30,14 +30,14 @@ def mine(name, spec):
     MINE14[name] = S.SPECS[name]
 
 
-def scenario(name, mods, renderer='Software', predl=False, tics=4000, joinwait=40, server_cmds=False):
+def scenario(name, mods, renderer='Software', predl=False, tics=4000, joinwait=40, server_cmds=False, warp='MAP01'):
     srv_stdin = []
     if server_cmds:   # seconds after the server started; the client joins at about joinwait + 25
         base = joinwait + 45
         srv_stdin = [{'at': base, 'text': 'lm_scale 17\n'}, {'at': base + 5, 'text': 'lm_cmd one two three\n'}, {'at': base + 10, 'text': 'say !lm hello from the server\n'},
                      {'at': base + 15, 'text': 'lm_scale 5\n'}]
     srv_extra = ['-netlat'] + sum([['-file', (TESTS / m).as_posix()] for m in mods], [])
-    srv = pcsrv(extra=srv_extra, start=0)
+    srv = pcsrv(extra=srv_extra, start=0, warp=warp)
     srv['stdin'] = srv_stdin
     # a dedicated server does not advance the game while nobody is in it: a PC client joins first and keeps the game (and the mod) running, the PS2 joins later
     pccli = {'id': 'pc', 'kind': 'pc', 'exe': S.PC, 'cwd': S.PCDIR, 'args': ['-connect', H, '-nosound', '-nomusic', '-skipintro', '-netsync', '-home', S.HOME2, '+nettimeout', '2100', '+jointimeout', '2100'] + sum([['-file', (TESTS / m).as_posix()] for m in mods], []),
@@ -71,6 +71,8 @@ ps2srv('lua-ps2srv-pre', ['lm_net.lua'], pcfile=True)
 ps2srv('lua-ps2srv-dl', ['lm_net.lua'], pcfile=False)
 scenario('lua-join-pre', ['lm_net.lua'], predl=True)
 scenario('lua-join-hw', ['lm_net.lua'], renderer='Hardware')
+scenario('lua-join-rain', ['lm_net.lua'], warp='MAP32')   # a level with weather: the client's own rain mobjs are removed by the savegame (P_RemoveSavegameMobj)
+scenario('lua-join-rain-hw', ['lm_net.lua'], warp='MAP32', renderer='Hardware')
 
 if __name__ == '__main__':
     import json

@@ -36,7 +36,7 @@
 #include "lua_libs.h"
 #include "lua_hook.h"
 #include "ps2/ps2_loadprof.h" // PS2-LOAD-1
-#ifdef PS2_PROFILE
+#ifdef PS2
 #include "m_argv.h" // -luastackmargin
 #endif
 
@@ -877,7 +877,7 @@ static int setglobals(lua_State *L)
 #ifdef PS2_PROFILE
 // PS2-LOAD-18: the zone calls LUA_InvalidateUserdata for every block it frees (the engine may have given a script a userdata of it). With a script loaded that is a
 // lua_getfield of the registry (interning the name "LREG_VALID" again each time) and a table lookup, ~1500 cycles per freed block, thousands per level and many per tic.
-// The pointers that got a userdata are also marked in a small bit set (16384 bits, no false negatives); a block that is not marked cannot be in the table. Marks are never
+// The pointers that got a userdata are also marked in a bit set (65536 bits since PS2-LUA-2, no false negatives); a block that is not marked cannot be in the table. Marks are never
 // removed, so the set is rebuilt from the table when too many distinct pointers have been marked.
 #define VALIDBITS 65536
 static UINT32 valid_bloom[VALIDBITS / 32];
@@ -936,7 +936,7 @@ static void ValidRefresh(lua_State *L)
 }
 #endif
 
-#ifdef PS2_PROFILE
+#ifdef PS2
 size_t ps2lua_stackfloor; // PS2-LUA-5: see luaD_call (ldo.c)
 size_t PS2Mem_StackFloor(size_t margin); // ps2_mem.c: the bottom of the main thread stack + margin, 0 when unknown
 
@@ -965,7 +965,9 @@ static void LUA_ClearState(void)
 #ifdef PS2_PROFILE
 	LUA_PoolRelease();
 	LUA_PoolInit();
+#ifdef PS2
 	LUA_InitStackFloor();
+#endif
 	lua_heap_after_collect = 0;
 #endif
 

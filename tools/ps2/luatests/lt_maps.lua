@@ -55,7 +55,8 @@ local function build()
 	end
 end
 local KINDS = {"sector", "line", "side", "vertex", "subsector", "seg", "node", "slope", "ffloor", "polyobj", "mapthing"}
-local function fmt(v)
+local fmt
+function fmt(v, inner)
 	local t = type(v)
 	if t == "number" or t == "boolean" or t == "nil" then return tostring(v) end
 	if t == "string" then return '"' .. v .. '"' end
@@ -67,6 +68,18 @@ local function fmt(v)
 		local ok, ty = pcall(function() return v.type end)
 		local ok2, x = pcall(function() return v.x end)
 		if ok and ok2 and type(ty) == "number" and type(x) == "number" then return "mo(" .. ty .. "," .. (x >> 16) .. ")" end
+		-- (OPT14) a list userdata (line.args, line.stringargs, mapthing.args, taglist, sector.lines, ...): its length and its elements, the PS2 keeps line.args in a block of its own
+		if not inner then
+			local okn, n = pcall(function() return #v end)
+			if okn and type(n) == "number" and n >= 0 and n <= 64 then
+				local parts = {}
+				for i = 0, n - 1 do
+					local oke, e = pcall(function() return v[i] end)
+					parts[#parts + 1] = oke and fmt(e, true) or "E"
+				end
+				return "[" .. n .. ":" .. table.concat(parts, ",") .. "]"
+			end
+		end
 		return "userdata"
 	end
 	if t == "table" then return "table" end

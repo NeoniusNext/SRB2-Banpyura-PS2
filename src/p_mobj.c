@@ -11636,8 +11636,14 @@ void P_RemoveSavegameMobj(mobj_t *mobj)
 		thinker_t *next = thinker->next;
 		(next->prev = thinker->prev)->next = next;
 #ifdef PS2
-		((mobj_t *)thinker)->hnext = mobjcache; // PS2-511: a slice of a chunk (P_AllocMobjBlock), it cannot be freed alone
-		mobjcache = (mobj_t *)thinker;
+		if (thinker->function == (actionf_p1)P_NullPrecipThinker)
+			Z_Free(thinker); // OPT14 (PS2-LUA-6): a rain/snow object is its own zone block (P_SpawnPrecipMobj, smaller than a mobj_t): in mobjcache it would be reused as a mobj_t, whose memset overwrites the block after it
+		else
+		{
+			LUA_InvalidateUserdata(thinker); // OPT14 (PS2-LUA-6): Z_Free did this for the original, scripts must not keep a reference to an object the savegame replaced
+			((mobj_t *)thinker)->hnext = mobjcache; // PS2-511: a slice of a chunk (P_AllocMobjBlock), it cannot be freed alone
+			mobjcache = (mobj_t *)thinker;
+		}
 #else
 		Z_Free(thinker);
 #endif
