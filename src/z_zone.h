@@ -140,6 +140,8 @@ UINT32 Z_FrameCount(void);
 size_t Z_ArenaFree(void); // free bytes of the arena (the sum of all free blocks, not one contiguous block)
 size_t Z_ArenaCapacity(void); // PS2-600 (OPT13 IZ): bytes of the arena: what the behaviour of a subsystem should follow, not the free bytes of the moment
 size_t Z_ReclaimableBytes(void); // PS2-600: the free bytes and the caches that could go now (PU_CACHE, evictable sprites, PU_HWRCACHE_LRU): the room a big request can get
+void Z_SetRebuildCost(void **user, UINT32 cycles); // PS2-603 (OPT13 IZ, RF-3): what making the cache block owned by *user again cost (EE cycles): Z_MakeRoom's eviction cost uses it
+void Z_ClearRebuildCosts(void); // the owners are gone (a new texture list)
 void Z_ModeProf(unsigned int frames); // PS2-600: the "ZMODE" line of an HWPROF window (what the zone policy did, EE cycles), counters back to 0
 size_t Z_RenderHeadroom(void); // configured contiguous workspace target, also reserved from optional precaching
 // PS2-71: a subsystem that keeps rebuildable memory outside the zone caches (the audio effects cache, tag PU_SOUND) registers a hook. The zone calls
@@ -193,6 +195,8 @@ static inline void Z_FlushCache(void) {}
 static inline size_t Z_ArenaFree(void) { return (size_t)-1; }
 static inline size_t Z_ArenaCapacity(void) { return (size_t)-1; }
 static inline size_t Z_ReclaimableBytes(void) { return (size_t)-1; }
+static inline void Z_SetRebuildCost(void **user, UINT32 cycles) { (void)user; (void)cycles; }
+static inline void Z_ClearRebuildCosts(void) {}
 static inline void Z_ModeProf(unsigned int frames) { (void)frames; }
 #endif
 

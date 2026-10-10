@@ -118,15 +118,23 @@ typedef enum
 	LP_COUNT
 } ps2lp_slot_t;
 
-#if defined(PS2) && defined(PS2_PROFILE)
+#if defined(PS2_PROFILE)
 
+#ifdef PS2
 extern boolean ps2lp_on;
+#else
+#define ps2lp_on 0 /* host profile build (tools/ps2/host_variant.sh): no EE counter, the macros below compile to nothing */
+#endif
 
 static inline UINT32 PS2LP_Now(void)
 {
 	UINT32 v;
 
+#ifdef PS2
 	__asm__ volatile("mfc0 %0,$9" : "=r"(v));
+#else
+	v = 0;
+#endif
 	return v;
 }
 

@@ -172,6 +172,12 @@ static boolean zlevel_play;
 #define Z_FRONT_TOP_MAX (1u << 20)
 #define Z_FRONT_STEP (96u << 10)        // the frontier moves this much beyond the request, so that the next few requests need no move
 static UINT32 zfront_moves_down, zfront_moves_up, zfront_fallbacks;
+static boolean zroom_rebuild_cost = true;   // PS2-603: -zroomcost 0: the eviction cost of Z_MakeRoom is the size alone, as OPT12 (A/B on one ELF)
+static boolean zroom_partial = true;        // PS2-603: -zpartial 0: the last resort frees every PU_HWRCACHE_LRU block at once, as OPT12
+static UINT32 zfront_gen;                   // PS2-600: bumped by whatever can make a span of free and evictable blocks (a block freed, a block that got an owner or a cache tag)
+static INT32 zfront_neg_on = 1;             // PS2-600: -zfrontneg 0: every failed look for room is made again (A/B)
+static struct { const void *f; const uint8_t *front; UINT32 frame, gen; size_t need; boolean valid; } zfront_neg; // the last "no room above the frontier" and what it was made from
+static UINT32 zfront_negs;                  // calls answered by it
 static INT32 zfront_mode = 1;       // PS2-600: -zfront 0: Z_MoveFrontier walks the whole arena as in OPT12 (A/B on one ELF), 1: Z_MoveFrontierNear
 static UINT32 zslow_calls, zslow_cyc;  // PS2-600: allocations whose first try failed (the slow path of Z_AllocBlock) and the EE cycles they cost
 
@@ -250,8 +256,8 @@ static UINT32 zreg_overflows;
 // have to be free for the conversion, and at most `cap` bytes of blocks above ZHWLRU_SMALL are converted in one frame (0 = no limit).
 #define ZHWLRU_SMALL (32u << 10)
 static boolean zhwcache_lru;
-static unsigned int zhwlru_conv, zhwlru_flushes;
-static UINT32 zlru_lastresort; // PS2-600: the same as zhwlru_flushes but never reset (the driver's HWPROF line resets that one)
+static unsigned int zhwlru_conv, zhwlru_flushes, zhwlru_partial;
+static UINT32 zlru_lastresort; // PS2-603: the same as zhwlru_flushes but never reset (the driver's HWPROF line resets that one)
 static size_t zhwlru_free = 128u << 10, zhwlru_cap, zhwlru_used;
 static UINT32 zhwlru_frame;
 void Z_SetHWCacheLRU(boolean on, size_t freemin, size_t cap)
@@ -356,6 +362,7 @@ static void Z_RegRebuild(void)
 // Every place that gives a used block a tag: keeps the array and the purge flag right.
 static void Z_NoteTag(zablock_t *block, INT32 oldtag, INT32 newtag)
 {
+	zfront_gen++;
 	if (oldtag != newtag)
 	{
 		if (Z_RegTag(oldtag))
@@ -371,6 +378,8 @@ static void Z_NoteTag(zablock_t *block, INT32 oldtag, INT32 newtag)
 static void *Z_FreeBlock(zablock_t *block)
 {
 	void *ptr = ZA_PAYLOAD(block);
+
+	zfront_gen++;
 
 	// anything that isn't by lua gets passed to lua just in case.
 	if (ZA_TAG(block) != PU_LUA)
@@ -432,9 +441,94 @@ static zablock_t *Z_CandNext(zablock_t *b, UINT32 *ci)
 	return ++*ci < zreg_n ? zreg[*ci] : NULL;
 }
 
+// PS2-603 (OPT13 IZ, RF-3): what a cache block costs to make again. The cost of an eviction was the size of the block times its recency, but a composite texture of 4 M cycles and a flat
+// copy of the same size are not the same loss (the sky of 400 KB: 26 M cycles to compose, three times in a demo; a lump read from the pack: 4 M whatever its size). The owner of the block (its user
+// pointer: a texture's mipmap data pointer) says what the last making cost, in units of 512 cycles (65535 = 33.5 M and more); a block whose owner said nothing costs by its size.
+// Z_RoomCost reads it, so Z_MakeRoom picks the windows that hold cheap blocks and the sky and the dear composites go last.
+#define Z_COST_SLOTS 2048u
+#define Z_COST_PROBES 8u
+static struct zcost_slot_s { UINT32 key; UINT32 units; } *zcost_tab;
+
+static UINT32 Z_CostSlot(const void *user)
+{
+	return (((UINT32)(uintptr_t)user >> 3) * 2654435761u) >> 21;
+}
+
+void Z_SetRebuildCost(void **user, UINT32 cycles)
+{
+	UINT32 h, k, units = cycles >> 9;
+	struct zcost_slot_s *victim = NULL;
+
+	if (!user)
+		return;
+	if (units > 65535u)
+		units = 65535u;
+	if (!zcost_tab)
+	{
+		zcost_tab = Z_TryMallocAlign(Z_COST_SLOTS * sizeof *zcost_tab, PU_STATIC, &zcost_tab, 2);
+		if (!zcost_tab)
+			return;
+		memset(zcost_tab, 0, Z_COST_SLOTS * sizeof *zcost_tab);
+	}
+	h = Z_CostSlot(user);
+	for (k = 0; k < Z_COST_PROBES; k++)
+	{
+		struct zcost_slot_s *e = &zcost_tab[(h + k) & (Z_COST_SLOTS - 1)];
+
+		if (e->key == (UINT32)(uintptr_t)user || !e->key)
+		{
+			e->key = (UINT32)(uintptr_t)user;
+			e->units = units;
+			return;
+		}
+		if (!victim || e->units < victim->units)
+			victim = e;
+	}
+	victim->key = (UINT32)(uintptr_t)user; // (a full neighbourhood: the cheapest of it gives way)
+	victim->units = units;
+}
+
+void Z_ClearRebuildCosts(void)
+{
+	if (zcost_tab)
+		memset(zcost_tab, 0, Z_COST_SLOTS * sizeof *zcost_tab);
+}
+
+static UINT32 Z_RebuildUnits(const zablock_t *b)
+{
+	UINT32 h, k;
+
+	if (!zcost_tab || !b->user)
+		return 0;
+	h = Z_CostSlot(b->user);
+	for (k = 0; k < Z_COST_PROBES; k++)
+	{
+		const struct zcost_slot_s *e = &zcost_tab[(h + k) & (Z_COST_SLOTS - 1)];
+
+		if (e->key == (UINT32)(uintptr_t)b->user)
+			return e->units;
+		if (!e->key)
+			break;
+	}
+	return 0;
+}
+
+
+#define Z_DEAR_UNITS 6000u // 3 M EE cycles and more to make again (units of 512): the eviction by age takes these last
+// A cache block that costs a lot to make again (the sky, the decimated cloud planes: 10..28 M cycles) is evicted by age only when nothing cheaper is left
+static boolean Z_Dear(const zablock_t *b)
+{
+	return zroom_rebuild_cost && Z_RebuildUnits(b) >= Z_DEAR_UNITS;
+}
+
+static boolean Z_EvictableX(const zablock_t *b, boolean current, boolean dear_ok)
+{
+	return Z_Evictable(b, current) && (dear_ok || !Z_Dear(b));
+}
+
 // Evicts the oldest PU_CACHE blocks that have an owner (it sees NULL and rebuilds on demand), at least `want`
 // bytes when that much is evictable. Blocks of the current frame stay, unless `current`. False when nothing was evictable.
-static boolean Z_EvictLRUWalk(size_t want, boolean current)
+static boolean Z_EvictLRUWalk(size_t want, boolean current, boolean dear_ok)
 {
 	size_t hist[Z_AGE_BUCKETS] = {0}, have = 0, atlimit = SIZE_MAX;
 	INT32 age, limit = -1;
@@ -444,7 +538,7 @@ static boolean Z_EvictLRUWalk(size_t want, boolean current)
 	UINT32 ci;
 
 	for (block = Z_CandFirst(&ci); block; block = Z_CandNext(block, &ci))
-		if (Z_Evictable(block, current))
+		if (Z_EvictableX(block, current, dear_ok))
 		{
 			age = (INT32)Z_Age(block);
 			hist[age < Z_AGE_BUCKETS ? age : Z_AGE_BUCKETS - 1] += ZA_SIZE(block);
@@ -476,7 +570,7 @@ static boolean Z_EvictLRUWalk(size_t want, boolean current)
 		{
 			memset(hist, 0, sizeof hist);
 			for (block = Z_CandFirst(&ci); block; block = Z_CandNext(block, &ci))
-				if (Z_Evictable(block, current) && Z_Age(block) >= Z_AGE_BUCKETS - 1 && (Z_Age(block) & mask) == prefix)
+				if (Z_EvictableX(block, current, dear_ok) && Z_Age(block) >= Z_AGE_BUCKETS - 1 && (Z_Age(block) & mask) == prefix)
 					hist[(Z_Age(block) >> shift) & (Z_AGE_BUCKETS - 1)] += ZA_SIZE(block);
 			for (age = Z_AGE_BUCKETS - 1; age > 0; age--)
 			{
@@ -498,7 +592,7 @@ static boolean Z_EvictLRUWalk(size_t want, boolean current)
 			boolean victim = false;
 
 			block = zreg[ci];
-			if (Z_Evictable(block, current))
+			if (Z_EvictableX(block, current, dear_ok))
 			{
 				age = (INT32)Z_Age(block);
 				if (limit < 0 || age > limit)
@@ -524,7 +618,7 @@ static boolean Z_EvictLRUWalk(size_t want, boolean current)
 		uint8_t *after = (uint8_t *)block + ZA_SIZE(block);
 		boolean victim = false;
 
-		if (Z_Evictable(block, current))
+		if (Z_EvictableX(block, current, dear_ok))
 		{
 			age = (INT32)Z_Age(block);
 			if (limit < 0 || age > limit)
@@ -547,13 +641,17 @@ static boolean Z_EvictLRUWalk(size_t want, boolean current)
 }
 
 static boolean Z_MakeRoom(size_t bytes, boolean current);
-static boolean Z_EvictLRUWalk(size_t want, boolean current);
+static boolean Z_MakeRoomEx(size_t bytes, boolean current, boolean lruonly);
+static boolean Z_EvictLRUWalk(size_t want, boolean current, boolean dear_ok);
 
 static boolean Z_EvictLRU(size_t want, boolean current)
 {
 	ZCOST_BEGIN();
-	const boolean any = Z_EvictLRUWalk(want, current);
+	// PS2-603: what is dear to make again goes last: the first walk leaves it, the second (when the first found nothing at all) takes it; "everything" (want = -1: a level load) takes it at once
+	boolean any = Z_EvictLRUWalk(want, current, want == (size_t)-1);
 
+	if (!any)
+		any = Z_EvictLRUWalk(want, current, true);
 	ZCOST_END(zcost_evict);
 	return any;
 }
@@ -740,6 +838,11 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 		return true;
 	}
 	// long-lived side: the span of free and evictable blocks that reaches the frontier (the first one, from the arena start, that ends at or above it)
+	if (zfront_neg_on && zfront_neg.valid && zfront_neg.frame == zframe && zfront_neg.gen == zfront_gen && zfront_neg.f == f && zfront_neg.front == front && need >= zfront_neg.need)
+	{
+		zfront_negs++; // nothing has freed or released a block since the last look in this frame, the same blocks stand where they stood: the same answer
+		return false;
+	}
 	first = NULL;
 	if (Z_SpanOK(f))
 		first = f;
@@ -755,7 +858,7 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 	if (!first)
 	{
 		zfront_walked += walked;
-		return false;
+		goto no_room;
 	}
 	for (last = first, b = ZA_Next(last); b && walked < Z_FRONT_WALK_MAX && Z_SpanOK(b); b = ZA_Next(b), walked++)
 		last = b;
@@ -769,7 +872,7 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 	}
 	zfront_walked += walked;
 	if ((size_t)(ae - as) < need)
-		return false;
+		goto no_room;
 	x = (uint8_t *)(((uintptr_t)ae - need) & ~(uintptr_t)15); // the zone gets [x, ae): the request plus a step, but never more than the span has
 	if ((size_t)(x - as) >= Z_FRONT_STEP)
 		x -= Z_FRONT_STEP;
@@ -802,6 +905,23 @@ static boolean Z_MoveFrontierNear(size_t size, size_t align, int side)
 		zfront_moves_down++;
 	}
 	return true;
+
+no_room:
+	if (zfront_neg.valid && zfront_neg.frame == zframe && zfront_neg.gen == zfront_gen && zfront_neg.f == f && zfront_neg.front == front)
+	{
+		if (need < zfront_neg.need)
+			zfront_neg.need = need;
+	}
+	else
+	{
+		zfront_neg.valid = true;
+		zfront_neg.f = f;
+		zfront_neg.front = front;
+		zfront_neg.frame = zframe;
+		zfront_neg.gen = zfront_gen;
+		zfront_neg.need = need;
+	}
+	return false;
 }
 
 static UINT32 zfront_checks, zfront_badanchor;
@@ -884,6 +1004,13 @@ static void *Z_AllocBlock(size_t size, INT32 tag, size_t align)
 				hwlru_flushed = true;
 				zhwlru_flushes++;
 				zlru_lastresort++;
+				// PS2-603 (OPT13 IZ): the cheapest run of free blocks and texture data that makes the room goes, not every texture at once (an OPT12 flush of 40 textures was 100 M cycles of
+				// composing in the next frames); only when no run of them makes it the old flush is the answer
+				if (zroom_partial && Z_MakeRoomEx(size + Z_EVICT_ALIGN_PAD, false, true) && (p = ZA_Alloc(size, align, side)) != NULL)
+				{
+					zhwlru_partial++;
+					continue;
+				}
 				Z_FreeTagRange(PU_HWRCACHE_LRU, PU_HWRCACHE_LRU);
 				p = ZA_Alloc(size, align, side);
 				if (!p && size >= Z_MAKEROOM_MIN && Z_MakeRoom(size + Z_EVICT_ALIGN_PAD, false))
@@ -909,20 +1036,32 @@ static void *Z_AllocBlock(size_t size, INT32 tag, size_t align)
 // Frees the cheapest run of neighbouring blocks that makes one free block of `bytes`: free blocks and cache blocks with
 // an owner are eligible, what goes costs its size times its recency (halving with every frame of age, 12 frames and older all equal).
 // Evicting by age alone frees pieces that are scattered, and a single large allocation then still does not fit.
-static size_t Z_RoomCost(const zablock_t *b)
+static uint64_t Z_RoomCost(const zablock_t *b)
 {
-	UINT32 age;
+	UINT32 age, units;
 
 	if (ZA_ISFREE(b))
 		return 0;
 	age = Z_Age(b) < 12 ? Z_Age(b) : 12;
-	return (ZA_SIZE(b) >> 8) * (4096u >> age) + 1; // halves with every frame of age: what was used lately is dear
+	units = zroom_rebuild_cost ? Z_RebuildUnits(b) : 0;
+	return (uint64_t)(units ? units : (ZA_SIZE(b) >> 8)) * (4096u >> age) + 1; // halves with every frame of age: what was used lately is dear
 }
 
-static boolean Z_MakeRoomWalk(size_t bytes, boolean current)
+// lruonly: the last resort of Z_AllocBlock: the texture data of the hardware renderer (PU_HWRCACHE_LRU with an owner) of any age, the current frame's too
+static boolean Z_RoomOK(const zablock_t *b, boolean current, boolean lruonly)
+{
+	if (ZA_ISFREE(b))
+		return true;
+	if (lruonly)
+		return ZA_TAG(b) == PU_HWRCACHE_LRU && b->user != NULL && b != zpinned;
+	return Z_Evictable(b, current);
+}
+
+static boolean Z_MakeRoomWalk(size_t bytes, boolean current, boolean lruonly)
 {
 	zablock_t *b, *lo = NULL, *bestlo = NULL, *bestend = NULL, *first = ZA_First(), *last = NULL;
-	size_t sum = 0, bestcost = SIZE_MAX, cost = 0;
+	size_t sum = 0;
+	uint64_t bestcost = ~(uint64_t)0, cost = 0;
 
 	if (zreg_ok && zreg_n)
 	{
@@ -935,10 +1074,11 @@ static boolean Z_MakeRoomWalk(size_t bytes, boolean current)
 	}
 	for (b = first; b; b = ZA_Next(b))
 	{
-		if (!ZA_ISFREE(b) && !Z_Evictable(b, current))
+		if (!Z_RoomOK(b, current, lruonly))
 		{
 			lo = NULL; // the window cannot span a block that stays
-			sum = cost = 0;
+			sum = 0;
+			cost = 0;
 			if (last && (uintptr_t)b > (uintptr_t)last)
 				break; // no candidate behind this block
 			continue;
@@ -978,13 +1118,18 @@ static boolean Z_MakeRoomWalk(size_t bytes, boolean current)
 	return true;
 }
 
-static boolean Z_MakeRoom(size_t bytes, boolean current)
+static boolean Z_MakeRoomEx(size_t bytes, boolean current, boolean lruonly)
 {
 	ZCOST_BEGIN();
-	const boolean made = Z_MakeRoomWalk(bytes, current);
+	const boolean made = Z_MakeRoomWalk(bytes, current, lruonly);
 
 	ZCOST_END(zcost_room);
 	return made;
+}
+
+static boolean Z_MakeRoom(size_t bytes, boolean current)
+{
+	return Z_MakeRoomEx(bytes, current, false);
 }
 
 // Called when the 3D view starts: nothing is held yet, so any cache block with an owner may go. Tries to make one free
@@ -1247,6 +1392,12 @@ static void Z_ArenaStart(void)
 	Z_OomTestInit();
 	if (M_CheckParm("-zfront") && M_IsNextParm())
 		zfront_mode = atoi(M_GetNextParm());
+	if (M_CheckParm("-zfrontneg") && M_IsNextParm())
+		zfront_neg_on = atoi(M_GetNextParm()) != 0;
+	if (M_CheckParm("-zroomcost") && M_IsNextParm())
+		zroom_rebuild_cost = atoi(M_GetNextParm()) != 0;
+	if (M_CheckParm("-zpartial") && M_IsNextParm())
+		zroom_partial = atoi(M_GetNextParm()) != 0;
 	zreserve = Z_KiBParm("-zreserve", zreserve);
 	cap = Z_KiBParm("-zarena", cap);
 	zheadroom = Z_KiBParm("-zheadroom", zheadroom);
@@ -1395,24 +1546,26 @@ size_t Z_ReclaimableBytes(void)
 // try failed and the EE cycles they took (the frontier moves and the evictions included). front: calls of Z_MoveFrontier, the ones that found no room, the blocks looked at, its EE cycles.
 void Z_ModeProf(unsigned int frames)
 {
-	static UINT32 s_slow, s_slowc, s_calls, s_failed, s_walked, s_cyc, s_down, s_up, s_fb, s_flush;
+	static UINT32 s_slow, s_slowc, s_calls, s_failed, s_negs, s_walked, s_cyc, s_down, s_up, s_fb, s_flush, s_part;
 
 	if (!frames)
 		frames = 1;
-	I_OutputMsg("ZMODE cap=%luK free=%luK reclaimable=%luK front=%s mode=%d | slow=%u (%u cyc) front calls=%u failed=%u walked=%u (%u cyc) down=%u up=%u zoneless=%u | lru last resort %u | anchor checks %u bad %u | registry %s %u\n",
+	I_OutputMsg("ZMODE cap=%luK free=%luK reclaimable=%luK front=%s mode=%d | slow=%u (%u cyc) front calls=%u failed=%u (%u from memory) walked=%u (%u cyc) down=%u up=%u zoneless=%u | lru last resort %u (partial %u) | anchor checks %u bad %u | registry %s %u\n",
 		(unsigned long)(ZA_Capacity() >> 10), (unsigned long)(ZA_FreeBytes() >> 10), (unsigned long)(Z_ReclaimableBytes() >> 10), ZA_Frontier() ? "on" : "off", (int)zfront_mode,
-		zslow_calls - s_slow, zslow_cyc - s_slowc, zfront_calls - s_calls, zfront_failed - s_failed, zfront_walked - s_walked, zfront_cyc - s_cyc,
-		zfront_moves_down - s_down, zfront_moves_up - s_up, zfront_fallbacks - s_fb, zlru_lastresort - s_flush, zfront_checks, zfront_badanchor, zreg_ok ? "on" : "OFF", (unsigned)zreg_n);
+		zslow_calls - s_slow, zslow_cyc - s_slowc, zfront_calls - s_calls, zfront_failed - s_failed, zfront_negs - s_negs, zfront_walked - s_walked, zfront_cyc - s_cyc,
+		zfront_moves_down - s_down, zfront_moves_up - s_up, zfront_fallbacks - s_fb, zlru_lastresort - s_flush, zhwlru_partial - s_part, zfront_checks, zfront_badanchor, zreg_ok ? "on" : "OFF", (unsigned)zreg_n);
 	s_slow = zslow_calls;
 	s_slowc = zslow_cyc;
 	s_calls = zfront_calls;
 	s_failed = zfront_failed;
+	s_negs = zfront_negs;
 	s_walked = zfront_walked;
 	s_cyc = zfront_cyc;
 	s_down = zfront_moves_down;
 	s_up = zfront_moves_up;
 	s_fb = zfront_fallbacks;
 	s_flush = zlru_lastresort;
+	s_part = zhwlru_partial;
 }
 
 size_t Z_RenderHeadroom(void)
@@ -2442,10 +2595,23 @@ void Z_SetUser(void *ptr, void **newuser)
 		I_Error("Internal memory management error: "
 			"tried to make block purgable but it has no owner");
 
+	if (newuser != (void **)block->user && block->user && zcost_tab)
+	{
+		// PS2-603: what the block costs to make again goes with it to its new owner (HWR_PS2_StealData: a texture's data become the driver's data cache entry)
+		const UINT32 units = Z_RebuildUnits(block);
+
+		if (units)
+		{
+			Z_SetRebuildCost((void **)block->user, 0);
+			if (newuser)
+				Z_SetRebuildCost(newuser, units << 9);
+		}
+	}
 	block->user = (void*)newuser;
 	if (newuser)
 		*newuser = ptr;
 	ZA_SetStamp(block, zframe);
+	zfront_gen++;
 }
 #else
 #ifdef PARANOIA

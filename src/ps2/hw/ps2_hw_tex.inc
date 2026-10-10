@@ -1077,8 +1077,16 @@ static inline u32 dc_key(const GLMipmap_t *m)
 	return ((u32)m->regen_kind << 28) | ((u32)m->regen_id & 0x0FFFFFFFu);
 }
 
+static int dc_why; // OPT13 IZ: why dc_drop is called now (1 the zone purged the block, 2 the byte budget, 3 flush), for the HWDCDROP lines
+
 static void dc_drop(dcent_t *e)
 {
+	static unsigned reports;
+
+	if (e->bytes >= 32768 && e->lvl && reports++ < 40)
+		CONS_Printf("HWDCDROP f=%u kind %u id %u level %u %ux%u %u bytes why %d (%s)\n", (unsigned)H.frame_no, (unsigned)(e->key >> 28), (unsigned)(e->key & 0x0FFFFFFFu), (unsigned)e->lvl, (unsigned)e->w, (unsigned)e->h, (unsigned)e->bytes, dc_why,
+			dc_why == 1 ? "zone purged the block" : dc_why == 2 ? "byte budget" : "flush");
+	Z_SetRebuildCost((void **)(void *)&e->p, 0); // OPT13 IZ (PS2-603): the entry is another block next time
 	if (e->p)
 		HWR_PS2_FreeData(e->p);
 	dc_bytes -= e->bytes;
@@ -1097,6 +1105,7 @@ static dcent_t *dc_find(u32 key, u32 w, u32 h, u32 lvl)
 			continue;
 		if (!e->p && !e->busy)
 		{
+			dc_why = 1;
 			dc_drop(e); // the zone purged the block
 			continue;
 		}
@@ -1146,6 +1155,7 @@ static dcent_t *dc_slot(u32 bytes)
 			}
 			else if (!e->p && !e->busy)
 			{
+				dc_why = 1;
 				dc_drop(e);
 				fr = e;
 			}
@@ -1158,6 +1168,7 @@ static dcent_t *dc_slot(u32 bytes)
 			return fr;
 		if (!lru)
 			return NULL;
+		dc_why = 2;
 		dc_drop(lru);
 	}
 }
@@ -1168,7 +1179,10 @@ static void dc_flush(void)
 
 	for (i = 0; i < DC_MAX; i++)
 		if (dc[i].key && !dc[i].busy)
+		{
+			dc_why = 3;
 			dc_drop(&dc[i]);
+		}
 }
 
 // ---- PS2-HW-442 (OPT12 HWDRV): the data of the textures between two uses ----
@@ -1828,6 +1842,7 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 	ne->stamp = ++dc_seq;
 	dc_bytes += ne->bytes;
 	TX.lvl_cyc += cyc() - t0;
+	Z_SetRebuildCost((void **)(void *)&ne->p, cyc() - t0); // OPT13 IZ (PS2-603): a level of a 1 MiB cloud plane made from its lump: 10..12 M cycles; the zone evicts it last
 	{
 		static int logged;
 
@@ -2219,6 +2234,7 @@ static int tex_upload(GLMipmap_t *m)
 					}
 				}
 				TX.lvl_cyc += cyc() - dt0;
+				Z_SetRebuildCost((void **)(void *)&ne->p, cyc() - dt0); // OPT13 IZ (PS2-603)
 				{
 					static int dl_logged;
 
