@@ -55,6 +55,10 @@
 #include "lua_hudlib_drawlist.h"
 #include "lua_hook.h"
 
+#ifdef PS2
+#include "ps2/ps2_osk.h" // OPT14-CHAT: the on-screen keyboard comes up on the chat line
+#endif
+
 // coords are scaled
 #define HU_INPUTX 0
 #define HU_INPUTY 0
@@ -1067,6 +1071,45 @@ static void Chat_DeleteSelection(void)
 	c_selection = c_input = start;
 }
 
+// Opens the chat line (the talk key, the team key). textfollows: the key that did it is a keyboard key, whose text event comes next and must not be typed.
+static void HU_OpenChatLine(boolean teamkey, boolean textfollows)
+{
+	I_SetTextInputMode(true);
+	chat_on = true;
+	chat_on_first_event = !textfollows;
+	if (cv_chat_clearonexit.value)
+	{
+		w_chat[0] = 0;
+		c_selection = c_input = 0;
+	}
+	teamtalk = (teamkey ? G_GametypeHasTeams() : false);
+	chat_scrollmedown = true;
+	typelines = 1;
+	hu_tick = 0;
+#ifdef PS2
+	PS2OSK_ChatOpened(teamtalk); // the pad has no keys: the on-screen keyboard comes up on the chat line
+#endif
+}
+
+#ifdef PS2
+// OPT14-CHAT: the "Chat" / "Team Chat" items of the pause menu (m_menu.c) and the quick button: what the talk key does, without a key
+boolean HU_OpenChat(boolean team)
+{
+	if (!netgame || chat_on || OLD_MUTE)
+		return false;
+	if (gamestate != GS_LEVEL && gamestate != GS_INTERMISSION && gamestate != GS_CUTSCENE && gamestate != GS_CREDITS
+	 && gamestate != GS_ENDING && gamestate != GS_EVALUATION) // the gamestates of G_Responder that give the events to HU_Responder
+		return false;
+	HU_OpenChatLine(team, false);
+	return true;
+}
+
+boolean HU_ChatTeamAvailable(void)
+{
+	return G_GametypeHasTeams();
+}
+#endif
+
 //
 // Returns true if key eaten
 //
@@ -1112,18 +1155,12 @@ boolean HU_Responder(event_t *ev)
 		// enter chat mode
 		if ((talkkey || teamkey) && netgame && !OLD_MUTE) // check for old chat mute, still let the players open the chat incase they want to scroll otherwise.
 		{
-			I_SetTextInputMode(true);
-			chat_on = true;
-			chat_on_first_event = false;
-			if (cv_chat_clearonexit.value)
-			{
-				w_chat[0] = 0;
-				c_selection = c_input = 0;
-			}
-			teamtalk = (teamkey ? G_GametypeHasTeams() : false);
-			chat_scrollmedown = true;
-			typelines = 1;
-			hu_tick = 0;
+#ifdef PS2
+			// OPT14-CHAT: a key of the keyboard is followed by its text event, which the first-event guard below eats; a button of the pad is not
+			HU_OpenChatLine(teamkey, c < KEY_MOUSE1);
+#else
+			HU_OpenChatLine(teamkey, true);
+#endif
 			return true;
 		}
 	}
@@ -1452,13 +1489,97 @@ boolean HU_Responder(event_t *ev)
 #define chatx (cv_chatx.value)
 #define chaty (cv_chaty.value)
 
+// OPT14-CHAT: the cell of the window chat. At 640 px and up (the PC) it is the menu font at half size, a 4x6 cell, exactly as ever. The 320x200 picture of the PS2 would
+// take every second row and column of that font away (blobs), so there the thin font is drawn at full size: glyphs of their own width (5 px most), 8 px lines. One place
+// decides it, so that the three drawers (the fading messages, the log, the input line) and the word wrap agree. Not compiled for the PC at all.
+#ifdef PS2
+#define CHATTHIN (vid.width < 640)
+#else
+#define CHATTHIN false
+#endif
+
+static inline INT32 HU_ChatLineH(void)
+{
+	return CHATTHIN ? 8 : 6;
+}
+
+// how far a character moves the pen (c: the character, no colour code)
+static INT32 HU_ChatAdv(INT32 c)
+{
+	if (CHATTHIN)
+	{
+		const INT32 i = (c & 0x7f) - FONTSTART;
+
+		if (i < 0 || i >= FONTSIZE || !tny_font.chars[i])
+			return tny_font.spacewidth; // (the word wrap of v_video.c counts a space so)
+		return tny_font.chars[i]->width;
+	}
+	return 4;
+}
+
+static char *HU_ChatWrap(INT32 w, INT32 option, const char *str)
+{
+	if (CHATTHIN)
+		return V_FontWordWrap(0, w, option & ~V_SPACINGMASK, FRACUNIT, str, tny_font);
+	return V_ChatWordWrap(0, w, option, str);
+}
+
+static void HU_ChatDrawChar(INT32 x, INT32 y, INT32 c, UINT8 *colormap)
+{
+	if (CHATTHIN)
+		V_DrawFontCharacter(x, y, c, true, FRACUNIT, colormap, tny_font);
+	else
+		V_DrawChatCharacter(x, y, c, true, colormap);
+}
+
 // HU_DrawMiniChat
+
+// OPT14-CHAT (thin font): the tint behind one message as one rectangle per line. The original draws a fill per character (a draw call each, hundreds for a full window);
+// the picture is the same, the lines are found by the same walk as the drawing loop below makes (breaks, the width of the box)
+static void HU_ChatTintLines(const char *msg, INT32 x, INT32 y, INT32 boxw, boolean prev_linereturn)
+{
+	const INT32 charwidth = 4, charheight = HU_ChatLineH();
+	INT32 dx = 0, dy = 0;
+
+	for (size_t j = 0; ; j++)
+	{
+		const UINT8 c = (UINT8)msg[j];
+
+		if (c == '\0' || c == '\n')
+		{
+			if (c == '\0' || !prev_linereturn)
+			{
+				if (dx > 0)
+					V_DrawFill(x + 2, y + dy, dx, charheight, CHATOPACITY|cv_menubgcolor.value|chatsnap);
+				if (c == '\0')
+					break;
+				dy += charheight;
+				dx = 0;
+			}
+			prev_linereturn = true;
+		}
+		else if (c & 0x80)
+			;
+		else if (c >= FONTSTART)
+		{
+			prev_linereturn = false;
+			dx += HU_ChatAdv(c);
+			if (dx >= boxw-charwidth-2)
+			{
+				V_DrawFill(x + 2, y + dy, dx, charheight, CHATOPACITY|cv_menubgcolor.value|chatsnap);
+				dx = 0;
+				dy += charheight;
+				prev_linereturn = true;
+			}
+		}
+	}
+}
 
 static void HU_drawMiniChat(void)
 {
 	INT32 x = chatx+2, y;
 	INT32 chatheight = 0;
-	INT32 charwidth = 4, charheight = 6;
+	INT32 charwidth = 4, charheight = HU_ChatLineH();
 	INT32 boxw = cv_chatwidth.value;
 	INT32 dx = 0, dy = 0;
 	boolean prev_linereturn = false;
@@ -1468,7 +1589,7 @@ static void HU_drawMiniChat(void)
 
 	for (size_t i = chat_nummsg_min; i > 0; i--)
 	{
-		char *msg = V_ChatWordWrap(0, boxw-charwidth-2, chatsnap|V_ALLOWLOWERCASE|V_MONOSPACE, chat_mini[i-1]);
+		char *msg = HU_ChatWrap(boxw-charwidth-2, chatsnap|V_ALLOWLOWERCASE|V_MONOSPACE, chat_mini[i-1]);
 		for(size_t j = 0; msg[j]; j++) // iterate through msg
 		{
 			if (msg[j] == '\n') // get back down.
@@ -1484,7 +1605,7 @@ static void HU_drawMiniChat(void)
 			{
 				prev_linereturn = false;
 
-				dx += charwidth;
+				dx += HU_ChatAdv(msg[j]);
 
 				if (dx >= boxw-charwidth-2)
 				{
@@ -1508,8 +1629,11 @@ static void HU_drawMiniChat(void)
 	{
 		INT32 timer = ((cv_chattime.value*TICRATE)-chat_timers[i]) - cv_chattime.value*TICRATE+9; // see below...
 		INT32 transflag = (timer >= 0 && timer <= 9) ? (timer*V_10TRANS) : 0; // you can make bad jokes out of this one.
-		char *msg = V_ChatWordWrap(0, boxw-charwidth-2, chatsnap|V_ALLOWLOWERCASE|V_MONOSPACE, chat_mini[i]); // get the current message, and word wrap it.
+		char *msg = HU_ChatWrap(boxw-charwidth-2, chatsnap|V_ALLOWLOWERCASE|V_MONOSPACE, chat_mini[i]); // get the current message, and word wrap it.
 		UINT8 *colormap = NULL;
+
+		if (CHATTHIN && cv_chatbacktint.value)
+			HU_ChatTintLines(msg, x, y + dy, boxw, prev_linereturn);
 
 		for(size_t j = 0; msg[j]; j++) // iterate through msg
 		{
@@ -1528,11 +1652,11 @@ static void HU_drawMiniChat(void)
 			{
 				prev_linereturn = false;
 
-				if (cv_chatbacktint.value) // on request of wolfy
+				if (cv_chatbacktint.value && !CHATTHIN) // on request of wolfy
 					V_DrawFill(x + dx + 2, y+dy, charwidth, charheight, CHATOPACITY|cv_menubgcolor.value|chatsnap);
 
-				V_DrawChatCharacter(x + dx + 2, y+dy, msg[j] |chatsnap|V_MONOSPACE|transflag, true, colormap);
-				dx += charwidth;
+				HU_ChatDrawChar(x + dx + 2, y+dy, msg[j] |chatsnap|V_MONOSPACE|transflag, colormap);
+				dx += HU_ChatAdv(msg[j]);
 
 				if (dx >= boxw-charwidth-2)
 				{
@@ -1557,7 +1681,7 @@ static void HU_drawMiniChat(void)
 
 static void HU_drawChatLog(INT32 offset)
 {
-	INT32 charwidth = 4, charheight = 6;
+	INT32 charwidth = 4, charheight = HU_ChatLineH();
 	INT32 boxw = cv_chatwidth.value, boxh = cv_chatheight.value;
 	INT32 x = chatx+2, y, dx = 0, dy = 0;
 	UINT32 i = 0;
@@ -1597,7 +1721,7 @@ static void HU_drawChatLog(INT32 offset)
 
 	for (i=0; i<chat_nummsg_log; i++) // iterate through our chatlog
 	{
-		char *msg = V_ChatWordWrap(0, boxw-charwidth-2, chatsnap|V_ALLOWLOWERCASE|V_MONOSPACE, chat_log[i]); // get the current message, and word wrap it.
+		char *msg = HU_ChatWrap(boxw-charwidth-2, chatsnap|V_ALLOWLOWERCASE|V_MONOSPACE, chat_log[i]); // get the current message, and word wrap it.
 		UINT8 *colormap = NULL;
 		for(size_t j = 0; msg[j]; j++) // iterate through msg
 		{
@@ -1619,9 +1743,9 @@ static void HU_drawChatLog(INT32 offset)
 				if (msg[j] >= FONTSTART)
 				{
 					if ((y+dy+2 >= chat_topy) && (y+dy < (chat_bottomy)))
-						V_DrawChatCharacter(x + dx + 2, y+dy+2, msg[j] |chatsnap|V_MONOSPACE, true, colormap);
+						HU_ChatDrawChar(x + dx + 2, y+dy+(CHATTHIN ? 0 : 2), msg[j] |chatsnap|V_MONOSPACE, colormap);
 
-					dx += charwidth;
+					dx += HU_ChatAdv(msg[j]);
 				}
 
 				if (dx >= boxw-charwidth-2 && i < chat_nummsg_log) // end of message shouldn't count, nor should invisible characters!!!!
@@ -1668,7 +1792,7 @@ static void HU_drawChatLog(INT32 offset)
 
 static void HU_DrawChat(void)
 {
-	INT32 charwidth = 4, charheight = 6;
+	INT32 charwidth = 4, charheight = HU_ChatLineH();
 	INT32 boxw = cv_chatwidth.value;
 	INT32 t = 0, c = 0, y = chaty - (typelines*charheight);
 	UINT32 i = 0, saylen = strlen(w_chat); // You learn new things everyday!
@@ -1710,8 +1834,8 @@ static void HU_DrawChat(void)
 	for (i = 0; talk[i]; i++)
 	{
 		if (talk[i] >= FONTSTART)
-			V_DrawChatCharacter(chatx + c + 2, y, talk[i] |chatsnap|cflag, true, V_GetStringColormap(talk[i]|cflag));
-		c += charwidth;
+			HU_ChatDrawChar(chatx + c + 2, y, talk[i] |chatsnap|cflag, V_GetStringColormap(talk[i]|cflag));
+		c += HU_ChatAdv(talk[i]);
 	}
 
 	// if chat is muted, just draw the log and get it over with, no need to draw anything else.
@@ -1729,9 +1853,10 @@ static void HU_DrawChat(void)
 	for (i = 0; w_chat[i]; i++)
 	{
 		boolean skippedline = false;
+		const INT32 adv = HU_ChatAdv(w_chat[i]);
 		if (c_input == (i+1))
 		{
-			cursorx = (c+charwidth < boxw-charwidth) ? (chatx + 2 + c+charwidth) : (chatx+1); // we may have to go down.
+			cursorx = (c+adv < boxw-charwidth) ? (chatx + 2 + c+adv) : (chatx+1); // we may have to go down.
 			cursory = (cursorx != chatx+1) ? (y) : (y+charheight);
 
 			if (cursorx == chatx+1 && saylen == i) // a weirdo hack
@@ -1744,11 +1869,11 @@ static void HU_DrawChat(void)
 		if (w_chat[i] >= FONTSTART)
 		{
 			if ((c_selection > i && c_input <= i) || (c_selection <= i && c_input > i))
-				V_DrawFill(chatx+c+2, y-1, charwidth, charheight, V_VMAPToPaletteIndex(cv_menucolor.value)|chatsnap|t);
-			V_DrawChatCharacter(chatx+c+2, y, w_chat[i] | chatsnap | t, true, NULL);
+				V_DrawFill(chatx+c+2, y-1, adv, charheight, V_VMAPToPaletteIndex(cv_menucolor.value)|chatsnap|t);
+			HU_ChatDrawChar(chatx+c+2, y, w_chat[i] | chatsnap | t, NULL);
 		}
 
-		c += charwidth;
+		c += adv;
 		if (c > boxw-charwidth && !skippedline)
 		{
 			c = 0;
@@ -1767,15 +1892,17 @@ static void HU_DrawChat(void)
 
 	// and draw the cursor
 	if (cursorblink < 8)
-		V_DrawChatCharacter(cursorx, cursory+1, cv_chatcursor.string[0]|chatsnap|t, true, NULL);
+		HU_ChatDrawChar(cursorx, cursory+(CHATTHIN ? 0 : 1), cv_chatcursor.string[0]|chatsnap|t, NULL);
 
 	if (cv_chat_showlimit.value)
 	{
 		// Limit
-			V_DrawSmallString(chatx, chaty,
-				chatsnap|((HU_MAXMSGLEN - typed_chars) > 64 ? V_TRANSLUCENT : (typed_chars == HU_MAXMSGLEN ? V_REDMAP : V_YELLOWMAP)),
-				va("%d/%d",typed_chars,HU_MAXMSGLEN)
-			);
+		const INT32 limflags = chatsnap|((HU_MAXMSGLEN - typed_chars) > 64 ? V_TRANSLUCENT : (typed_chars == HU_MAXMSGLEN ? V_REDMAP : V_YELLOWMAP));
+
+		if (CHATTHIN) // (the small string is the menu font at half size: see HU_ChatLineH)
+			V_DrawThinString(chatx, chaty, limflags, va("%d/%d",typed_chars,HU_MAXMSGLEN));
+		else
+			V_DrawSmallString(chatx, chaty, limflags, va("%d/%d",typed_chars,HU_MAXMSGLEN));
 	}
 
 	// handle /pm list. It's messy, horrible and I don't care.

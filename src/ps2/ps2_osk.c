@@ -86,6 +86,11 @@ static void Move(INT32 dir)
 	}
 }
 
+void PS2OSK_ChatOpened(boolean team)
+{
+	(void)team;
+}
+
 void PS2OSK_TestClose(void)
 {
 	active = false;
