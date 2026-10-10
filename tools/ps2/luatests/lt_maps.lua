@@ -32,16 +32,24 @@ end
 local MAPS = {1,2,3,4,5,6,7,8,9,10,11}
 local idx = {sector = {}, line = {}, side = {}, vertex = {}, subsector = {}, seg = {}, node = {}, slope = {}, ffloor = {}, polyobj = {}, mapthing = {}}
 local HAVE_SEGS = pcall(function() return segs[0] end)
+-- (OPT14) a map with more than LIGHTMAX lines + sides + vertexes keeps no index of them (68 000 userdata with their index tables take 8 MB of Lua heap, which the PS2 does not have next to the level):
+-- a reference to a line, side, vertex, subsector, seg or node is then written as a fingerprint of the object (its coordinates, textures, sector index); the sectors, FOFs, slopes, polyobjects
+-- and map things are still indexed.
+local LIGHTMAX = 20000
+local light = false
 local function build()
 	for k in pairs(idx) do idx[k] = {} end
+	light = (#lines + #sides + #vertexes) > LIGHTMAX
 	for i = 0, #sectors - 1 do idx.sector[sectors[i]] = i end
-	for i = 0, #lines - 1 do idx.line[lines[i]] = i end
-	for i = 0, #sides - 1 do idx.side[sides[i]] = i end
-	for i = 0, #vertexes - 1 do idx.vertex[vertexes[i]] = i end
-	for i = 0, #subsectors - 1 do idx.subsector[subsectors[i]] = i end
-	if HAVE_SEGS then
-		for i = 0, #segs - 1 do idx.seg[segs[i]] = i end
-		for i = 0, #nodes - 1 do idx.node[nodes[i]] = i end
+	if not light then
+		for i = 0, #lines - 1 do idx.line[lines[i]] = i end
+		for i = 0, #sides - 1 do idx.side[sides[i]] = i end
+		for i = 0, #vertexes - 1 do idx.vertex[vertexes[i]] = i end
+		for i = 0, #subsectors - 1 do idx.subsector[subsectors[i]] = i end
+		if HAVE_SEGS then
+			for i = 0, #segs - 1 do idx.seg[segs[i]] = i end
+			for i = 0, #nodes - 1 do idx.node[nodes[i]] = i end
+		end
 	end
 	local n = 0
 	pcall(function() for sl in slopes.iterate do idx.slope[sl] = n n = n + 1 end end)
@@ -56,7 +64,7 @@ local function build()
 end
 local KINDS = {"sector", "line", "side", "vertex", "subsector", "seg", "node", "slope", "ffloor", "polyobj", "mapthing"}
 local fmt
-function fmt(v, inner)
+function fmt(v, inner, fname)
 	local t = type(v)
 	if t == "number" or t == "boolean" or t == "nil" then return tostring(v) end
 	if t == "string" then return '"' .. v .. '"' end
@@ -68,12 +76,32 @@ function fmt(v, inner)
 		local ok, ty = pcall(function() return v.type end)
 		local ok2, x = pcall(function() return v.x end)
 		if ok and ok2 and type(ty) == "number" and type(x) == "number" then return "mo(" .. ty .. "," .. (x >> 16) .. ")" end
+		if light then
+			local function try(f) local ok, r = pcall(f) if ok then return r end end
+			local function px(vx) return vx and (vx.x >> 16) .. "," .. (vx.y >> 16) or "?" end
+			local v1, v2 = try(function() return v.v1 end), try(function() return v.v2 end)
+			if v1 and v2 then
+				if try(function() return v.dx end) then return "line(" .. px(v1) .. "," .. px(v2) .. ")" end
+				local sd = try(function() return v.side end)
+				if sd then return "seg(" .. px(v1) .. "," .. px(v2) .. "," .. sd .. ")" end
+			end
+			local top = try(function() return v.toptexture end)
+			if top then
+				local sec = try(function() return v.sector end)
+				return "side(" .. top .. "," .. v.midtexture .. "," .. v.bottomtexture .. "," .. (v.textureoffset >> 16) .. "," .. (v.rowoffset >> 16) .. "," .. tostring(sec and idx.sector[sec]) .. ")"
+			end
+			if try(function() return v.floorzset end) ~= nil then return "vertex(" .. px(v) .. ")" end
+			local nl = try(function() return v.numlines end)
+			if nl then return "subsector(" .. tostring(idx.sector[v.sector]) .. "," .. nl .. ")" end
+			local bb = try(function() return v.bbox end)
+			if bb then return "node(" .. (v.x >> 16) .. "," .. (v.y >> 16) .. "," .. (v.dx >> 16) .. "," .. (v.dy >> 16) .. ")" end
+		end
 		-- (OPT14) a list userdata (line.args, line.stringargs, mapthing.args, taglist, sector.lines, ...): its length and its elements, the PS2 keeps line.args in a block of its own
 		if not inner then
 			local okn, n = pcall(function() return #v end)
 			if okn and type(n) == "number" and n >= 0 and n <= 64 then
 				local parts = {}
-				for i = 0, n - 1 do
+				for i = (fname == "taglist" and 1 or 0), (fname == "taglist" and n or n - 1) do -- (tag lists count from 1: [0] reads before the array)
 					local oke, e = pcall(function() return v[i] end)
 					parts[#parts + 1] = oke and fmt(e, true) or "E"
 				end
@@ -95,7 +123,7 @@ local function digest(kind, iter)
 		n = n + 1
 		for _, f in ipairs(F[kind]) do
 			local ok, v = pcall(function() return obj[f] end)
-			h = mix(h, ok and fmt(v) or "E")
+			h = mix(h, ok and fmt(v, false, f) or "E")
 		end
 	end
 	return h, n

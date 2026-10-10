@@ -8,7 +8,7 @@ local function P(...)
 	print("LQ " .. table.concat(s, " "))
 end
 local LEVELTICS = 1500
-local MAPS = {1, 2, 3, 1, 4, 2, 1, 3}
+local MAPS = {1, 2, 4, 1, 5, 2, 1, 4}
 local mi = 1
 local MT_B = freeslot("MT_LMSOAK")
 local S_B = freeslot("S_LMSOAK")
@@ -55,6 +55,8 @@ local g = 0
 addHook("ThinkFrame", function()
 	local p = players[0]
 	if not (p and p.mo and p.mo.valid) then return end
+	p.lives = 9 -- (the idle player of a boss map would end the game and the run would go on in the title demos)
+	p.powers[pw_invulnerability] = 3
 	local t = leveltime
 	if t % 3 == 0 and t < LEVELTICS - 60 then
 		local o = P_SpawnMobj(p.mo.x + P_RandomRange(-100, 100) * FRACUNIT, p.mo.y + P_RandomRange(-100, 100) * FRACUNIT, p.mo.z + 40 * FRACUNIT, MT_B)
