@@ -149,6 +149,7 @@ local function mobj_iter()
 end
 local mi, state, started = 1, 0, false
 local function report(m)
+	print("LP luakb start " .. m .. " " .. collectgarbage("count"))
 	build()
 	local parts = {}
 	local function add(kind, h, n) parts[#parts + 1] = kind .. "=" .. n .. "/" .. h end
@@ -170,6 +171,7 @@ local function report(m)
 	local mh = "-"
 	pcall(function() local hh = 17 for _, f in ipairs(F.mapheader) do local ok, v = pcall(function() return mapheaderinfo[gamemap][f] end) hh = mix(hh, ok and fmt(v) or "E") end mh = hh end)
 	P("map", m, "mapheader", mh, table.concat(parts, " "))
+	print("LP luakb end " .. m .. " " .. collectgarbage("count"))
 end
 addHook("ThinkFrame", function()
 	if mi > #MAPS then return end
