@@ -79,6 +79,15 @@ if a user script recurses without bound through `gsub`/`sort` callbacks this is 
 (200 levels of gsub callbacks, section above) stops 52 KB from the end, so the check never fires in any test of the stand (the levels reached are the PC's: 198/197/198); with `-luastackmargin 300`
 (a margin that is reached) gsub stops at level 50 with the same message and the stack stays at 132 KB. The EE has no stack guard; without the check an overflow corrupts the heap silently.
 
+### PS2-LUA-6: a client that joins (or resyncs) a game on a weather map: rain/snow objects went into the mobj cache, the objects Lua held stayed "valid"
+
+* Cause: `P_RemoveSavegameMobj` (src/p_mobj.c) empties the thinker lists before a netgame savegame is read (`P_NetUnArchiveThinkers`: the join, a resync, a netgame load). PS2-511 made mobjs slices of
+  zone chunks, so the PS2 branch cannot `Z_Free` them and puts them on `mobjcache` instead. That branch did it for every thinker: the rain/snow objects (`precipmobj_t`, 120 bytes, each its own
+  `Z_Calloc` block) ended on the same list and were handed out by the next `P_SpawnMobj`, which does `memset(mobj, 0, sizeof(mobj_t))` (~500 bytes) over the block after them (a heap overwrite, only on weather maps).
+  Second defect of the same lines: upstream's `Z_Free` invalidates the Lua userdata of the object, the cache branch did not, so a script that held a mobj of the old state kept `mo.valid == true` for
+  an object the savegame had replaced and that was later reused as a different one.
+* Fix: precipitation -> `Z_Free` (as upstream); every other mobj -> `LUA_InvalidateUserdata` first, then the cache. No behaviour change outside the netgame load path.
+
 ### Memory note found on the way
 
 Each live userdata costs ~100 bytes of Lua heap (userdata + registry node + the script's own reference): 12 000 line userdata + 3000 mobjs on MAP11 end with "Not enough memory to draw map MAP11 (PU_RENDERWORK)" and a return to the title.
