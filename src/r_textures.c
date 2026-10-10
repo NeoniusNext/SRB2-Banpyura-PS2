@@ -1891,6 +1891,12 @@ static void R_AllocateTextures(INT32 add)
 		texturetranslation[i] = i;
 		i++;
 	}
+#if defined(PS2_PROFILE) && defined(HWRENDER) // (the software-only build has no hw_cache.c)
+	{
+		extern UINT32 hwr_texsig; // hardware/hw_cache.c (OPT13 IR)
+		hwr_texsig++;
+	}
+#endif
 }
 
 static INT32 R_DefineTextures(INT32 i, UINT16 w)

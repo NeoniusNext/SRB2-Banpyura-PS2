@@ -660,13 +660,22 @@ static void HWR_ProcessPolygonSlow(FSurfaceInfo *pSurf, FOutVector *pOutVerts, F
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
 #endif
 {
+#ifdef PS2_PROFILE
+	int rec_blk = 0; // OPT13 IR: the polygon is recorded as a block once the collection has it
+#endif
     if (iNumPts < 3)
         return; // no triangles; do not advance the fan writer past its allocation
 #ifdef PS2_PROFILE
 	if (hwr_ph_on > 0)
 		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 	if (hwr_grec_on)
-		HWR_GCRecPoly(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // OPT11: the geometry cache records what the BSP walk hands to the batch
+	{
+		// OPT11: the geometry cache records what the BSP walk hands to the batch. OPT13 IR: a polygon the collection takes whole is recorded as the block it makes (below, after it is collected)
+		if (currently_batching && HWR_PBOn() && !hwr_sprite_batch && HWR_GCRecBlkOk(PolyFlags, horizonSpecial))
+			rec_blk = 1;
+		else
+			HWR_GCRecPoly(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+	}
 	if (currently_batching && hwr_sprite_batch)
 	{
 		// PS2-HW-52: batched sprite polygons are drawn in texture order, not in depth order. That is the same picture for polygons that write the depth
@@ -708,6 +717,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			ps2hwp_cnt[HWC_PROC_BATCH]--;
 			if (!HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, (hwr_sprite_batch && !hwr_sprite_shadow) ? 1u : 0u))
 				HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
+#ifdef PS2_PROFILE
+			if (rec_blk)
+				HWR_PBRecLast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // OPT13 IR
+#endif
 #ifdef PS2_HWDETAIL
 			if (hwr_sprite_batch)
 				ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);

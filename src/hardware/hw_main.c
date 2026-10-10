@@ -60,7 +60,14 @@ extern int ps2hwd_dbg_flags; // the driver's -hwdbg bits (ps2/hw/ps2_hwd.c)
 extern boolean Cubeapply; // v_video.c (the colour cube): HWR_Lighting
 extern float Cubepal[2][2][2][3];
 static boolean HWR_PS2_NoCull(void);
+extern UINT32 hwr_plkey, hwr_plhit, hwr_plhitn; // OPT13 IR: HWPROF72, the planes the cache served
 static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw); // OPT11 round 2: room for a replay or a record in the batch arrays and the list of transparent walls (false: the cache went)
+#ifdef IR_CENSUS
+static void HWR_CensusPolyobj(void);
+#endif
+static boolean HWR_GCArraysOK(const void *rh); // OPT13 IR: room in the batch arrays (or the pool of the block collection, which this grows) for the replay of a record
+static void HWR_GCVerifyBegin(boolean check, const void *rh, UINT32 len, UINT32 *a, UINT32 *b); // OPT13 IR: -hwgv 4, check mode: a hit is replayed for real before it is calculated again
+static void HWR_GCVerifyEnd(boolean check, UINT32 a, UINT32 b, const char *what, UINT32 id);
 extern int PS2HWD_QuadHidden(const void *quad); // PS2-HW-72: can this quad (4 FOutVector) put a pixel on the screen? (ps2_hw_plan.inc)
 extern int PS2HWD_QuadVisibleRef(const void *quad); // OPT13 IQ-7c: the reference of the cull checks: can a pixel centre be inside the view after the quad is clipped to it? (ps2_hw_plan.inc)
 extern double ps2hwd_qref_dbg[8];
@@ -610,6 +617,7 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 	int gckn = 0;
 	boolean gccheck = false;
 	UINT32 gcid = 0, gcid2 = 0;
+	UINT32 gcva = 0, gcvb = 0; // OPT13 IR: -hwgv 4, the polygons the check mode replayed
 #endif
 
 	float height; // constant y for all points on the convex flat polygon
@@ -679,21 +687,27 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 
 			gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, (UINT32 *)(rh + 1), false);
 			gc.c_key += ps2hwp_now() - t0;
+			hwr_plkey += ps2hwp_now() - t0;
 			if (gckn == (int)rh->keyw)
 			{
 				if (!(gccheck = gc_check_this()))
 				{
 					const UINT32 t1 = ps2hwp_now();
 
-					if ((rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize)
-						|| HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+					if ((rh->nwall == 0 && !gc.test_res && HWR_GCArraysOK(rh))
+						|| (HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall) && HWR_GCArraysOK(rh)))
 					{
 						rh = gc_promote(gce, rh);
-						gc_replay(rh, (UINT32)gce->len);
+						if (rh->flags & 4)
+							gc_replay_blk(rh, (UINT32)gce->len);
+						else
+							gc_replay(rh, (UINT32)gce->len);
 						gc.s_pl_hit++;
 						gc.w_q++;
 						gc.w_hit++;
 						gc.c_hit += ps2hwp_now() - t1;
+						hwr_plhit += ps2hwp_now() - t1;
+						hwr_plhitn++;
 						return;
 					}
 					gce = NULL; // (the allocation took the cache's memory: this plane is made the long way, nothing is recorded)
@@ -711,7 +725,11 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
 		gc.w_q++;
 		gckn = gc_plane_words(slope, src, isceiling, fixedheight, PolyFlags, lightlevel, alpha, levelflat, lfchroma, planecolormap, gckey, true);
 		if (gckn >= 0 && HWR_GCReserve(1, (UINT32)nrPlaneVerts + 8u, 0))
+		{
+			if (hit)
+				HWR_GCVerifyBegin(gccheck, gc.ar + gce->off, (UINT32)gce->len, &gcva, &gcvb);
 			gc_rec_begin(gccheck, gckey, gckn);
+		}
 		else
 		{
 			gce = NULL;
@@ -904,6 +922,7 @@ gc_plane_nocache:
 		const UINT32 t1 = ps2hwp_now();
 
 		gc_rec_end(gce, gcid, gcid2, gccheck, "plane", gcid >> 1);
+		HWR_GCVerifyEnd(gccheck, gcva, gcvb, "plane", gcid >> 1);
 		gce = NULL;
 		if (gccheck)
 			gc.s_pl_hit++;
@@ -1009,11 +1028,27 @@ gc_plane_nocache:
 #endif
 }
 
+#ifdef IR_CENSUS // (measurement build only: which features the maps and demos have - the coverage of the checks)
+UINT32 ir_cen[16];
+#endif
 #ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the plane builder (HWPROF2 "plane")
+UINT32 hwr_plc[4], hwr_plcyc[4]; // OPT13 IR: planes (a sector's, a 3D floor's, and the translucent ones) in a window: number and cycles
+UINT32 hwr_plkey, hwr_plhit, hwr_plhitn; // ... the key and the replay of the planes the cache served, and how many
 static void HWR_RenderPlaneTimed(subsector_t *subsector, extrasubsector_t *xsub, boolean isceiling, fixed_t fixedheight, FBITFIELD PolyFlags, INT32 lightlevel, levelflat_t *levelflat, sector_t *FOFsector, UINT8 alpha, extracolormap_t *planecolormap)
 {
 	HWP_SPAN_BEGIN(t);
 	HWC_ADD(HWC_PLANES);
+#ifdef IR_CENSUS
+	ir_cen[8]++;
+	if (subsector->sector->f_slope || subsector->sector->c_slope || (FOFsector && (FOFsector->f_slope || FOFsector->c_slope)))
+		ir_cen[9]++;
+	if (FOFsector)
+		ir_cen[10]++;
+	if (PolyFlags & (PF_Translucent | PF_Fog | PF_Additive | PF_Subtractive | PF_ReverseSubtract | PF_Multiplicative | PF_Environment))
+		ir_cen[11]++;
+	if (FOFsector && (FOFsector->ffloors == NULL) && FOFsector->heightsec >= 0)
+		ir_cen[12]++;
+#endif
 #ifdef PS2_HWDETAIL
 	HWR_FrCensusBegin();
 	hwr_fr_src = FRC_PLANE;
@@ -1023,6 +1058,11 @@ static void HWR_RenderPlaneTimed(subsector_t *subsector, extrasubsector_t *xsub,
 	hwr_fr_src = FRC_OTHER;
 	HWR_FrCensusPlane(ps2hwp_now() - t);
 #endif
+	{
+		const UINT32 cls = (FOFsector ? 1u : 0u) + ((PolyFlags & (PF_Translucent | PF_Fog | PF_Additive | PF_Subtractive | PF_ReverseSubtract | PF_Multiplicative | PF_Environment)) ? 2u : 0u); // OPT13 IR: HWPROF71, the planes by kind
+		hwr_plc[cls]++;
+		hwr_plcyc[cls] += ps2hwp_now() - t;
+	}
 	HWP_SPAN_END(t, HWP_PLANE);
 }
 #define HWR_RenderPlane HWR_RenderPlaneTimed
@@ -2349,6 +2389,21 @@ static void HWR_ProcessSegC(void)
 
 
 	HWC_ADD(HWC_SEGS);
+#ifdef IR_CENSUS
+	ir_cen[0]++;
+	if (sg->polyseg)
+		ir_cen[1]++;
+	if ((gl_frontsector && gl_frontsector->ffloors) || (gl_backsector && gl_backsector->ffloors))
+		ir_cen[2]++;
+	if ((gl_frontsector && (gl_frontsector->f_slope || gl_frontsector->c_slope)) || (gl_backsector && (gl_backsector->f_slope || gl_backsector->c_slope)))
+		ir_cen[3]++;
+	if ((gl_frontsector && gl_frontsector->heightsec >= 0) || (gl_backsector && gl_backsector->heightsec >= 0))
+		ir_cen[4]++;
+	if ((gl_frontsector && gl_frontsector->numlights) || (gl_backsector && gl_backsector->numlights))
+		ir_cen[5]++;
+	if (sg->linedef->alpha != FRACUNIT || sg->linedef->blendmode)
+		ir_cen[6]++;
+#endif
 	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
 		return;
 	if (!gc.on || sg->polyseg || !currently_batching || (gc.mode & 8))
@@ -2375,8 +2430,8 @@ static void HWR_ProcessSegC(void)
 			{
 				const UINT32 t1 = ps2hwp_now();
 
-				if (!(rh->nwall == 0 && !gc.test_res && polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize) // (room, no allocation: the usual case)
-					&& !HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall))
+				if (!(rh->nwall == 0 && !gc.test_res && HWR_GCArraysOK(rh)) // (room, no allocation: the usual case)
+					&& !(HWR_GCReserve(rh->npoly, rh->nvert, rh->nwall) && HWR_GCArraysOK(rh)))
 				{
 					HWR_ProcessSeg(); // (the allocation took the cache's memory: this seg is made the long way)
 					HWP_SPAN_END(t, HWP_SEG);
@@ -2387,7 +2442,10 @@ static void HWR_ProcessSegC(void)
 					gc_src_patch((gcrh_t *)rh, (UINT32)e->len);
 				gl_sidedef = sg->sidedef;
 				gl_linedef = sg->linedef;
-				gc_replay(rh, (UINT32)e->len);
+				if (rh->flags & 4)
+					gc_replay_blk(rh, (UINT32)e->len);
+				else
+					gc_replay(rh, (UINT32)e->len);
 				gc.s_seg_hit++;
 				gc.w_q++;
 				gc.w_hit++;
@@ -2419,10 +2477,14 @@ static void HWR_ProcessSegC(void)
 		{
 			const UINT32 t1 = ps2hwp_now();
 			const UINT32 bad0 = gc.s_bad;
+			UINT32 va = 0, vb = 0;
 
+			if (hit)
+				HWR_GCVerifyBegin(check, gc.ar + e->off, (UINT32)e->len, &va, &vb);
 			gc_rec_begin(check, gckey, kn);
 			HWR_ProcessSeg();
 			gc_rec_end(e, id * 2u, 0, check, "seg", id);
+			HWR_GCVerifyEnd(check, va, vb, "seg", id);
 			{
 				const UINT32 cyc = ps2hwp_now() - t1;
 				const UINT32 bk = cyc >> 9 < 9 ? cyc >> 9 : 9;
@@ -8835,6 +8897,9 @@ static void HWR_SetupView(player_t *player, INT32 viewnumber, float fpov, boolea
 			R_SkyboxFrame(player);
 		else
 			R_SetupFrame(player);
+#ifdef IR_CENSUS
+		HWR_CensusPolyobj();
+#endif
 		HWP_SPAN_END(tfr, HWP_S_FRAME);
 	}
 
@@ -9011,6 +9076,43 @@ void HWR_RenderSkyboxView(INT32 viewnumber, player_t *player)
 // ==========================================================================
 //
 // ==========================================================================
+#ifdef IR_CENSUS
+#include "../p_polyobj.h"
+// (measurement build only, -hwcenpo: every 25 frames the view is put 192 units from the centre of the next polyobject of the level, looking at it, to have polyobjects in the view of the checks;
+// the game itself is not touched: only the view variables the renderer reads, right after R_SetupFrame)
+static void HWR_CensusPolyobj(void)
+{
+	static int frn = -1;
+	static const polyobj_t *po;
+
+	if (frn == -1)
+		frn = M_CheckParm("-hwcenpo") ? 0 : -2;
+	if (frn < 0 || numPolyObjects <= 0)
+		return;
+	frn++;
+	if (frn >= 30 && (frn % 25) == 0)
+	{
+		po = &PolyObjects[(frn / 25) % numPolyObjects];
+		I_OutputMsg("HWCENPO frame %d polyobject %d of %d at %d,%d segs %d\n", frn, (int)((frn / 25) % numPolyObjects), (int)numPolyObjects, (int)(po->centerPt.x >> FRACBITS), (int)(po->centerPt.y >> FRACBITS), (int)po->segCount);
+	}
+	if (po)
+	{
+		const fixed_t cx = po->centerPt.x, cy = po->centerPt.y;
+		const fixed_t px = cx - 192 * FRACUNIT, py = cy;
+		subsector_t *ss = R_PointInSubsector(px, py);
+
+		viewx = px;
+		viewy = py;
+		viewz = (ss ? ss->sector->floorheight : 0) + 41 * FRACUNIT;
+		viewangle = R_PointToAngle2(px, py, cx, cy);
+		viewsin = FINESINE(viewangle >> ANGLETOFINESHIFT);
+		viewcos = FINECOSINE(viewangle >> ANGLETOFINESHIFT);
+		if (ss)
+			viewsector = ss->sector;
+	}
+}
+#endif
+
 void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
 {
 	HWP_LOCAL;
@@ -9566,6 +9668,42 @@ static boolean HWR_GCReserve(UINT32 np, UINT32 nv, UINT32 nw)
 		}
 	}
 	return gc.blk != NULL;
+}
+
+// OPT13 IR: room for the replay of a record: the arrays of the earlier collection, or the pool of the block collection (it grows here, before anything is replayed)
+static boolean HWR_GCArraysOK(const void *vrh)
+{
+	const gcrh_t *rh = (const gcrh_t *)vrh;
+
+	if (!(hwr_geo_off & 0x10000u))
+		return HWR_PBRoomFor(rh->npoly, rh->nvert) && gc.blk != NULL;
+	return polygonArraySize + (int)rh->npoly <= polygonArrayAllocSize && unsortedVertexArraySize + (int)rh->nvert <= unsortedVertexArrayAllocSize;
+}
+
+// -hwgv 4, check mode (-hwgc 2): before a hit is calculated again (and its record compared) it is replayed for real, without the box test; the polygons the replay collected and those the
+// calculation collects must be the same blocks in the same buckets (HWR_GCVerifyPool). This is what the check of the records alone cannot see: the code of the replay itself.
+static void HWR_GCVerifyBegin(boolean check, const void *vrh, UINT32 len, UINT32 *a, UINT32 *b)
+{
+	const gcrh_t *rh = (const gcrh_t *)vrh;
+
+	*a = *b = 0;
+	if (!check || !(hwr_gv_off & 4) || (hwr_geo_off & 0x10000u) || !currently_batching || (rh->flags & 2) || !gc.blk)
+		return;
+	if (!HWR_GCArraysOK(rh) || !gc.blk)
+		return;
+	*a = HWR_PBCount();
+	HWR_PBNoCull(1);
+	gc_replay(rh, len);
+	HWR_PBNoCull(0);
+	*b = HWR_PBCount();
+	if (*b == *a)
+		*a = *b = 0;
+}
+
+static void HWR_GCVerifyEnd(boolean check, UINT32 a, UINT32 b, const char *what, UINT32 id)
+{
+	if (check && b > a)
+		HWR_GCVerifyPool(a, b, HWR_PBCount(), what, id);
 }
 #endif
 

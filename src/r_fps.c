@@ -1039,7 +1039,11 @@ static inline void R_ResetMobjInterpolationStateInline(mobj_t *mobj)
 }
 
 #ifdef PS2_PROFILE
+#ifdef HWRENDER
 extern int ps2hwd_fx2; // ps2/hw/ps2_hw_fx2.h
+#else
+#define ps2hwd_fx2 0 // (OPT13 IR: the software-only PS2 build, golden_full.sh, has no hardware driver and did not link with the extern above)
+#endif
 #define R_FPS_NOMERGE __asm__ volatile("" ::: "memory") // (the compiler would merge the word copies into double word moves: this path is the one before OPT13 IS)
 #define R_FX4_NOINTERP2 0x40000000 // -hwfx 1073741824: the interpolation state is moved word by word, as before OPT13 IS (A/B on one ELF)
 
