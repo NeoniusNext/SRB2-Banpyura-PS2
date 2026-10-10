@@ -7,6 +7,12 @@ local function P(...)
 	for i = 1, select("#", ...) do s[#s+1] = tostring(t[i]) end
 	print("LQ " .. table.concat(s, " "))
 end
+-- (a game that is not a demo starts with a random seed: the script's own generator keeps both builds on the same numbers)
+local rseed = 12345
+local function rnd(a, b)
+	rseed = (rseed * 75 + 74) % 65537
+	return a + rseed % (b - a + 1)
+end
 local LEVELTICS = 1500
 local MAPS = {1, 2, 4, 1, 5, 2, 1, 4}
 local mi = 1
@@ -59,8 +65,8 @@ addHook("ThinkFrame", function()
 	p.powers[pw_invulnerability] = 3
 	local t = leveltime
 	if t % 3 == 0 and t < LEVELTICS - 60 then
-		local o = P_SpawnMobj(p.mo.x + P_RandomRange(-100, 100) * FRACUNIT, p.mo.y + P_RandomRange(-100, 100) * FRACUNIT, p.mo.z + 40 * FRACUNIT, MT_B)
-		if o then o.health = P_RandomRange(0, 20) end
+		local o = P_SpawnMobj(p.mo.x + rnd(-100, 100) * FRACUNIT, p.mo.y + rnd(-100, 100) * FRACUNIT, p.mo.z + 40 * FRACUNIT, MT_B)
+		if o then o.health = rnd(0, 20) end
 	end
 	g = g + garbage(20 + t % 30)
 	if t % 5 == 0 then
