@@ -1303,6 +1303,12 @@ void HWR_PBProf(unsigned int frames)
 		pb_nslow / frames, pb_nfind / frames, pb_ncreate / frames, pb_nbatches / frames, pb_nplanned / frames, pb_cap, pb_nfail);
 	pb_nfail = 0;
 	pb_nplanned = pb_ngen = pb_nslow = pb_nfind = pb_ncreate = pb_nbuckets = pb_npolys = pb_nflush = pb_nbatches = 0;
+#ifdef IR_CENSUS
+	{
+		extern UINT32 ir_cen[16];
+		I_OutputMsg("HWCEN segs=%u polyseg=%u ffloor=%u slope=%u heightsec=%u lights=%u trans=%u | planes=%u slope=%u ffloor=%u trans=%u\n", ir_cen[0], ir_cen[1], ir_cen[2], ir_cen[3], ir_cen[4], ir_cen[5], ir_cen[6], ir_cen[8], ir_cen[9], ir_cen[10], ir_cen[11]);
+	}
+#endif
 	I_OutputMsg("HWPROF70 stored records v3: blocks=%u culled=%u (planes right=%u left=%u top=%u bottom=%u near=%u gate off %u) resolved=%u runs=%u | recorded=%u not=%u stfull=%u states=%u grew=%u | verify=%u bad=%u cullbad=%u | cycles run=%u cull=%u\n",
 		pb_v3_polys / frames, pb_v3_culled / frames, pb_v3_cull[0] / frames, pb_v3_cull[1] / frames, pb_v3_cull[2] / frames, pb_v3_cull[3] / frames, pb_v3_cull[4] / frames, pb_cg_off,
 		pb_v3_resolve / frames, pb_v3_runs / frames, pb_v3_rec, pb_v3_recfail, pb_v3_stfull, pb_nst, pb_v3_grow, pb_v3_vchk, pb_v3_vbad, pb_v3_cullbad, pb_v3_cyc / frames, pb_v3_cyc_cull / frames);

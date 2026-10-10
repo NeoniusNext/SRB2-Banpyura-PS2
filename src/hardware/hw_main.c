@@ -1025,6 +1025,9 @@ gc_plane_nocache:
 #endif
 }
 
+#ifdef IR_CENSUS // (measurement build only: which features the maps and demos have - the coverage of the checks)
+UINT32 ir_cen[16];
+#endif
 #ifdef PS2_PROFILE // PS2-HW-40: inclusive timer of the plane builder (HWPROF2 "plane")
 UINT32 hwr_plc[4], hwr_plcyc[4]; // OPT13 IR: planes (a sector's, a 3D floor's, and the translucent ones) in a window: number and cycles
 UINT32 hwr_plkey, hwr_plhit, hwr_plhitn; // ... the key and the replay of the planes the cache served, and how many
@@ -1032,6 +1035,17 @@ static void HWR_RenderPlaneTimed(subsector_t *subsector, extrasubsector_t *xsub,
 {
 	HWP_SPAN_BEGIN(t);
 	HWC_ADD(HWC_PLANES);
+#ifdef IR_CENSUS
+	ir_cen[8]++;
+	if (subsector->sector->f_slope || subsector->sector->c_slope || (FOFsector && (FOFsector->f_slope || FOFsector->c_slope)))
+		ir_cen[9]++;
+	if (FOFsector)
+		ir_cen[10]++;
+	if (PolyFlags & (PF_Translucent | PF_Fog | PF_Additive | PF_Subtractive | PF_ReverseSubtract | PF_Multiplicative | PF_Environment))
+		ir_cen[11]++;
+	if (FOFsector && (FOFsector->ffloors == NULL) && FOFsector->heightsec >= 0)
+		ir_cen[12]++;
+#endif
 #ifdef PS2_HWDETAIL
 	HWR_FrCensusBegin();
 	hwr_fr_src = FRC_PLANE;
@@ -2372,6 +2386,21 @@ static void HWR_ProcessSegC(void)
 
 
 	HWC_ADD(HWC_SEGS);
+#ifdef IR_CENSUS
+	ir_cen[0]++;
+	if (sg->polyseg)
+		ir_cen[1]++;
+	if ((gl_frontsector && gl_frontsector->ffloors) || (gl_backsector && gl_backsector->ffloors))
+		ir_cen[2]++;
+	if ((gl_frontsector && (gl_frontsector->f_slope || gl_frontsector->c_slope)) || (gl_backsector && (gl_backsector->f_slope || gl_backsector->c_slope)))
+		ir_cen[3]++;
+	if ((gl_frontsector && gl_frontsector->heightsec >= 0) || (gl_backsector && gl_backsector->heightsec >= 0))
+		ir_cen[4]++;
+	if ((gl_frontsector && gl_frontsector->numlights) || (gl_backsector && gl_backsector->numlights))
+		ir_cen[5]++;
+	if (sg->linedef->alpha != FRACUNIT || sg->linedef->blendmode)
+		ir_cen[6]++;
+#endif
 	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
 		return;
 	if (!gc.on || sg->polyseg || !currently_batching || (gc.mode & 8))
