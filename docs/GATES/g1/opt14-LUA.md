@@ -87,6 +87,9 @@ if a user script recurses without bound through `gsub`/`sort` callbacks this is 
   Second defect of the same lines: upstream's `Z_Free` invalidates the Lua userdata of the object, the cache branch did not, so a script that held a mobj of the old state kept `mo.valid == true` for
   an object the savegame had replaced and that was later reused as a different one.
 * Fix: precipitation -> `Z_Free` (as upstream); every other mobj -> `LUA_InvalidateUserdata` first, then the cache. No behaviour change outside the netgame load path.
+* **Not reproduced.** Found by reading `P_RemoveSavegameMobj`; the sizes are measured (212 and 416 bytes). A PS2 client that joins a PC server on MAP32 (`lua-join-rain`, the mod `lm_net.lua`) runs to gametic 4000 and is SAME as the PC
+  also on the pre-fix `--debug` ELF (`build/out-dbg`, ZDEBUG red zones on, no trashed block reported), so the stand shows no failure for it: the overwrite needs a precipitation block to be handed out by the cache
+  before the level ends and a check to look at the block behind it. It is a defect of the code (and of the Lua validity of replaced mobjs) that I could not make visible; the fix is the upstream behaviour.
 
 ### Memory note found on the way
 
