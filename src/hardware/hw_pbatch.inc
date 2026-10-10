@@ -1306,7 +1306,8 @@ void HWR_PBProf(unsigned int frames)
 #ifdef IR_CENSUS
 	{
 		extern UINT32 ir_cen[16];
-		I_OutputMsg("HWCEN segs=%u polyseg=%u ffloor=%u slope=%u heightsec=%u lights=%u trans=%u | planes=%u slope=%u ffloor=%u trans=%u\n", ir_cen[0], ir_cen[1], ir_cen[2], ir_cen[3], ir_cen[4], ir_cen[5], ir_cen[6], ir_cen[8], ir_cen[9], ir_cen[10], ir_cen[11]);
+		extern INT32 numPolyObjects;
+		I_OutputMsg("HWCEN segs=%u polyseg=%u ffloor=%u slope=%u heightsec=%u lights=%u trans=%u | planes=%u slope=%u ffloor=%u trans=%u | polyobjects in the level=%d\n", ir_cen[0], ir_cen[1], ir_cen[2], ir_cen[3], ir_cen[4], ir_cen[5], ir_cen[6], ir_cen[8], ir_cen[9], ir_cen[10], ir_cen[11], (int)numPolyObjects);
 	}
 #endif
 	I_OutputMsg("HWPROF70 stored records v3: blocks=%u culled=%u (planes right=%u left=%u top=%u bottom=%u near=%u gate off %u) resolved=%u runs=%u | recorded=%u not=%u stfull=%u states=%u grew=%u | verify=%u bad=%u cullbad=%u | cycles run=%u cull=%u\n",
