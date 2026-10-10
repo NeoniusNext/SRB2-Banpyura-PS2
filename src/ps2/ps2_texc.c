@@ -67,7 +67,7 @@ static struct
 	UINT32 nkeys;
 	INT32 ntex; // the texture list the per-texture tables below belong to
 	UINT16 *tlump; // per texture: 0 not looked up, 0xFFFF the pack has none, else lump + 1
-	UINT8 *arena; // the stored form of the textures of the level (PU_LEVEL: the zone clears the pointer with the level)
+	UINT8 *arena; // the stored form of the textures of the level (PU_LEVEL while it is filled, then PU_CACHE: the zone clears the pointer when it takes the block back)
 	UINT32 *toff; // per texture: offset in arena + 1, or 0
 	size_t budget; // -texcmem KiB: the most the prefetch keeps
 	UINT32 s_hit, s_miss, s_fail, s_resident, s_read; // window counters: stored composites used / textures the pack has none of / damaged / from the prefetch / lumps read in the frame
@@ -372,6 +372,7 @@ boolean PS2TexC_Fetch(INT32 texnum, UINT8 *dest, size_t bytes)
 	}
 	if (TC.arena && TC.toff && TC.toff[texnum])
 	{
+		Z_Touch(TC.arena); // (in use: the zone takes the stored forms back only when nothing has asked for them for a frame)
 		blob = TC.arena + TC.toff[texnum] - 1;
 		TC.s_resident++;
 	}
@@ -587,6 +588,7 @@ void PS2TexC_PrefetchLevel(void)
 	{
 		TC.pre_n = (UINT32)nu;
 		TC.pre_bytes = total;
+		Z_ChangeTag(TC.arena, PU_CACHE); // a cache: the stored forms are a luxury, the zone takes the block back (TC.arena becomes NULL, the lumps are read one by one) when a geometry cache or a frame needs the room
 	}
 	Z_Free(run);
 	Z_Free(mark);
