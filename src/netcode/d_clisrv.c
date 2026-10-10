@@ -1275,6 +1275,47 @@ void GetPackets(void)
 	}
 }
 
+#ifdef NETSYNC_DIAG
+// OPT14-CHAT (test stand only: the PC build of tools/ps2/net_env.py): "-diagsay 400:hello there|900:another" runs "say <text>" in the console of this engine at that game tic.
+// A PC client has no console input without a terminal (stdin is not a tty: sdl/i_system.c), and the chat of the PS2 needs a second talker.
+static void NetDiagSay(void)
+{
+	static char spec[1024];
+	static INT32 state; // 0 = not read, 1 = reading, -1 = none
+	static const char *pos;
+	char *end;
+	tic_t at;
+
+	if (state == 0)
+	{
+		state = -1;
+		if (M_CheckParm("-diagsay") && M_IsNextParm())
+		{
+			strlcpy(spec, M_GetNextParm(), sizeof spec);
+			pos = spec;
+			state = 1;
+		}
+	}
+	if (state != 1 || !netgame || gamestate != GS_LEVEL || !pos || !*pos)
+		return;
+	at = (tic_t)strtoul(pos, &end, 10);
+	if (*end != ':' || gametic < at)
+		return;
+	{
+		char cmd[300];
+		size_t n = 0;
+		const char *q = end + 1;
+
+		while (*q && *q != '|' && n < sizeof cmd - 8)
+			cmd[n++] = *q++;
+		cmd[n] = '\0';
+		pos = *q ? q + 1 : q;
+		CONS_Printf("DIAGSAY gametic=%u: say %s\n", (unsigned)gametic, cmd);
+		COM_BufAddText(va("say \"%s\"\n", cmd));
+	}
+}
+#endif
+
 #if defined (PS2_PROFILE) || defined (NETSYNC_DIAG)
 // PS2-133: "-netsync" prints, once per second of game tics, a checksum of everything the players' state consists of. The same line from two
 // machines of one game (PS2 server and PC client, or the reverse) with the same gametic must match: that is the proof of a synchronous game.
@@ -1522,6 +1563,9 @@ boolean TryRunTics(tic_t realtics)
 				consistancy[gametic%BACKUPTICS] = Consistancy();
 #if defined (PS2_PROFILE) || defined (NETSYNC_DIAG)
 				NetSyncLog();
+#endif
+#ifdef NETSYNC_DIAG
+				NetDiagSay();
 #endif
 
 				if (update_stats)
