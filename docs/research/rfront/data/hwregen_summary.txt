@@ -1,0 +1,20 @@
+build/runs/r0_d1/boot.txt: 20 events, 145 M cycles; first 100 frames: 13 events 101 M; later: 7 events 44 M
+   f=54 T:SKY1 1024x512 20.9 M (zone free 11504 K, dropped by 0)
+   f=633 T:SKY1 1024x512 20.9 M (zone free 231 K, dropped by 1)
+   f=77 T:SKY1 1024x512 18.5 M (zone free 3705 K, dropped by 1)
+   f=54 T:GFZWALL2 1024x512 17.5 M (zone free 5388 K, dropped by 0)
+build/runs/r0_d2/boot.txt: 19 events, 123 M cycles; first 100 frames: 8 events 58 M; later: 11 events 65 M
+   f=959 T:SKY4 512x768 28.6 M (zone free 939 K, dropped by 1)
+   f=54 T:SKY4 512x768 26.2 M (zone free 4871 K, dropped by 0)
+   f=836 T:THPIPMT4 64x1536 5.4 M (zone free 371 K, dropped by 1)
+   f=78 T:THROCKM1 256x256 5.0 M (zone free 3219 K, dropped by 0)
+build/runs/r0_d3/boot.txt: 4 events, 47 M cycles; first 100 frames: 4 events 47 M; later: 0 events 0 M
+   f=54 T:SKY8 1024x512 37.5 M (zone free 3182 K, dropped by 0)
+   f=54 F:DSROCK_1 256x256 3.1 M (zone free 1306 K, dropped by 0)
+   f=54 F:DSTILE_1 256x256 3.0 M (zone free 1108 K, dropped by 0)
+   f=54 T:DSDORG3 256x256 3.0 M (zone free 2082 K, dropped by 0)
+build/runs/r0_d4/boot.txt: 13 events, 164 M cycles; first 100 frames: 8 events 85 M; later: 5 events 79 M
+   f=78 T:GFZWALLB 1024x1024 27.1 M (zone free 5290 K, dropped by 0)
+   f=1024 T:SKY1 1024x512 25.3 M (zone free 2395 K, dropped by 1)
+   f=954 T:SKY1 1024x512 25.1 M (zone free 1625 K, dropped by 1)
+   f=504 T:SKY1 1024x512 22.4 M (zone free 2636 K, dropped by 1)

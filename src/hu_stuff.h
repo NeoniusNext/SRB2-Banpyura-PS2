@@ -65,7 +65,11 @@ typedef struct
 //------------------------------------
 #define HU_MAXMSGLEN 223
 #define CHAT_BUFSIZE 64		// that's enough messages, right? We'll delete the older ones when that gets out of hand.
-#ifdef NETSPLITSCREEN
+#ifdef PS2
+// OPT14-CHAT: the PS2 picture is 320x200, below the 640 px that the window chat was written for, and the console chat would be all there was on it (the last lines of the
+// console over the HUD). The window chat is drawn there with the thin font at full size (hu_stuff.c, CHATTHIN): the menu font at half size is unreadable on 320x200.
+#define OLDCHAT (cv_consolechat.value == 1 || dedicated || splitscreen)
+#elif defined(NETSPLITSCREEN)
 #define OLDCHAT (cv_consolechat.value == 1 || dedicated || vid.width < 640)
 #else
 #define OLDCHAT (cv_consolechat.value == 1 || dedicated || vid.width < 640 || splitscreen)
@@ -87,6 +91,14 @@ void HU_AddChatText(const char *text, boolean playsound);
 
 // set true when entering a chat message
 extern boolean chat_on;
+
+// OPT14-CHAT: opens the chat line as the talk key (team: the team key) does, for the menus of the PS2 port; false when a chat cannot be opened now
+// (no netgame, the old chat of a muted player, no level). `PS2` only: the PC engine has its keys.
+#ifdef PS2
+boolean HU_OpenChat(boolean team);
+boolean HU_ChatAvailable(void); // a chat line can be opened now (a netgame, a gamestate that takes it)
+boolean HU_ChatTeamAvailable(void); // the gametype has teams: "Team Chat" is a real choice
+#endif
 
 extern UINT8 spam_tokens[MAXPLAYERS];
 extern tic_t spam_tics[MAXPLAYERS];

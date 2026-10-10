@@ -84,6 +84,9 @@ struct GLMipmap_s
 	UINT8                 ps2_vis; // some polygon of the frame is visible at all
 	UINT32                ps2_full_fr; // driver frame + 1 of the last draw that needed the full size without a plan (the next plans keep the full size)
 	UINT32                ps2_gcv; // OPT11 (PS2-HW-80): the view of the geometry cache whose replay last made this texture the current one (once per view is enough)
+	UINT32                ps2_spv; // OPT13 IS (PS2-HW-700): the sprite view (hw_main.c hwr_fx_view) whose fused sprite draw last made this texture current (touch and tag change once per view)
+	UINT8                 ps2_nup, ps2_drop; // OPT12 HWDRV (PS2-HW-441): uploads of this texture so far (saturating) / why its VRAM image was dropped last (1 evicted, 2 upgrade, 3 downgrade, 4 cap, 5 other)
+	UINT8                 ps2_cost; // OPT12 HWDRV (PS2-HW-442): what the last make-again of its data cost, in units of 2^18 cycles (0 = never made again, 255 = more)
 #endif
 };
 typedef struct GLMipmap_s GLMipmap_t;

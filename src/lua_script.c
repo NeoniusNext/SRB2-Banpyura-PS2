@@ -35,6 +35,10 @@
 #include "lua_script.h"
 #include "lua_libs.h"
 #include "lua_hook.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1
+#ifdef PS2
+#include "m_argv.h" // -luastackmargin
+#endif
 
 #include "doomstat.h"
 #include "g_state.h"
@@ -79,6 +83,306 @@ static void *LUA_Alloc(void *ud, void *ptr, size_t osize, size_t nsize)
 	} else
 		return Z_Realloc(ptr, nsize, PU_LUA, NULL);
 }
+
+#ifdef PS2_PROFILE
+static int lua_heap_after_collect; // KB (PS2-LOAD-18: see LUA_CollectAfterScript)
+
+// PS2-LOAD-18: the allocator of the main Lua state. Every table, string, closure and prototype of a mod went through Z_Realloc (ZA_Alloc's address ordered search over
+// the free blocks of the arena, ~3000 cycles when the arena is busy, and a hole of its own in the arena for each object). Blocks up to 512 bytes now come from 16 KB slabs
+// of the zone (PU_LUA) carved in sizes of a multiple of 16 bytes, freed objects go to a list per size and are reused by the next allocation of that size; larger blocks
+// are Z_Realloc blocks as before. Lua tells the size of every block it frees or resizes, so the blocks have no header. The slabs go back to the zone when the state is closed.
+#define LPOOL_MAXSIZE 512
+#define LPOOL_CLASSES (LPOOL_MAXSIZE / 16)
+#define LPOOL_SLAB (16*1024)
+typedef struct lpfree_s { struct lpfree_s *next; } lpfree_t;
+typedef struct lpslab_s { struct lpslab_s *next; UINT32 pad[3]; } lpslab_t; // 16 bytes: the blocks after it stay 16-byte aligned (the zone gives 16-byte aligned payloads)
+
+// OPT14 (PS2-LUA-4): the first version never gave a slab back. A freed block can only be reused for its own size, so a script that makes and drops many objects of one size and then many of
+// another kept the memory of the first for the rest of the run (measured: tools/ps2/luatests/lt_heap.lua, BIG.pk3 of 100 scripts, 3.6 MB of live objects, 6.65 MB of pool after
+// four rounds of garbage of different sizes; the original, one zone block per object, gave the memory back). The directory below lists the slabs by address and says how many bytes
+// of each were handed out; LUA_PoolTrim adds up the bytes of each slab that sit on the free lists and returns the slabs that are free in their whole used extent to the zone
+// (never the one being carved). It runs where nothing of the heap is in transit: after the full collection at the end of loading, every few seconds from LUA_Step when enough
+// is on the lists, and as a reclaim hook of the zone when an allocation would fail (the hook only frees).
+#define LPOOL_DIRMAX 1024 // slabs the trim knows (16 MB of Lua heap); a slab past that is only given back when the state is closed
+typedef struct
+{
+	lpslab_t *slab[LPOOL_DIRMAX]; // sorted by address
+	UINT32 used[LPOOL_DIRMAX]; // bytes handed out of the slab (set when the slab is no longer the one being carved)
+	UINT32 freed[LPOOL_DIRMAX]; // scratch of LUA_PoolTrim
+	UINT32 n;
+} lpdir_t;
+
+static lpfree_t *lpool_free[LPOOL_CLASSES];
+static lpslab_t *lpool_slabs;
+static lpslab_t *lpool_cur; // the slab lpool_bump points into
+static lpdir_t *lpool_dir; // PU_LUA block, made with the state
+static size_t lpool_freebytes; // bytes on the free lists
+static UINT8 *lpool_bump;
+static size_t lpool_left;
+static UINT32 lpool_trimmed; // slabs given back (statistics)
+
+#define LPOOL_DEAD 0xFFFFFFFFu
+
+// index of the slab of the directory that holds p, or d->n
+static UINT32 LUA_PoolSlabIndex(const lpdir_t *d, const void *p)
+{
+	UINT32 lo = 0, hi = d->n;
+
+	while (lo < hi) // the first slab above p
+	{
+		const UINT32 mid = (lo + hi) >> 1;
+
+		if ((const UINT8 *)d->slab[mid] <= (const UINT8 *)p)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	if (lo && (const UINT8 *)p < (const UINT8 *)d->slab[lo - 1] + LPOOL_SLAB)
+		return lo - 1;
+	return d->n;
+}
+
+static void LUA_PoolDirAdd(lpslab_t *slab)
+{
+	lpdir_t *d = lpool_dir;
+	UINT32 i, lo = 0, hi;
+
+	if (!d || d->n >= LPOOL_DIRMAX)
+		return;
+	hi = d->n;
+	while (lo < hi)
+	{
+		const UINT32 mid = (lo + hi) >> 1;
+
+		if ((UINT8 *)d->slab[mid] < (UINT8 *)slab)
+			lo = mid + 1;
+		else
+			hi = mid;
+	}
+	for (i = d->n; i > lo; i--)
+	{
+		d->slab[i] = d->slab[i - 1];
+		d->used[i] = d->used[i - 1];
+	}
+	d->slab[lo] = slab;
+	d->used[lo] = 0;
+	d->n++;
+}
+
+static void *LUA_PoolGet(size_t size) // size: 1..LPOOL_MAXSIZE
+{
+	const size_t c = (size - 1) >> 4;
+	lpfree_t *f = lpool_free[c];
+
+	if (f)
+	{
+		lpool_free[c] = f->next;
+		lpool_freebytes -= (c + 1) << 4;
+		return f;
+	}
+	size = (c + 1) << 4;
+	if (lpool_left < size)
+	{
+		lpslab_t *slab = Z_Malloc(LPOOL_SLAB, PU_LUA, NULL); // (this may call the reclaim hook: LUA_PoolTrim, which leaves lpool_cur alone)
+
+		if (lpool_cur && lpool_dir)
+		{
+			const UINT32 i = LUA_PoolSlabIndex(lpool_dir, lpool_cur);
+
+			if (i < lpool_dir->n)
+				lpool_dir->used[i] = (UINT32)(lpool_bump - ((UINT8 *)lpool_cur + sizeof *lpool_cur));
+		}
+		slab->next = lpool_slabs;
+		lpool_slabs = slab;
+		lpool_cur = slab;
+		LUA_PoolDirAdd(slab);
+		lpool_bump = (UINT8 *)slab + sizeof *slab;
+		lpool_left = LPOOL_SLAB - sizeof *slab; // (what is left of the old slab, less than size, is not used)
+	}
+	f = (lpfree_t *)lpool_bump;
+	lpool_bump += size;
+	lpool_left -= size;
+	return f;
+}
+
+static void LUA_PoolPut(void *ptr, size_t size)
+{
+	lpfree_t *f = ptr;
+	const size_t c = (size - 1) >> 4;
+
+	f->next = lpool_free[c];
+	lpool_free[c] = f;
+	lpool_freebytes += (c + 1) << 4;
+}
+
+// Gives back the slabs whose whole used extent is on the free lists; returns the bytes freed. Allocates nothing (it may run inside an allocation of the zone).
+static size_t LUA_PoolTrim(size_t want)
+{
+	lpdir_t *d = lpool_dir;
+	lpslab_t *s, **pp;
+	UINT32 i, n, dead = 0;
+	size_t c, bytes = 0;
+	lpfree_t *f, **fp;
+
+	(void)want;
+	if (!d || d->n < 2 || lpool_freebytes < LPOOL_SLAB / 2)
+		return 0;
+	n = d->n;
+	for (i = 0; i < n; i++)
+		d->freed[i] = 0;
+	for (c = 0; c < LPOOL_CLASSES; c++)
+		for (f = lpool_free[c]; f; f = f->next)
+		{
+			i = LUA_PoolSlabIndex(d, f);
+			if (i < n)
+				d->freed[i] += (UINT32)((c + 1) << 4);
+		}
+	for (i = 0; i < n; i++)
+		if (d->slab[i] != lpool_cur && d->used[i] && d->freed[i] == d->used[i])
+		{
+			d->freed[i] = LPOOL_DEAD;
+			dead++;
+		}
+	if (!dead)
+		return 0;
+	for (c = 0; c < LPOOL_CLASSES; c++)
+	{
+		fp = &lpool_free[c];
+		while ((f = *fp) != NULL)
+		{
+			i = LUA_PoolSlabIndex(d, f);
+			if (i < n && d->freed[i] == LPOOL_DEAD)
+			{
+				*fp = f->next;
+				lpool_freebytes -= (c + 1) << 4;
+			}
+			else
+				fp = &f->next;
+		}
+	}
+	pp = &lpool_slabs;
+	while ((s = *pp) != NULL)
+	{
+		i = LUA_PoolSlabIndex(d, s);
+		if (i < n && d->freed[i] == LPOOL_DEAD)
+		{
+			*pp = s->next;
+			bytes += LPOOL_SLAB;
+			Z_Free(s);
+		}
+		else
+			pp = &s->next;
+	}
+	for (i = 0, c = 0; i < n; i++) // the directory without the slabs that went
+		if (d->freed[i] != LPOOL_DEAD)
+		{
+			d->slab[c] = d->slab[i];
+			d->used[c] = d->used[i];
+			c++;
+		}
+	d->n = (UINT32)c;
+	lpool_trimmed += dead;
+	return bytes;
+}
+
+void LUA_PoolTrimNow(void) // after a full collection (collectgarbage())
+{
+	LUA_PoolTrim(0);
+}
+
+static size_t LUA_PoolReclaim(size_t want) // the hook of the zone
+{
+	const size_t freebytes = lpool_freebytes;
+	const size_t got = LUA_PoolTrim(want);
+
+	if (got)
+		CONS_Printf("Lua heap: %lu KB of empty slabs went back to the zone (a request of %lu KB; %lu KB were on the free lists)\n", (unsigned long)(got >> 10), (unsigned long)(want >> 10), (unsigned long)(freebytes >> 10));
+	return got;
+}
+
+// (for the console command memfree)
+void LUA_PoolStats(size_t *slabs, size_t *freebytes, size_t *trimmed)
+{
+	size_t n = 0;
+	const lpslab_t *s;
+
+	for (s = lpool_slabs; s; s = s->next)
+		n++;
+	*slabs = n;
+	*freebytes = lpool_freebytes;
+	*trimmed = lpool_trimmed;
+}
+
+static void LUA_PoolInit(void) // a new state: the directory
+{
+	lpool_dir = Z_Calloc(sizeof *lpool_dir, PU_LUA, NULL);
+	Z_AddReclaimHook(LUA_PoolReclaim);
+}
+
+static void LUA_PoolRelease(void) // the state is closed: nothing points into the slabs any more
+{
+	Z_RemoveReclaimHook(LUA_PoolReclaim);
+	while (lpool_slabs)
+	{
+		lpslab_t *next = lpool_slabs->next;
+
+		Z_Free(lpool_slabs);
+		lpool_slabs = next;
+	}
+	if (lpool_dir)
+		Z_Free(lpool_dir);
+	lpool_dir = NULL;
+	memset(lpool_free, 0, sizeof lpool_free);
+	lpool_bump = NULL;
+	lpool_left = 0;
+	lpool_cur = NULL;
+	lpool_freebytes = 0;
+}
+
+static void *LUA_PoolAlloc(void *ud, void *ptr, size_t osize, size_t nsize)
+{
+	void *n;
+
+	(void)ud;
+	if (nsize == 0)
+	{
+		if (ptr)
+		{
+			if (osize <= LPOOL_MAXSIZE)
+				LUA_PoolPut(ptr, osize ? osize : 1);
+			else
+				Z_Free(ptr);
+		}
+		return NULL;
+	}
+	if (!ptr)
+		return nsize <= LPOOL_MAXSIZE ? LUA_PoolGet(nsize) : Z_Malloc(nsize, PU_LUA, NULL); // (osize is the kind of object here, not a size)
+	if (osize > LPOOL_MAXSIZE)
+	{
+		if (nsize > LPOOL_MAXSIZE)
+			return Z_Realloc(ptr, nsize, PU_LUA, NULL);
+		n = LUA_PoolGet(nsize); // a big block shrinks below the limit
+		memcpy(n, ptr, nsize);
+		Z_Free(ptr);
+		return n;
+	}
+	if (osize == 0)
+		osize = 1;
+	if (nsize <= LPOOL_MAXSIZE)
+	{
+		if (((osize - 1) >> 4) == ((nsize - 1) >> 4))
+			return ptr; // the same size class
+		n = LUA_PoolGet(nsize);
+		memcpy(n, ptr, osize < nsize ? osize : nsize);
+		LUA_PoolPut(ptr, osize);
+		return n;
+	}
+	n = Z_Malloc(nsize, PU_LUA, NULL); // a pool block grows past the limit
+	memcpy(n, ptr, osize);
+	LUA_PoolPut(ptr, osize);
+	return n;
+}
+#endif
 
 // Panic function Lua calls when there's an unprotected error.
 // This function cannot return. Lua would kill the application anyway if it did.
@@ -570,22 +874,111 @@ static int setglobals(lua_State *L)
 	return luaL_error(L, "Implicit global " LUA_QS " prevented. Create a local variable instead.", csname);
 }
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-18: the zone calls LUA_InvalidateUserdata for every block it frees (the engine may have given a script a userdata of it). With a script loaded that is a
+// lua_getfield of the registry (interning the name "LREG_VALID" again each time) and a table lookup, ~1500 cycles per freed block, thousands per level and many per tic.
+// The pointers that got a userdata are also marked in a bit set (65536 bits since PS2-LUA-2, no false negatives); a block that is not marked cannot be in the table. Marks are never
+// removed, so the set is rebuilt from the table when too many distinct pointers have been marked.
+#define VALIDBITS 65536
+static UINT32 valid_bloom[VALIDBITS / 32];
+static UINT32 valid_marked; // marks made since the last rebuild (a mark is never removed)
+static UINT32 valid_live; // OPT14 (PS2-LUA-2): the entries of the LREG_VALID table, exactly (+1 for a new userdata, -1 for an invalidated one)
+static boolean valid_pending; // OPT14: valid_off can end (the next LUA_RawPushUserdata rebuilds the set)
+static boolean valid_off; // OPT14 (PS2-LUA-2): more live entries than the set can tell apart (> VALIDBITS/8): the table is asked for every freed block, as in the original
+static int valid_ref = LUA_NOREF; // the registry reference of the LREG_VALID table (made in LUA_Load with the table)
+
+static inline UINT32 ValidHash(const void *p)
+{
+	return (UINT32)(((UINT32)(uintptr_t)p >> 3) * 0x9E3779B1u) >> (32 - 16);
+}
+
+static inline void ValidMark(const void *p)
+{
+	const UINT32 h = ValidHash(p);
+
+	valid_bloom[h >> 5] |= 1u << (h & 31);
+	valid_marked++;
+}
+
+static void ValidRebuild(lua_State *L)
+{
+	memset(valid_bloom, 0, sizeof valid_bloom);
+	valid_marked = 0;
+	valid_off = false;
+	valid_pending = false;
+	lua_rawgeti(L, LUA_REGISTRYINDEX, valid_ref);
+	lua_pushnil(L);
+	while (lua_next(L, -2))
+	{
+		if (lua_islightuserdata(L, -2))
+		{
+			const UINT32 h = ValidHash(lua_touserdata(L, -2));
+
+			valid_bloom[h >> 5] |= 1u << (h & 31);
+			valid_marked++;
+		}
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
+	valid_live = valid_marked; // (one mark per entry: the exact count)
+}
+
+// OPT14 (PS2-LUA-2): the first version rebuilt the set whenever a quarter of its bits had been marked, whatever the number of live entries: with more live userdata than that
+// (a script that walks the 6 700 mobjs or the 25 000 lines of a big level keeps one for each) every new userdata rebuilt it, O(n) each, O(n^2) in all. The rebuild now happens
+// only when the live entries are few enough for the set to be worth it (<= 1/8 of the bits, a false positive rate of 12 % at most), otherwise the set is switched off until
+// invalidations bring the live entries under 1/16 of the bits.
+static void ValidRefresh(lua_State *L)
+{
+	if (valid_live > VALIDBITS / 8)
+		valid_off = true;
+	else
+		ValidRebuild(L);
+}
+#endif
+
+#ifdef PS2
+size_t ps2lua_stackfloor; // PS2-LUA-5: see luaD_call (ldo.c)
+size_t PS2Mem_StackFloor(size_t margin); // ps2_mem.c: the bottom of the main thread stack + margin, 0 when unknown
+
+static void LUA_InitStackFloor(void)
+{
+	size_t margin = 40*1024; // (the worst recursion measured, 200 levels of gsub callbacks, leaves 52 KB: it does not meet the floor; what the engine needs below a call from Lua is far less)
+
+	if (M_CheckParm("-luastackmargin") && M_IsNextParm()) // the test: a larger margin makes the check fire at a depth we can reach
+		margin = (size_t)atoi(M_GetNextParm()) * 1024;
+	ps2lua_stackfloor = PS2Mem_StackFloor(margin);
+}
+#endif
+
 // Clear and create a new Lua state, laddo!
 // There's SCRIPTIN to be had!
 static void LUA_ClearState(void)
 {
 	lua_State *L;
 	int i;
+	LP_BEGIN(lps);
 
 	// close previous state
 	if (gL)
 		lua_close(gL);
 	gL = NULL;
+#ifdef PS2_PROFILE
+	LUA_PoolRelease();
+	LUA_PoolInit();
+#ifdef PS2
+	LUA_InitStackFloor();
+#endif
+	lua_heap_after_collect = 0;
+#endif
 
 	CONS_Printf(M_GetText("Pardon me while I initialize the Lua scripting interface...\n"));
 
 	// allocate state
+#ifdef PS2_PROFILE
+	L = lua_newstate(LUA_PoolAlloc, NULL);
+#else
 	L = lua_newstate(LUA_Alloc, NULL);
+#endif
 	lua_atpanic(L, LUA_Panic);
 
 	// open base libraries
@@ -594,7 +987,17 @@ static void LUA_ClearState(void)
 
 	// make LREG_VALID table for all pushed userdata cache.
 	lua_newtable(L);
+#ifdef PS2_PROFILE
+	lua_pushvalue(L, -1);
 	lua_setfield(L, LUA_REGISTRYINDEX, LREG_VALID);
+	valid_ref = luaL_ref(L, LUA_REGISTRYINDEX); // OPT13 IQ-L2 (RTICK L-2): LUA_RawPushUserdata finds the table by this reference (no "LREG_VALID" string to intern and look up on every push)
+	memset(valid_bloom, 0, sizeof valid_bloom);
+	valid_marked = 0;
+	valid_live = 0;
+	valid_off = valid_pending = false;
+#else
+	lua_setfield(L, LUA_REGISTRYINDEX, LREG_VALID);
+#endif
 
 	// make LREG_METATABLES table for all registered metatables
 	lua_newtable(L);
@@ -615,6 +1018,7 @@ static void LUA_ClearState(void)
 
 	// lua state is ready!
 	gL = L;
+	LP_END(LUA_NEWSTATE, lps);
 }
 
 #ifdef _DEBUG
@@ -633,6 +1037,32 @@ void LUA_ClearExtVars(void)
 INT32 lua_lumploading = 0;
 INT32 lua_locallyloading = 0;
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-18: a script was loaded or run. The original collected the whole Lua heap after each of the two steps (a full mark and sweep of every library table,
+// string and function: ~6 M cycles each at 100 scripts, 60 % of the time to load a mod of 100 scripts). Garbage only costs memory, so the full collection happens when
+// the heap has grown by a quarter (and at least 256 KB) since the last one, and when the engine is done loading files. Scripts cannot see the difference apart from
+// collectgarbage("count"), which differs between builds anyway.
+static void LUA_CollectAfterScript(boolean force)
+{
+	int kb = lua_gc(gL, LUA_GCCOUNT, 0);
+
+	if (!force && kb < lua_heap_after_collect + 256 + lua_heap_after_collect / 4)
+		return;
+	lua_gc(gL, LUA_GCCOLLECT, 0);
+	lua_heap_after_collect = lua_gc(gL, LUA_GCCOUNT, 0);
+	LUA_PoolTrim(0); // OPT14 (PS2-LUA-4): the garbage of the scripts just loaded is on the free lists now
+}
+
+// (the end of a batch of files: the garbage of the last scripts goes before the game starts)
+void LUA_CollectLoaded(void)
+{
+	if (gL)
+		LUA_CollectAfterScript(true);
+}
+#else
+#define LUA_CollectAfterScript(force) lua_gc(gL, LUA_GCCOLLECT, 0)
+#endif
+
 // Load a script from a MYFILE
 static inline boolean LUA_LoadFile(MYFILE *f, char *name)
 {
@@ -650,14 +1080,22 @@ static inline boolean LUA_LoadFile(MYFILE *f, char *name)
 	lua_pushcfunction(gL, LUA_GetErrorMessage);
 	errorhandlerindex = lua_gettop(gL);
 
-	success = !luaL_loadbuffer(gL, f->data, f->size, va("@%s",name));
+	{
+		LP_BEGIN(lpp);
+		success = !luaL_loadbuffer(gL, f->data, f->size, va("@%s",name));
+		LP_END(LUA_PARSE, lpp);
+	}
 
 	if (!success) {
 		CONS_Alert(CONS_WARNING,"%s\n",lua_tostring(gL,-1));
 		lua_pop(gL,1);
 	}
 
-	lua_gc(gL, LUA_GCCOLLECT, 0);
+	{
+		LP_BEGIN(lpg);
+		LUA_CollectAfterScript(false);
+		LP_END(LUA_GC, lpg);
+	}
 	lua_remove(gL, errorhandlerindex);
 
 	return success;
@@ -677,12 +1115,20 @@ static inline void LUA_DoFile(boolean noresults)
 	lua_insert(gL, -2); // move the function we're calling to the top.
 	errorhandlerindex = lua_gettop(gL) - 1;
 
-	if (lua_pcall(gL, 0, noresults ? 0 : LUA_MULTRET, lua_gettop(gL) - 1)) {
-		CONS_Alert(CONS_WARNING,"%s\n",lua_tostring(gL,-1));
-		lua_pop(gL,1);
+	{
+		LP_BEGIN(lpr);
+		if (lua_pcall(gL, 0, noresults ? 0 : LUA_MULTRET, lua_gettop(gL) - 1)) {
+			CONS_Alert(CONS_WARNING,"%s\n",lua_tostring(gL,-1));
+			lua_pop(gL,1);
+		}
+		LP_END(LUA_RUN, lpr);
 	}
 
-	lua_gc(gL, LUA_GCCOLLECT, 0);
+	{
+		LP_BEGIN(lpg);
+		LUA_CollectAfterScript(false);
+		LP_END(LUA_GC, lpg);
+	}
 	lua_remove(gL, errorhandlerindex);
 
 	lua_lumploading--; // turn off again
@@ -721,6 +1167,7 @@ static inline MYFILE *LUA_GetFile(UINT16 wad, UINT16 lump, char **name)
 // Load a script from a lump
 boolean LUA_LoadLump(UINT16 wad, UINT16 lump)
 {
+	LP_BEGIN(lpl);
 	char *name = NULL;
 	MYFILE *f = LUA_GetFile(wad, lump, &name);
 	boolean success = LUA_LoadFile(f, name); // actually load file!
@@ -730,6 +1177,7 @@ boolean LUA_LoadLump(UINT16 wad, UINT16 lump)
 	Z_Free(f->data);
 	Z_Free(f);
 
+	LP_END(LUA_LOADLUMP, lpl);
 	return success;
 }
 
@@ -881,7 +1329,16 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
 		return status;
 	}
 
+#ifdef PS2_PROFILE
+	if (valid_pending)
+	{
+		valid_pending = false;
+		ValidRebuild(L);
+	}
+	lua_rawgeti(L, LUA_REGISTRYINDEX, valid_ref); // (the table of LREG_VALID, by its reference: OPT13 IQ-L2)
+#else
 	lua_getfield(L, LUA_REGISTRYINDEX, LREG_VALID);
+#endif
 	I_Assert(lua_istable(L, -1));
 
 	lua_pushlightuserdata(L, data);
@@ -898,6 +1355,17 @@ lpushed_t LUA_RawPushUserdata(lua_State *L, void *data)
 		lua_pushlightuserdata(L, data); // k (store the userdata via the data's pointer)
 		lua_pushvalue(L, -2); // v (copy of the userdata)
 		lua_rawset(L, -4);
+#ifdef PS2_PROFILE
+		// (every lua_State: the registry, and with it LREG_VALID, is shared by the coroutines of a script; the first version marked the main state only, a userdata made
+		// inside a coroutine was then never invalidated: OPT14 PS2-LUA-1)
+		valid_live++;
+		if (!valid_off)
+		{
+			ValidMark(data);
+			if (valid_marked > VALIDBITS / 4)
+				ValidRefresh(L); // (the new pointer is in the table by now)
+		}
+#endif
 
 		// stack is left with the userdata on top, as if getting it had originally succeeded.
 
@@ -917,9 +1385,22 @@ void LUA_InvalidateUserdata(void *data)
 	void **userdata;
 	if (!gL)
 		return;
+#ifdef PS2_PROFILE
+	if (!valid_off)
+	{
+		const UINT32 h = ValidHash(data);
+
+		if (!(valid_bloom[h >> 5] & (1u << (h & 31))))
+			return; // never had a userdata
+	}
+#endif
 
 	// fetch the userdata
+#ifdef PS2_PROFILE
+	lua_rawgeti(gL, LUA_REGISTRYINDEX, valid_ref);
+#else
 	lua_getfield(gL, LUA_REGISTRYINDEX, LREG_VALID);
+#endif
 	I_Assert(lua_istable(gL, -1));
 		lua_pushlightuserdata(gL, data);
 		lua_rawget(gL, -2);
@@ -946,6 +1427,12 @@ void LUA_InvalidateUserdata(void *data)
 		lua_pushnil(gL);
 		lua_rawset(gL, -3);
 	lua_pop(gL, 1); // pop LREG_VALID
+#ifdef PS2_PROFILE
+	if (valid_live)
+		valid_live--;
+	if (valid_off && valid_live <= VALIDBITS / 16)
+		valid_pending = true; // few enough again: the set is rebuilt by the next userdata that a script makes (this runs inside the zone, possibly inside an allocation of the Lua heap)
+#endif
 }
 
 #ifdef PS2_DYNLIMITS
@@ -970,6 +1457,10 @@ void LUA_RemapUserdata(const void *oldp, void *newp)
 	lua_pushlightuserdata(gL, newp); // the cache finds it by the new pointer from now on
 	lua_pushvalue(gL, -2);
 	lua_rawset(gL, -4);
+#ifdef PS2_PROFILE
+	if (!valid_off)
+		ValidMark(newp);
+#endif
 	lua_pushlightuserdata(gL, (void *)oldp);
 	lua_pushnil(gL);
 	lua_rawset(gL, -4);
@@ -1820,6 +2311,19 @@ void LUA_Step(void)
 		return;
 	lua_settop(gL, 0);
 	lua_gc(gL, LUA_GCSTEP, 1);
+#ifdef PS2_PROFILE
+	{
+		// OPT14 (PS2-LUA-4): every ~10 s (350 frames) give back the slabs of the pool that the collector emptied, when 256 KB or more sit on the free lists
+		static UINT32 trimtick;
+
+		if (++trimtick >= 350)
+		{
+			trimtick = 0;
+			if (lpool_freebytes >= 256*1024)
+				LUA_PoolTrim(0);
+		}
+	}
+#endif
 }
 
 void LUA_Archive(save_t *save_p)

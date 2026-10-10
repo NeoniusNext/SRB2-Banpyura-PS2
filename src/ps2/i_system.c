@@ -35,6 +35,9 @@
 #include "../netcode/d_netfil.h"
 
 #include "ps2_boot.h"
+#ifdef HAS_ADDONS
+#include "ps2_addons.h"
+#endif
 #include "ps2_sys.h"
 #include "ps2_mem.h"
 #include "ps2_kbd.h"
@@ -126,8 +129,11 @@ void I_OutputMsg(const char *fmt, ...)
 // Time. GetTimerSystemTime is the kernel's 64-bit bus-clock counter: no wrap handling needed.
 // ---------------------------------------------------------------------------------------------
 
+extern volatile UINT32 ps2net_beat; // ps2_net.c: the beat of the stall watchdog (-netwd)
+
 precise_t I_GetPreciseTime(void)
 {
+	ps2net_beat++; // PS2-NET-3: every loop that waits for something reads the clock; a hang shows as a beat that stands still
 	return GetTimerSystemTime();
 }
 
@@ -179,34 +185,53 @@ void I_StartupTimer(void)
 	elapsed_frames = 0.0;
 }
 
+#ifdef PS2_PROFILE
+unsigned long long ps2prof_sleep_cyc; // (OPT12 HWDRV, PS2-HW-440) defined here, not in ps2_prof.c: that file is not linked into the release build, which still has the HWPROF code; the working cycles printed by HWPROF0 are the wall minus these sleeps and the waits of the driver
+static inline unsigned int sleep_cyc_now(void) { unsigned int v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
+#endif
+
+// PS2-NET-3 (OPT12): the game thread never sleeps with DelayThread. DelayThread is built on the SDK's alarm library (SetTimerAlarm on EE timer 2, software list of alarms),
+// which shares its list with lwIP's WaitSemaEx time-outs and with every other DelayThread; under the network threads' traffic an alarm of the game thread was lost for good
+// (docs/GATES/g1/opt12-NET.md: the guest sat in the EE idle loop, the game thread in WaitSema of its own DelayThread semaphore, no alarm left for it in the library's list; seen in
+// 1 of 3 bring-ups of the network in the Hardware renderer). Here "sleeping" is: drop the thread to the lowest priority and read the clock until the time is up. Every other
+// thread (audio, netman, lwIP, the SDK's own) is above that priority and runs first; nothing but the clock register is needed to wake up.
+void PS2_SleepUs(UINT32 us)
+{
+#ifdef PS2_PROFILE
+	const unsigned int t0 = sleep_cyc_now();
+#endif
+	ee_thread_status_t st;
+	const s32 self = GetThreadId();
+	const precise_t dest = GetTimerSystemTime() + (precise_t)((UINT64)us * (PS2_PRECISION / 1000) / 1000);
+	s32 prio = -1;
+
+	if (ReferThreadStatus(self, &st) >= 0 && st.current_priority < 120)
+	{
+		prio = st.current_priority;
+		ChangeThreadPriority(self, 120);
+	}
+	while ((INT64)(dest - GetTimerSystemTime()) > 0)
+		;
+	if (prio >= 0)
+		ChangeThreadPriority(self, prio);
+#ifdef PS2_PROFILE
+	ps2prof_sleep_cyc += (unsigned int)(sleep_cyc_now() - t0);
+#endif
+}
+
 void I_Sleep(UINT32 ms)
 {
 	if (ms)
-		DelayThread((s32)(ms * 1000));
+		PS2_SleepUs(ms * 1000);
 }
 
-// Thread sleep for all but the last millisecond, spin for the rest.
+// Sleep (see PS2_SleepUs) until the time is up.
 void I_SleepDuration(precise_t duration)
 {
-	const precise_t dest = I_GetPreciseTime() + duration;
-	const INT64 slack = (INT64)(PS2_PRECISION / 1000);
-	precise_t cur = I_GetPreciseTime();
+	const INT64 d = (INT64)duration;
 
-	// two's complement: the counter may wrap
-	while ((INT64)(dest - cur) > slack)
-	{
-		// 147.456 ticks per microsecond: dividing by 148 never oversleeps
-		UINT64 us = (UINT64)((INT64)(dest - cur) - slack) / 148;
-		if (us == 0)
-			break;
-		if (us > 100000)
-			us = 100000;
-		DelayThread((s32)us);
-		cur = I_GetPreciseTime();
-	}
-
-	while ((INT64)(dest - cur) > 0)
-		cur = I_GetPreciseTime();
+	if (d > 0)
+		PS2_SleepUs((UINT32)(((UINT64)d * 1000) / (PS2_PRECISION / 1000)));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -588,7 +613,21 @@ INT32 I_mkdir(const char *dirname, INT32 unixright)
 char *I_GetEnv(const char *name)
 {
 	if (!strcmp(name, "HOME"))
+	{
+#ifdef HAS_ADDONS
+		// OPT13-IO (S-02): booted from a disc the home is the memory card, whose IOP drivers nobody had loaded: the config, gamedata.dat and the saves were silently lost.
+		// The drivers are IRX files in <data>/modules (ps2_addons.h; make_dist puts them on the disc); the first use of the home loads them.
+		static boolean prepared;
+
+		if (!prepared)
+		{
+			prepared = true;
+			if (!PS2Addons_Prepare(ps2boot.homedir))
+				CONS_Alert(CONS_WARNING, "PS2: the home device %s is not usable: the config and the saves cannot be kept\n", ps2boot.homedir);
+		}
+#endif
 		return ps2boot.homedir;
+	}
 	return getenv(name);
 }
 

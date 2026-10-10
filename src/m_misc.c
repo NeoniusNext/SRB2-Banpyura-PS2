@@ -43,6 +43,9 @@
 #include "m_argv.h"
 #include "i_system.h"
 #include "command.h" // cv_execversion
+#ifdef PS2_PROFILE
+#include "ps2/ps2_safefile.h" // OPT13-IO (RS-08)
+#endif
 
 #include "m_anigif.h"
 
@@ -315,6 +318,11 @@ boolean FIL_WriteFile(char const *name, const void *source, size_t length)
 	FILE *handle = NULL;
 	size_t count;
 
+#ifdef PS2_PROFILE
+	// OPT13-IO (RS-08): the new content goes to NAME.tmp and replaces NAME only when it is whole (ps2_safefile.h); a full card or a power-off keeps the old file
+	return PS2Safe_Write(name, source, length);
+#endif
+
 	//if (FIL_WriteFileOK(name))
 		handle = fopen(name, "w+b");
 
@@ -347,6 +355,13 @@ size_t FIL_ReadFileTag(char const *name, UINT8 **buffer, INT32 tag)
 	//if (FIL_ReadFileOK(name))
 		handle = fopenfile(name, "rb");
 
+#ifdef PS2_PROFILE
+	if (!handle) // a power-off in the middle of a save (ps2_safefile.h) can leave only NAME.bak
+	{
+		PS2Safe_Recover(name);
+		handle = fopenfile(name, "rb");
+	}
+#endif
 	if (!handle)
 		return 0;
 
@@ -732,6 +747,10 @@ void M_SaveConfig(const char *filename)
 {
 	FILE *f;
 	char *filepath;
+#ifdef PS2_PROFILE
+	char tmpconfig[256];
+	boolean safeconfig = false; // OPT13-IO (RS-08): the default config file is written as NAME.tmp and replaces NAME when whole
+#endif
 
 	// make sure not to write back the config until it's been correctly loaded
 	if (!gameconfig_loaded)
@@ -771,6 +790,11 @@ void M_SaveConfig(const char *filename)
 			return;
 		}
 
+#ifdef PS2_PROFILE
+		f = PS2Safe_Begin(configfile, tmpconfig, sizeof tmpconfig);
+		safeconfig = f != NULL;
+		if (!f)
+#endif
 		f = fopen(configfile, "w");
 		if (!f)
 		{
@@ -811,7 +835,18 @@ void M_SaveConfig(const char *filename)
 			G_SaveKeySetting(f, gamecontrol, gamecontrolbis);
 	}
 
+#ifdef PS2_PROFILE
+	if (safeconfig)
+	{
+		if (!PS2Safe_End(f, tmpconfig, configfile))
+			CONS_Alert(CONS_ERROR, M_GetText("Couldn't save game config file %s\n"), configfile);
+		return;
+	}
+	if (ferror(f) | (fclose(f) != 0)) // the medium is full or gone: the player is told
+		CONS_Alert(CONS_ERROR, M_GetText("Couldn't save game config file %s\n"), filename ? filename : configfile);
+#else
 	fclose(f);
+#endif
 }
 
 // ==========================================================================
@@ -1856,13 +1891,37 @@ boolean M_ScreenshotResponder(event_t *ev)
 
 	ch = ev->key;
 
+#ifdef PS2
+	// OPT14-GIF: KEY_NULL is "no key": the second slot of a control that has none (Toggle GIF Recording has none by default, Screenshot has none on the console) is
+	// 0, and a keydown with key 0 (what a replayed, never written event slot looks like) would match it. Only a key that was really pressed starts a recording.
+	if (ch == KEY_NULL)
+		return false;
+#endif
+
 	if (ch >= KEY_MOUSE1 && menuactive) // If it's not a keyboard key, then don't allow it in the menus!
 		return false;
 
+#ifdef PS2
+	// OPT14-GIF: a held key (USB keyboard auto-repeat) is one press: it must not toggle the recording on and off again
+	if (ev->repeated && (ch == KEY_F8 || ch == gamecontrol[GC_SCREENSHOT][0] || ch == gamecontrol[GC_SCREENSHOT][1]
+		|| ch == KEY_F9 || ch == gamecontrol[GC_RECORDGIF][0] || ch == gamecontrol[GC_RECORDGIF][1]))
+		return true;
+#endif
+
 	if (ch == KEY_F8 || ch == gamecontrol[GC_SCREENSHOT][0] || ch == gamecontrol[GC_SCREENSHOT][1]) // remappable F8
+	{
+#ifdef PS2_PROFILE // OPT14-GIF: the log says which key it was (tools/ps2/net_specs14_gif.py searches for these lines)
+		CONS_Printf("PS2: screenshot key %d\n", (int)ch);
+#endif
 		M_ScreenShot();
+	}
 	else if (ch == KEY_F9 || ch == gamecontrol[GC_RECORDGIF][0] || ch == gamecontrol[GC_RECORDGIF][1]) // remappable F9
+	{
+#ifdef PS2_PROFILE
+		CONS_Printf("PS2: record key %d\n", (int)ch);
+#endif
 		((moviemode) ? M_StopMovie : M_StartMovie)();
+	}
 	else
 		return false;
 	return true;
@@ -2016,6 +2075,179 @@ static UINT32 endPos = 0; // now external to M_GetToken, but still static
   * The pointer to the last string supplied is stored as a static variable, so be careful not to free it while this function is still using it!
   * \return A pointer to a string, containing the fetched token. This is in freshly allocated memory, so be sure to Z_Free() it as appropriate.
 */
+#ifdef PS2_PROFILE
+// PS2-LOAD-20: the TEXTURES parser asks for 130 000 tokens at the start-up (two passes over the lumps, every token a Z_Malloc + Z_Free: more than half of
+// R_LoadTextures). M_GetTokenPooled gives the same strings from a table of small buckets outside the zone; M_FreeToken takes a token back
+// (a bucket, or a Z_Free of the rare long one). The text of every token is the same as M_GetToken's.
+#define TOKPOOL_N 64
+#define TOKPOOL_SIZE 64
+static char tokpool[TOKPOOL_N][TOKPOOL_SIZE];
+static UINT8 tokpool_free[TOKPOOL_N];
+static int tokpool_top = -1; // -1: not filled yet
+
+static char *TokenAlloc(size_t size, boolean pooled)
+{
+	if (pooled)
+	{
+		if (tokpool_top < 0)
+		{
+			int i;
+
+			for (i = 0; i < TOKPOOL_N; i++)
+				tokpool_free[i] = (UINT8)(TOKPOOL_N - 1 - i);
+			tokpool_top = TOKPOOL_N;
+		}
+		if (size <= TOKPOOL_SIZE && tokpool_top > 0)
+			return tokpool[tokpool_free[--tokpool_top]];
+	}
+	return (char *)Z_Malloc(size * sizeof(char), PU_STATIC, NULL);
+}
+
+void M_FreeToken(char *token)
+{
+	if (token >= &tokpool[0][0] && token < &tokpool[0][0] + sizeof tokpool)
+		tokpool_free[tokpool_top++] = (UINT8)((token - &tokpool[0][0]) / TOKPOOL_SIZE);
+	else
+		Z_Free(token);
+}
+#define TOKALLOC(size) TokenAlloc((size), pooled)
+#else
+#define TOKALLOC(size) (char *)Z_Malloc((size)*sizeof(char),PU_STATIC,NULL)
+#endif
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-24: the tokenizer of the TEXTURES / ANIMDEFS / SPRTINFO lumps with its state in locals (the original reads and writes six statics for every character) and the
+// character classes in a table (11 comparisons per character). The same tokens, positions and comment state as the original below
+// (tools/ps2/gettoken_hosttest.c compares them over the TEXTURES lumps of the game and random texts, with M_UnGetToken in between).
+#define GTC_SKIP 1 // between tokens: ' ' '\t' '\r' '\n' NUL '=' ';'
+#define GTC_END 2  // ends a plain token: ' ' '\t' '\r' '\n' ',' '{' '}' '=' ';'
+static const UINT8 gtcls[256] =
+{
+	[0] = GTC_SKIP, [' '] = GTC_SKIP|GTC_END, ['\t'] = GTC_SKIP|GTC_END, ['\r'] = GTC_SKIP|GTC_END, ['\n'] = GTC_SKIP|GTC_END,
+	['='] = GTC_SKIP|GTC_END, [';'] = GTC_SKIP|GTC_END, [','] = GTC_END, ['{'] = GTC_END, ['}'] = GTC_END,
+};
+static const char *gt_string = NULL; // Populated if inputString != NULL; used otherwise
+static UINT32 gt_length = 0;
+static UINT8 gt_inComment = 0; // 0 = not in comment, 1 = // Single-line, 2 = /* Multi-line */
+
+static char *M_GetTokenImpl(const char *inputString, boolean pooled)
+{
+	const UINT8 *str;
+	UINT32 sp, ep, len;
+	UINT8 inc;
+	char *token;
+
+	if (inputString != NULL)
+	{
+		gt_string = inputString;
+		sp = 0;
+		oldendPos = endPos = 0;
+		gt_length = (UINT32)strlen(inputString);
+	}
+	else
+		sp = oldendPos = endPos;
+	if (gt_string == NULL)
+		return NULL;
+	str = (const UINT8 *)gt_string;
+	len = gt_length;
+	inc = gt_inComment;
+
+	// Try to detect comments now, in case we're pointing right at one
+	if (sp < len - 1 && inc == 0 && str[sp] == '/')
+	{
+		if (str[sp + 1] == '/')
+			inc = 1;
+		else if (str[sp + 1] == '*')
+			inc = 2;
+	}
+
+	// Find the first non-whitespace char, or else the end of the string trying
+	while (sp < len && (inc != 0 || (gtcls[str[sp]] & GTC_SKIP)))
+	{
+		const UINT8 c = str[sp];
+
+		if (inc == 1 && c == '\n')
+			inc = 0; // End of line for a single-line comment
+		else if (inc == 2 && sp < len - 1 && c == '*' && str[sp + 1] == '/')
+		{
+			inc = 0; // End of multi-line comment
+			sp++; // Make damn well sure we're out of the comment ending at the end of it all
+		}
+		sp++;
+
+		// Try to detect comment starts now
+		if (sp < len - 1 && inc == 0 && str[sp] == '/')
+		{
+			if (str[sp + 1] == '/')
+				inc = 1;
+			else if (str[sp + 1] == '*')
+				inc = 2;
+		}
+	}
+	gt_inComment = inc;
+
+	// If the end of the string is reached, no token is to be read
+	if (sp == len)
+	{
+		endPos = len;
+		return NULL;
+	}
+	// Else, if it's one of these three symbols, capture only this one character
+	if (str[sp] == ',' || str[sp] == '{' || str[sp] == '}')
+	{
+		endPos = sp + 1;
+		token = TokenAlloc(2, pooled);
+		token[0] = (char)str[sp];
+		token[1] = '\0';
+		return token;
+	}
+	// Return entire string within quotes, except without the quotes.
+	if (str[sp] == '"')
+	{
+		ep = ++sp;
+		while (ep < len && str[ep] != '"')
+			ep++;
+		endPos = ep + 1;
+		len = ep - sp;
+		token = TokenAlloc(len + 1, pooled);
+		M_Memcpy(token, str + sp, (size_t)len);
+		token[len] = '\0';
+		return token;
+	}
+
+	// Now find the end of the token. This includes several additional characters that are okay to capture as one character, but not trailing at the end of another token.
+	ep = sp + 1;
+	while (ep < len && inc == 0 && !(gtcls[str[ep]] & GTC_END))
+	{
+		ep++;
+		// Try to detect comment starts now; if it's in a comment, we don't want it in this token
+		if (ep < len - 1 && str[ep] == '/')
+		{
+			if (str[ep + 1] == '/')
+				inc = 1;
+			else if (str[ep + 1] == '*')
+				inc = 2;
+		}
+	}
+	gt_inComment = inc;
+	endPos = ep;
+	len = ep - sp;
+	token = TokenAlloc(len + 1, pooled);
+	M_Memcpy(token, str + sp, (size_t)len);
+	token[len] = '\0';
+	return token;
+}
+
+char *M_GetToken(const char *inputString)
+{
+	return M_GetTokenImpl(inputString, false);
+}
+
+char *M_GetTokenPooled(const char *inputString)
+{
+	return M_GetTokenImpl(inputString, true);
+}
+#else
 char *M_GetToken(const char *inputString)
 {
 	static const char *stringToUse = NULL; // Populated if inputString != NULL; used otherwise
@@ -2117,7 +2349,7 @@ char *M_GetToken(const char *inputString)
 			|| stringToUse[startPos] == '}')
 	{
 		endPos = startPos + 1;
-		texturesToken = (char *)Z_Malloc(2*sizeof(char),PU_STATIC,NULL);
+		texturesToken = TOKALLOC(2);
 		texturesToken[0] = stringToUse[startPos];
 		texturesToken[1] = '\0';
 		return texturesToken;
@@ -2131,7 +2363,7 @@ char *M_GetToken(const char *inputString)
 
 		texturesTokenLength = endPos++ - startPos;
 		// Assign the memory. Don't forget an extra byte for the end of the string!
-		texturesToken = (char *)Z_Malloc((texturesTokenLength+1)*sizeof(char),PU_STATIC,NULL);
+		texturesToken = TOKALLOC(texturesTokenLength+1);
 		// Copy the string.
 		M_Memcpy(texturesToken, stringToUse+startPos, (size_t)texturesTokenLength);
 		// Make the final character NUL.
@@ -2175,13 +2407,14 @@ char *M_GetToken(const char *inputString)
 	texturesTokenLength = endPos - startPos;
 
 	// Assign the memory. Don't forget an extra byte for the end of the string!
-	texturesToken = (char *)Z_Malloc((texturesTokenLength+1)*sizeof(char),PU_STATIC,NULL);
+	texturesToken = TOKALLOC(texturesTokenLength+1);
 	// Copy the string.
 	M_Memcpy(texturesToken, stringToUse+startPos, (size_t)texturesTokenLength);
 	// Make the final character NUL.
 	texturesToken[texturesTokenLength] = '\0';
 	return texturesToken;
 }
+#endif
 
 /** Undoes the last M_GetToken call
   * The current position along the string being parsed is reset to the last saved position.
@@ -2213,6 +2446,41 @@ const char *M_TokenizerRead(UINT32 i)
 
 	return Tokenizer_SRB2Read(globalTokenizer, i);
 }
+
+#ifdef PS2_PROFILE
+boolean M_TokenizerSkipBlock(UINT32 size)
+{
+	if (!globalTokenizer)
+		return false;
+
+	return Tokenizer_SRB2SkipBlock(globalTokenizer, size);
+}
+
+boolean M_TokenizerScanBlocks(UINT32 size, tokscan_t *scan)
+{
+	if (!globalTokenizer)
+		return false;
+
+	return Tokenizer_SRB2ScanBlocks(globalTokenizer, size, scan);
+}
+
+void M_TokenizerScanParse(const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *))
+{
+	if (globalTokenizer)
+		Tokenizer_SRB2ScanParse(globalTokenizer, scan, type, num, parser);
+}
+
+int M_TokenizerReadPair(const char **param, const char **val)
+{
+	if (!globalTokenizer)
+	{
+		*param = *val = NULL;
+		return 0;
+	}
+
+	return Tokenizer_SRB2ReadPair(globalTokenizer, param, val);
+}
+#endif
 
 UINT32 M_TokenizerGetEndPos(void)
 {

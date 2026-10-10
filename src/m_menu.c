@@ -272,6 +272,10 @@ static UINT8 check_on;
 static void M_SinglePlayerMenu(INT32 choice);
 static void M_Options(INT32 choice);
 static void M_SelectableClearMenus(INT32 choice);
+#ifdef PS2
+static void M_PauseChat(INT32 choice); // OPT14-CHAT: "Chat" / "Team Chat" of the pause menu of a netgame
+static void M_PauseTeamChat(INT32 choice);
+#endif
 static void M_Retry(INT32 choice);
 static void M_EndGame(INT32 choice);
 static void M_MapChange(INT32 choice);
@@ -614,6 +618,11 @@ static menuitem_t MPauseMenu[] =
 	{IT_STRING | IT_CALL,    NULL, "Switch Gametype/Level...",  M_MapChange,           32},
 
 	{IT_STRING | IT_CALL,    NULL, "Continue",                  M_SelectableClearMenus,48},
+#ifdef PS2
+	// OPT14-CHAT: the chat of a netgame without a keyboard: the line opens with the on-screen keyboard (src/ps2/ps2_osk.c); M_StartControlPanel shows these and moves the rows below
+	{IT_DISABLED,            NULL, "Chat",                      M_PauseChat,           56},
+	{IT_DISABLED,            NULL, "Team Chat",                 M_PauseTeamChat,       64},
+#endif
 
 	{IT_STRING | IT_CALL,    NULL, "Player 1 Setup",            M_SetupMultiPlayer,    56}, // splitscreen
 	{IT_STRING | IT_CALL,    NULL, "Player 2 Setup",            M_SetupMultiPlayer2,   64},
@@ -638,6 +647,10 @@ typedef enum
 	mpause_switchmap,
 
 	mpause_continue,
+#ifdef PS2
+	mpause_chat,
+	mpause_teamchat,
+#endif
 	mpause_psetupsplit,
 	mpause_psetupsplit2,
 	mpause_spectate,
@@ -3906,6 +3919,90 @@ void M_Drawer(void)
 #endif
 }
 
+#ifdef PS2
+// OPT14-CHAT: "Chat" and "Team Chat" of the pause menu of a netgame (hidden in a local game: nobody to talk to; grey while the player is muted). The rows were laid out
+// without them (alphaKey is the row's offset from the top of the menu, "Quit Game" ends just above the lives counter of the HUD), so the room for the new rows is taken
+// from the empty rows of the menu: the blank row before "Return to Title", the one before "Continue" (when there are items above it), and then the menu moves up
+// (when "Continue" is the first row there is empty space above it). Without chat rows the rows are exactly where they were.
+static void M_PS2PauseChatItems(void)
+{
+	static INT16 basey[sizeof MPauseMenu / sizeof MPauseMenu[0]];
+	const INT32 n = (INT32)(sizeof MPauseMenu / sizeof MPauseMenu[0]);
+	INT32 i, prev = -1, first = -1, y = 0, rows = 0, need;
+	INT32 gap[sizeof MPauseMenu / sizeof MPauseMenu[0]];
+
+	if (!basey[0]) // the layout of the table as it was written
+		for (i = 0; i < n; i++)
+			basey[i] = MPauseMenu[i].alphaKey;
+
+	MPauseMenu[mpause_chat].status = IT_DISABLED;
+	MPauseMenu[mpause_teamchat].status = IT_DISABLED;
+	if (HU_ChatAvailable())
+	{
+		const UINT16 st = CHAT_MUTE ? IT_GRAYEDOUT : (IT_STRING | IT_CALL);
+
+		MPauseMenu[mpause_chat].status = st;
+		rows++;
+		if (HU_ChatTeamAvailable())
+		{
+			MPauseMenu[mpause_teamchat].status = st;
+			rows++;
+		}
+	}
+
+	// the distance from the row above, as written (8 px a row; 16 where the table leaves a blank row)
+	for (i = 0; i < n; i++)
+	{
+		gap[i] = 0;
+		if (MPauseMenu[i].status == IT_DISABLED)
+			continue;
+		if (first < 0)
+			first = i;
+		else if (i == mpause_chat || i == mpause_teamchat || prev == mpause_chat || prev == mpause_teamchat)
+			gap[i] = 8;
+		else
+			gap[i] = basey[i] - basey[prev];
+		prev = i;
+	}
+	need = 8 * rows;
+	if (need > 0 && gap[mpause_title] >= 16) // the blank row above "Return to Title"
+	{
+		gap[mpause_title] -= 8;
+		need -= 8;
+	}
+	if (need > 0 && gap[mpause_continue] >= 16) // the blank row above "Continue" (the rows of the server are above it)
+	{
+		gap[mpause_continue] -= 8;
+		need -= 8;
+	}
+	y = basey[first];
+	if (need > 0 && first == mpause_continue) // nothing above "Continue": the menu moves up into the empty space under the box with the level's name
+		y -= need;
+	for (i = 0; i < n; i++)
+	{
+		if (MPauseMenu[i].status == IT_DISABLED)
+			continue;
+		y += (i == first) ? 0 : gap[i];
+		MPauseMenu[i].alphaKey = (INT16)y;
+	}
+}
+
+// the items: the menu closes and the chat line opens (hu_stuff.c), with the on-screen keyboard on it when the pad was in use (ps2_osk.c)
+static void M_PauseChat(INT32 choice)
+{
+	(void)choice;
+	M_ClearMenus(true);
+	HU_OpenChat(false);
+}
+
+static void M_PauseTeamChat(INT32 choice)
+{
+	(void)choice;
+	M_ClearMenus(true);
+	HU_OpenChat(true);
+}
+#endif
+
 //
 // M_StartControlPanel
 //
@@ -4044,6 +4141,10 @@ void M_StartControlPanel(void)
 		}
 
 		MPauseMenu[mpause_hints].status = (M_SecretUnlocked(SECRET_EMBLEMHINTS, clientGamedata) && G_CoopGametype()) ? (IT_STRING | IT_CALL) : (IT_DISABLED);
+
+#ifdef PS2
+		M_PS2PauseChatItems();
+#endif
 
 		currentMenu = &MPauseDef;
 		itemOn = mpause_continue;
@@ -14876,6 +14977,8 @@ INT32 M_PS2MenuKind(void)
 	st = it->status;
 	if (currentMenu == &MP_ConnectDef && itemOn >= FIRSTSERVERLINE)
 		return PS2MH_SERVER;
+	if (currentMenu == &MPauseDef && (itemOn == mpause_chat || itemOn == mpause_teamchat)) // OPT14-CHAT
+		return itemOn == mpause_chat ? PS2MH_CHAT : PS2MH_TEAMCHAT;
 	if (st == IT_CONTROL)
 		return PS2MH_CONTROL;
 	switch (st & IT_TYPE)

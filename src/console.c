@@ -34,6 +34,7 @@
 #include "m_menu.h"
 #include "filesrch.h"
 #include "m_misc.h"
+#include "m_argv.h"
 
 #ifdef _WINDOWS
 #include "win32/win_main.h"
@@ -51,6 +52,25 @@ I_mutex con_mutex;
 #  define Unlock_state() I_unlock_mutex(con_mutex)
 
 static boolean con_started = false; // console has been initialised
+#ifdef PS2
+// OPT13 IQ-7b (RS-05a, research PoC rs05a_startup_console.patch): during the start-up every CONS_Printf redraws the whole screen (27 times on a normal start, 3.3 M EE cycles each in the
+// software path, 91 M in all = 21 % of the start-up). The STARTUP picture does not change: it is drawn once and the pixels are kept; later redraws copy them back and draw the text lines.
+// Two prints less than 40 ms apart share one redraw: the screen shows the first of them for up to 40 ms, then the next print (or CON_FlushStartup) draws both.
+// CON_FlushStartup() is called where a long job follows a print (d_main.c), so that its message is on the screen while the job runs. -rsys_nostart: as before.
+static UINT8 *rsys_bg;
+static INT32 rsys_bg_rows, rsys_bg_w, rsys_bg_h;
+static INT32 rsys_off = -1;
+static precise_t rsys_last; // the time of the last redraw of the start-up
+static boolean rsys_pending; // a print was held back: the screen is behind the text buffer
+static unsigned rsys_con_calls, rsys_con_cyc; // redraws of the start-up and the EE cycles they took (printed by CON_EndStartup with -loadprof)
+static boolean RSYS_On(void)
+{
+	if (rsys_off < 0)
+		rsys_off = M_CheckParm("-rsys_nostart") ? 1 : 0;
+	return !rsys_off;
+}
+#endif
+
        boolean con_startup = false; // true at game startup
        boolean con_refresh = false; // screen needs refreshing
 static boolean con_forcepic = true; // at startup toggle console translucency when first off
@@ -1490,9 +1510,51 @@ void CONS_Printf(const char *fmt, ...)
 	// if not in display loop, force screen update
 	if (refresh)
 	{
+#ifdef PS2
+		unsigned c0, c1;
+
+		if (con_startup && RSYS_On() && rsys_last && (INT64)(I_GetPreciseTime() - rsys_last) < (INT64)(I_GetPrecisePrecision() / 25))
+		{
+			rsys_pending = true; // (drawn by the next print or by CON_FlushStartup)
+			return;
+		}
+		__asm__ volatile("mfc0 %0,$9" : "=r"(c0));
+#endif
 		CON_Drawer(); // here we display the console text
 		I_FinishUpdate(); // page flip or blit buffer
+#ifdef PS2
+		__asm__ volatile("mfc0 %0,$9" : "=r"(c1));
+		rsys_con_calls++;
+		rsys_con_cyc += c1 - c0;
+		rsys_pending = false;
+		rsys_last = I_GetPreciseTime();
+#endif
 	}
+}
+
+// OPT13 IQ-7b: draws the print that was held back (CONS_Printf shares a redraw between prints less than 40 ms apart), so that it is on the screen before a long job starts
+void CON_FlushStartup(void)
+{
+#ifdef PS2
+	if (!rsys_pending || !con_startup || !con_refresh)
+		return;
+	rsys_pending = false;
+	CON_Drawer();
+	I_FinishUpdate();
+	rsys_last = I_GetPreciseTime();
+#endif
+}
+
+// OPT13 IQ-7b: the start-up screen is over (D_SRB2Loop): the kept picture goes, the redraws are counted with -loadprof
+void CON_EndStartup(void)
+{
+#ifdef PS2
+	if (rsys_con_calls && M_CheckParm("-loadprof"))
+		I_OutputMsg("CONRD redraws=%u cycles=%u%s\n", rsys_con_calls, rsys_con_cyc, RSYS_On() ? "" : " (-rsys_nostart)");
+	free(rsys_bg);
+	rsys_bg = NULL;
+	rsys_pending = false;
+#endif
 }
 
 void CONS_Alert(alerttype_t level, const char *fmt, ...)
@@ -1721,6 +1783,15 @@ static void CON_DrawBackpic(void)
 	patch_t *con_backpic;
 	lumpnum_t piclump;
 	int x, w, h;
+#ifdef PS2
+	const boolean rsys_cache = con_startup && rendermode == render_soft && RSYS_On() && screens[0];
+
+	if (rsys_cache && rsys_bg && rsys_bg_rows == con_curlines && rsys_bg_w == (INT32)vid.rowbytes && rsys_bg_h == vid.height)
+	{
+		memcpy(screens[0], rsys_bg, (size_t)vid.rowbytes * (size_t)con_curlines);
+		return;
+	}
+#endif
 
 	// Get the lumpnum for CONSBACK, STARTUP (Only during game startup) or fallback into MISSING.
 	if (con_startup)
@@ -1761,6 +1832,22 @@ static void CON_DrawBackpic(void)
 
 	// Unlock the cached patch.
 	W_UnlockCachedPatch(con_backpic);
+#ifdef PS2
+	if (rsys_cache && con_curlines > 0 && con_curlines <= vid.height)
+	{
+		const size_t bytes = (size_t)vid.rowbytes * (size_t)con_curlines;
+
+		free(rsys_bg);
+		rsys_bg = malloc(bytes);
+		if (rsys_bg)
+		{
+			memcpy(rsys_bg, screens[0], bytes);
+			rsys_bg_rows = con_curlines;
+			rsys_bg_w = (INT32)vid.rowbytes;
+			rsys_bg_h = vid.height;
+		}
+	}
+#endif
 }
 
 // draw the console background, text, and prompt if enough place

@@ -1,0 +1,114 @@
+diff --git a/src/console.c b/src/console.c
+index e7245e1..8027728 100644
+--- a/src/console.c
++++ b/src/console.c
+@@ -34,6 +34,7 @@
+ #include "m_menu.h"
+ #include "filesrch.h"
+ #include "m_misc.h"
++#include "m_argv.h"
+ 
+ #ifdef _WINDOWS
+ #include "win32/win_main.h"
+@@ -51,6 +52,20 @@ I_mutex con_mutex;
+ #  define Unlock_state() I_unlock_mutex(con_mutex)
+ 
+ static boolean con_started = false; // console has been initialised
++#ifdef PS2
++// OPT13-RSYS (RS-07, research PoC): during the start-up every CONS_Printf redraws the whole screen (27 times on a normal start, 3.3 M EE cycles each in the software
++// path, 91 M in all = 21 % of the start-up). The STARTUP picture does not change: it is drawn once and the pixels are kept; later redraws copy them back and draw the text lines.
++static UINT8 *rsys_bg;
++static INT32 rsys_bg_rows, rsys_bg_w, rsys_bg_h;
++static INT32 rsys_off = -1;
++static boolean RSYS_On(void)
++{
++	if (rsys_off < 0)
++		rsys_off = M_CheckParm("-rsys_nostart") ? 1 : 0;
++	return !rsys_off;
++}
++#endif
++
+        boolean con_startup = false; // true at game startup
+        boolean con_refresh = false; // screen needs refreshing
+ static boolean con_forcepic = true; // at startup toggle console translucency when first off
+@@ -508,6 +523,10 @@ void CON_Init(void)
+ 
+ 		con_started = true;
+ 		con_startup = false;
++#ifdef PS2
++		free(rsys_bg);
++		rsys_bg = NULL;
++#endif
+ 		con_refresh = false; // disable explicit screen refresh
+ 		consoletoggle = true;
+ 
+@@ -1490,10 +1509,30 @@ void CONS_Printf(const char *fmt, ...)
+ 	// if not in display loop, force screen update
+ 	if (refresh)
+ 	{
++#ifdef PS2
++		static precise_t rsys_last;
++		extern unsigned rsys_con_calls, rsys_con_cyc;
++		unsigned c0, c1;
++		const precise_t now = I_GetPreciseTime();
++
++		// OPT13-RSYS (RS-07): two prints less than 40 ms apart (the SOC lines of a pack, the tables of one phase) share one redraw: the screen shows the
++		// first of them for 40 ms, then the next print draws both
++		if (con_startup && RSYS_On() && rsys_last && (INT64)(now - rsys_last) < (INT64)(I_GetPrecisePrecision() / 25))
++			return;
++		__asm__ volatile("mfc0 %0,$9" : "=r"(c0));
++#endif
+ 		CON_Drawer(); // here we display the console text
+ 		I_FinishUpdate(); // page flip or blit buffer
++#ifdef PS2
++		__asm__ volatile("mfc0 %0,$9" : "=r"(c1));
++		rsys_con_calls++; rsys_con_cyc += c1 - c0;
++		rsys_last = I_GetPreciseTime();
++#endif
+ 	}
+ }
++#ifdef PS2
++unsigned rsys_con_calls, rsys_con_cyc;
++#endif
+ 
+ void CONS_Alert(alerttype_t level, const char *fmt, ...)
+ {
+@@ -1721,6 +1760,15 @@ static void CON_DrawBackpic(void)
+ 	patch_t *con_backpic;
+ 	lumpnum_t piclump;
+ 	int x, w, h;
++#ifdef PS2
++	const boolean rsys_cache = con_startup && rendermode == render_soft && RSYS_On() && screens[0];
++
++	if (rsys_cache && rsys_bg && rsys_bg_rows == con_curlines && rsys_bg_w == (INT32)vid.rowbytes && rsys_bg_h == vid.height)
++	{
++		memcpy(screens[0], rsys_bg, (size_t)vid.rowbytes * (size_t)con_curlines);
++		return;
++	}
++#endif
+ 
+ 	// Get the lumpnum for CONSBACK, STARTUP (Only during game startup) or fallback into MISSING.
+ 	if (con_startup)
+@@ -1761,6 +1809,22 @@ static void CON_DrawBackpic(void)
+ 
+ 	// Unlock the cached patch.
+ 	W_UnlockCachedPatch(con_backpic);
++#ifdef PS2
++	if (rsys_cache && con_curlines > 0 && con_curlines <= vid.height)
++	{
++		const size_t bytes = (size_t)vid.rowbytes * (size_t)con_curlines;
++
++		free(rsys_bg);
++		rsys_bg = malloc(bytes);
++		if (rsys_bg)
++		{
++			memcpy(rsys_bg, screens[0], bytes);
++			rsys_bg_rows = con_curlines;
++			rsys_bg_w = (INT32)vid.rowbytes;
++			rsys_bg_h = vid.height;
++		}
++	}
++#endif
+ }
+ 
+ // draw the console background, text, and prompt if enough place

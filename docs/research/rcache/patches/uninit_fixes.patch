@@ -1,0 +1,47 @@
+diff -u -r a/src/r_portal.c b/src/r_portal.c
+--- a/src/r_portal.c	2026-10-09 13:49:35.002529146 +0000
++++ b/src/r_portal.c	2026-10-09 13:49:35.009208879 +0000
+@@ -248,13 +248,13 @@
+ 	 * valid area.
+ 	 */
+ 
+-	while (plane->bottom[*start] == 0 && plane->top[*start] == 65535 && *start < *end)
++	while (*start < *end && plane->bottom[*start] == 0 && plane->top[*start] == 65535) // OPT13-RCACHE: bound first (the column behind the cleared range is not initialised)
+ 	{
+ 		(*start)++;
+ 	}
+ 
+ 
+-	while (plane->bottom[*end - 1] == 0 && plane->top[*start] == 65535 && *end > *start)
++	while (*end > *start && plane->bottom[*end - 1] == 0 && plane->top[*start] == 65535)
+ 	{
+ 		(*end)--;
+ 	}
+diff -u -r a/src/r_things.c b/src/r_things.c
+--- a/src/r_things.c	2026-10-09 13:49:34.989305137 +0000
++++ b/src/r_things.c	2026-10-09 13:49:34.995358255 +0000
+@@ -995,6 +995,12 @@
+ 			return &overflowsprite;
+ 		}
+ 		visspritecount++;
++		{ // OPT13-RCACHE: a vissprite starts from zero (R_ProjectDropShadow and R_ProjectBoundingBox set only some fields; the rest was whatever the arena held)
++			INT16 *cb = vs->clipbot, *ct = vs->cliptop;
++			memset(vs, 0, sizeof *vs);
++			vs->clipbot = cb;
++			vs->cliptop = ct;
++		}
+ 		return vs;
+ 	}
+ #else
+diff -u -r a/src/s_sound.c b/src/s_sound.c
+--- a/src/s_sound.c	2026-10-09 13:49:34.995358255 +0000
++++ b/src/s_sound.c	2026-10-09 13:49:35.002529146 +0000
+@@ -318,7 +318,7 @@
+ 	}
+ #endif
+ 	if (cv_numChannels.value)
+-		channels = (channel_t *)Z_Malloc(cv_numChannels.value * sizeof (channel_t), PU_STATIC, NULL);
++		channels = (channel_t *)Z_Calloc(cv_numChannels.value * sizeof (channel_t), PU_STATIC, NULL);
+ 	numofchannels = cv_numChannels.value;
+ 
+ 	// Free all channels for use

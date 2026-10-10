@@ -1,0 +1,81 @@
+separate calibration: tick k=0.848 (Ir 854M), render k=1.638 (Ir 4860M)
+callgrind totals: Ir 17410.1M Dr 4540.2M Dw 2092.5M D1mr 263.36M D1mw 91.60M I1mr 87.40M
+modelled set (no harness, no load): Ir 5713.5M = 33% of all; k = 1.520 EE cycles per host instruction (emulator 8.28 Mcyc/frame x 1049 frames)
+model: hw = k*Ir + 40*(D1mr+D1mw)*0.75(structure stages; 1.0 for drawers/hud) + 40*I1mr
+
+stage                      emu M/frm    D-miss    I-miss  hw M/frm  hw/emu  D1m/kIr  I1m/kIr
+render:walls                   2.423     1.094     1.189     4.706   1.94x    24.67    20.11
+render:drawers(col/span)       1.784     1.523     0.059     3.367   1.89x    34.96     1.36
+render:sprites/masked          1.931     0.841     0.318     3.091   1.60x    23.79     6.75
+render:bsp/setup               0.567     0.470     0.408     1.445   2.55x    45.32    29.48
+render:planes                  0.562     0.308     0.219     1.089   1.94x    29.92    15.94
+tick:collision/sight           0.409     0.316     0.287     1.012   2.48x    21.83    14.89
+tick:thinkers                  0.198     0.371     0.080     0.648   3.28x    52.97     8.55
+render:hud/video               0.261     0.116     0.009     0.386   1.48x    18.21     1.45
+tick:specials/interp           0.077     0.091     0.108     0.276   3.58x    33.41    29.60
+other                          0.062     0.037     0.024     0.124   1.98x    32.24    15.97
+tick:other                     0.006     0.013     0.011     0.029   4.93x    60.36    37.99
+TOTAL                          8.280     5.181     2.713    16.174   1.95x
+
+rank by emulator cost vs rank by modelled console cost (functions):
+hw#  function                           stage                    emuK/frm  hwK/frm   hw/emu   emu# D1m/fr  file
+1    R_RenderSegLoopX                   render:walls               1405.8   2350.9    1.67x      1  19039  r_segs.c
+2    R_DrawColumn_8                     render:drawers(col/span)    775.5   1701.3    2.19x      2  22938  r_draw8.c
+3    R_StoreWallRange                   render:walls                490.4   1556.8    3.17x      5  10252  r_segs.c
+4    R_DrawSpan_8                       render:drawers(col/span)    590.1   1070.6    1.81x      3  11981  r_draw8.c
+5    R_AddSprites                       render:sprites/masked       338.8    780.3    2.30x      9   5831  r_things.c
+6    R_CreateDrawNodes.constprop.0      render:sprites/masked       580.7    732.9    1.26x      4   4986  r_things.c
+7    R_RenderBSPNode'2                  render:bsp/setup            227.9    659.2    2.89x     10   6892  r_bsp.c
+8    R_ClipSprites                      render:sprites/masked       409.0    633.2    1.55x      6   7390  r_things.c
+9    R_RenderMaskedSegRange             render:walls                382.5    533.6    1.39x      8   4881  r_segs.c
+10   R_FindPlane                        render:planes               197.8    523.7    2.65x     11   5069  r_plane.c
+11   R_DrawMaskedColumn                 render:sprites/masked       387.8    480.5    1.24x      7   3064  r_things.c
+12   R_AddLine                          render:bsp/setup            134.1    328.2    2.45x     17   4372  r_bsp.c
+13   P_MobjThinker                      tick:thinkers                93.2    316.1    3.39x     12   7048  p_mobj.c
+14   R_DrawTiltedSpan_8                 render:drawers(col/span)    175.5    243.5    1.39x     13   1580  r_draw8.c
+15   V_DrawStretchyFixedPatch           render:hud/video            152.2    208.6    1.37x     16   1357  v_video.c
+16   R_PointToAngle64                   tick:collision/sight         87.2    194.1    2.22x     14   1817  r_main.c
+17   PS2_FixedDivMag                    tick:collision/sight         82.1    181.6    2.21x     15    271  m_fixed.c
+18   R_DrawSinglePlane.part.0           render:planes               132.8    176.9    1.33x     18   1195  r_plane.c
+19   R_MapPlane                         render:planes               108.9    155.2    1.43x     19   1481  r_plane.c
+20   R_ScaleFromGlobalAngle             render:walls                 62.7    138.0    2.20x     22   1071  r_segs.c
+21   P_CrossBSPNode'2                   tick:collision/sight         43.2    134.6    3.12x     21   3009  p_sight.c
+22   R_FakeFlat                         render:bsp/setup             60.7    131.8    2.17x     23   1409  r_bsp.c
+23   R_AddSingleSpriteDef               render:sprites/masked        54.0    125.1    2.32x     26   2331  r_things.c
+24   R_CalcSlopeLight                   render:drawers(col/span)     98.9    105.6    1.07x     20     76  r_draw.c
+25   V_DrawCroppedPatch                 render:hud/video             53.2    103.3    1.94x     28   1253  v_video.c
+26   R_DrawWaterSpan_8                  render:drawers(col/span)     60.3     81.6    1.35x     24    515  r_draw8.c
+27   Portal_AddPlanePortals             render:bsp/setup             34.0     78.8    2.32x     33   1471  r_portal.c
+28   R_RenderThickSideRange             render:walls                 44.7     71.5    1.60x     30    714  r_segs.c
+29   R_Prep3DFloors                     render:bsp/setup             25.7     68.3    2.66x     41    192  r_bsp.c
+30   R_CheckPlane                       render:planes                30.8     68.2    2.21x     36    465  r_plane.c
+31   R_PointToDist2                     tick:collision/sight         22.2     60.0    2.70x     31    461  r_main.c
+32   R_InterpolateMobjState             tick:specials/interp         21.2     59.7    2.82x     32   1066  r_fps.c
+33   R_PointOnSide                      render:bsp/setup             28.2     57.2    2.03x     39    536  r_main.c
+34   P_CycleMobjState                   tick:thinkers                16.1     57.1    3.55x     35   1328  p_mobj.c
+35   P_Ticker                           tick:thinkers                 7.8     49.0    6.32x     54   1331  p_tick.c
+36   P_SectorHasCeilingPortal           tick:specials/interp          3.5     45.9   13.27x     91    420  p_spec.c
+37   R_Render2sidedMultiPatchColumn     render:walls                 33.2     44.5    1.34x     34    351  r_segs.c
+38   R_DrawNodeClaims                   render:sprites/masked        24.6     44.0    1.79x     45    631  r_things.c
+39   R_DrawMasked                       render:sprites/masked        10.5     43.4    4.12x     71   1047  r_things.c
+40   R_Draw2sMultiPatchColumn_8         render:drawers(col/span)     27.0     41.5    1.54x     40    342  r_draw8.c
+41   A_AttractChase                     tick:thinkers                28.2     40.6    1.44x     25    361  p_enemy.c
+42   P_GetZAt                           tick:collision/sight         27.8     39.5    1.42x     27    103  p_slopes.c
+43   R_PlaneBounds                      render:planes                29.0     38.9    1.34x     38    327  r_plane.c
+44   R_GetShadowZInterp                 render:sprites/masked        12.5     38.9    3.12x     63    232  r_things.c
+45   R_CheckSectorLightLists.part.0     render:bsp/setup             14.7     38.0    2.59x     55    144  r_bsp.c
+46   P_DivlineSide                      tick:collision/sight         24.7     37.7    1.53x     29    434  p_sight.c
+47   R_GetBlendTable                    render:drawers(col/span)     11.3     37.5    3.33x     68     91  r_draw.c
+48   Tag_Compare                        other                        12.6     36.5    2.89x     62    189  taglist.c
+49   P_GetSectorFloorZAt                tick:collision/sight         12.9     35.8    2.78x     44    421  p_slopes.c
+50   R_ThingVisible                     render:sprites/masked        13.3     33.3    2.51x     59    517  r_things.c
+51   R_PointInSubsector                 tick:collision/sight         13.0     32.6    2.50x     43    464  r_main.c
+52   R_ThingWithinDist                  render:sprites/masked        11.6     32.0    2.77x     66    586  r_things.c
+53   P_CheckPosition                    tick:collision/sight         11.3     31.9    2.83x     47    439  p_map.c
+54   R_GetVisSprite                     render:sprites/masked        25.3     31.9    1.26x     42    160  r_things.c
+55   P_KillRingsInLava                  tick:thinkers                 8.2     29.7    3.61x     53    664  p_mobj.c
+56   R_DrawVisSprite                    render:sprites/masked        19.4     29.4    1.52x     48    243  r_things.c
+57   P_MobjCheckWater                   tick:thinkers                 9.2     29.1    3.15x     51    390  p_mobj.c
+58   R_ApplyLevelInterpolators          tick:specials/interp         15.4     28.7    1.87x     37    416  r_fps.c
+59   P_GetFFloorTopZAt                  tick:collision/sight          7.4     28.0    3.79x     57    590  p_slopes.c
+60   new_visplane                       render:planes                 5.6     26.2    4.69x     95    491  r_plane.c

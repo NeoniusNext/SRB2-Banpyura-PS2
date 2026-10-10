@@ -59,6 +59,37 @@ static UINT8 lib_searchBlockmap_Objects(lua_State *L, mobj_t *thing, mobj_t *mob
 	return 0;
 }
 
+// One line of the "lines" search: UINT8_MAX = go on with the next line, else the return value of the helper (see blockmap_func)
+static UINT8 lib_searchBlockmap_LineCall(lua_State *L, mobj_t *thing, line_t *ld)
+{
+	if (ld->validcount == validcount)
+		return UINT8_MAX; // Line has already been checked.
+
+	ld->validcount = validcount;
+
+	lua_pushvalue(L, 1);
+	LUA_PushUserdata(L, thing, META_MOBJ);
+	LUA_PushUserdata(L, ld, META_LINE);
+	if (lua_pcall(gL, 2, 1, 0)) {
+		if (!blockfuncerror || cv_debug & DBG_LUA)
+			CONS_Alert(CONS_WARNING,"%s\n",lua_tostring(gL, -1));
+		lua_pop(gL, 1);
+		blockfuncerror = true;
+		return 0; // *shrugs*
+	}
+	if (!lua_isnil(gL, -1))
+	{ // if nil, continue
+		if (lua_toboolean(gL, -1))
+			return 2; // stop whole search
+		else
+			return 1; // stop block search
+	}
+	lua_pop(gL, 1);
+	if (P_MobjWasRemoved(thing))
+		return 2;
+	return UINT8_MAX;
+}
+
 // Helper function for "lines" search
 static UINT8 lib_searchBlockmap_Lines(lua_State *L, INT32 x, INT32 y, mobj_t *thing)
 {
@@ -117,36 +148,30 @@ static UINT8 lib_searchBlockmap_Lines(lua_State *L, INT32 x, INT32 y, mobj_t *th
 
 	offset = *(blockmap + offset); // offset = blockmap[y*bmapwidth+x];
 
+#ifdef PS2_PROFILE
+	// PS2-LUA: the line lists of the PS2 level are 16 bit (p_setup.c P_CompactBlockmap, P_BlockLinesIterator reads them the same way); this loop read them as INT32 and ran
+	// off into the memory behind the level (a TLB miss in the emulator, searchBlockmap("lines", ...) from any script)
+	if (ps2_blockmaplists)
+	{
+		const UINT16 *shortlist;
+		for (shortlist = ps2_blockmaplists + offset + 1; *shortlist != UINT16_MAX; shortlist++)
+		{
+			ld = &lines[*shortlist];
+			UINT8 r = lib_searchBlockmap_LineCall(L, thing, ld);
+			if (r != UINT8_MAX)
+				return r;
+		}
+		return 0;
+	}
+#endif
+
 	// First index is really empty, so +1 it.
 	for (list = blockmaplump + offset + 1; *list != -1; list++)
 	{
 		ld = &lines[*list];
-
-		if (ld->validcount == validcount)
-			continue; // Line has already been checked.
-
-		ld->validcount = validcount;
-
-		lua_pushvalue(L, 1);
-		LUA_PushUserdata(L, thing, META_MOBJ);
-		LUA_PushUserdata(L, ld, META_LINE);
-		if (lua_pcall(gL, 2, 1, 0)) {
-			if (!blockfuncerror || cv_debug & DBG_LUA)
-				CONS_Alert(CONS_WARNING,"%s\n",lua_tostring(gL, -1));
-			lua_pop(gL, 1);
-			blockfuncerror = true;
-			return 0; // *shrugs*
-		}
-		if (!lua_isnil(gL, -1))
-		{ // if nil, continue
-			if (lua_toboolean(gL, -1))
-				return 2; // stop whole search
-			else
-				return 1; // stop block search
-		}
-		lua_pop(gL, 1);
-		if (P_MobjWasRemoved(thing))
-			return 2;
+		UINT8 r = lib_searchBlockmap_LineCall(L, thing, ld);
+		if (r != UINT8_MAX)
+			return r;
 	}
 	return 0; // Everything was checked.
 }

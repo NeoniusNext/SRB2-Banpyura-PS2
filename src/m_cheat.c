@@ -992,8 +992,8 @@ static void OP_CycleThings(INT32 amt)
 		{
 			op_currentthing += add;
 			if (op_currentthing <= 0)
-				op_currentthing = LIMIT_NUMMOBJTYPES-1;
-			if (op_currentthing >= LIMIT_NUMMOBJTYPES)
+				op_currentthing = NUMMOBJTYPES-1;
+			if (PS2_OOR_MOBJTYPE(op_currentthing))
 				op_currentthing = 0;
 		} while
 		(mobjinfo[op_currentthing].doomednum == -1

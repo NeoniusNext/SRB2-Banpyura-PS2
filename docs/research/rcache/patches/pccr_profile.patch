@@ -1,0 +1,106 @@
+diff --git a/src/ps2/ps2_prof.h b/src/ps2/ps2_prof.h
+index 55901fc..9ff5ff5 100644
+--- a/src/ps2/ps2_prof.h
++++ b/src/ps2/ps2_prof.h
+@@ -41,6 +41,14 @@ void PS2Prof_FrameEnd(void); // frame counter of LTO profile builds (called from
+ // after the display; the rest of the frame is "other" (idle wait, sleep). realtics = what the clock asked for, gametic delta = what ran: lost tics.
+ extern UINT64 ps2prof_c_tick, ps2prof_c_disp, ps2prof_c_snd;
+ extern UINT32 ps2prof_real;
++// OPT13-RCACHE: R5900 performance counters (PCCR). -ps2pccr [E0 E1]: counter 0 counts event E0 (default 6 = instruction cache miss), counter 1 event E1 (default 6 = data cache miss);
++// the numbers are the EE Core User's Manual's, tools/.../bench/cachebench.c (CB pccr) finds them empirically on a console. PCSX2 counts neither (zeros). Misses summed per window over
++// TryRunTics (tick), D_Display (render + HUD + present) and the sound step: PROFPC line next to TICK.
++extern UINT32 ps2prof_pccr_on;
++extern UINT64 ps2prof_pc_i[3], ps2prof_pc_d[3]; // [0] tick, [1] disp, [2] snd
++static inline UINT32 PS2Prof_Pc0(void) { UINT32 v; __asm__ volatile("mfpc %0,0" : "=r"(v)); return v; }
++static inline UINT32 PS2Prof_Pc1(void) { UINT32 v; __asm__ volatile("mfpc %0,1" : "=r"(v)); return v; }
++void PS2Prof_PccrInit(void);
+ static inline UINT32 PS2Prof_Cyc(void) { UINT32 v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
+ #endif
+ 
+diff --git a/src/d_main.c b/src/d_main.c
+index 84c2492..adf7b0f 100644
+--- a/src/d_main.c
++++ b/src/d_main.c
+@@ -906,8 +906,10 @@ static void D_RunFrame(void)
+ #ifdef PS2_PROF_DIRECT
+ 			{
+ 				const UINT32 pc0 = PS2Prof_Cyc();
++				const UINT32 pi0 = PS2Prof_Pc0(), pd0 = PS2Prof_Pc1(); // OPT13-RCACHE
+ 				TryRunTics(realtics);
+ 				ps2prof_c_tick += PS2Prof_Cyc() - pc0;
++				ps2prof_pc_i[0] += PS2Prof_Pc0() - pi0; ps2prof_pc_d[0] += PS2Prof_Pc1() - pd0;
+ 			}
+ #else
+ 			TryRunTics(realtics);
+@@ -1012,8 +1014,10 @@ static void D_RunFrame(void)
+ #ifdef PS2_PROF_DIRECT
+ 			{
+ 				const UINT32 pc0 = PS2Prof_Cyc();
++				const UINT32 pi0 = PS2Prof_Pc0(), pd0 = PS2Prof_Pc1(); // OPT13-RCACHE
+ 				PS2HWFB_Display(D_Display); // PS2-170 (also in the profile build)
+ 				ps2prof_c_disp += PS2Prof_Cyc() - pc0;
++				ps2prof_pc_i[1] += PS2Prof_Pc0() - pi0; ps2prof_pc_d[1] += PS2Prof_Pc1() - pd0;
+ 			}
+ #elif defined(PS2)
+ 			PS2HWFB_Display(D_Display); // PS2-170: running out of memory in the frame leaves the hardware renderer / draws the frame again, it does not end the game
+@@ -1034,6 +1038,7 @@ static void D_RunFrame(void)
+ 
+ #ifdef PS2_PROF_DIRECT
+ 		const UINT32 pcs0 = PS2Prof_Cyc();
++		const UINT32 pis0 = PS2Prof_Pc0(), pds0 = PS2Prof_Pc1(); // OPT13-RCACHE
+ #endif
+ 		// consoleplayer -> displayplayers (hear sounds from viewpoint)
+ 		S_UpdateSounds(); // move positional sounds
+@@ -1048,6 +1053,7 @@ static void D_RunFrame(void)
+ 		LUA_HTTPProcessCallbacks();
+ #ifdef PS2_PROF_DIRECT
+ 		ps2prof_c_snd += PS2Prof_Cyc() - pcs0;
++		ps2prof_pc_i[2] += PS2Prof_Pc0() - pis0; ps2prof_pc_d[2] += PS2Prof_Pc1() - pds0;
+ #endif
+ 
+ #ifdef PS2_PROF_DIRECT
+diff --git a/src/ps2/ps2_prof.c b/src/ps2/ps2_prof.c
+index 116496c..0c31269 100644
+--- a/src/ps2/ps2_prof.c
++++ b/src/ps2/ps2_prof.c
+@@ -366,8 +366,28 @@ unsigned long long ps2prof_sleep_cyc;
+ UINT32 ps2prof_interp; // frames drawn with 0 < rendertimefrac < FRACUNIT (d_main.c counts them)
+ UINT64 ps2prof_c_tick, ps2prof_c_disp, ps2prof_c_snd; // PS2-200: cycles in TryRunTics / D_Display / S_UpdateSounds+LUA_Step (d_main.c)
+ UINT32 ps2prof_real; // tics the clock asked for (the sum of realtics handed to TryRunTics)
++// OPT13-RCACHE: PCCR (see ps2_prof.h). Layout of PCCR: bit31 CTE, EVENT0 bits 9:5, EVENT1 bits 19:15, U0/S0/K0/EXL0 bits 4:1, U1/S1/K1/EXL1 bits 14:11.
++UINT32 ps2prof_pccr_on;
++UINT64 ps2prof_pc_i[3], ps2prof_pc_d[3];
++void PS2Prof_PccrInit(void)
++{
++	UINT32 e0 = 6, e1 = 6, v;
++	INT32 p = M_CheckParm("-ps2pccr");
++
++	if (!p)
++		return;
++	if (M_IsNextParm()) { e0 = (UINT32)atoi(M_GetNextParm()); if (M_IsNextParm()) e1 = (UINT32)atoi(M_GetNextParm()); }
++	v = (1u << 31) | (0xFu << 1) | ((e0 & 31u) << 5) | (0xFu << 11) | ((e1 & 31u) << 15);
++	__asm__ volatile("mtps $0,0\n\tmtpc $0,0\n\tmtpc $0,1\n\tsync.p" ::: "memory");
++	__asm__ volatile("mtps %0,0\n\tsync.p" :: "r"(v) : "memory");
++	ps2prof_pccr_on = 1;
++	I_OutputMsg("PCCR armed: counter0 event %u, counter1 event %u (PROFPC lines; PCSX2 counts no cache events)\n", (unsigned)e0, (unsigned)e1);
++}
+ void PS2Prof_FrameEnd(void)
+ {
++	static boolean pccr_tried;
++
++	if (!pccr_tried) { pccr_tried = true; PS2Prof_PccrInit(); }
+ 	static tic_t lasttic;
+ 	static UINT32 lastframe, maxframe, over5t;
+ 	static UINT32 bin[4]; // frame intervals in 60 Hz periods (16.67 ms): shorter than 0.5, 0.5..1.5, 1.5..2.5, longer
+@@ -397,6 +417,11 @@ void PS2Prof_FrameEnd(void)
+ 		I_OutputMsg("TICK win=%u frames=%u tics=%u real=%u tickcyc=%llu dispcyc=%llu sndcyc=%llu maxframe=%u over5tics=%u p0=%u p1=%u p2=%u p3=%u isum=%llu isq=%llu\n", (unsigned)windows, (unsigned)frames,
+ 			(unsigned)tics, (unsigned)ps2prof_real, (unsigned long long)ps2prof_c_tick, (unsigned long long)ps2prof_c_disp, (unsigned long long)ps2prof_c_snd,
+ 			(unsigned)maxframe, (unsigned)over5t, (unsigned)bin[0], (unsigned)bin[1], (unsigned)bin[2], (unsigned)bin[3], (unsigned long long)isum, (unsigned long long)isq);
++		if (ps2prof_pccr_on)
++			I_OutputMsg("PROFPC win=%u frames=%u tick_i=%llu tick_d=%llu disp_i=%llu disp_d=%llu snd_i=%llu snd_d=%llu\n", (unsigned)windows, (unsigned)frames,
++				(unsigned long long)ps2prof_pc_i[0], (unsigned long long)ps2prof_pc_d[0], (unsigned long long)ps2prof_pc_i[1], (unsigned long long)ps2prof_pc_d[1],
++				(unsigned long long)ps2prof_pc_i[2], (unsigned long long)ps2prof_pc_d[2]);
++		ps2prof_pc_i[0] = ps2prof_pc_i[1] = ps2prof_pc_i[2] = ps2prof_pc_d[0] = ps2prof_pc_d[1] = ps2prof_pc_d[2] = 0;
+ 		ps2prof_c_tick = ps2prof_c_disp = ps2prof_c_snd = 0;
+ 		ps2prof_real = 0;
+ 		maxframe = over5t = 0;

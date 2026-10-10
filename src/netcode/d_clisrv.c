@@ -28,6 +28,7 @@
 #include "../m_menu.h"
 #include "../console.h"
 #include "d_netfil.h"
+#include "netlat.h"
 #include "../byteptr.h"
 #include "../p_saveg.h"
 #include "../z_zone.h"
@@ -1260,6 +1261,7 @@ static void HandlePacketFromPlayer(SINT8 node)
   */
 void GetPackets(void)
 {
+	NetLat_Poll(); // PS2-NET-1 (diagnostic)
 	while (HGetPacket())
 	{
 		SINT8 node = doomcom->remotenode;
@@ -1272,6 +1274,47 @@ void GetPackets(void)
 			HandlePacketFromAwayNode(node);
 	}
 }
+
+#ifdef NETSYNC_DIAG
+// OPT14-CHAT (test stand only: the PC build of tools/ps2/net_env.py): "-diagsay 400:hello there|900:another" runs "say <text>" in the console of this engine at that game tic.
+// A PC client has no console input without a terminal (stdin is not a tty: sdl/i_system.c), and the chat of the PS2 needs a second talker.
+static void NetDiagSay(void)
+{
+	static char spec[1024];
+	static INT32 state; // 0 = not read, 1 = reading, -1 = none
+	static const char *pos;
+	char *end;
+	tic_t at;
+
+	if (state == 0)
+	{
+		state = -1;
+		if (M_CheckParm("-diagsay") && M_IsNextParm())
+		{
+			strlcpy(spec, M_GetNextParm(), sizeof spec);
+			pos = spec;
+			state = 1;
+		}
+	}
+	if (state != 1 || !netgame || gamestate != GS_LEVEL || !pos || !*pos)
+		return;
+	at = (tic_t)strtoul(pos, &end, 10);
+	if (*end != ':' || gametic < at)
+		return;
+	{
+		char cmd[300];
+		size_t n = 0;
+		const char *q = end + 1;
+
+		while (*q && *q != '|' && n < sizeof cmd - 8)
+			cmd[n++] = *q++;
+		cmd[n] = '\0';
+		pos = *q ? q + 1 : q;
+		CONS_Printf("DIAGSAY gametic=%u: say %s\n", (unsigned)gametic, cmd);
+		COM_BufAddText(va("say \"%s\"\n", cmd));
+	}
+}
+#endif
 
 #if defined (PS2_PROFILE) || defined (NETSYNC_DIAG)
 // PS2-133: "-netsync" prints, once per second of game tics, a checksum of everything the players' state consists of. The same line from two
@@ -1314,6 +1357,114 @@ static void NetSyncLog(void)
 	}
 	CONS_Printf("NETSYNC gametic=%u leveltime=%u players=%d state=%08x cons=%u rnd=%u\n", (unsigned)gametic, (unsigned)leveltime, (int)n,
 		(unsigned)h, (unsigned)(UINT16)consistancy[gametic%BACKUPTICS], (unsigned)P_GetRandSeed());
+}
+#endif
+
+#ifdef PS2
+// PS2-NET-6 (OPT12): a joined client runs the tics of the server when they ARRIVE, not at the next tick of its own clock.
+//
+// The clock of the client and the clock of the server run at the same 35 Hz but have no common phase: a tic of the server that reached the client right after one of the client's
+// clock edges waited, on the average, half a tic (14 ms), at the worst a whole one (28.6 ms) before it was run - and then, with cv_netticbuffer at its default of 1, one more tic
+// was kept back on purpose (the client ran one tic per pass and left the last one in the buffer, to be safe against a late packet: 28.6 ms more, always). The measurement (NETLAT run-wait,
+// backlog) showed ~29 ms from the arrival of a tic to its run and a standing backlog of 1.3..1.8 tics.
+//
+// Here: (1) the main loop looks at the network on every pass, not only on the passes where the clock has ticked, and runs a waiting tic at once (D_NetEarlyTic; TryRunTics(0) does it, the clock
+// passes go on as before for everything else: commands, the client's own ticcmd, time-outs); (2) the tic buffer is 0 as long as the tics come in time (a hold of 1.6 tics without a tic twice
+// within 3 s puts it to 1 for 10 s: the buffer of the original, for a line with jitter); (3) a tic is not run earlier than 0.7 tic after the previous one unless the client is behind by 2 or more
+// (a burst is spread out, a backlog is not); (4) the picture is interpolated from the time of the last run (D_NetEarlyFrac), not from the clock, otherwise the picture would jump back at
+// every clock edge. The simulation itself is untouched: the same tics with the same ticcmds in the same order (NETSYNC hashes stay equal).
+static boolean early_on = true, early_checked;
+static INT32 earlybuf;                 // 0 or 1: the buffer that the line needs now
+static UINT64 early_lastrun;           // I_GetPreciseTime() at which a tic was run last
+static boolean early_starved;          // the present gap was counted
+static tic_t early_starve_tic;         // gametic of the last starvation
+static UINT32 early_starves;           // starvations counted (NETLAT)
+static INT32 early_forced = -2;        // -netearlybuf N: the buffer is N, whatever the line does (measurements)
+
+boolean D_NetEarlyActive(void)
+{
+	if (!early_checked)
+	{
+		early_checked = true;
+		early_on = !M_CheckParm("-netnoearly");
+	}
+	return early_on && netgame && client && addedtogame && gamestate == GS_LEVEL && !demoplayback && cl_mode == CL_CONNECTED && !cl_redownloadinggamestate && leveltime > 3;
+}
+
+INT32 D_NetTicBuffer(void)
+{
+	if (cv_netticbuffer.value != 1 || !D_NetEarlyActive())
+		return cv_netticbuffer.value;
+	if (early_forced == -2)
+		early_forced = (M_CheckParm("-netearlybuf") && M_IsNextParm()) ? atoi(M_GetNextParm()) : -1;
+	return early_forced >= 0 ? early_forced : earlybuf;
+}
+
+// the state for the NETLAT line: the buffer in use and the starvations so far
+void D_NetEarlyState(INT32 *buffer, UINT32 *starves)
+{
+	*buffer = D_NetEarlyActive() ? D_NetTicBuffer() : cv_netticbuffer.value;
+	*starves = early_starves;
+}
+
+// called on the passes of the main loop where the clock has not ticked: look at the network and say whether a tic can run now
+boolean D_NetEarlyTic(boolean clockpass)
+{
+	const UINT64 now = I_GetPreciseTime();
+	const UINT64 period = I_GetPrecisePrecision() / TICRATE;
+	const INT64 since = early_lastrun ? (INT64)(now - early_lastrun) : 0;
+	const tic_t buffer = (tic_t)D_NetTicBuffer();
+
+	if (!D_NetEarlyActive())
+		return false;
+	if (!clockpass)
+		GetPackets();
+	if (neededtic <= gametic + buffer)
+		return false;
+	if (early_lastrun && since < (INT64)(period * 7 / 10) && neededtic < gametic + buffer + 2)
+		return false; // too early for the picture: it would jump by more than 0.3 tic
+	return true;
+}
+
+// the end of every pass of the main loop; `ran`: tics were run in it
+void D_NetEarlyPassEnd(boolean ran)
+{
+	const UINT64 now = I_GetPreciseTime();
+	const UINT64 period = I_GetPrecisePrecision() / TICRATE;
+
+	if (!D_NetEarlyActive())
+	{
+		early_lastrun = 0;
+		return;
+	}
+	if (ran)
+	{
+		early_lastrun = now;
+		early_starved = false;
+		if (earlybuf && gametic - early_starve_tic > 350)
+			earlybuf = 0;
+	}
+	else if (early_lastrun && !early_starved && neededtic <= gametic + (tic_t)D_NetTicBuffer() && (INT64)(now - early_lastrun) > (INT64)(period * 8 / 5))
+	{
+		// no tic to run for 1.6 tics: a starvation; two within 3 s put the buffer at 1
+		early_starved = true;
+		early_starves++;
+		if (gametic - early_starve_tic < 105)
+			earlybuf = 1;
+		early_starve_tic = gametic;
+	}
+}
+
+// how far between the last two tics the picture is (FRACUNIT = the last tic itself)
+fixed_t D_NetEarlyFrac(void)
+{
+	const UINT64 period = I_GetPrecisePrecision() / TICRATE;
+	UINT64 el;
+
+	if (!early_lastrun)
+		return FRACUNIT;
+	el = I_GetPreciseTime() - early_lastrun;
+	return el >= period ? FRACUNIT : (fixed_t)((el * FRACUNIT) / period);
 }
 #endif
 
@@ -1405,12 +1556,16 @@ boolean TryRunTics(tic_t realtics)
 				if (update_stats)
 					PS_START_TIMING(ps_tictime);
 
+				NetLat_TicRun(gametic, (INT32)(neededtic - gametic)); // PS2-NET-1 (diagnostic)
 				G_Ticker((gametic % NEWTICRATERATIO) == 0);
 				ExtraDataTicker();
 				gametic++;
 				consistancy[gametic%BACKUPTICS] = Consistancy();
 #if defined (PS2_PROFILE) || defined (NETSYNC_DIAG)
 				NetSyncLog();
+#endif
+#ifdef NETSYNC_DIAG
+				NetDiagSay();
 #endif
 
 				if (update_stats)
@@ -1420,8 +1575,13 @@ boolean TryRunTics(tic_t realtics)
 				}
 
 				// Leave a certain amount of tics present in the net buffer as long as we've ran at least one tic this frame.
+#ifdef PS2
+				if (client && gamestate == GS_LEVEL && leveltime > 3 && neededtic <= gametic + (tic_t)D_NetTicBuffer())
+					break;
+#else
 				if (client && gamestate == GS_LEVEL && leveltime > 3 && neededtic <= gametic + cv_netticbuffer.value)
 					break;
+#endif
 			}
 
 		return true;

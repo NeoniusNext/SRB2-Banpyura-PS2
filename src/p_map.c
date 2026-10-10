@@ -2212,9 +2212,9 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 		// shift), and nothing at all in a level without polyobjects (the array is NULL there, PS2-88). The loop body is the original's.
 		// PS2-200: and only the cells of the box that can hold a polyobject link (ps2_polycells): the others have none, so visiting them did nothing
 #ifdef PS2_OPT_CORE
-		if (polyblocklinks && xl <= ps2_polycells[1] && xh >= ps2_polycells[0] && yl <= ps2_polycells[3] && yh >= ps2_polycells[2]) // the boxes meet
+		if (PS2_HAVE_POLYBLOCKS && xl <= ps2_polycells[1] && xh >= ps2_polycells[0] && yl <= ps2_polycells[3] && yh >= ps2_polycells[2]) // the boxes meet
 #else
-		if (polyblocklinks)
+		if (PS2_HAVE_POLYBLOCKS)
 #endif
 		{
 #ifdef PS2_OPT_CORE
@@ -2235,15 +2235,13 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 
 				for (sy = yl; sy <= syh; sy++)
 					for (sx = xl; sx <= sxh; sx++)
-						if (polyblocklinks[(size_t)sy * bmapwidth + sx] && (sx < ps2_polycells[0] || sx > ps2_polycells[1] || sy < ps2_polycells[2] || sy > ps2_polycells[3]))
+						if (POLYBLOCKLINK((size_t)sy * bmapwidth + sx) && (sx < ps2_polycells[0] || sx > ps2_polycells[1] || sy < ps2_polycells[2] || sy > ps2_polycells[3]))
 							I_Error("PS2-200: polyobject link at cell %d,%d outside the box %d..%d, %d..%d", (int)sx, (int)sy, (int)ps2_polycells[0], (int)ps2_polycells[1],
 								(int)ps2_polycells[2], (int)ps2_polycells[3]);
 			}
 #endif
 			for (by = pyl; by <= pyh; by++)
 			{
-				polymaplink_t **const prow = polyblocklinks + (size_t)by * bmapwidth;
-
 				for (bx = pxl; bx <= pxh; bx++)
 #else
 		for (by = yl; by <= yh; by++)
@@ -2251,7 +2249,7 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
 #endif
 			{
 #ifdef PS2_OPT_REND
-				polymaplink_t *plink = prow[bx]; // haleyjd 02/22/06: consider polyobject lines
+				polymaplink_t *plink = POLYBLOCKLINK((size_t)by * bmapwidth + bx); // haleyjd 02/22/06: consider polyobject lines
 #else
 				INT32 offset;
 				polymaplink_t *plink; // haleyjd 02/22/06

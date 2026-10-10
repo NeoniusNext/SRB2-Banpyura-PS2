@@ -55,6 +55,7 @@ int za_redzone = 0;
 
 static uint8_t *za_base, *za_end;
 static uint8_t *za_front; // PS2-75: see ZA_SetFrontier
+static uint8_t *za_anchor; // PS2-600 (OPT13 IZ): a block start at or below the frontier, kept right by ZA_Free / ZA_Resize (see ZA_FrontBlock)
 static size_t za_size;
 static zafree_t *za_bin[ZA_NBINS];
 static uint32_t za_map[ZA_NBINS / 32];
@@ -163,6 +164,7 @@ int ZA_InitMem(void *base, size_t bytes)
 		za_map[i] = 0;
 	za_base = base;
 	za_front = NULL;
+	za_anchor = NULL;
 	za_end = za_base + bytes;
 	za_size = bytes;
 	za_used = za_peak = za_gpeak = za_freecount = za_usedcount = 0;
@@ -227,6 +229,7 @@ void ZA_Shutdown(void)
 {
 	za_base = za_end = NULL;
 	za_front = NULL;
+	za_anchor = NULL;
 	za_size = 0;
 }
 
@@ -239,15 +242,41 @@ void ZA_SetFrontier(void *addr)
 
 	if (!a || a <= za_base || a >= za_end)
 	{
-		za_front = NULL;
+		za_front = NULL; // (the anchor stays: it is a block start and the frees keep it right, so the frontier can come back to it)
 		return;
 	}
 	za_front = (uint8_t *)((uintptr_t)a & ~(uintptr_t)15);
+	if (za_anchor && za_anchor > za_front)
+		za_anchor = NULL; // (a frontier below the anchor: found again from the arena start at the next ZA_FrontBlock)
 }
 
 void *ZA_Frontier(void)
 {
 	return za_front;
+}
+
+// PS2-600 (OPT13 IZ, Z1): the block that holds the frontier address, in the blocks between the anchor and the frontier instead of the walk from the arena start that
+// Z_MoveFrontier made on every failed first try (about 32 000 headers, 1.2 M cycles in the emulator, three times that on the console). The anchor is a block start at or
+// below the frontier. An allocation only adds block starts; ZA_Free (the merged block starts at its first byte, so a start inside it moves there) and ZA_Resize keep it a block start.
+// The result becomes the new anchor: the next call walks only the blocks made since.
+zablock_t *ZA_FrontBlock(void)
+{
+	const uint8_t *p;
+
+	if (!za_front)
+		return NULL;
+	p = za_anchor && za_anchor <= za_front ? za_anchor : za_base;
+	while (p + ZA_SIZE((const zablock_t *)p) <= za_front)
+		p += ZA_SIZE((const zablock_t *)p);
+	za_anchor = (uint8_t *)p;
+	return (zablock_t *)p;
+}
+
+// A block start at or below the frontier the caller knows (the block it found the new frontier in); ignored otherwise.
+void ZA_SetAnchor(zablock_t *b)
+{
+	if (b && (uint8_t *)b >= za_base && (uint8_t *)b < za_end && (!za_front || (uint8_t *)b <= za_front))
+		za_anchor = (uint8_t *)b;
 }
 
 zablock_t *ZA_PrevFree(zablock_t *b)
@@ -462,6 +491,8 @@ int ZA_Resize(void *payload, size_t size)
 		need = total;
 		rest = 0;
 	}
+	if (za_anchor > (uint8_t *)b && za_anchor < (uint8_t *)b + total)
+		za_anchor = (uint8_t *)b; // (the free block behind it that the anchor may have been is part of it, or split elsewhere)
 	b->sf = (uint32_t)need | flags;
 	b->realsize = (uint32_t)size;
 	tail = (uint8_t *)b + need;
@@ -530,6 +561,8 @@ void *ZA_Free(void *payload)
 	ZA_MakeFree(start, size, pf);
 	if (start + size < za_end)
 		((zablock_t *)(start + size))->sf |= ZAF_PREVFREE;
+	if (za_anchor > start && za_anchor < start + size)
+		za_anchor = start; // (the block start the anchor was is inside the merged block now)
 	return start + size;
 }
 
@@ -568,6 +601,11 @@ zablock_t *ZA_BlockAt(void *addr)
 size_t ZA_FreeBytes(void)
 {
 	return za_size - za_used;
+}
+
+size_t ZA_Capacity(void)
+{
+	return za_size;
 }
 
 size_t ZA_BinCount(void)
@@ -757,6 +795,7 @@ const char *PS2Mem_TagName(int tag)
 		case PU_HWRLIGHTTABLEDATA: return "PU_HWRLIGHTTABLEDATA";
 		case PU_HWRBATCH: return "PU_HWRBATCH";
 		case PU_RENDERWORK: return "PU_RENDERWORK";
+		case PU_HWRCACHE_LRU: return "PU_HWRCACHE_LRU";
 		case PU_HWRCACHE: return "PU_HWRCACHE";
 		case PU_CACHE: return "PU_CACHE";
 		case PU_LEVEL: return "PU_LEVEL";
@@ -923,6 +962,16 @@ static void PS2Mem_StackFill(void)
 	za_stack_size = (size_t)thread.stack_size;
 }
 
+// OPT14 (PS2-LUA-5): the lowest address of the main thread stack + margin (Lua refuses a call below it: ldo.c luaD_call)
+size_t PS2Mem_StackFloor(size_t margin)
+{
+	ee_thread_status_t thread;
+
+	if (ReferThreadStatus(GetThreadId(), &thread) < 0 || thread.stack_size <= 0 || (size_t)thread.stack_size <= margin)
+		return 0;
+	return (size_t)thread.stack + margin;
+}
+
 size_t PS2Mem_StackUsed(void) // 0 unless -zstack
 {
 	const uint8_t *p = (const uint8_t *)za_stack_lo;
@@ -938,6 +987,7 @@ size_t PS2Mem_StackUsed(void) // 0 unless -zstack
 unsigned PS2Mem_Ms(void) { return 0; }
 size_t PS2Mem_LibcPeak(void) { return 0; }
 size_t PS2Mem_StackUsed(void) { return 0; }
+size_t PS2Mem_StackFloor(size_t margin) { (void)margin; return 0; }
 #endif
 
 // PS2-73: -zsample [period]: statistical PC sampler over the level load (from "level-free-before" to "precache"), the same method as ps2_prof.c.
@@ -1055,7 +1105,7 @@ static char ZA_Class(const zablock_t *b)
 		return 'L';
 	if (t == PU_RENDERWORK)
 		return 'W';
-	if (t >= PU_CACHE)
+	if (t >= PU_CACHE || t == PU_HWRCACHE_LRU)
 		return 'C';
 	if (t == PU_PATCH || t == PU_PATCH_DATA || t == PU_SPRITE || t == PU_HUDGFX || t == PU_PATCH_LOWPRIORITY || t == PU_PATCH_ROTATED)
 		return 'P';

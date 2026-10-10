@@ -409,19 +409,25 @@ boolean EV_DoPolyObjFade(polyfadedata_t *);
 
 extern polyobj_t *PolyObjects;
 extern INT32 numPolyObjects;
+#ifdef PS2_PROFILE
+// PS2-508 (OPT12-CORE): the polyobject blockmap is not a pointer per blockmap cell any more (283 KB on MAP11, a second array of the size of blocklinks) but a bit per cell
+// (9 KB) and a small hash of the cells that have ever held a link; the head of a cell's list keeps its address (the lists point back at it, M_DLList). Nothing is allocated in a
+// level without polyobjects (ps2_pcell_bits stays NULL), which is also the "this level has polyobjects" test.
+extern UINT32 *ps2_pcell_bits;
+polymaplink_t **Polyobj_cellFind(INT32 offset); // the head slot of a cell whose bit is set
+void Polyobj_ResetCells(void); // a new level (P_LoadBlockMap)
+#define PS2_HAVE_POLYBLOCKS (ps2_pcell_bits != NULL)
+#define POLYBLOCKLINK(offset) ((ps2_pcell_bits && (ps2_pcell_bits[(offset) >> 5] & (1u << ((offset) & 31)))) ? *Polyobj_cellFind(offset) : NULL)
+#else
 extern polymaplink_t **polyblocklinks; // polyobject blockmap
+#define PS2_HAVE_POLYBLOCKS (polyblocklinks != NULL)
+#define POLYBLOCKLINK(offset) (polyblocklinks[offset])
+#endif
 #ifdef PS2_OPT_CORE
 extern INT32 ps2_polycells[4]; // PS2-200: cell box of the linked polyobjects (x1 x2 y1 y2), x1 > x2 when there is none
 #define PS2_POLYCELLS_RESET() (ps2_polycells[0] = 1, ps2_polycells[1] = 0, ps2_polycells[2] = 1, ps2_polycells[3] = 0)
 #else
 #define PS2_POLYCELLS_RESET() ((void)0)
-#endif
-#ifdef PS2_PROFILE
-// PS2-88: the array (4 bytes per blockmap cell: 283 KB on MAP11) exists only in levels that have polyobjects: P_LoadBlockMap leaves it NULL,
-// Polyobj_linkToBlockmap makes it
-#define POLYBLOCKLINK(offset) (polyblocklinks ? polyblocklinks[offset] : NULL)
-#else
-#define POLYBLOCKLINK(offset) (polyblocklinks[offset])
 #endif
 
 #endif

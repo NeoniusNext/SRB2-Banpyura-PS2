@@ -1,4 +1,8 @@
 // PS2 GS hardware renderer driver: VRAM pool, texture records, conversion and upload (included by ps2_hwd.c).
+
+// OPT13 IR: TF_TRANSPARENT of a map texture is an input of the key of the geometry cache (HWR_PS2_SideTexWord): hwr_texsig says it may have changed
+extern UINT32 hwr_texsig;
+#define HW_SET_TRANSPARENT(m_) do { if (!((m_)->flags & TF_TRANSPARENT)) { (m_)->flags |= TF_TRANSPARENT; hwr_texsig++; } } while (0)
 //
 // Palette indexed engine data (P_8, AP_88, ALPHA_8, and RGBA whose colours all come from the current palette) lives in the
 // pool as PSMT8 plus a CLUT; every other texture is CT32 with the GS alpha scale (0x80 = 1.0). Textures keep their exact
@@ -308,9 +312,14 @@ static void own_clear(u32 blk, u32 n);
 static void lod_account(texrec_t *r);
 static int batch_phase; // (defined below)
 
+static int drop_reason; // OPT12 HWDRV (PS2-HW-441): who drops the image (0 = the default: eviction when counted, 5 otherwise); set by the callers that drop for another reason
+
 static void tex_drop(int i, int count_eviction)
 {
 	texrec_t *r = &H.rec[i];
+
+	if (r->owner)
+		r->owner->ps2_drop = (u8)(drop_reason ? drop_reason : (count_eviction ? 1 : 5));
 
 	if (ps2hwd_dbg_flags & HWDBG_TEX)
 		lod_account(r);
@@ -1074,6 +1083,7 @@ static inline u32 dc_key(const GLMipmap_t *m)
 
 static void dc_drop(dcent_t *e)
 {
+	Z_SetRebuildCost((void **)(void *)&e->p, 0); // OPT13 IZ (PS2-603): the entry is another block next time
 	if (e->p)
 		HWR_PS2_FreeData(e->p);
 	dc_bytes -= e->bytes;
@@ -1165,6 +1175,26 @@ static void dc_flush(void)
 		if (dc[i].key && !dc[i].busy)
 			dc_drop(&dc[i]);
 }
+
+// ---- PS2-HW-442 (OPT12 HWDRV): the data of the textures between two uses ----
+// A map texture of the hardware renderer is composed from patches that the engine reads from the pack (HWR_GenerateTexture): about 4 M cycles for every lump that is not in the zone's cache
+// (the read of one lump costs the same for 2 KB and for 60 KB). The composite is released to the zone right after the upload (PU_HWRCACHE_UNLOCKED), and that tag is "purgable whenever
+// needed": any allocation that does not fit frees it. When the VRAM image is dropped (evicted, or made again at another level of the plan) the composite is gone as well and the 81 patches of
+// THROCK4 are read again: DEMO_002 lost 260..320 M cycles (one second) at a time, six times in 700 frames. z_zone.c turns the tag into PU_HWRCACHE_LRU (-hwkeep 0, the default; -hwkeep 1
+// is the old rule): an LRU cache block that goes when the room is needed. keep_off is the A/B switch of the whole.
+static int keep_off; // -hwkeep N (0 = on, the default; 1 = the old behaviour): A/B on one ELF (the bits of -hwdbg belong to several files)
+
+#ifdef __mips__
+extern void Z_HWCacheStats(unsigned int *conv, unsigned int *flushes);
+static void keep_prof(unsigned int frames)
+{
+	unsigned int conv, flushes;
+
+	(void)frames;
+	Z_HWCacheStats(&conv, &flushes);
+	I_OutputMsg("HWPROF46 texture data cache (PS2-HW-442): %s, blocks made LRU cache blocks=%u, freed at once by an allocation nothing else could serve=%u (zone free %u K)\n", keep_off ? "off (-hwkeep)" : "on", conv, flushes, (unsigned)(Z_ArenaFree() >> 10));
+}
+#endif
 
 #define REL_MAX 160
 #define REL_BYTES_MAX (1024u * 1024u) // texels read by queued DMA that the cache must keep locked: bounds the memory the zone cannot take back
@@ -1803,6 +1833,7 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 	ne->stamp = ++dc_seq;
 	dc_bytes += ne->bytes;
 	TX.lvl_cyc += cyc() - t0;
+	Z_SetRebuildCost((void **)(void *)&ne->p, cyc() - t0); // OPT13 IZ (PS2-603): a level of a 1 MiB cloud plane made from its lump: 10..12 M cycles; the zone evicts it last
 	{
 		static int logged;
 
@@ -2194,6 +2225,7 @@ static int tex_upload(GLMipmap_t *m)
 					}
 				}
 				TX.lvl_cyc += cyc() - dt0;
+				Z_SetRebuildCost((void **)(void *)&ne->p, cyc() - dt0); // OPT13 IZ (PS2-603)
 				{
 					static int dl_logged;
 
@@ -2341,7 +2373,7 @@ static int tex_upload(GLMipmap_t *m)
 		r->sxs = (float)(crop ? sw : W2) / (float)(1u << r->tw); // the engine's texture coordinate 1.0 is the whole block: sw texels, of which W2 are stored
 		r->sys = (float)(crop ? sh : H2) / (float)(1u << r->th);
 		if (holes && clut == 2 && (m->format == GL_TEXFMT_P_8 || m->format == GL_TEXFMT_AP_88))
-			m->flags |= TF_TRANSPARENT; // as r_opengl.c does for a chroma keyed texture with a hole
+			HW_SET_TRANSPARENT(m); // as r_opengl.c does for a chroma keyed texture with a hole
 		r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;
 		r->shareable = (u8)shareable;
 		r->has255 = (u8)has255;
@@ -2430,7 +2462,7 @@ static int tex_view(GLMipmap_t *m, int owner_rec)
 	r->wrapy = (m->flags & TF_WRAPY) ? 1 : 0;
 	r->clut = (u8)(((m->flags & TF_CHROMAKEYED) && o->has255) ? 2 : 1);
 	if (r->clut == 2)
-		m->flags |= TF_TRANSPARENT; // as tex_upload does for a chroma keyed texture with a hole
+		HW_SET_TRANSPARENT(m); // as tex_upload does for a chroma keyed texture with a hole
 	r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;
 	r->stamp = H.frame_no;
 	r->done = 0;

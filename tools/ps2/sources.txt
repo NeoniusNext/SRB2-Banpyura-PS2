@@ -115,8 +115,10 @@ src/ps2/net_stub.c
 src/ps2/ps2_curl.c
 src/ps2/ps2_osk.c
 src/netcode/mserv.c
+src/netcode/netlat.c
 src/netcode/http-mserv.c
 src/ps2/ps2_net.c
+src/ps2/ps2_netsvc.c
 src/ps2/ps2_netui.c
 src/ps2/ps2_uiicons.c
 src/ps2/ps2_menuhints.c
@@ -133,6 +135,11 @@ src/ps2/ps2_spill.c
 src/ps2/ps2_hwfb.c
 src/ps2/ps2_memops.c
 src/ps2/ps2_ftest.c
+src/ps2/ps2_loadprof.c  # PS2-LOAD-1
+src/ps2/ps2_texc.c  # OPT13 IZ (PS2-602): prebuilt composite textures (TEXC.PAK)
+src/ps2/ps2_nearest.c  # PS2-LOAD-14
+src/ps2/ps2_safefile.c  # OPT13-IO RS-08: atomic saves
+src/ps2/ps2_iobench.c  # OPT13-IO RS-16: -iobench storage benchmark
 src/ps2/ps2_addons.c  # feature:addons
 src/ps2/ps2_limits.c  # feature:limits
 # OPT6-F: the Lua VM (blua) and the Lua libraries, compiled only with the lua feature (SRB2_PS2_NO=lua leaves them out and uses lua_stub.c)

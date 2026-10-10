@@ -1,0 +1,137 @@
+CB start buf=0x13c940
+CB chase ws=1024 cyc_per_op=5.00
+CB seqread1 ws=1024 cyc_per_op=6.31
+CB seqwrite1 ws=1024 cyc_per_op=6.31
+CB fullread ws=1024 cyc_per_op=6.02
+CB chase ws=2048 cyc_per_op=5.00
+CB seqread1 ws=2048 cyc_per_op=6.16
+CB seqwrite1 ws=2048 cyc_per_op=6.16
+CB fullread ws=2048 cyc_per_op=6.01
+CB chase ws=4096 cyc_per_op=5.00
+CB seqread1 ws=4096 cyc_per_op=6.08
+CB seqwrite1 ws=4096 cyc_per_op=6.08
+CB fullread ws=4096 cyc_per_op=6.00
+CB chase ws=6144 cyc_per_op=5.00
+CB seqread1 ws=6144 cyc_per_op=6.05
+CB seqwrite1 ws=6144 cyc_per_op=6.05
+CB fullread ws=6144 cyc_per_op=6.00
+CB chase ws=8192 cyc_per_op=5.00
+CB seqread1 ws=8192 cyc_per_op=6.04
+CB seqwrite1 ws=8192 cyc_per_op=6.07
+CB fullread ws=8192 cyc_per_op=6.00
+CB chase ws=12288 cyc_per_op=5.00
+CB seqread1 ws=12288 cyc_per_op=6.03
+CB seqwrite1 ws=12288 cyc_per_op=6.03
+CB fullread ws=12288 cyc_per_op=6.00
+CB chase ws=16384 cyc_per_op=5.00
+CB seqread1 ws=16384 cyc_per_op=6.02
+CB seqwrite1 ws=16384 cyc_per_op=6.02
+CB fullread ws=16384 cyc_per_op=6.00
+CB chase ws=32768 cyc_per_op=5.00
+CB seqread1 ws=32768 cyc_per_op=6.01
+CB seqwrite1 ws=32768 cyc_per_op=6.01
+CB fullread ws=32768 cyc_per_op=6.00
+CB chase ws=65536 cyc_per_op=5.00
+CB seqread1 ws=65536 cyc_per_op=6.01
+CB seqwrite1 ws=65536 cyc_per_op=6.00
+CB fullread ws=65536 cyc_per_op=6.00
+CB chase ws=262144 cyc_per_op=5.00
+CB seqread1 ws=262144 cyc_per_op=6.00
+CB seqwrite1 ws=262144 cyc_per_op=6.00
+CB fullread ws=262144 cyc_per_op=6.00
+CB chase ws=1048576 cyc_per_op=5.00
+CB seqread1 ws=1048576 cyc_per_op=6.00
+CB seqwrite1 ws=1048576 cyc_per_op=6.00
+CB fullread ws=1048576 cyc_per_op=6.00
+CB chase ws=4194304 cyc_per_op=5.00
+CB seqread1 ws=4194304 cyc_per_op=6.00
+CB seqwrite1 ws=4194304 cyc_per_op=6.00
+CB fullread ws=4194304 cyc_per_op=6.00
+CB chase_uncached ws=65536 cyc_per_op=5.00
+CB chase_spr ws=8192 cyc_per_op=5.00
+CB wr_cached_sync ws=4096 cyc_per_qw=15.98
+CB wr_ucab ws=4096 cyc_per_qw=9.04
+CB wr_ucab_check ws=4096 bad_qw=0
+CB wr_uncached ws=4096 cyc_per_qw=9.04
+CB wr_uncached_check ws=4096 bad_qw=0
+CB wr_cached_sync ws=16384 cyc_per_qw=10.75
+CB wr_ucab ws=16384 cyc_per_qw=9.01
+CB wr_ucab_check ws=16384 bad_qw=0
+CB wr_uncached ws=16384 cyc_per_qw=9.01
+CB wr_uncached_check ws=16384 bad_qw=0
+CB wr_cached_sync ws=65536 cyc_per_qw=9.44
+CB wr_ucab ws=65536 cyc_per_qw=9.00
+CB wr_ucab_check ws=65536 bad_qw=0
+CB wr_uncached ws=65536 cyc_per_qw=9.00
+CB wr_uncached_check ws=65536 bad_qw=0
+CB wr_cached_sync ws=262144 cyc_per_qw=9.11
+CB wr_ucab ws=262144 cyc_per_qw=9.00
+CB wr_ucab_check ws=262144 bad_qw=0
+CB wr_uncached ws=262144 cyc_per_qw=9.00
+CB wr_uncached_check ws=262144 bad_qw=0
+CB wr_cached_sync ws=1048576 cyc_per_qw=9.03
+CB wr_ucab ws=1048576 cyc_per_qw=9.00
+CB wr_ucab_check ws=1048576 bad_qw=0
+CB wr_uncached ws=1048576 cyc_per_qw=9.00
+CB wr_uncached_check ws=1048576 bad_qw=0
+CB wr_spr ws=16384 cyc_per_qw=9.01
+CB sync_dirty n=1024 cyc_per_call=1783 cyc_per_line=111.44
+CB sync_clean n=1024 cyc_per_call=1782 cyc_per_line=111.38
+CB flush0 n=1024 cyc_per_call=714
+CB sync_dirty n=4096 cyc_per_call=1783 cyc_per_line=27.86
+CB sync_clean n=4096 cyc_per_call=1782 cyc_per_line=27.84
+CB flush0 n=4096 cyc_per_call=714
+CB sync_dirty n=8192 cyc_per_call=1783 cyc_per_line=13.93
+CB sync_clean n=8192 cyc_per_call=1782 cyc_per_line=13.92
+CB flush0 n=8192 cyc_per_call=714
+CB sync_dirty n=16384 cyc_per_call=1783 cyc_per_line=6.96
+CB sync_clean n=16384 cyc_per_call=1782 cyc_per_line=6.96
+CB flush0 n=16384 cyc_per_call=714
+CB sync_dirty n=65536 cyc_per_call=1783 cyc_per_line=1.74
+CB sync_clean n=65536 cyc_per_call=1782 cyc_per_line=1.74
+CB flush0 n=65536 cyc_per_call=714
+CB sync_dirty n=131072 cyc_per_call=1783 cyc_per_line=0.87
+CB sync_clean n=131072 cyc_per_call=1782 cyc_per_line=0.87
+CB flush0 n=131072 cyc_per_call=714
+CB sync_dirty n=262144 cyc_per_call=1783 cyc_per_line=0.44
+CB sync_clean n=262144 cyc_per_call=1782 cyc_per_line=0.44
+CB flush0 n=262144 cyc_per_call=714
+CB copy_lq n=4096 cyc_per_64B=21.08
+CB copy_lq_pref n=4096 cyc_per_64B=22.08
+CB copy_lq n=32768 cyc_per_64B=21.01
+CB copy_lq_pref n=32768 cyc_per_64B=22.01
+CB copy_lq n=262144 cyc_per_64B=21.00
+CB copy_lq_pref n=262144 cyc_per_64B=22.00
+CB pccr ev= 0  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev= 1  A(1KB chase): pc0=163846 pc1=163846 | B(64KB chase 32768 hops): pc0=163846 pc1=163846 | C(8 x 64KB code): pc0=147510 pc1=147510
+CB pccr ev= 2  A(1KB chase): pc0=163846 pc1=163846 | B(64KB chase 32768 hops): pc0=163846 pc1=163846 | C(8 x 64KB code): pc0=147510 pc1=147510
+CB pccr ev= 3  A(1KB chase): pc0=163846 pc1=163846 | B(64KB chase 32768 hops): pc0=163846 pc1=163846 | C(8 x 64KB code): pc0=147510 pc1=147510
+CB pccr ev= 4  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev= 5  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev= 6  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev= 7  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev= 8  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev= 9  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=10  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=11  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=12  A(1KB chase): pc0=163846 pc1=163846 | B(64KB chase 32768 hops): pc0=163846 pc1=163846 | C(8 x 64KB code): pc0=147510 pc1=147510
+CB pccr ev=13  A(1KB chase): pc0=163846 pc1=163846 | B(64KB chase 32768 hops): pc0=163846 pc1=163846 | C(8 x 64KB code): pc0=147510 pc1=147510
+CB pccr ev=14  A(1KB chase): pc0=163846 pc1=163846 | B(64KB chase 32768 hops): pc0=163846 pc1=163846 | C(8 x 64KB code): pc0=147510 pc1=147510
+CB pccr ev=15  A(1KB chase): pc0=163846 pc1=163846 | B(64KB chase 32768 hops): pc0=163846 pc1=163846 | C(8 x 64KB code): pc0=147510 pc1=147510
+CB pccr ev=16  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=17  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=18  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=19  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=20  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=21  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=22  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=23  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=24  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=25  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=26  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=27  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=28  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=29  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=30  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB pccr ev=31  A(1KB chase): pc0=0 pc1=0 | B(64KB chase 32768 hops): pc0=0 pc1=0 | C(8 x 64KB code): pc0=0 pc1=0
+CB done

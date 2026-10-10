@@ -1,0 +1,195 @@
+diff --git a/src/p_mobj.h b/src/p_mobj.h
+index 4a84276..27deab0 100644
+--- a/src/p_mobj.h
++++ b/src/p_mobj.h
+@@ -289,29 +289,63 @@ typedef struct blocknode_s
+ // Map Object definition.
+ typedef struct mobj_s
+ {
+-	// List: thinker links.
++	// OPT13-RCACHE experiment: hot/cold field order (semantics unchanged; thinker, x, y, z stay first: degenmobj_t shares this prefix)
++	// ---- line 0: position, momentum, extents (every tick of every mobj)
+ 	thinker_t thinker;
+-
+-	// Info for drawing: position.
+ 	fixed_t x, y, z;
+-	fixed_t old_x, old_y, old_z; // position interpolation
+-	fixed_t old_x2, old_y2, old_z2;
+-
+-	// More list: links in sector (if needed)
++	fixed_t momx, momy, momz;
++	fixed_t floorz; // Nearest floor below.
++	fixed_t ceilingz; // Nearest ceiling above.
++	fixed_t radius;
++	fixed_t height;
++	INT32 tics; // state tic counter
++	// ---- line 1: flags, state, links, identity
++	UINT32 flags; // flags from mobjinfo tables
++	UINT32 flags2; // MF2_ flags
++	state_t *state;
++	struct subsector_s *subsector; // Subsector the mobj resides in.
++	mobjtype_t type;
++	const mobjinfo_t *info; // &mobjinfo[mobj->type]
++	INT32 health;
++	struct mobj_s *target; // Thing being chased/attacked (or NULL), and originator for missiles.
++	struct mobj_s *tracer; // Thing being chased/attacked for tracers.
++	fixed_t scale;
++	angle_t angle;
++	UINT32 frame; // frame number, plus bits see p_pspr.h
++	spritenum_t sprite; // used to find patch_t and flip value
+ 	struct mobj_s *snext;
+ 	struct mobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
+-
+-	// More drawing info: to determine current sprite.
+-	angle_t angle, pitch, roll; // orientation
+-	angle_t old_angle, old_pitch, old_roll; // orientation interpolation
+-	angle_t old_angle2, old_pitch2, old_roll2;
+-	angle_t spriteroll, old_spriteroll, old_spriteroll2;
+-	spritenum_t sprite; // used to find patch_t and flip value
+-	UINT32 frame; // frame number, plus bits see p_pspr.h
++	UINT16 eflags; // extra flags
+ 	UINT16 sprite2; // player sprites
++	// ---- line 2: less frequent tick state
++	INT32 fuse; // Does something in P_MobjThinker on reaching 0.
++	INT32 threshold; // If >0, the target will be chased no matter what.
++	INT32 reactiontime; // If not 0, don't attack yet.
++	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
++	INT32 movecount; // when 0, select a new dir
++	struct player_s *player;
++	fixed_t pmomz; // If you're on a moving floor, its "momz" would be here
++	fixed_t watertop; // top of the water FOF the mobj is in
++	fixed_t waterbottom; // bottom of the water FOF the mobj is in
++	struct pslope_s *standingslope;
++	struct msecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
++	blocknode_t *blocknode;
++	struct ffloor_s *floorrover; // FOF referred by floorz
++	struct ffloor_s *ceilingrover; // FOF referred by ceilingz
+ 	UINT16 anim_duration; // for FF_ANIMATE states
+-
++	UINT16 color;
++	UINT16 translation;
++	boolean resetinterp;
++	boolean colorized;
++	boolean mirrored;
+ 	UINT32 renderflags; // render flags
++	// ---- cold for the tick: interpolation and drawing detail, Lua values
++	fixed_t old_x, old_y, old_z; // position interpolation
++	fixed_t old_x2, old_y2, old_z2;
++	angle_t pitch, roll; // orientation
++	angle_t old_angle, old_pitch, old_roll; // orientation interpolation
++	angle_t old_angle2, old_pitch2, old_roll2;
++	angle_t spriteroll, old_spriteroll, old_spriteroll2;
+ 	INT32 blendmode; // blend mode
+ 	fixed_t alpha; // alpha
+ 	fixed_t spritexscale, spriteyscale;
+@@ -319,109 +353,26 @@ typedef struct mobj_s
+ 	fixed_t old_spritexscale, old_spriteyscale, old_spritexscale2, old_spriteyscale2;
+ 	fixed_t old_spritexoffset, old_spriteyoffset, old_spritexoffset2, old_spriteyoffset2;
+ 	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
+-
+-	struct msecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
+-
+-	struct subsector_s *subsector; // Subsector the mobj resides in.
+-
+-	// The closest interval over all contacted sectors (or things).
+-	fixed_t floorz; // Nearest floor below.
+-	fixed_t ceilingz; // Nearest ceiling above.
+-	struct ffloor_s *floorrover; // FOF referred by floorz
+-	struct ffloor_s *ceilingrover; // FOF referred by ceilingz
+-
+-	// For movement checking.
+-	fixed_t radius;
+-	fixed_t height;
+-
+-	// Momentums, used to update position.
+-	fixed_t momx, momy, momz;
+-	fixed_t pmomz; // If you're on a moving floor, its "momz" would be here
+-
+-	INT32 tics; // state tic counter
+-	state_t *state;
+-	UINT32 flags; // flags from mobjinfo tables
+-	UINT32 flags2; // MF2_ flags
+-	UINT16 eflags; // extra flags
+-
+ 	void *skin; // overrides 'sprite' when non-NULL (for player bodies to 'remember' the skin)
+-
+-	// Player and mobj sprites in multiplayer modes are modified
+-	//  using an internal color lookup table for re-indexing.
+-	UINT16 color;
+-
+-	// This replaces MF_TRANSLATION. Use 0 for default (no translation).
+-	UINT16 translation;
+-
+ 	struct player_s *drawonlyforplayer; // If set, hides the mobj for everyone except this player and their spectators
+ 	struct mobj_s *dontdrawforviewmobj; // If set, hides the mobj if dontdrawforviewmobj is the current camera (first-person player or awayviewmobj)
+-
+-	// Interaction info, by BLOCKMAP.
+-	// Links in blocks (if needed).
+-	blocknode_t *blocknode;
+-
+-	// Additional pointers for NiGHTS hoops
+-	struct mobj_s *hnext;
++	struct mobj_s *hnext; // Additional pointers for NiGHTS hoops
+ 	struct mobj_s *hprev;
+-
+-	mobjtype_t type;
+-	const mobjinfo_t *info; // &mobjinfo[mobj->type]
+-
+-	INT32 health; // for player this is rings + 1 -- no it isn't, not any more!!
+-
+-	// Movement direction, movement generation (zig-zagging).
+-	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
+-	INT32 movecount; // when 0, select a new dir
+-
+-	struct mobj_s *target; // Thing being chased/attacked (or NULL), and originator for missiles.
+-
+-	INT32 reactiontime; // If not 0, don't attack yet.
+-
+-	INT32 threshold; // If >0, the target will be chased no matter what.
+-
+-	// Additional info record for player avatars only.
+-	// Only valid if type == MT_PLAYER
+-	struct player_s *player;
+-
+ 	INT32 lastlook; // Player number last looked for.
+-
+ 	mapthing_t *spawnpoint; // Used for CTF flags, objectplace, and a handful other applications.
+-
+-	struct mobj_s *tracer; // Thing being chased/attacked for tracers.
+-
+ 	fixed_t friction;
+ 	fixed_t movefactor;
+-
+-	INT32 fuse; // Does something in P_MobjThinker on reaching 0.
+-	fixed_t watertop; // top of the water FOF the mobj is in
+-	fixed_t waterbottom; // bottom of the water FOF the mobj is in
+-
+ 	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
+-
+-	fixed_t scale;
+ 	fixed_t old_scale; // interpolation
+ 	fixed_t old_scale2;
+ 	fixed_t destscale;
+ 	fixed_t scalespeed;
+-
+-	// Extra values are for internal use for whatever you want
+ 	INT32 extravalue1;
+ 	INT32 extravalue2;
+-
+-	// Custom values are not to be altered by us!
+-	// They are for SOCs to store things in.
+ 	INT32 cusval;
+ 	INT32 cvmem;
+-
+-	struct pslope_s *standingslope; // The slope that the object is standing on (shouldn't need synced in savegames, right?)
+-
+-	boolean resetinterp; // if true, some fields should not be interpolated (see R_InterpolateMobjState implementation)
+-	boolean colorized; // Whether the mobj uses the rainbow colormap
+-	boolean mirrored; // The object's rotations will be mirrored left to right, e.g., see frame AL from the right and AR from the left
+ 	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
+ 	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
+-
+-	// WARNING: New fields must be added separately to savegame and Lua.
+ } mobj_t;
+ 
+ //

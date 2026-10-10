@@ -1,0 +1,26 @@
+sampler total 11785 kcyc/frame; with modelled misses 21426 kcyc/frame (x1.82); functions with host data: 64 of 80
+hw#  function                         stage                     emu K  Dmiss K  Imiss K     hw K  hw/emu  emu#
+1    P_MobjThinker                    tick:thinkers            1030.2    870.7    156.6   2057.5   2.00x     2
+2    R_RenderSegLoopX                 render:walls             1227.9    549.2    274.1   2051.2   1.67x     1
+3    R_DrawColumn_8                   render:drawers(col/span)    672.3    909.8     12.8   1594.8   2.37x     4
+4    P_CheckPosition                  tick:collision/sight      803.7    312.6    282.0   1398.3   1.74x     3
+5    R_StoreWallRange                 render:walls              477.8    227.8    496.9   1202.5   2.52x     5
+6    R_DrawSpan_8                     render:drawers(col/span)    468.6    427.3      1.1    897.1   1.91x     6
+7    P_MobjCheckWater                 tick:thinkers             357.1    204.4    238.0    799.6   2.24x     8
+8    R_PointInSubsector               tick:collision/sight      428.0    245.8     76.3    750.1   1.75x     7
+9    R_DrawWaterSpan_8                render:drawers(col/span)    294.1    273.7      0.9    568.7   1.93x     9
+10   P_BlockLinesIterator             tick:collision/sight      284.8    225.9     52.9    563.6   1.98x    10
+11   R_AddSprites                     render:sprites/masked     257.5    118.2    147.5    523.1   2.03x    11
+12   P_ZMovement                      tick:thinkers             167.7     31.9    231.1    430.7   2.57x    18
+13   PIT_DoCheckThing                 tick:collision/sight      183.9     81.7    121.9    387.5   2.11x    16
+14   R_FindPlane                      render:planes             151.3    113.4     93.3    358.1   2.37x    22
+15   R_RenderBSPNode                  render:bsp/setup          103.1    107.4    136.1    346.6   3.36x    29
+16   R_DrawSinglePlane                render:planes             249.8     61.8      9.3    320.9   1.28x    12
+17   R_ClipSprites                    render:sprites/masked     210.7    102.1      2.1    314.9   1.49x    14
+18   P_CycleMobjState                 tick:thinkers             137.0    141.8     32.5    311.3   2.27x    23
+19   P_Ticker                         tick:thinkers             103.0    151.9     14.5    269.5   2.62x    30
+20   R_IsPointInSector                tick:collision/sight      153.6     54.4     53.2    261.2   1.70x    20
+21   PIT_CheckLine                    tick:collision/sight      161.6     51.0     43.2    255.9   1.58x    19
+22   P_MobjRegularThink               -                         246.1      0.0      0.0    246.1   1.00x    13
+23   R_MapPlane                       render:planes             177.5     59.2      3.1    239.8   1.35x    17
+24   P_CreateSecNodeList              tick:collision/sight       79.4     45.5     86.9    211.8   2.67x    36

@@ -50,6 +50,7 @@
 #include "hw/ps2_hwd.h"
 #include "hw/ps2_hwd_dbg.h"
 #include "hw/ps2_hw_prof.h"
+#include "ps2_texc.h" // OPT13 IZ (PS2-602)
 #endif
 #include "ps2_prof.h"
 
@@ -953,13 +954,49 @@ static void Impl_HWProf(void)
 {
 	static INT32 frames, windows;
 	static unsigned int hwprof_vbl0; // vblank counter at the end of the previous window (st.vblanks is a running count)
-	static UINT32 last_count;
-	static UINT64 wall;
+	static UINT32 last_count, wmax, wspikes; // OPT13 IZ: the worst frame of the window (wall cycles) and the frames above 15 M: the spikes of the lazy texture builds
+	static UINT16 fhist[40]; // frames of the window by wall cycles, 1 M each (the last: 39 M and more): HWFH, the percentiles of tools/ps2/iz_sum.py
+	static UINT64 wall, sleep0;
 	UINT32 now = ps2hwp_now();
 	ps2hwd_stats_t st;
 	ps2hwd_info_t info;
 
-	wall += (UINT32)(now - last_count);
+	{
+		const UINT32 d = (UINT32)(now - last_count);
+
+		if (d > wmax)
+			wmax = d;
+		if (d > 15000000u)
+			wspikes++;
+		fhist[d / 1000000u < 39u ? d / 1000000u : 39u]++;
+		wall += d;
+		// OPT13 IZ: a frame above 15 M cycles is named with the stages that took it (the deltas of the cumulative counters of the window): the first 40 of a run, "HWSPIKE"
+		{
+			static UINT32 pc[HWP_POST + 1], pdraw, ptex, pwait, pflip, nspike;
+			ps2hwd_stats_t cs;
+			int k;
+			UINT32 dc[HWP_POST + 1];
+
+			PS2HWD_GetStats(&cs, 0);
+			for (k = 0; k <= HWP_POST; k++)
+			{
+				dc[k] = ps2hwp_cyc[k] >= pc[k] ? (UINT32)(ps2hwp_cyc[k] - pc[k]) : (UINT32)ps2hwp_cyc[k];
+				pc[k] = (UINT32)ps2hwp_cyc[k];
+			}
+			if (d > 15000000u && nspike < 40 && hwframes > 20)
+			{
+				nspike++;
+				I_OutputMsg("HWSPIKE f=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u\n", (int)hwframes, (unsigned)d,
+					(unsigned)dc[HWP_CLEAR], (unsigned)dc[HWP_BSP], (unsigned)dc[HWP_BATCH], (unsigned)dc[HWP_SPRITES], (unsigned)dc[HWP_NODES], (unsigned)dc[HWP_POST],
+					(unsigned)(cs.cyc_draw >= pdraw ? cs.cyc_draw - pdraw : cs.cyc_draw), (unsigned)(cs.cyc_tex >= ptex ? cs.cyc_tex - ptex : cs.cyc_tex),
+					(unsigned)(cs.cyc_wait >= pwait ? cs.cyc_wait - pwait : cs.cyc_wait), (unsigned)(cs.cyc_flipwait >= pflip ? cs.cyc_flipwait - pflip : cs.cyc_flipwait));
+			}
+			pdraw = (UINT32)cs.cyc_draw;
+			ptex = (UINT32)cs.cyc_tex;
+			pwait = (UINT32)cs.cyc_wait;
+			pflip = (UINT32)cs.cyc_flipwait;
+		}
+	}
 	last_count = now;
 	if (++frames < 105)
 		return;
@@ -967,6 +1004,29 @@ static void Impl_HWProf(void)
 		PS2HWD_DumpWorkingSet();
 	PS2HWD_GetStats(&st, 1);
 	PS2HWD_GetInfo(&info);
+	{
+		// OPT12 HWDRV (PS2-HW-440): the working cycles of a frame = wall minus what the EE spent waiting (ring / GS finish, the flip of the previous frame, the frame cap sleep);
+		// the flip histogram says how many vblanks each picture stayed (a steady 60 Hz is all in bin 1; bin 0 = replaced within a vblank)
+		extern unsigned long long ps2prof_sleep_cyc;
+		const UINT64 slept = ps2prof_sleep_cyc - sleep0;
+		const UINT64 perframe_wait = ((UINT64)st.cyc_wait + (UINT64)st.cyc_flipwait) / (UINT64)frames + slept / (UINT64)frames;
+		const UINT64 wallf = wall / (UINT64)frames;
+
+		sleep0 = ps2prof_sleep_cyc;
+		I_OutputMsg("HWPROF0 win=%d work=%u wall=%u sleep=%u cad=%u/%u/%u/%u/%u vbl=%u flips=%u wmax=%u spikes=%u\n", (int)windows,
+			(unsigned)(wallf > perframe_wait ? wallf - perframe_wait : 0), (unsigned)wallf, (unsigned)(slept / (UINT64)frames),
+			st.flip_hist[0], st.flip_hist[1], st.flip_hist[2], st.flip_hist[3], st.flip_hist[4], st.vblanks - hwprof_vbl0, st.flips, wmax, wspikes);
+		wmax = wspikes = 0;
+		{
+			int k;
+
+			I_OutputMsg("HWFH win=%d", (int)windows);
+			for (k = 0; k < 40; k++)
+				I_OutputMsg(" %u", (unsigned)fhist[k]);
+			I_OutputMsg("\n");
+			memset(fhist, 0, sizeof fhist);
+		}
+	}
 	I_OutputMsg("HWPROF win=%d frames=%d wall=%u clear=%u bsp=%u batch=%u sprites=%u nodes=%u post=%u | drv draw=%u tex=%u wait=%u flipwait=%u vbl=%u finishmax=%u | polys=%u vin=%u vout=%u clip=%u rej=%u qw=%u state=%u passes=%u bands=%u uploads=%u upbytes=%u evict=%u clut=%u kicks=%u dmawait=%u framewait=%u dropped=%u regen=%u missing=%u skipped=%u ws=%u/%u pool=%u/%u cap=%u pred=%u capchg=%u restamp=%u decim=%u\n",
 		(int)windows, (int)frames, (unsigned)(wall / frames),
 		(unsigned)(ps2hwp_cyc[HWP_CLEAR] / frames), (unsigned)(ps2hwp_cyc[HWP_BSP] / frames), (unsigned)(ps2hwp_cyc[HWP_BATCH] / frames),
@@ -983,6 +1043,8 @@ static void Impl_HWProf(void)
 		(unsigned)(ps2hwp_cyc[HWP_PLANE] / frames), (unsigned)(ps2hwp_cyc[HWP_ADDSPR] / frames), (unsigned)(ps2hwp_cyc[HWP_SUBSEC] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_LIGHT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRSORT] / frames), (unsigned)(ps2hwp_cyc[HWP_SPRDRAW] / frames),
 		(unsigned)(ps2hwp_cyc[HWP_NODESORT] / frames), (unsigned)(ps2hwp_cyc[HWP_NODEDRAW] / frames));
+	Z_ModeProf((unsigned int)frames); // OPT13 IZ (PS2-600): the zone policy of the window
+	PS2TexC_Prof((unsigned int)frames); // OPT13 IZ (PS2-602): the stored composites used in the window
 	PS2HWD_ProfExtra((unsigned int)frames); // OPT10 HG
 	PS2MemHud_ProfLine((unsigned int)frames); // OPT11-MEM (PS2-HW-300)
 	memset(ps2hwp_cyc, 0, sizeof ps2hwp_cyc);

@@ -60,10 +60,13 @@ typedef enum
 #define LIMIT_SFX_LASTFREESLOT (sfx_freeslot0 + LIMIT_SFXFREESLOTS - 1)
 #define LIMIT_SFX_SKINSLOT0 (sfx_freeslot0 + LIMIT_SFXFREESLOTS)
 #define LIMIT_NUMSFX (LIMIT_SFX_SKINSLOT0 + LIMIT_SKINSFXSLOTS)
+// PS2-LUA: see info.h (PS2_OOR_STATE). In the small table the numbers past the 256 free slots are the skin slots; on the PC they are free slots: such an index grows the table first.
+#define PS2_OOR_SFX(i) ((!ps2_fullsfx && (INT64)(i) >= (INT64)(sfx_freeslot0 + PS2_SMALL_SFXFREESLOTS) && (INT64)(i) < (INT64)NUMSFX ? PS2Limits_GrowSounds() : (void)0), (unsigned)(i) >= (unsigned)NUMSFX)
 #else
 #define LIMIT_SFX_LASTFREESLOT sfx_lastfreeslot
 #define LIMIT_SFX_SKINSLOT0 sfx_skinsoundslot0
 #define LIMIT_NUMSFX NUMSFX
+#define PS2_OOR_SFX(i) ((unsigned)(i) >= (unsigned)NUMSFX)
 #endif
 
 //

@@ -1,0 +1,74 @@
+# Lua equivalence: SOC numbers (get_number -> LUA_EvalMath) in the fields of objects, states, sounds, colours and level headers
+Freeslot
+MT_LQSOC
+MT_LQSOC2
+S_LQSOC1
+S_LQSOC2
+SPR_LQSC
+sfx_lqsoc
+SKINCOLOR_LQSOC
+
+Object MT_LQSOC
+MapThingNum = 4000 + 22
+SpawnState = S_LQSOC1
+SpawnHealth = 7 * 6 - 2
+Radius = 16*FRACUNIT
+Height = FRACUNIT*32 + (FRACUNIT/2)
+Speed = 10 << 4
+Mass = (7*8)^3
+Damage = 2147483647 + 1
+ReactionTime = FRACUNIT
+PainChance = 255 - 1 - MT_PLAYER
+DispOffset = -3 + 1
+Flags = MF_NOGRAVITY|MF_SOLID|MF_SHOOTABLE
+SeeSound = sfx_lqsoc
+DeathState = S_LQSOC2
+
+Object MT_LQSOC2
+MapThingNum = 0x1000
+SpawnState = S_LQSOC2
+Radius = 3*FRACUNIT/2
+Height = 2147483647
+Speed = -2147483647 - 1
+Mass = 100000 * 100000
+Damage = 17 / 5
+ReactionTime = 17 % 5
+PainChance = 1 << 31
+Flags = MF_NOGRAVITY|MF_NOCLIP|MF_NOBLOCKMAP
+
+Frame S_LQSOC1
+SpriteNumber = SPR_LQSC
+SpriteSubNumber = A|FF_FULLBRIGHT|FF_PAPERSPRITE
+Duration = 35*2
+Next = S_LQSOC2
+Var1 = 12*FRACUNIT/7
+Var2 = -5 / 2
+
+Frame S_LQSOC2
+SpriteNumber = SPR_PLAY
+SpriteSubNumber = 3
+Duration = -1
+Next = S_LQSOC2
+Var1 = 1 ^ 3
+Var2 = 5 & 3
+Action = A_Look
+
+Sound sfx_lqsoc
+Singular = 1
+Priority = 64 * 2
+Flags = SF_X2AWAYSOUND|SF_NOMULTIPLESOUND
+
+Color SKINCOLOR_LQSOC
+Name = LQSocColor
+Ramp = 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16
+InvColor = SKINCOLOR_BLUE
+InvShade = 3 * 4 - 5
+ChatColor = V_YELLOWMAP
+Accessible = true
+
+Level 98
+LevelName = LQ Level
+Weather = 1 + 1
+SkyNum = 2 * 3
+Act = 2
+NoZone = false

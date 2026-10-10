@@ -320,7 +320,12 @@ static inline void P_AddDynVertexSlopeThinker (pslope_t* slope, const INT16 tags
 /// Create a new slope and add it to the slope list.
 static inline pslope_t* Slope_Add (const UINT8 flags)
 {
+#ifdef PS2
+	static zlevelpool_t ps2_slopepool; // PS2-511: 2 089 on MAP11
+	pslope_t *ret = Z_LevelPoolAlloc(&ps2_slopepool, sizeof(pslope_t), 64);
+#else
 	pslope_t *ret = Z_Calloc(sizeof(pslope_t), PU_LEVEL, NULL);
+#endif
 	ret->flags = flags;
 
 	ret->next = slopelist;
