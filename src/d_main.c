@@ -218,8 +218,8 @@ void D_ProcessEvents(void)
 	// OPT14-GIF: the event leaves the queue BEFORE the responders see it. A responder may run a blocking network request whose "please wait" screen
 	// empties the queue itself (ps2_netui.c Poll, the connection loop): with the old "step on after the body" loop the tail then jumped over the head
 	// (tail == head + 1) and this loop replayed the whole ring - 127 slots of old events and of never written ones, i.e. keydown events with key 0 -
-	// which M_ScreenshotResponder took for the unbound second key of Screenshot / Toggle GIF Recording: connecting to a server (Multiplayer >
-	// server list, the first blocking request) started a GIF (and, with the default controls, took a screenshot) 60+ times in a row.
+	// which M_ScreenshotResponder took for the unbound second key of Toggle GIF Recording (or Screenshot): the first network use after the start-up from a
+	// menu (server list, Connect) switched a GIF recording on and off 119 times in a row and left it on (with the default controls: one screenshot).
 	// A copy of the event: the nested loop may post more than MAXEVENTS events over the slot while the responder runs.
 	while (eventtail != eventhead)
 #else
