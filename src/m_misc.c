@@ -43,6 +43,9 @@
 #include "m_argv.h"
 #include "i_system.h"
 #include "command.h" // cv_execversion
+#ifdef PS2_PROFILE
+#include "ps2/ps2_safefile.h" // OPT13-IO (RS-08)
+#endif
 
 #include "m_anigif.h"
 
@@ -315,6 +318,11 @@ boolean FIL_WriteFile(char const *name, const void *source, size_t length)
 	FILE *handle = NULL;
 	size_t count;
 
+#ifdef PS2_PROFILE
+	// OPT13-IO (RS-08): the new content goes to NAME.tmp and replaces NAME only when it is whole (ps2_safefile.h); a full card or a power-off keeps the old file
+	return PS2Safe_Write(name, source, length);
+#endif
+
 	//if (FIL_WriteFileOK(name))
 		handle = fopen(name, "w+b");
 
@@ -347,6 +355,13 @@ size_t FIL_ReadFileTag(char const *name, UINT8 **buffer, INT32 tag)
 	//if (FIL_ReadFileOK(name))
 		handle = fopenfile(name, "rb");
 
+#ifdef PS2_PROFILE
+	if (!handle) // a power-off in the middle of a save (ps2_safefile.h) can leave only NAME.bak
+	{
+		PS2Safe_Recover(name);
+		handle = fopenfile(name, "rb");
+	}
+#endif
 	if (!handle)
 		return 0;
 
@@ -732,6 +747,10 @@ void M_SaveConfig(const char *filename)
 {
 	FILE *f;
 	char *filepath;
+#ifdef PS2_PROFILE
+	char tmpconfig[256];
+	boolean safeconfig = false; // OPT13-IO (RS-08): the default config file is written as NAME.tmp and replaces NAME when whole
+#endif
 
 	// make sure not to write back the config until it's been correctly loaded
 	if (!gameconfig_loaded)
@@ -771,6 +790,11 @@ void M_SaveConfig(const char *filename)
 			return;
 		}
 
+#ifdef PS2_PROFILE
+		f = PS2Safe_Begin(configfile, tmpconfig, sizeof tmpconfig);
+		safeconfig = f != NULL;
+		if (!f)
+#endif
 		f = fopen(configfile, "w");
 		if (!f)
 		{
@@ -811,7 +835,18 @@ void M_SaveConfig(const char *filename)
 			G_SaveKeySetting(f, gamecontrol, gamecontrolbis);
 	}
 
+#ifdef PS2_PROFILE
+	if (safeconfig)
+	{
+		if (!PS2Safe_End(f, tmpconfig, configfile))
+			CONS_Alert(CONS_ERROR, M_GetText("Couldn't save game config file %s\n"), configfile);
+		return;
+	}
+	if (ferror(f) | (fclose(f) != 0)) // the medium is full or gone: the player is told
+		CONS_Alert(CONS_ERROR, M_GetText("Couldn't save game config file %s\n"), filename ? filename : configfile);
+#else
 	fclose(f);
+#endif
 }
 
 // ==========================================================================

@@ -198,6 +198,10 @@ UINT16 W_InitFolder(const char *path, boolean mainfile, boolean startup, boolean
 
 // W_InitMultipleFiles exits if a file was not found, but not if all is okay.
 void W_InitMultipleFiles(addfilelist_t *list);
+#ifdef PS2_PROFILE
+void W_PrefetchLump(UINT16 wad, UINT16 lump); // OPT13-IO (RS-02): lists a lump of a cooked pack for the prefetch pass
+void W_SoftReads(boolean on); // OPT13-IO (RS-07): a pack read that fails for good returns the short count instead of ending the game (a sound effect can be missed)
+#endif
 
 #define W_FileHasFolders(wadfile) ((wadfile)->type == RET_PK3 || (wadfile)->type == RET_FOLDER)
 
