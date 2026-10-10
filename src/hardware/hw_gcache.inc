@@ -649,7 +649,7 @@ static boolean gc_alloc_block(void)
 	tab_b = (size_t)want * GC_WAYS * sizeof(gchent_t);
 	seg_b = dseg ? (((size_t)numsegs * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
 	pl_b = dpl ? (((size_t)addsubsector * 2u * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
-	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
+	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + (((gc.mode & 3) >= 2) ? GC_SCRATCH : 0); // (the scratch record of a checked hit only where hits are checked: -hwgc 2, 3; 24 KB of the zone otherwise)
 	total = tab_b + seg_b + pl_b + sec_b + vert_b + HWR_PBStBytes() + ar_b + 64;
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
