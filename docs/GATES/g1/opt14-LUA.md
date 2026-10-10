@@ -61,6 +61,24 @@ The worst case uses 86-87 % of the stack (about 1.5 KB of C stack per level: the
 The messages and depths (198 / 197 / 199 levels) are the PC's (`lt_stack`, `lt_stack2`, `lt_stack3` SAME). A different context (a debug build, a deeper engine call chain) could reach the end of the stack, which on the EE corrupts memory silently:
 if a user script recurses without bound through `gsub`/`sort` callbacks this is the place where the PS2 differs from the PC (8 MB stack).
 
+### PS2-LUA-4: the Lua slab pool kept the memory of freed objects for ever (the same size only); a heavy mod ate 2.7 MB more than it needed
+
+* Cause: PS2-LOAD-18 made the heap of the main Lua state a slab allocator (16 KB slabs carved in 16-byte size classes, a free list per class, no headers). A freed block can only serve the next
+  allocation of its own class and a slab was never returned, so garbage of one size followed by garbage of another size left the first in the free lists for the rest of the run.
+* Measured with `tools/ps2/luatests/lt_heap.lua` on BIG.pk3 (100 scripts, 3.6 MB of live objects; `memfree` now prints "Lua heap" and "Lua pool"): after rounds of 15 000 small strings, 6 000 medium
+  strings, 1 500 large strings and 12 000 tables, each dropped and collected, Lua counts 3.64 MB live and the zone holds 6.65 MB for the heap (2.8 MB on free lists), against 3.97 MB after the fix.
+* Fix (`src/lua_script.c`): a directory of the slabs (sorted by address, 12 KB, made with the state), the bytes of each slab that sit on the free lists are added up, slabs that are free in their whole
+  used extent go back to the zone (`LUA_PoolTrim`; never the slab being carved). It runs after the full collection at the end of loading, after `collectgarbage()` of a script, every ~10 s from
+  `LUA_Step` when 256 KB or more sit on the lists, and as a reclaim hook of the zone (`Z_AddReclaimHook`, "the hook only frees") when an allocation would fail. Nothing is allocated by the trim.
+* Checks: `lt_poolstress.lua` (40 rounds of 1 500 objects of every kind, survivors verified every round, then 30 rounds with 4 000 objects and ~10 survivors; 481 slabs given back, 0 wrong checksums) SAME as the PC;
+  `lt_heap` 601 lines SAME; the whole suite below.
+
+### PS2-LUA-5: a call from Lua that would run past the end of the EE stack is refused (hardening, not triggered by any test)
+
+`luaD_call` (ldo.c, PS2_PROFILE) compares `$sp` with the bottom of the main thread stack + 40 KiB and raises the same error as the 200th C level ("C stack overflow"). The worst recursion measured
+(200 levels of gsub callbacks, section above) stops 52 KB from the end, so the check never fires in any test of the stand (the levels reached are the PC's: 198/197/198); with `-luastackmargin 300`
+(a margin that is reached) gsub stops at level 50 with the same message and the stack stays at 132 KB. The EE has no stack guard; without the check an overflow corrupts the heap silently.
+
 ### Memory note found on the way
 
 Each live userdata costs ~100 bytes of Lua heap (userdata + registry node + the script's own reference): 12 000 line userdata + 3000 mobjs on MAP11 end with "Not enough memory to draw map MAP11 (PU_RENDERWORK)" and a return to the title.

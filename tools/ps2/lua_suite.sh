@@ -6,7 +6,7 @@ PAK=${2:-build/pak2}
 T=tools/ps2/luatests
 EQ="python3 tools/ps2/lua_equiv.py --elf $ELF --pak $PAK ${LUA_OUT:+--out $LUA_OUT}"
 W320="--pc-args=-width 320 -height 200 -ps2ref-maptics"
-run() { name=$1; shift; $EQ --name "$name" "$@" 2>&1 | grep -E "^(lt_|RESULT|[a-z0-9]+: )" | tr '\n' ' '; echo; }
+run() { name=$1; shift; $EQ --name "$name" "$@" 2>&1 | grep -E "^(lt_|lm_|RESULT|[a-z0-9_]+: )" | tr '\n' ' '; echo; }
 run lt_vm      --until "LQ DONE_VM" $T/lt_vm.lua
 run lt_math    --until "LQ DONE_MATH" $T/lt_math.lua
 run lt_globals --until "LQ DONE_GLOBALS" $T/lt_globals.lua
