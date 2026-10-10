@@ -5,6 +5,7 @@
 #include "../command.h"
 #include "../console.h"
 #include "../f_finale.h"
+#include "../g_input.h" // gamecontrol: the quick button of the chat (OPT14-CHAT)
 #include "../i_video.h"
 #include "../m_argv.h"
 #include "../m_menu.h"
@@ -58,8 +59,30 @@ static const hintset_t hintsets[PS2MH_NUMKINDS] =
 	[PS2MH_VIDEOMODE]  = {PS2I_DPAD_UD PS2I_DPAD_LR " Select   " PS2I_CROSS " Set", PS2I_CIRCLE " Back"},
 	[PS2MH_CHANGE]     = {PS2I_DPAD_UD " Select   " PS2I_DPAD_LR " Change   " PS2I_CROSS " OK", PS2I_CIRCLE " Back"}, // (the order of every set: move, the main button; then the side ones, Circle last)
 	[PS2MH_VMCONFIRM]  = {PS2I_CROSS " Keep this mode", PS2I_CIRCLE " Return"},
+	[PS2MH_CHAT]       = {PS2I_DPAD_UD " Select   " PS2I_CROSS " Write", PS2I_CIRCLE " Back"}, // (the quick button is put in by ChatSet)
+	[PS2MH_TEAMCHAT]   = {PS2I_DPAD_UD " Select   " PS2I_CROSS " Write", PS2I_CIRCLE " Back"},
 	[PS2MH_NONE]       = {NULL, NULL},
 };
+
+// OPT14-CHAT: the pause menu's chat items also tell the quick button of the chat: the pad button that Setup Controls has on Talk / Talk (Team only) (Select by default,
+// g_input.c), so a changed binding is told as changed. No pad button bound: the Cross / Circle hints alone.
+static const hintset_t *ChatSet(boolean team)
+{
+	static hintset_t set;
+	static char right[48];
+	const INT32 gc = team ? GC_TEAMKEY : GC_TALKKEY;
+	const char *tok = PS2UI_KeyToken(gamecontrol[gc][1]);
+
+	if (!tok[0])
+		tok = PS2UI_KeyToken(gamecontrol[gc][0]);
+	set = hintsets[team ? PS2MH_TEAMCHAT : PS2MH_CHAT];
+	if (tok[0])
+	{
+		snprintf(right, sizeof right, "%s %s   " PS2I_CIRCLE " Back", tok, team ? "Team chat" : "Quick chat");
+		set.right = right;
+	}
+	return &set;
+}
 
 // ---- the map of what the menu has drawn ------------------------------------------------------------------------------------------------------------------
 #define ROW0_Y 182      // the top of the 13 px icons of the lowest row: the plate ends 4 px above the bottom edge of the 320x200 picture
@@ -1126,7 +1149,7 @@ void PS2MenuHints_Draw(void)
 		kind = M_PS2MenuKind();
 		if (kind >= 0 && kind < PS2MH_NUMKINDS)
 		{
-			set = &hintsets[kind];
+			set = (kind == PS2MH_CHAT || kind == PS2MH_TEAMCHAT) ? ChatSet(kind == PS2MH_TEAMCHAT) : &hintsets[kind];
 			if (set->left)
 				how[0] = PlaceGroup(set->left, false);
 			if (set->right)

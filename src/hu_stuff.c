@@ -1093,12 +1093,17 @@ static void HU_OpenChatLine(boolean teamkey, boolean textfollows)
 
 #ifdef PS2
 // OPT14-CHAT: the "Chat" / "Team Chat" items of the pause menu (m_menu.c) and the quick button: what the talk key does, without a key
+boolean HU_ChatAvailable(void)
+{
+	if (!netgame || OLD_MUTE)
+		return false;
+	return gamestate == GS_LEVEL || gamestate == GS_INTERMISSION || gamestate == GS_CUTSCENE || gamestate == GS_CREDITS
+		|| gamestate == GS_ENDING || gamestate == GS_EVALUATION; // the gamestates of G_Responder that give the events to HU_Responder
+}
+
 boolean HU_OpenChat(boolean team)
 {
-	if (!netgame || chat_on || OLD_MUTE)
-		return false;
-	if (gamestate != GS_LEVEL && gamestate != GS_INTERMISSION && gamestate != GS_CUTSCENE && gamestate != GS_CREDITS
-	 && gamestate != GS_ENDING && gamestate != GS_EVALUATION) // the gamestates of G_Responder that give the events to HU_Responder
+	if (chat_on || !HU_ChatAvailable())
 		return false;
 	HU_OpenChatLine(team, false);
 	return true;

@@ -96,6 +96,7 @@ extern boolean chat_on;
 // (no netgame, the old chat of a muted player, no level). `PS2` only: the PC engine has its keys.
 #ifdef PS2
 boolean HU_OpenChat(boolean team);
+boolean HU_ChatAvailable(void); // a chat line can be opened now (a netgame, a gamestate that takes it)
 boolean HU_ChatTeamAvailable(void); // the gametype has teams: "Team Chat" is a real choice
 #endif
 
