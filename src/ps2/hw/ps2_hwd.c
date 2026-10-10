@@ -1803,7 +1803,16 @@ static void settex_now(GLMipmap_t *TexInfo)
 		tt_capture(TexInfo); // PS2-HW-69: the texels as the engine hands them over
 	if ((ps2hwd_dbg_flags & HWDBG_IMMDBG) && (u32)TexInfo->width * TexInfo->height >= PLAN_MIN_TEXELS)
 		CONS_Printf("HWIMM f=%u %s %ux%u want=%u UPLOAD imm=%d phase=%d\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, imm_level, batch_phase);
-	ri = tex_upload(TexInfo);
+	{
+		// OPT13 IZ: an upload that takes the driver more than 2 M cycles (a sky, a big wall: level conversion, fill, DMA): the first 40 of a run, "HWUPSLOW"
+		const u32 u0 = cyc();
+		static unsigned upslow_reports;
+
+		ri = tex_upload(TexInfo);
+		if (cyc() - u0 > 2000000u && upslow_reports++ < 40)
+			CONS_Printf("HWUPSLOW f=%u %s %ux%u fmt=%d want=%u cycles %u (upload number %u of this texture, dropped by %u)\n", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo),
+				(unsigned)TexInfo->width, (unsigned)TexInfo->height, (int)TexInfo->format, (unsigned)want, (unsigned)(cyc() - u0), (unsigned)TexInfo->ps2_nup + 1u, (unsigned)TexInfo->ps2_drop);
+	}
 	if (tex_flatpin)
 	{
 		HWR_PS2_FlatUnpin(tex_flatpin, (size_t)TexInfo->width * TexInfo->height);

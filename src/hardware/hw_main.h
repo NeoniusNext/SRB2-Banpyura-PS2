@@ -136,6 +136,9 @@ extern boolean gl_shadersavailable;
 // Called by the GS driver (src/ps2/hw/ps2_hwd.c) when a texture that is not in VRAM is drawn: make the data of the mipmap again
 // (when the zone dropped it) / let the zone drop it again after the upload.
 void HWR_PS2_RegenerateMipmap(GLMipmap_t *mipmap);
+#ifdef PS2_PROFILE
+void HWR_PS2_PrefetchLevel(void); // OPT13 IZ (PS2-602): P_LoadLevel, hardware renderer on: the stored composites of the level are read (ps2_texc.c)
+#endif
 void HWR_PS2_ReleaseMipmapData(GLMipmap_t *mipmap);
 const char *HWR_PS2_TexName(const GLMipmap_t *mipmap);
 #endif

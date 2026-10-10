@@ -1079,6 +1079,7 @@ static inline u32 dc_key(const GLMipmap_t *m)
 
 static void dc_drop(dcent_t *e)
 {
+	Z_SetRebuildCost((void **)(void *)&e->p, 0); // OPT13 IZ (PS2-603): the entry is another block next time
 	if (e->p)
 		HWR_PS2_FreeData(e->p);
 	dc_bytes -= e->bytes;
@@ -1828,6 +1829,7 @@ static dcent_t *flat_make_level(GLMipmap_t *m, u32 lv)
 	ne->stamp = ++dc_seq;
 	dc_bytes += ne->bytes;
 	TX.lvl_cyc += cyc() - t0;
+	Z_SetRebuildCost((void **)(void *)&ne->p, cyc() - t0); // OPT13 IZ (PS2-603): a level of a 1 MiB cloud plane made from its lump: 10..12 M cycles; the zone evicts it last
 	{
 		static int logged;
 
@@ -2219,6 +2221,7 @@ static int tex_upload(GLMipmap_t *m)
 					}
 				}
 				TX.lvl_cyc += cyc() - dt0;
+				Z_SetRebuildCost((void **)(void *)&ne->p, cyc() - dt0); // OPT13 IZ (PS2-603)
 				{
 					static int dl_logged;
 
