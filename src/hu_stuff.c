@@ -1497,7 +1497,21 @@ boolean HU_Responder(event_t *ev)
 
 #define chatsnap (cv_chatsnapx.value|cv_chatsnapy.value)
 #define chatx (cv_chatx.value)
+#ifdef PS2
+// OPT14-CHAT: with the on-screen keyboard of the chat line up (ps2_osk.c, pinned to the bottom edge) a chat window that stands on the bottom edge stands on the keyboard instead:
+// the lowest point of the chat (the counter of the line under the input line) moves up to its top edge, the input line, the log above it and the scrolling follow
+static INT32 HU_ChatY(void)
+{
+	INT32 y = cv_chaty.value;
+
+	if (PS2OSK_ChatUp() && cv_chatsnapy.value == V_SNAPTOBOTTOM)
+		y = min(y, PS2OSK_ChatTop() - 8);
+	return y;
+}
+#define chaty HU_ChatY()
+#else
 #define chaty (cv_chaty.value)
+#endif
 
 // OPT14-CHAT: the cell of the window chat. At 640 px and up (the PC) it is the menu font at half size, a 4x6 cell, exactly as ever. The 320x200 picture of the PS2 would
 // take every second row and column of that font away (blobs), so there the thin font is drawn at full size: glyphs of their own width (5 px most), 8 px lines. One place

@@ -1,7 +1,7 @@
 // PS2-135: see ps2_osk.h. Layout: four rows of characters and a row of commands.
 //   Cross: type / run the command, D-pad: move, Square: Shift, Triangle: Backspace, Start: Enter (OK), Circle: close the keyboard,
 //   Select (OPT14-CHAT): the symbols layer (punctuation and brackets, which the two letter layers have little of).
-// OPT14-CHAT: on the chat line of a netgame (hu_stuff.c) the keyboard sits at the TOP of the picture (the chat window and the line being typed stay in view at the bottom),
+// OPT14-CHAT: on the chat line of a netgame (hu_stuff.c) the keyboard is pinned to the BOTTOM edge of the picture and the chat window and the line being typed stand on top of it,
 //   Start sends, Circle drops the message (the chat line closes), L1 / R1 scroll the chat log, L2 / R2 move the text cursor, and the game goes on under it: the sticks still
 //   steer the player (the original chat does not stop them either), and the release of a button that was pressed before the keyboard came up reaches the game.
 #include "../doomdef.h"
@@ -22,6 +22,7 @@
 #include "ps2_menuhints.h"
 
 #define OSK_COLS 10
+#define OSK_EVENT 0x4B53 // the y of the key events that the keyboard itself posts (Enter, Backspace, Escape, arrows)
 #define OSK_ROWS 5
 
 static const char *const rows_lower[4] = {"1234567890", "qwertyuiop", "asdfghjkl.", "zxcvbnm:/-"};
@@ -51,7 +52,8 @@ static void Post(evtype_t type, INT32 key)
 
 	e.type = type;
 	e.key = key;
-	e.x = e.y = 0;
+	e.x = 0;
+	e.y = OSK_EVENT; // (a key event has no use for y: the mark of ours, see last_pad in PS2OSK_Responder)
 	e.repeated = false;
 	D_PostEvent(&e);
 }
@@ -163,10 +165,13 @@ static INT32 PadBit(INT32 key)
 
 boolean PS2OSK_Responder(const event_t *ev)
 {
-	if (ev->type == ev_keydown && ev->key < KEY_MOUSE1)
-		last_pad = false; // a key of the keyboard
-	else if (ev->type == ev_keydown && ev->key >= KEY_JOY1 && ev->key < KEY_HAT1 + JOYHATS * 4)
-		last_pad = true; // a button of the pad (or a direction of its D-pad)
+	if (ev->type == ev_keydown && ev->y != OSK_EVENT) // (not the keys that this keyboard posted for the pad's button)
+	{
+		if (ev->key < KEY_MOUSE1)
+			last_pad = false; // a key of the keyboard
+		else if (ev->key >= KEY_JOY1 && ev->key < KEY_HAT1 + JOYHATS * 4)
+			last_pad = true; // a button of the pad (or a direction of its D-pad)
+	}
 
 	if (!active)
 	{
@@ -252,20 +257,35 @@ boolean PS2OSK_Responder(const event_t *ev)
 	return ev->type == ev_joystick && !chatmode;
 }
 
-// the chat keyboard: the top of the picture, 90 px high, so that the chat window (its log starts at y = 93 with the default settings) and the line being typed stay in view
+// the chat keyboard: pinned to the BOTTOM edge of the picture (V_SNAPTOBOTTOM, like the chat window: in the video modes that are taller than 320x200 both stand on the real
+// bottom edge), 90 px high with 5 px under it (the safe area of a television; the corner hints keep 4). The game and the chat window stay in view above it: the chat line
+// moves up to stand on its top edge (hu_stuff.c, HU_ChatY: the line being typed, the counter and the log above it).
+#define CHAT_TOP 105 // the y of the top of the panel (base pixels from the top of a 200 px picture whose bottom is the edge of the screen)
+#define CHAT_H 90
+
+boolean PS2OSK_ChatUp(void)
+{
+	return active && chatmode;
+}
+
+INT32 PS2OSK_ChatTop(void)
+{
+	return CHAT_TOP;
+}
+
 static void DrawChat(void)
 {
 	static const char hint1[] = PS2I_CROSS " type  " PS2I_SQUARE " shift  " PS2I_TRIANGLE " delete  " PS2I_SELECT " symbols";
 	static const char hint2[] = PS2I_START " send  " PS2I_CIRCLE " cancel  " PS2I_L1 PS2I_R1 " scroll  " PS2I_L2 PS2I_R2 " cursor";
-	const INT32 x0 = 40, y0 = 14, pitch = 11;
+	const INT32 x0 = 40, y0 = CHAT_TOP + 13, pitch = 11, snap = V_SNAPTOBOTTOM;
 	INT32 r, c;
 
-	V_DrawFill(x0 - 6, 1, 252, 90, 31);
-	V_DrawFill(x0 - 6, 1, 252, 1, 0);
-	V_DrawFill(x0 - 6, 90, 252, 1, 0);
-	V_DrawCenteredString(160, 3, V_YELLOWMAP, chatteam ? "TEAM CHAT" : "CHAT");
+	V_DrawFill(x0 - 6, CHAT_TOP, 252, CHAT_H, 31 | snap);
+	V_DrawFill(x0 - 6, CHAT_TOP, 252, 1, 0 | snap);
+	V_DrawFill(x0 - 6, CHAT_TOP + CHAT_H - 1, 252, 1, 0 | snap);
+	V_DrawCenteredString(160, CHAT_TOP + 2, V_YELLOWMAP | snap, chatteam ? "TEAM CHAT" : "CHAT");
 	if (sym || upper)
-		V_DrawRightAlignedThinString(x0 + 240, 5, V_ALLOWLOWERCASE | V_YELLOWMAP, sym ? "symbols" : "shift");
+		V_DrawRightAlignedThinString(x0 + 240, CHAT_TOP + 4, V_ALLOWLOWERCASE | V_YELLOWMAP | snap, sym ? "symbols" : "shift");
 	for (r = 0; r < 4; r++)
 		for (c = 0; c < OSK_COLS; c++)
 		{
@@ -274,8 +294,8 @@ static void DrawChat(void)
 			const INT32 x = x0 + c * 24, y = y0 + r * pitch;
 
 			if (cur)
-				V_DrawFill(x, y - 1, 22, 10, 73);
-			V_DrawCenteredString(x + 11, y, V_ALLOWLOWERCASE | (cur ? V_YELLOWMAP : 0), s);
+				V_DrawFill(x, y - 1, 22, 10, 73 | snap);
+			V_DrawCenteredString(x + 11, y, V_ALLOWLOWERCASE | (cur ? V_YELLOWMAP : 0) | snap, s);
 		}
 	for (c = 0; c < 5; c++)
 	{
@@ -283,15 +303,15 @@ static void DrawChat(void)
 		const INT32 x = x0 + c * 48, y = y0 + 4 * pitch + 3;
 
 		if (cur)
-			V_DrawFill(x, y - 1, 46, 10, 73);
+			V_DrawFill(x, y - 1, 46, 10, 73 | snap);
 		else if (c == 0 && upper)
-			V_DrawFill(x, y - 1, 46, 10, 54);
-		V_DrawCenteredString(x + 23, y, V_ALLOWLOWERCASE | (cur ? V_YELLOWMAP : 0), cmd_names_chat[c]);
+			V_DrawFill(x, y - 1, 46, 10, 54 | snap);
+		V_DrawCenteredString(x + 23, y, V_ALLOWLOWERCASE | (cur ? V_YELLOWMAP : 0) | snap, cmd_names_chat[c]);
 	}
 	PS2MenuHints_Log("osk", hint1); // PS2-341: the check for hints said twice
 	PS2MenuHints_Log("osk", hint2);
-	V_DrawCenteredThinString(160, 74, V_ALLOWLOWERCASE, hint1);
-	V_DrawCenteredThinString(160, 82, V_ALLOWLOWERCASE, hint2);
+	V_DrawCenteredThinString(160, CHAT_TOP + 73, V_ALLOWLOWERCASE | snap, hint1);
+	V_DrawCenteredThinString(160, CHAT_TOP + 81, V_ALLOWLOWERCASE | snap, hint2);
 }
 
 void PS2OSK_Draw(void)
@@ -313,9 +333,9 @@ void PS2OSK_Draw(void)
 		held_last = I_GetTime();
 	}
 
-	if (chatmode && !OLDCHAT)
+	if (chatmode)
 	{
-		DrawChat();
+		DrawChat(); // (also with the console chat, whose line is at the top: the keyboard is the same)
 		return;
 	}
 

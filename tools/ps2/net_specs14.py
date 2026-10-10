@@ -114,8 +114,8 @@ def chat_pad(first, text, via='menu', team=False, step=9):
             t += 25
         items += [(t, 'cross', 5)]
         t += 45
-    else:
-        items += [(t, 'select', 5)]
+    else:  # the quick buttons: Select = Talk, R2 = Talk (Team only)
+        items += [(t, 'r2' if via == 'r2' else 'select', 5)]
         t += 45
     typed, t = seq(t, osk_buttons(text), step)
     items += typed
@@ -151,6 +151,9 @@ def pause_srv(name, renderer='Software', via='menu', team=False, text='hi there'
 pause_srv('chat-pause-srv')
 pause_srv('chat-pause-srv-hw', 'Hardware')
 pause_srv('chat-pause-srv-team', team=True, mode='ctf', mapname='MAPM0')
+pause_srv('chat-select-srv', via='select', text='quick one')
+pause_srv('chat-select-srv-hw', 'Hardware', via='select', text='quick one')
+pause_srv('chat-r2-srv', via='r2', text='for the team', mode='ctf', mapname='MAPM0')
 
 
 # ---- 2b. more of the PS2 server alone
@@ -162,7 +165,7 @@ def alone(name, args, files, frames, renderer='Software', cfg='', mapname='MAP01
 
 for _r, _sfx in (('Software', ''), ('Hardware', '-hw')):
     # the button hints (cvar menuhints) of the pause menu on "Chat" and on "Continue": the quick button of the chat is told
-    alone('chat-hints-srv' + _sfx, ['-padscript', 'file:pad.txt'], {'pad.txt': pad((700, 'start', 5), (760, 'down', 5))}, [740, 800, 880], _r, cfg='menuhints "On"\n')
+    alone('chat-hints-srv' + _sfx, ['-padscript', 'file:pad.txt'] + (['-menuhintscheck', '-iconcheck'] if _r == 'Software' else []), {'pad.txt': pad((700, 'start', 5), (760, 'down', 5))}, [740, 800, 880], _r, cfg='menuhints "On"\n')
     # the pause menu with messages in the chat window under it (the window is not drawn over the menu's text: it is dimmed by the menu's fade, like the HUD)
     alone('chat-overlap-srv' + _sfx, ['-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'],
           {'pad.txt': pad((900, 'start', 5)), 'cmd.txt': '300:say First message|330:say Second message|360:say Third message that is a bit longer than the others to wrap'}, [880, 950, 1000], _r)
