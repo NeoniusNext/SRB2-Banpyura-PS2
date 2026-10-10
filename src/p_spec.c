@@ -120,6 +120,23 @@ static void P_AddPlaneDisplaceThinker(INT32 type, fixed_t speed, INT32 control, 
 //SoM: 3/7/2000: New sturcture without limits.
 static anim_t *lastanim;
 static anim_t *anims = NULL; /// \todo free leak
+
+#ifdef PS2_PROFILE
+// OPT13 IZ (PS2-602): the pictures of the animation that texture `tex` belongs to (texture numbers *first..*last); false if it is not animated. The prefetch of a level's textures asks.
+boolean P_PS2_AnimRange(INT32 tex, INT32 *first, INT32 *last)
+{
+	const anim_t *anim;
+
+	for (anim = anims; anim && anim < lastanim; anim++)
+		if (tex >= anim->basepic && tex < anim->basepic + anim->numpics)
+		{
+			*first = anim->basepic;
+			*last = anim->basepic + anim->numpics - 1;
+			return true;
+		}
+	return false;
+}
+#endif
 static size_t maxanims;
 
 // Animating line specials

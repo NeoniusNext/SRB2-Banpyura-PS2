@@ -21,6 +21,8 @@
 #include "../i_video.h"     //rendermode
 #include "../r_data.h"
 #include "../r_textures.h"
+#include "../r_state.h"
+#include "../r_sky.h"
 #include "../w_wad.h"
 #include "../z_zone.h"
 #ifdef PS2_PROFILE
@@ -33,6 +35,7 @@
 #include "../p_setup.h"
 #ifdef PS2_PROFILE
 #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
+#include "../ps2/ps2_texc.h" // OPT13 IZ (PS2-602, R2): composites prebuilt by the cooker
 
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
 boolean ps2hwt_comp_old; // OPT13 RDRV: -hwcomp 0 = the composition as before (A/B): the raw lump read per patch use, the GL structures and the patch built and freed for every placement
@@ -672,6 +675,7 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 	INT32 missing; // PS2-140: patches that could not be read for lack of memory
 #endif
 #ifdef PS2_PROFILE
+	const unsigned int gt0 = ps2hwt_now(); // OPT13 IZ (PS2-603): what making this texture cost, for the eviction (Z_SetRebuildCost)
 	ps2_cpatch_t held[PS2_CPATCH_MAX]; // OPT13 RDRV: patches read for this texture, kept until it is composed
 	INT32 nheld = 0, h;
 #endif
@@ -683,6 +687,47 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 	blockwidth = texture->width;
 	blockheight = texture->height;
 	blocksize = blockwidth * blockheight;
+#if defined(PS2) && defined(PS2_PROFILE)
+	// OPT13 IZ (PS2-602, R2): the pixels were made by the cooker from the same patches (TEXC.PAK): a decode of a stored LZ4 block instead of the composition below (4..28 M cycles, 260..320 M
+	// when the zone dropped the patches). A texture the pack has no composite of for this definition (an add-on's, patches from other files) goes the way it always did.
+	if (!ps2_slow_composite && mipmap->format == GL_TEXFMT_P_8 && PS2TexC_Present())
+	{
+		UINT8 *tb = Z_TryMallocAlign((size_t)blocksize, PU_HWRCACHE, &(mipmap->data), sizeof (void *));
+
+		if (tb)
+		{
+			if (PS2TexC_Fetch(texnum, tb, (size_t)blocksize))
+			{
+				if (ps2hwd_dbg_flags & 0x1000000 /* HWDBG_COMPOSE */)
+				{
+					// the check: the same texture composed by the original column loops against the stored pixels
+					static unsigned checked, bad;
+					GLMipmap_t chk = *mipmap;
+					GLMapTexture_t tmp = *grtex;
+
+					chk.data = NULL;
+					ps2_slow_composite = true;
+					HWR_GenerateTexture(texnum, &tmp, &chk);
+					ps2_slow_composite = false;
+					checked++;
+					if (!chk.data || memcmp(chk.data, tb, (size_t)blocksize))
+					{
+						bad++;
+						CONS_Printf("HWC TEXC MISMATCH texture %d %.8s %dx%d (%u of %u checked differ)\n", (int)texnum, texture->name, (int)texture->width, (int)texture->height, bad, checked);
+					}
+					else if (!(checked & 63))
+						CONS_Printf("HWC TEXC check: %u textures identical, %u differ\n", checked - bad, bad);
+					Z_Free(chk.data);
+				}
+				grtex->scaleX = 1.0f/(texture->width*FRACUNIT);
+				grtex->scaleY = 1.0f/(texture->height*FRACUNIT);
+				Z_SetRebuildCost(&mipmap->data, ps2hwt_now() - gt0);
+				return;
+			}
+			Z_Free(tb); // (the owner pointer, mipmap->data, is NULL again)
+		}
+	}
+#endif
 #ifdef PS2
 	// PS2-140: a texture of 64 KB and more that does not fit has no data: the driver skips the draws that need it for a frame and the engine asks again
 	block = MakeBlockEx(mipmap, (size_t)blocksize * format2bpp(mipmap->format) >= HWR_TRYPATCH_MIN);
@@ -868,6 +913,10 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 #endif
 	grtex->scaleX = 1.0f/(texture->width*FRACUNIT);
 	grtex->scaleY = 1.0f/(texture->height*FRACUNIT);
+#ifdef PS2
+	if (!ps2_slow_composite && mipmap->data)
+		Z_SetRebuildCost(&mipmap->data, ps2hwt_now() - gt0); // OPT13 IZ (PS2-603): Z_MakeRoom frees the cheap textures before this one
+#endif
 }
 
 // patch may be NULL if grMipmap has been initialised already and makebitmap is false
@@ -1171,6 +1220,10 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 {
 	// we must free it since numtextures may have changed
 	HWR_FreeMapTextures();
+#if defined(PS2) && defined(PS2_PROFILE)
+	PS2TexC_Reset(); // OPT13 IZ (PS2-602): the stored composites are looked up by texture number
+	Z_ClearRebuildCosts(); // OPT13 IZ (PS2-603): the owners of the old list are gone
+#endif
 
 	gl_numtextures = pnumtextures;
 	gl_textures = calloc(gl_numtextures, sizeof(*gl_textures));
@@ -1462,6 +1515,157 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 		}
 	}
 }
+
+#if defined(PS2) && defined(PS2_PROFILE)
+// OPT13 IZ (PS2-602): the composition of texture `texnum` by the original loops, for PS2TexC_Check (-texccheck): into dest, bytes = width * height
+static boolean HWR_PS2_ComposeForCheck(INT32 texnum, UINT8 *dest, size_t bytes)
+{
+	GLMipmap_t chk;
+	GLMapTexture_t tmp;
+	boolean ok;
+
+	Z_FlushCache(); // (the level load, nothing held: the lump reads of the original composition are PU_CACHE blocks of this very frame, which the zone would not evict)
+	memset(&chk, 0, sizeof chk);
+	memset(&tmp, 0, sizeof tmp);
+	chk.format = GL_TEXFMT_P_8;
+	chk.width = (UINT16)textures[texnum]->width;
+	chk.height = (UINT16)textures[texnum]->height;
+	ps2_slow_composite = true;
+	HWR_GenerateTexture(texnum, &tmp, &chk);
+	ps2_slow_composite = false;
+	ok = chk.data && (size_t)chk.width * chk.height == bytes;
+	if (ok)
+		memcpy(dest, chk.data, bytes);
+	Z_Free(chk.data);
+	return ok;
+}
+
+// OPT13 IZ (PS2-603, RF-3): the textures near the start of a level are made before the first frame (the screen is still the loading screen), nearest first, the sky before them, within a budget
+// of EE cycles (-hwwarm M: M million, 0 off) and while the arena has room: the walls the player sees in the first seconds were composed in the middle of frames 54..80 of the demos (47..101 M
+// cycles, 0.16..0.34 s). The data are ordinary cache blocks (tag change as HWR_GetTexture does it): the zone takes them back, oldest first, when it needs the room, and the driver asks for
+// what was taken the way it always did. Nothing is uploaded here: which textures reach the GS is the frame plan's business.
+static INT32 warm_budget = -1;
+
+typedef struct { INT32 tex; UINT32 dist; } warm_t;
+
+static int HWR_WarmCmp(const void *a, const void *b)
+{
+	const warm_t *x = a, *y = b;
+
+	return x->dist < y->dist ? -1 : x->dist > y->dist ? 1 : 0;
+}
+
+static void HWR_WarmTexture(INT32 tex)
+{
+	GLMapTexture_t *grtex;
+	GLMipmap_t *m;
+
+	if (!gl_textures || tex < 0 || (size_t)tex >= gl_numtextures || !textures[tex])
+		return;
+	grtex = &gl_textures[tex];
+	m = &grtex->mipmap;
+	if (m->data || m->downloaded)
+		return;
+	m->flags = TF_WRAPXY;
+	m->width = (UINT16)textures[tex]->width;
+	m->height = (UINT16)textures[tex]->height;
+	m->format = textureformat;
+	m->regen_kind = 1;
+	m->regen_id = tex;
+	HWR_GenerateTexture(tex, grtex, m);
+	if (m->data)
+		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+}
+
+static void HWR_PS2_WarmLevel(void)
+{
+	warm_t *list;
+	UINT8 *seen;
+	size_t i, n = 0;
+	INT32 px = 0, py = 0, done = 0;
+	const unsigned int t0 = ps2hwt_now();
+	unsigned int spent;
+
+	if (warm_budget < 0)
+		warm_budget = (M_CheckParm("-hwwarm") && M_IsNextParm()) ? atoi(M_GetNextParm()) : 0;
+	if (!warm_budget || !gl_textures || !gl_numtextures || !numlines)
+		return;
+	list = Z_TryMallocAlign(gl_numtextures * sizeof *list, PU_RENDERWORK, NULL, 0);
+	seen = Z_TryMallocAlign(gl_numtextures, PU_RENDERWORK, NULL, 0);
+	if (!list || !seen)
+	{
+		Z_Free(list);
+		Z_Free(seen);
+		return;
+	}
+	memset(seen, 0, gl_numtextures);
+	if (playerstarts[0])
+	{
+		px = playerstarts[0]->x;
+		py = playerstarts[0]->y;
+	}
+	list[n].tex = skytexture; // the sky first
+	list[n++].dist = 0;
+	if (skytexture >= 0 && (size_t)skytexture < gl_numtextures)
+		seen[skytexture] = 1;
+	for (i = 0; i < numlines; i++)
+	{
+		const line_t *ln = &lines[i];
+		const INT32 mx = ((ln->v1->x >> FRACBITS) + (ln->v2->x >> FRACBITS)) / 2, my = ((ln->v1->y >> FRACBITS) + (ln->v2->y >> FRACBITS)) / 2;
+		const INT32 dx = mx - px, dy = my - py;
+		const UINT32 dist = (UINT32)(((INT64)dx * dx + (INT64)dy * dy) >> 8) + 1u;
+		int sd;
+
+		for (sd = 0; sd < 2; sd++)
+		{
+			const side_t *sidep;
+			INT32 t[3], k;
+
+			if (ln->sidenum[sd] == 0xFFFF)
+				continue;
+			sidep = &sides[ln->sidenum[sd]];
+			t[0] = sidep->toptexture;
+			t[1] = sidep->midtexture;
+			t[2] = sidep->bottomtexture;
+			for (k = 0; k < 3; k++)
+				if (t[k] > 0 && (size_t)t[k] < gl_numtextures && !seen[t[k]])
+				{
+					seen[t[k]] = 1;
+					list[n].tex = t[k];
+					list[n++].dist = dist;
+				}
+		}
+	}
+	qsort(list + 1, n - 1, sizeof *list, HWR_WarmCmp);
+	for (i = 0; i < n; i++)
+	{
+		if ((ps2hwt_now() - t0) > (unsigned int)warm_budget * 1000000u || Z_ArenaFree() < Z_RenderHeadroom() + (3u << 20))
+			break;
+		HWR_WarmTexture(list[i].tex);
+		done++;
+	}
+	spent = ps2hwt_now() - t0;
+	CONS_Printf("HWWARM %d of %u textures made before the first frame, %u cycles (budget %d M), arena free %u K\n", (int)done, (unsigned)n, spent, (int)warm_budget, (unsigned)(Z_ArenaFree() >> 10));
+	Z_Free(list);
+	Z_Free(seen);
+}
+
+// P_LoadLevel, the hardware renderer is on: what the level needs of TEXC.PAK is read before the first frame (the screen is still the loading screen)
+void HWR_PS2_PrefetchLevel(void)
+{
+	static int checked = -1;
+
+	if (checked < 0)
+		checked = M_CheckParm("-texccheck") != 0;
+	if (checked > 0)
+	{
+		checked = 0;
+		PS2TexC_Check(HWR_PS2_ComposeForCheck);
+	}
+	PS2TexC_PrefetchLevel();
+	HWR_PS2_WarmLevel();
+}
+#endif
 
 // OPT10 (PS2-HW-38): the mip levels of a big flat (the 1 MiB cloud planes) are made from the engine's own converted flat, pinned while the driver
 // reads it: no second copy of 1 MiB (two of them at once ran the 22 MiB arena out of a contiguous 1 MiB block)

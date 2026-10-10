@@ -104,6 +104,7 @@ static struct
 	UINT32 c_hit, c_miss, c_key, c_fp, n_fpb, n_fpf; // cycles: replays, calculations with recording, keys, sector fingerprints (inside the keys), their number
 	UINT32 ch[10], cl[10]; // misses of segs by the cycles the calculation took (buckets of 512) and the bytes of their records
 	UINT32 w_full, grow_n;
+	UINT32 retry_frame, tries; // PS2-601 (OPT13 IZ, Z1): when the cache is off (dead) the frame from which the zone is asked again, and how many times it went off in this level
 	UINT32 nd_pl, nd_plc, nd_rip, nd_wl, nd_wlc; // HWR_CreateDrawNodes (HWPROF53): translucent planes (and the rippled ones), walls: number and cycles per window
 	UINT32 bypass, bypass_len, w_views, w_q, w_hit, s_bypass; // adaptive: a window of views in which fewer than a third of the queries hit puts the cache out of use for a while (bypass views), longer every time
 	UINT32 sdbg, nsets, nsets_user, s_reclaim, s_promo, test_rec, test_res, test_n1, test_n2; // -hwgctest R,S: the zone takes the memory back at the R-th polygon recorded / the S-th HWR_GCReserve (tests of the reclaim)
@@ -138,6 +139,31 @@ static inline UINT32 gc_tw(INT32 raw)
 }
 
 static void HWR_AddTransparentWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, INT32 texnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap);
+
+// PS2-601 (OPT13 IZ, Z1): the cache used to go off for the rest of the level (gc.dead) when the zone took its memory back or a block of it did not fit at the moment: at the edge of the
+// capacity curve of the arena (docs/research/rcache/OPT13_RCACHE.md, section 6) that is a coin that falls differently for 32 KiB more or less (DEMO_003: 9.6 M a frame with the cache, 11 M
+// without in the windows after it went). It goes off for a while now and the zone is asked again: GC_RETRY_FRAMES frames the first time, twice as long every time after that, GC_MAX_TRIES times in a level.
+// -hwgcdead 1: the old rule (off until the next level), A/B on one ELF.
+#define GC_RETRY_FRAMES 210u
+#define GC_MAX_TRIES 5u
+static INT32 gc_dead_forever; // -hwgcdead 1
+
+#ifdef PS2
+#define gc_frame() Z_FrameCount()
+#else
+#define gc_frame() 0u // (the other platforms keep the rule: off until the next level)
+#endif
+
+static void gc_off(void)
+{
+	gc.dead = true;
+#ifdef PS2
+	gc.retry_frame = gc_frame() + (GC_RETRY_FRAMES << (gc.tries < 4u ? gc.tries : 4u));
+	gc.tries++;
+#else
+	gc.tries = GC_MAX_TRIES;
+#endif
+}
 
 // two lanes of six simple operations (no multiplication: ~3 cycles a word): a change of any input changes both lanes with a chance of 1 - 2^-64
 static inline void gcw(gcfp_t *h, UINT32 x)
@@ -531,6 +557,7 @@ static void HWR_GCacheLevel(void)
 {
 	gc.bypass = gc.bypass_len = gc.w_views = gc.w_q = gc.w_hit = gc.w_full = 0;
 	gc.dead = false;
+	gc.tries = 0;
 	gc.blk = NULL;
 	HWR_PBStDetach(); // (the table of states was in the block)
 	gc.on = false;
@@ -552,6 +579,7 @@ static void HWR_GCacheParse(void)
 	if (M_CheckParm("-hwgv") && M_IsNextParm())
 		hwr_gv_off = (UINT32)atoi(M_GetNextParm());
 	gc.mode_set = true;
+	gc_dead_forever = (M_CheckParm("-hwgcdead") && M_IsNextParm()) ? atoi(M_GetNextParm()) : 0;
 	gc.mode = 1 | 4; // ON by default since the round 2, the walls only (with the block collection of PS2-HW-233 a plane hit costs about what the calculation does - 1100 cycles - and its record is the biggest: no gain on the 4 demos, more memory); -hwgc 0: off, -hwgc 1: the planes too
 	gc.kb = GC_DEFAULT_KB;
 	if (M_CheckParm("-hwgc") && M_IsNextParm())
@@ -593,7 +621,7 @@ static size_t HWR_GCacheReclaim(size_t want)
 	(void)want;
 	if (!gc.blk)
 		return 0;
-	gc.dead = true;
+	gc_off();
 	gc.on = false;
 	gc.rec_fail = true;
 	hwr_grec_on = false;
@@ -656,7 +684,7 @@ static boolean gc_alloc_block(void)
 #ifdef PS2
 	I_OutputMsg("HWGC block: %u KB wanted (tables %u KB, arena %u KB), arena free %u KB, render headroom %u KB | level: %u segs %u subsectors %u sectors %u vertices\n", (unsigned)(total >> 10), (unsigned)((total - ar_b) >> 10), (unsigned)(ar_b >> 10),
 		(unsigned)(Z_ArenaFree() >> 10), (unsigned)(Z_RenderHeadroom() >> 10), (unsigned)numsegs, (unsigned)numsubsectors, (unsigned)numsectors, (unsigned)numvertexes);
-	if (Z_ArenaFree() < total + Z_RenderHeadroom() + (1u << 20))
+	if ((gc_dead_forever ? Z_ArenaFree() : Z_ReclaimableBytes()) < total + Z_RenderHeadroom() + (1u << 20)) // (PS2-601: the room the caches could give, not the free bytes of the moment)
 		return false;
 #endif
 	p = Z_TryMallocAlign(total, PU_HWRPLANE, &gc.blk, 4);
@@ -736,11 +764,17 @@ static boolean HWR_GCacheFrame(void)
 	if (!gc.mode_set)
 		HWR_GCacheParse();
 	gc.on = false;
-	if ((gc.mode & 3) == 0 || gc.dead)
+	if ((gc.mode & 3) == 0)
 		return false;
+	if (gc.dead)
+	{
+		if (gc_dead_forever || gc.tries >= GC_MAX_TRIES || (INT32)(gc_frame() - gc.retry_frame) < 0)
+			return false;
+		gc.dead = false; // the pause is over: the zone is asked again below
+	}
 	if (!gc.blk && !gc_alloc_block())
 	{
-		gc.dead = true; // no room (until the next level)
+		gc_off(); // no room (for a while)
 		return false;
 	}
 	// A scene whose walls do not fit in the arena (THZ2: 1400 segs of 5 polygons a frame, nothing in the arena is ever used again) only pays for the records. After a window of views with
@@ -761,7 +795,7 @@ static boolean HWR_GCacheFrame(void)
 			const size_t delta = (size_t)(nkb - gc.kb) * 1024u;
 
 #ifdef PS2
-			if (Z_ArenaFree() >= delta + Z_RenderHeadroom() + (3u << 20))
+			if ((gc_dead_forever ? Z_ArenaFree() : Z_ReclaimableBytes()) >= delta + Z_RenderHeadroom() + (3u << 20)) // (PS2-601: by the room the caches could give)
 #endif
 			{
 				gc.kb = nkb;
@@ -771,7 +805,7 @@ static boolean HWR_GCacheFrame(void)
 				gc.blk = NULL;
 				if (!gc_alloc_block())
 				{
-					gc.dead = true;
+					gc_off();
 					return false;
 				}
 			}
@@ -1454,9 +1488,9 @@ void HWR_GCacheProf(unsigned int frames)
 	I_OutputMsg("HWPROF53 translucent items of HWR_CreateDrawNodes a frame: planes %u (%u water) %u cycles, walls %u %u cycles\n", gc.nd_pl / frames, gc.nd_rip / frames, gc.nd_plc / frames, gc.nd_wl / frames, gc.nd_wlc / frames);
 	gc.nd_pl = gc.nd_plc = gc.nd_rip = gc.nd_wl = gc.nd_wlc = 0;
 	gc.s_new = gc.s_stale = gc.c_rpoly = gc.c_rtex = gc.n_rpoly = gc.n_rtex = 0;
-	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | reclaim=%u promote=%u bypass=%u | arena=%u/%u\n",
+	I_OutputMsg("HWPROF32 gcache mode=%d on=%d seg hit=%u miss=%u skip=%u | plane hit=%u miss=%u skip=%u | ops replayed=%u recorded=%u | flush=%u full=%u | check=%u bad=%u | cycles key=%u (sector fp %u: %u base %u full) hit=%u miss=%u | reclaim=%u promote=%u bypass=%u | arena=%u/%u dead=%d tries=%u\n",
 		gc.mode, gc.blk ? 1 : 0, gc.s_seg_hit / frames, gc.s_seg_miss / frames, gc.s_seg_skip / frames, gc.s_pl_hit / frames, gc.s_pl_miss / frames, gc.s_pl_skip / frames, gc.s_rep_ops / frames, gc.s_rec_ops / frames,
-		gc.s_flush, gc.s_full, gc.s_chk, gc.s_bad, gc.c_key / frames, gc.c_fp / frames, gc.n_fpb / frames, gc.n_fpf / frames, gc.c_hit / frames, gc.c_miss / frames, gc.s_reclaim, gc.s_promo / frames, gc.s_bypass / frames, (unsigned)((gc.ar_used - gc.hbase) >> 10), (unsigned)(gc.hsize >> 10));
+		gc.s_flush, gc.s_full, gc.s_chk, gc.s_bad, gc.c_key / frames, gc.c_fp / frames, gc.n_fpb / frames, gc.n_fpf / frames, gc.c_hit / frames, gc.c_miss / frames, gc.s_reclaim, gc.s_promo / frames, gc.s_bypass / frames, (unsigned)((gc.ar_used - gc.hbase) >> 10), (unsigned)(gc.hsize >> 10), gc.dead ? 1 : 0, gc.tries);
 	gc.s_seg_hit = gc.s_seg_miss = gc.s_seg_skip = gc.s_pl_hit = gc.s_pl_miss = gc.s_pl_skip = gc.s_flush = gc.s_full = gc.s_chk = gc.s_bad = gc.s_rep_ops = gc.s_rec_ops = 0;
 	gc.c_hit = gc.c_miss = gc.c_key = gc.c_fp = gc.n_fpb = gc.n_fpf = gc.s_promo = gc.s_bypass = 0;
 }
