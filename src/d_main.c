@@ -214,11 +214,27 @@ void D_ProcessEvents(void)
 	mouse.buttons &= ~(MB_SCROLLUP|MB_SCROLLDOWN);
 	mouse2.buttons &= ~(MB_SCROLLUP|MB_SCROLLDOWN);
 
+#ifdef PS2
+	// OPT14-GIF: the event leaves the queue BEFORE the responders see it. A responder may run a blocking network request whose "please wait" screen
+	// empties the queue itself (ps2_netui.c Poll, the connection loop): with the old "step on after the body" loop the tail then jumped over the head
+	// (tail == head + 1) and this loop replayed the whole ring - 127 slots of old events and of never written ones, i.e. keydown events with key 0 -
+	// which M_ScreenshotResponder took for the unbound second key of Toggle GIF Recording (or Screenshot): the first network use after the start-up from a
+	// menu (server list, Connect) switched a GIF recording on and off 119 times in a row and left it on (with the default controls: one screenshot).
+	// A copy of the event: the nested loop may post more than MAXEVENTS events over the slot while the responder runs.
+	while (eventtail != eventhead)
+#else
 	for (; eventtail != eventhead; eventtail = (eventtail+1) & (MAXEVENTS-1))
+#endif
 	{
 		boolean hooked = false;
+#ifdef PS2
+		event_t evcopy = events[eventtail];
 
+		eventtail = (eventtail+1) & (MAXEVENTS-1);
+		ev = &evcopy;
+#else
 		ev = &events[eventtail];
+#endif
 
 		// Set mouse buttons early in case event is eaten later
 		if (ev->type == ev_keydown || ev->type == ev_keyup || ev->type == ev_text)
