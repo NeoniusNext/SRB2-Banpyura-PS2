@@ -144,7 +144,7 @@ asked for the first time or after the zone dropped its data (docs/research/rdrv/
   texture (`SRB2 -texcdump FILE`, about 1 s); `tools/ps2/cook.py --texc FILE --out OUTDIR` packs the dump. The pack is for exactly the game packs in PAKDIR: cook the game packs again and this
   again (a changed pack changes its checksums, hence every key, hence every lookup misses: nothing wrong is ever shown).
 * **Reading.** `PS2TexC_Fetch` (hw_cache.c: first thing in `HWR_GenerateTexture` for a P8 texture): the stored form from the level's prefetch (`PS2TexC_PrefetchLevel` after the level was loaded: the
-  textures of its sidedefs, its sky and the animations they belong to, one read per run of nearby lumps, kept in one long-lived block), else one lump read; `WPack_DecodeMem` decodes it straight into
+  textures of its sidedefs, its sky and the animations they belong to, one read per run of nearby lumps, kept in one cache block: the zone takes it back when nothing has used it for a frame, see docs/GATES/g1/opt13-IZ.md section 5), else one lump read; `WPack_DecodeMem` decodes it straight into
   the texture's data block. `-notexc` ignores the pack, `-texcmem KiB` limits the prefetch (default 1024), `-texccheck` compares every stored composite with the original composition at the first
   level load (`TEXC check: N textures checked, M differ`), `-hwdbg 16777216` checks each texture when it is made.
 
