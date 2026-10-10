@@ -1,10 +1,10 @@
 #!/bin/sh
 # PS2-LOAD-30: the whole Lua equivalence suite (PC reference build against the PS2 ELF in PCSX2), one result line per script.
-# usage: tools/ps2/lua_suite.sh ELF [PAKDIR]   (run in the worktree; results in build/lua-equiv/<name>/, summary on stdout)
+# usage: [LUA_OUT=dir] tools/ps2/lua_suite.sh ELF [PAKDIR]   (run in the worktree; results in build/lua-equiv/<name>/ or $LUA_OUT/<name>/, summary on stdout)
 ELF=${1:?ELF}
 PAK=${2:-build/pak2}
 T=tools/ps2/luatests
-EQ="python3 tools/ps2/lua_equiv.py --elf $ELF --pak $PAK"
+EQ="python3 tools/ps2/lua_equiv.py --elf $ELF --pak $PAK ${LUA_OUT:+--out $LUA_OUT}"
 W320="--pc-args=-width 320 -height 200 -ps2ref-maptics"
 run() { name=$1; shift; $EQ --name "$name" "$@" 2>&1 | grep -E "^(lt_|RESULT|[a-z0-9]+: )" | tr '\n' ' '; echo; }
 run lt_vm      --until "LQ DONE_VM" $T/lt_vm.lua
@@ -24,3 +24,11 @@ run lt_hooks2  --warp 1 --until "LQ DONE_HOOKS2" "$W320" "--ps2-args=-ps2ref-map
 run lt_local   --warp 1 --until "LQ DONE_LOCAL" "$W320" "--ps2-args=-ps2ref-maptics" --extra $T/lt_local2.lua $T/lt_local.lua
 run lt_coro    --warp 1 --until "LQ DONE_CORO" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_coro.lua
 run lt_udmany  --warp 11 --until "LQ DONE_UDMANY" "$W320" "--ps2-args=-ps2ref-maptics" $T/lt_udmany.lua
+python3 tools/ps2/make_luapk3.py build/opt14-addons/LP.pk3 >/dev/null
+run lt_pk3     --until "LQ DONE_PK3" build/opt14-addons/LP.pk3
+run lm_data    --until "LQ DONE_LMDATA" $T/lm_data.lua
+run lt_io      --until "LQ DONE_IO" $T/lt_io.lua
+run lm_objects --demo DEMO_001 --timedemo --until "LQ DONE_LMOBJ" $T/lm_objects.lua
+run lm_world   --demo DEMO_001 --timedemo --until "LQ DONE_LMWORLD" $T/lm_world.lua
+run lm_hud     --warp 1 --until "LQ DONE_LMHUD" "$W320" "--ps2-args=-ps2ref-maptics" $T/lm_hud.lua
+run lm_hud_hw  --warp 1 --until "LQ DONE_LMHUD" "$W320" "--ps2-args=-ps2ref-maptics -renderer Hardware" $T/lm_hud.lua
