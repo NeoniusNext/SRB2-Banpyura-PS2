@@ -1527,6 +1527,14 @@ static INT32 HU_ChatAdv(INT32 c)
 	return 4;
 }
 
+// the pen has reached the end of the line. The wrap of the words (V_FontWordWrap) lets a line be exactly `limit` wide; the cells of the PC are all 4 px, so a line that fills the
+// box to the pixel wraps once more there (a blank line follows it: how the window always behaved); the thin font's own widths hit the limit far more often (a blank line after a
+// message that happens to be 144 px wide), so there only a pen that is past it wraps
+static inline boolean HU_ChatFull(INT32 dx, INT32 limit)
+{
+	return CHATTHIN ? dx > limit : dx >= limit;
+}
+
 static char *HU_ChatWrap(INT32 w, INT32 option, const char *str)
 {
 	if (CHATTHIN)
@@ -1546,10 +1554,15 @@ static void HU_ChatDrawChar(INT32 x, INT32 y, INT32 c, UINT8 *colormap)
 
 // OPT14-CHAT (thin font): the tint behind one message as one rectangle per line. The original draws a fill per character (a draw call each, hundreds for a full window);
 // the picture is the same, the lines are found by the same walk as the drawing loop below makes (breaks, the width of the box)
-static void HU_ChatTintLines(const char *msg, INT32 x, INT32 y, INT32 boxw, boolean prev_linereturn)
+static void HU_ChatTintLines(const char *msg, INT32 x, INT32 y, INT32 boxw, boolean prev_linereturn, INT32 fade)
 {
 	const INT32 charwidth = 4, charheight = HU_ChatLineH();
 	INT32 dx = 0, dy = 0;
+	const INT32 alpha = (10 - cv_chatopacity.value) + fade; // the tint goes out with the text of a message in its last tics (the original leaves the tint of a fading line standing)
+	const INT32 flags = (min(alpha, 10) << V_ALPHASHIFT)|cv_menubgcolor.value|chatsnap;
+
+	if (alpha >= 10)
+		return;
 
 	for (size_t j = 0; ; j++)
 	{
@@ -1560,7 +1573,7 @@ static void HU_ChatTintLines(const char *msg, INT32 x, INT32 y, INT32 boxw, bool
 			if (c == '\0' || !prev_linereturn)
 			{
 				if (dx > 0)
-					V_DrawFill(x + 2, y + dy, dx, charheight, CHATOPACITY|cv_menubgcolor.value|chatsnap);
+					V_DrawFill(x + 2, y + dy, dx, charheight, flags);
 				if (c == '\0')
 					break;
 				dy += charheight;
@@ -1574,9 +1587,9 @@ static void HU_ChatTintLines(const char *msg, INT32 x, INT32 y, INT32 boxw, bool
 		{
 			prev_linereturn = false;
 			dx += HU_ChatAdv(c);
-			if (dx >= boxw-charwidth-2)
+			if (HU_ChatFull(dx, boxw-charwidth-2))
 			{
-				V_DrawFill(x + 2, y + dy, dx, charheight, CHATOPACITY|cv_menubgcolor.value|chatsnap);
+				V_DrawFill(x + 2, y + dy, dx, charheight, flags);
 				dx = 0;
 				dy += charheight;
 				prev_linereturn = true;
@@ -1617,7 +1630,7 @@ static void HU_drawMiniChat(void)
 
 				dx += HU_ChatAdv(msg[j]);
 
-				if (dx >= boxw-charwidth-2)
+				if (HU_ChatFull(dx, boxw-charwidth-2))
 				{
 					dx = 0;
 					chatheight += charheight;
@@ -1643,7 +1656,7 @@ static void HU_drawMiniChat(void)
 		UINT8 *colormap = NULL;
 
 		if (CHATTHIN && cv_chatbacktint.value)
-			HU_ChatTintLines(msg, x, y + dy, boxw, prev_linereturn);
+			HU_ChatTintLines(msg, x, y + dy, boxw, prev_linereturn, (timer >= 0 && timer <= 9) ? timer : 0);
 
 		for(size_t j = 0; msg[j]; j++) // iterate through msg
 		{
@@ -1668,7 +1681,7 @@ static void HU_drawMiniChat(void)
 				HU_ChatDrawChar(x + dx + 2, y+dy, msg[j] |chatsnap|V_MONOSPACE|transflag, colormap);
 				dx += HU_ChatAdv(msg[j]);
 
-				if (dx >= boxw-charwidth-2)
+				if (HU_ChatFull(dx, boxw-charwidth-2))
 				{
 					dx = 0;
 					dy += charheight;
@@ -1758,7 +1771,7 @@ static void HU_drawChatLog(INT32 offset)
 					dx += HU_ChatAdv(msg[j]);
 				}
 
-				if (dx >= boxw-charwidth-2 && i < chat_nummsg_log) // end of message shouldn't count, nor should invisible characters!!!!
+				if (HU_ChatFull(dx, boxw-charwidth-2) && i < chat_nummsg_log) // end of message shouldn't count, nor should invisible characters!!!!
 				{
 					dx = 0;
 					dy += charheight;

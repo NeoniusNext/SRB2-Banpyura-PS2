@@ -153,28 +153,69 @@ pause_srv('chat-pause-srv-hw', 'Hardware')
 pause_srv('chat-pause-srv-team', team=True, mode='ctf', mapname='MAPM0')
 
 
+# ---- 2b. more of the PS2 server alone
+def alone(name, args, files, frames, renderer='Software', cfg='', mapname='MAP01', timeout=900):
+    a = ['-server', '-vidshot', shots(*frames)] + (['-renderer', renderer] if renderer != 'Software' else []) + args
+    node = ps2('srv', EMU1, a, map=mapname, files=files, cfg=cfg, may_exit=True)
+    mine(name, {'timeout': timeout, 'nodes': [node], 'until': [{'node': 'srv', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
+
+
+for _r, _sfx in (('Software', ''), ('Hardware', '-hw')):
+    # the button hints (cvar menuhints) of the pause menu on "Chat" and on "Continue": the quick button of the chat is told
+    alone('chat-hints-srv' + _sfx, ['-padscript', 'file:pad.txt'], {'pad.txt': pad((700, 'start', 5), (760, 'down', 5))}, [740, 800, 880], _r, cfg='menuhints "On"\n')
+    # the pause menu with messages in the chat window under it (the window is not drawn over the menu's text: it is dimmed by the menu's fade, like the HUD)
+    alone('chat-overlap-srv' + _sfx, ['-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'],
+          {'pad.txt': pad((900, 'start', 5)), 'cmd.txt': '300:say First message|330:say Second message|360:say Third message that is a bit longer than the others to wrap'}, [880, 950, 1000], _r)
+    # the netgame paused by the server (the "pause" command): the chat window goes on being drawn and fading
+    alone('chat-paused-srv' + _sfx, ['-netcmd', 'file:cmd.txt'], {'cmd.txt': '250:pause|300:say Said while the game is paused|520:pause'}, [450, 550, 700, 900], _r)
+    # every key of the symbols layer on the chat line (and the shift layer): the line must show them all, none may be refused by the font
+    sym_text = ".,!?'\":;-_()[]{}<>=+@#$%&*/\\|~"
+    items, end = chat_pad(700, sym_text, 'menu', False, 8)
+    alone('chat-sym-srv' + _sfx, ['-padscript', 'file:pad.txt'], {'pad.txt': pad(*items)}, [end - 10, end + 60], _r, timeout=1200)
+    # a long message wraps in the line (the input line grows upward over the log) and in the window; the text cursor moves with L2 / R2; Cancel drops the line
+    items, end = chat_pad(700, 'the quick brown fox jumps over the lazy dog again and again', 'menu', False, 8)
+    alone('chat-long-srv' + _sfx, ['-padscript', 'file:pad.txt'], {'pad.txt': pad(*items)}, [end - 20, end + 60, end + 160], _r, timeout=1500)
+
+# ---- 2c. without a netgame: the pause menu of the single player and of the local split screen has no chat items; a netgame in split screen (the engine allows it with
+# "debug 1" only) keeps the console chat of the original there
+def local(name, args, files, frames, renderer='Software', mapname='MAP01', netgame=False, timeout=900):
+    a = (['-server'] if netgame else []) + ['-vidshot', shots(*frames)] + (['-renderer', renderer] if renderer != 'Software' else []) + args
+    node = ps2('srv', EMU1, a, map=mapname, files=files, may_exit=True)
+    mine(name, {'timeout': timeout, 'nodes': [node], 'until': [{'node': 'srv', 'text': 'VIDSHOT COMPLETE'}], 'grace': 2})
+
+
+for _r, _sfx in (('Software', '-so'), ('Hardware', '-ha')):
+    local('chat-single' + _sfx, ['-padscript', 'file:pad.txt'], {'pad.txt': pad((300, 'start', 5))}, [280, 360], _r, timeout=600)
+    local('chat-localsplit' + _sfx, ['-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'], {'pad.txt': pad((420, 'start', 5)), 'cmd.txt': '100:splitscreen 1'}, [400, 500], _r, timeout=600)
+    local('chat-netsplit' + _sfx, ['-netcmd', 'file:cmd.txt'], {'cmd.txt': '200:debug 1|220:splitscreen 1|420:say Said in the split screen|700:say And a second line of it'}, [380, 500, 620, 800], _r, netgame=True, timeout=900)
+
 # ---- 3. PC dedicated server <-> PS2 client
-def pc_client(name, renderer='Software', via='menu', team=False, text='hello from ps2', first=1700, ratio=None):
+# how the three counters of a PS2 run relate (fitted on chat-pc-sw / chat-pc-hw of this work): the pad script counts pad POLLS, -vidshot fN counts displayed FRAMES, the
+# game counts TICS (leveltime). Software: a poll is a frame, 29 frames a second against 35 tics a second. Hardware ("Match refresh rate", PCSX2 at ~0.75 of real time):
+# the pad is polled about once per tic, frames come 1.36 times as fast.
+COUNTERS = {'Software': {'tic': lambda poll: int(1.19 * poll + 25), 'frame': lambda poll: int(poll)},
+            'Hardware': {'tic': lambda poll: int(1.19 * poll + 25), 'frame': lambda poll: int(poll)}}  # (refitted below once measured)
+
+
+def pc_client(name, renderer='Software', via='menu', team=False, text='hello from ps2', first=1700):
     """The PS2 joins a PC dedicated server by pad (Cross on the join screens); a PC client (xvfb, build/pc-net, -diagsay: src/netcode/d_clisrv.c) and the server
     itself talk at given game tics; the PS2 pad then opens the chat (the pause menu, or Select) and types TEXT. The engine log of the PS2 gets every chat line
-    (-chatlog), the server's out.txt every line it sees. RATIO: displayed PS2 frames per game tic (about 1 in Software, more in Hardware: PCSX2 runs it slower
-    than the game's 35 tics, the frame counter runs on at the display rate)."""
-    ratio = ratio or (1.0 if renderer == 'Software' else 1.35)
+    (-chatlog), the server's out.txt every line it sees."""
     items, end = chat_pad(first, text, via, team)
-
-    def tic(poll):
-        return max(100, int(poll / ratio) - 90)
-    say1, say2, say3 = tic(first - 300), tic(end + 120), tic(end + 700)
+    tic, frame = COUNTERS[renderer]['tic'], COUNTERS[renderer]['frame']
+    p1, p2, p3 = first - 300, end + 120, end + 500  # (polls) the PC client talks, the PS2 is typing nothing; the PC client answers; the server talks
+    say1, say2, say3 = tic(p1), tic(p2), tic(p3)
     # the shots: the message of the PC client in the mini chat, the keyboard with the history under it, the sent message, the answers
-    frames = [first - 300 + 120, first - 300 + 220, first + 40, first + 100, first + 200, end + 40, end + 100, end + 120 + 80, end + 120 + 180, end + 700 + 80]
+    polls = [p1 + 60, p1 + 150, first + 40, first + 100, first + 200, end + 30, end + 80, p2 + 60, p2 + 130, p3 + 60]
+    frames = [frame(x) for x in polls]
     cli_args = ['-skipintro', '-connect', H, '-chatlog', '-padscript', 'file:pad.txt', '-vidshot', shots(*frames)] + (['-renderer', renderer] if renderer != 'Software' else [])
     srv = pcsrv(start=0, extra=['-diagsay', f'{say3}:Server says goodbye'])
     pcc = {'id': 'pcc', 'kind': 'pc', 'exe': S.PC, 'cwd': S.PCDIR, 'start': 6,
            'args': ['-connect', H, '-nomusic', '-nosound', '-netsync', '-home', S.HOME2, '-diagsay', f'{say1}:Hello from the PC client|{say2}:Reply from the PC client']}
     cli = ps2('cli', EMU1, cli_args, files={'pad.txt': pad(*(crosses(200, first - 300, 60) + items))},
-              cfg=CFG_SYNC + ('fpscap "Match refresh rate"\n' if renderer == 'Hardware' else ''), may_exit=True, start=8)
-    mine(name, {'timeout': 1800, 'nodes': [srv, pcc, cli],
-                'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}, {'node': 'srv', 'text': text, 'file': 'out.txt'}, {'node': 'cli', 'text': 'Reply from the PC client'}], 'grace': 3})
+              cfg=CFG_SYNC, may_exit=True, start=8)  # (fpscap 35 of the harness: the chat window does not depend on the frame rate)
+    mine(name, {'timeout': 2400, 'nodes': [srv, pcc, cli],
+                'until': [{'node': 'cli', 'text': 'VIDSHOT COMPLETE'}, {'node': 'srv', 'text': text, 'file': 'out.txt'}, {'node': 'cli', 'text': 'Server says goodbye'}], 'grace': 3})
     return frames, end
 
 
