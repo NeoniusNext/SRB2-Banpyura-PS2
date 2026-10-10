@@ -779,6 +779,10 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 		{
 			if (block[i] == 0)
 			{
+#ifdef PS2_PROFILE
+				if (!(mipmap->flags & TF_TRANSPARENT))
+					hwr_texsig++; // OPT13 IR
+#endif
 				mipmap->flags |= TF_TRANSPARENT;
 				break;
 			}
@@ -906,6 +910,8 @@ static GLMapTexture_t *gl_flats; // For all (texture) flats, as normal flats don
 boolean gl_maptexturesloaded = false;
 
 #ifdef PS2_PROFILE
+UINT32 hwr_texsig = 1; // OPT13 IR: a number that changes whenever a word of HWR_PS2_SideTexWord may have (texture animation: p_spec.c, textures added: r_textures.c, TF_TRANSPARENT set: here and in the driver)
+
 // OPT11 (PS2-HW-80): ProcessSeg tests TF_TRANSPARENT of the (translated) texture's mipmap, which the driver sets when it makes the texture resident:
 // an input of the geometry cache key. tex is a translated texture number (R_GetTextureNum).
 UINT32 HWR_PS2_TexTransparent(INT32 tex)
@@ -1170,6 +1176,10 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 
 	if (!originalMipmap->downloaded)
 	{
+#ifdef PS2_PROFILE
+		if (originalMipmap->flags & TF_TRANSPARENT)
+			hwr_texsig++; // OPT13 IR: the flag is made again when the texture is next made resident
+#endif
 		originalMipmap->flags = TF_WRAPXY;
 		originalMipmap->width = (UINT16)textures[tex]->width;
 		originalMipmap->height = (UINT16)textures[tex]->height;
@@ -1228,6 +1238,10 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 
 	if (!originalMipmap->downloaded)
 	{
+#ifdef PS2_PROFILE
+		if (originalMipmap->flags & TF_TRANSPARENT)
+			hwr_texsig++; // OPT13 IR: the flag is made again when the texture is next made resident
+#endif
 		originalMipmap->flags = TF_WRAPXY;
 		originalMipmap->width = (UINT16)textures[tex]->width;
 		originalMipmap->height = (UINT16)textures[tex]->height;

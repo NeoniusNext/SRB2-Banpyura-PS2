@@ -5332,6 +5332,10 @@ void P_CheckMobjTrigger(mobj_t *mobj, boolean pushable)
   *
   * \sa P_CheckTimeLimit, P_CheckPointLimit
   */
+#ifdef PS2_PROFILE
+extern UINT32 hwr_texsig; // hardware/hw_cache.c
+#endif
+
 void P_UpdateSpecials(void)
 {
 	// LEVEL TIMER
@@ -5356,12 +5360,20 @@ void P_UpdateSpecials(void)
 #endif
 			if (idx >= n)
 				idx -= n;
+#ifdef PS2_PROFILE
+			if (texturetranslation[anim->basepic+i] != anim->basepic + (INT32)idx)
+				hwr_texsig++; // OPT13 IR (hw_cache.c): the geometry cache keys hold the translated numbers of the side textures
+#endif
 			texturetranslation[anim->basepic+i] = anim->basepic + (INT32)idx;
 		}
 #else
 		for (INT32 i = 0; i < anim->numpics; i++)
 		{
 			INT32 pic = anim->basepic + ((leveltime/anim->speed + i) % anim->numpics);
+#ifdef PS2_PROFILE
+			if (texturetranslation[anim->basepic+i] != pic)
+				hwr_texsig++; // OPT13 IR
+#endif
 			texturetranslation[anim->basepic+i] = pic;
 		}
 #endif

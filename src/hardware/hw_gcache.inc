@@ -47,7 +47,7 @@
 
 extern unsigned int PS2HWD_ScanDirection(void); // ps2_hw_tex.inc: 0 / 1 alternating with the frames
 
-enum { GCOP_POLY = 2, GCOP_TWALL = 3 }; // (the texture ops of the first versions are gone: the entry of a polygon holds its texture, the header of the record the texture the function ended with)
+enum { GCOP_POLY = 2, GCOP_TWALL = 3 }; // (the texture ops of the first versions are gone: the entry of a polygon holds its texture, the header of the record the texture the function ended with; GCOP_BLK = 4: OPT13 IR, a polygon as the block of the collection, hw_batching.h)
 
 typedef struct { UINT8 op, fog; UINT16 size; INT32 texnum; INT32 src; FBITFIELD blend; INT32 lightlevel; extracolormap_t *cmap; FOutVector v[4]; FSurfaceInfo surf; } gctw_t;
 
@@ -87,6 +87,8 @@ static struct
 	UINT32 vmask;
 	size_t nvert;
 	UINT32 *bver, *fver; // ... and a number that changes when the fingerprint does (what the keys of segs and planes hold: one word for a sector)
+	UINT32 *texw, *texws; // OPT13 IR: per raw texture number HWR_PS2_SideTexWord and the hwr_texsig it was made at; texn: the size of the tables
+	UINT32 texn;
 	UINT32 vctr;
 	UINT32 nsec, view, scan;
 	UINT8 *ar;
@@ -95,7 +97,7 @@ static struct
 	UINT16 gen;
 	UINT32 epoch;
 	UINT32 rec_start, rec_pos, rec_limit, rec_np, rec_nv, rec_nw;
-	boolean rec_fail, rec_full, rec_lastset, rec_hassrc;
+	boolean rec_fail, rec_full, rec_lastset, rec_hassrc, rec_plane; // rec_plane: the record is that of a plane (OPT13 IR: its polygons are kept as blocks of quadwords)
 	GLMipmap_t *rec_last;
 	INT32 rec_lsrc, rec_ltnum;
 	// statistics of the window (HWPROF32)
@@ -110,6 +112,26 @@ static struct
 	UINT32 s_new, s_stale, c_rpoly, c_rtex, n_rpoly, n_rtex; // misses of a seg or plane never seen / seen with another key; cycles and number of the polygon and texture ops of the replays
 	UINT32 reports;
 } gc;
+
+// OPT13 IR: the word of a side texture of the key (HWR_PS2_SideTexWord: the translated number, the TF_TRANSPARENT bit of its mipmap) kept per raw texture number, valid while hwr_texsig has not changed
+// (it changes where the translation is written - the animation - and where TF_TRANSPARENT is set or cleared). Three calls of the function (45 cycles each) were a quarter of the key of a seg.
+static UINT32 gc_tw_slow(INT32 raw)
+{
+	const UINT32 w = HWR_PS2_SideTexWord(raw);
+
+	gc.texw[raw] = w;
+	gc.texws[raw] = hwr_texsig;
+	return w;
+}
+
+static inline UINT32 gc_tw(INT32 raw)
+{
+	if ((UINT32)raw >= gc.texn)
+		return HWR_PS2_SideTexWord(raw);
+	if (gc.texws[raw] == hwr_texsig)
+		return gc.texw[raw];
+	return gc_tw_slow(raw);
+}
 
 static void HWR_AddTransparentWall(FOutVector *wallVerts, FSurfaceInfo *pSurf, INT32 texnum, FBITFIELD blend, boolean fogwall, INT32 lightlevel, extracolormap_t *wallcolormap);
 
@@ -351,9 +373,9 @@ static inline __attribute__((always_inline)) int gc_seg_words(const seg_t *sg, c
 	GCW((bothceilingssky ? 1u : 0u) | (bothfloorssky ? 2u : 0u) | ((UINT32)(UINT16)ld->flags << 8) | ((UINT32)(UINT16)ld->special << 16));
 	GCW(ld->alpha);
 	GCW(ld->blendmode);
-	GCW(HWR_PS2_SideTexWord(sd->toptexture));
-	GCW(HWR_PS2_SideTexWord(sd->bottomtexture));
-	GCW(HWR_PS2_SideTexWord(sd->midtexture));
+	GCW(gc_tw(sd->toptexture));
+	GCW(gc_tw(sd->bottomtexture));
+	GCW(gc_tw(sd->midtexture));
 	GCW(sd->textureoffset);
 	GCW(sd->rowoffset);
 	GCW(sd->repeatcnt);
@@ -493,8 +515,10 @@ static void gc_swap_arena(void)
 void HWR_GCacheFlush(void)
 {
 	hwr_lt_epoch++; // (the light tables or the textures changed: HWR_Lighting asks for the table of the default colormap again)
+	hwr_texsig++; // (OPT13 IR: the texture records are gone or going: the words of gc_tw are made again)
 	if (gc.blk)
 		gc_flush_arena();
+	HWR_PBStateFlush(); // (OPT13 IR: the interned states hold texture records)
 	gc.s_flush++;
 }
 
@@ -513,12 +537,15 @@ static void HWR_GCacheLevel(void)
 // 8 HWR_Lighting fast path (PS2-HW-83), 16 HWR_CalcWallLight memo (PS2-HW-84), 32 RenderBatches shader/scan-direction cache (PS2-HW-85), 1024 inline R_FakeFlat / R_CheckSectorLightLists (PS2-HW-200),
 // 2048 light table of the default colormap once per view (PS2-HW-205), 4096 vertex angle once per view (PS2-HW-206) (64 and 128 are the VU branch's: HWR_RenderBatchesV2)
 UINT32 hwr_geo_off;
+UINT32 hwr_gv_off; // -hwgv: OPT13 IR (stored records v3, hw_pbatch.inc): 1 records made as calls of HWR_ProcessPolygon (the earlier format), 2 no box test of the view volume, 4 check mode replays a hit for real as well
 
 static void HWR_GCacheParse(void)
 {
 	HWR_FrInit(); // OPT12 (hw_front.inc): -hwfr
 	if (M_CheckParm("-hwgo") && M_IsNextParm())
 		hwr_geo_off = (UINT32)atoi(M_GetNextParm());
+	if (M_CheckParm("-hwgv") && M_IsNextParm())
+		hwr_gv_off = (UINT32)atoi(M_GetNextParm());
 	gc.mode_set = true;
 	gc.mode = 1 | 4; // ON by default since the round 2, the walls only (with the block collection of PS2-HW-233 a plane hit costs about what the calculation does - 1100 cycles - and its record is the biggest: no gain on the 4 demos, more memory); -hwgc 0: off, -hwgc 1: the planes too
 	gc.kb = GC_DEFAULT_KB;
@@ -568,6 +595,7 @@ static size_t HWR_GCacheReclaim(size_t want)
 	gc.s_reclaim++;
 	Z_Free(gc.blk); // (sets gc.blk to NULL)
 	gc.blk = NULL;
+	HWR_PBStateFlush();
 	return got;
 }
 
@@ -591,7 +619,7 @@ static const gcrh_t *gc_promote(gcent_t *e, const gcrh_t *rh)
 		memcpy(gc.ar + gc.ar_used, rh, len);
 		e->off = gc.ar_used;
 		e->gen = gc.gen;
-		gc.ar_used += (len + 3u) & ~3u;
+		gc.ar_used += (len + 15u) & ~15u;
 		gc.s_promo++;
 		return (const gcrh_t *)(gc.ar + e->off);
 	}
@@ -602,6 +630,7 @@ static boolean gc_alloc_block(void)
 {
 	size_t tab_b, seg_b, pl_b, vert_b, ar_b, total;
 	const size_t sec_b = (size_t)numsectors * (2 * sizeof(gcfp_t) + 4 * sizeof(UINT32));
+	const size_t tex_b = (size_t)(numtextures > 0 ? numtextures : 0) * 2 * sizeof(UINT32); // OPT13 IR: gc_tw
 	const boolean dseg = (UINT32)numsegs <= GC_DIRECT_MAX; // a small level: a place of its own for every seg and plane (8 bytes: no hashing, no ways, nothing to evict but by the arena),
 	const boolean dpl = !(gc.mode & 4) && (UINT32)addsubsector * 2u <= GC_DIRECT_MAX; // a big one: the hashed table (the memory of the tables does not grow with the level)
 	UINT32 want = (dseg && ((gc.mode & 4) || dpl)) ? 1024u : 4096u; // sets of the hashed table (2 ways, 16 bytes an entry): the planes of 3D floors, or all
@@ -617,7 +646,7 @@ static boolean gc_alloc_block(void)
 	seg_b = dseg ? (((size_t)numsegs * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
 	pl_b = dpl ? (((size_t)addsubsector * 2u * sizeof(gcent_t) + 15u) & ~(size_t)15u) : 0;
 	ar_b = (size_t)(gc.kb * 512u & ~15u) * 2u + GC_SCRATCH;
-	total = tab_b + seg_b + pl_b + sec_b + vert_b + ar_b + 64;
+	total = tab_b + seg_b + pl_b + sec_b + vert_b + tex_b + ar_b + 64 + 16;
 
 	// the cache is a luxury: only when the arena has room for it and still has what the level needs after it
 #ifdef PS2
@@ -664,10 +693,16 @@ static boolean gc_alloc_block(void)
 	gc.vtag = (UINT32 *)p;
 	p += (size_t)vsize * sizeof(UINT32);
 	gc.vmask = vsize - 1u;
+	gc.texw = (UINT32 *)p;
+	p += (size_t)(numtextures > 0 ? numtextures : 0) * sizeof(UINT32);
+	gc.texws = (UINT32 *)p;
+	p += (size_t)(numtextures > 0 ? numtextures : 0) * sizeof(UINT32);
+	gc.texn = (UINT32)(numtextures > 0 ? numtextures : 0);
+	memset(gc.texws, 0, (size_t)gc.texn * sizeof(UINT32));
 	gc.nvert = numvertexes;
 	memset(gc.vst, 0, (size_t)vsize * sizeof(UINT32));
 	memset(gc.vtag, 0, (size_t)vsize * sizeof(UINT32));
-	gc.ar = p;
+	gc.ar = (UINT8 *)(((uintptr_t)p + 15u) & ~(uintptr_t)15u); // (OPT13 IR: the records start on 16 bytes)
 	gc.hsize = gc.kb * 512u & ~15u;
 	gc.hbase = 0;
 	gc.ar_size = gc.hsize * 2u;
@@ -783,6 +818,7 @@ static boolean HWR_GCacheFrame(void)
 		gc.epoch = sig;
 	}
 	gc.view++;
+	HWR_PBCullView(); // OPT13 IR
 	gc.scan = PS2HWD_ScanDirection();
 	gc.on = true;
 	return true;
@@ -854,6 +890,7 @@ static void *gc_rec_alloc(UINT32 bytes)
 {
 	void *p;
 
+	bytes = (bytes + 15u) & ~15u; // OPT13 IR: every op is a multiple of 16 bytes and the record starts on 16, so that a block stored in an op (planes) is a block of quadwords for lq / sq; the bytes are zeroed (the check mode compares records)
 	if (gc.rec_fail)
 		return NULL;
 	if (gc.rec_pos + bytes > gc.rec_limit)
@@ -864,6 +901,7 @@ static void *gc_rec_alloc(UINT32 bytes)
 		return NULL;
 	}
 	p = gc.ar + gc.rec_pos;
+	memset(p, 0, bytes);
 	gc.rec_pos += bytes;
 	return p;
 }
@@ -891,7 +929,7 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 	h->n = (UINT8)n;
 	h->horizon = horizon ? 1 : 0;
 	h->pad = 0;
-	h->size = (UINT16)size;
+	h->size = (UINT16)((size + 15u) & ~15u);
 	h->target = (INT16)shader;
 	h->flags = flags;
 	h->tex = current_texture; // (the polygon takes it)
@@ -910,6 +948,122 @@ void HWR_GCRecPoly(const FSurfaceInfo *surf, const FOutVector *verts, FUINT n, F
 		d[k] = sp[k];
 	((FSurfaceInfo *)(h + 1))->PolyFlags = 0; // (stack garbage in most callers; only the model code of the driver reads it)
 	d = (UINT32 *)((UINT8 *)(h + 1) + sizeof(FSurfaceInfo));
+	sp = (const UINT32 *)verts;
+	for (k = 0; k < n * 5u; k++)
+		d[k] = sp[k];
+	gc.rec_np++;
+	gc.rec_nv += n;
+	gc.s_rec_ops++;
+}
+
+// the box of the vertices in whole map units, rounded outwards; a coordinate beyond 32767 (or not a number) leaves the polygon without one (flag 1: the integer test of the box cannot hold it)
+static void gc_box(INT32 *bb, UINT8 *fl, const FOutVector *verts, FUINT n)
+{
+	float x0 = verts[0].x, x1 = x0, y0 = verts[0].y, y1 = y0, z0 = verts[0].z, z1 = z0;
+	FUINT k;
+
+	for (k = 1; k < n; k++)
+	{
+		if (verts[k].x < x0) x0 = verts[k].x;
+		if (verts[k].x > x1) x1 = verts[k].x;
+		if (verts[k].y < y0) y0 = verts[k].y;
+		if (verts[k].y > y1) y1 = verts[k].y;
+		if (verts[k].z < z0) z0 = verts[k].z;
+		if (verts[k].z > z1) z1 = verts[k].z;
+	}
+	if (x0 > -32767.0f && x1 < 32767.0f && y0 > -32767.0f && y1 < 32767.0f && z0 > -32767.0f && z1 < 32767.0f)
+	{
+		const float lo[3] = {x0, y0, z0}, hi[3] = {x1, y1, z1};
+
+		for (k = 0; k < 3; k++)
+		{
+			INT32 a = (INT32)lo[k], b = (INT32)hi[k];
+
+			if ((float)a > lo[k])
+				a--;
+			if ((float)b < hi[k])
+				b++;
+			bb[2 * k] = a;
+			bb[2 * k + 1] = b;
+		}
+	}
+	else
+	{
+		*fl |= 1;
+		for (k = 0; k < 6; k++)
+			bb[k] = 0;
+	}
+}
+
+// OPT13 IR: may the polygon the walk is making be recorded as a block? (not the polygon of a 3D floor's animated texture, which is patched at the replay and is a call; not one the collection does not take whole)
+boolean HWR_GCRecBlkOk(FBITFIELD flags, boolean horizon)
+{
+	return !(hwr_gv_off & 1) && !gc.rec_fail && !horizon && !(flags & PF_NoTexture) && current_texture
+		&& !(hwr_gc_src && current_texture->regen_kind == 1 && current_texture->regen_id == hwr_gc_tnum);
+}
+
+// the record of a polygon the collection took whole: its state, the words of the two header quadwords of the block, its vertices (hw_pbatch.inc: HWR_PBRecLast)
+void HWR_GCRecBlk(UINT32 state, UINT32 light, const float *ex, UINT32 ext, const FOutVector *verts, FUINT n)
+{
+	gcbk_t *h;
+	UINT32 *d;
+	const UINT32 *sp;
+	UINT32 k;
+	if (gc.test_rec && ++gc.test_n1 == gc.test_rec)
+		HWR_GCacheReclaim(0); // (test: the zone takes the cache back in the middle of a record)
+	if (n > 250)
+	{
+		gc.rec_fail = true;
+		return;
+	}
+	if (gc.rec_plane && !(hwr_gv_off & 16))
+	{
+		// a plane: the block as the collection wants it (two header quadwords, two quadwords a vertex), the replay moves it with quadword loads and stores; the lanes the VU1 program does not read are zero
+		gcbk_t *const x = gc_rec_alloc(GCBX_SIZE(n));
+		UINT32 *q;
+
+		if (!x)
+			return;
+		x->op = GCOP_BLK;
+		x->n = (UINT8)n;
+		x->ext = (UINT8)ext;
+		x->fl = 2;
+		x->size = (UINT16)GCBX_SIZE(n);
+		x->state = (UINT16)state;
+		gc_box(x->bb, &x->fl, verts, n);
+		q = (UINT32 *)((UINT8 *)x + GCBX_HDR);
+		q[0] = n;
+		q[1] = light;
+		for (k = 0; k < 4; k++)
+			((float *)q)[4 + k] = ext ? ex[k] : 0.0f;
+		for (k = 0; k < n; k++)
+		{
+			const UINT32 *v5 = (const UINT32 *)(verts + k);
+
+			q[8 + 8 * k + 0] = v5[0];
+			q[8 + 8 * k + 1] = v5[1];
+			q[8 + 8 * k + 2] = v5[2];
+			q[8 + 8 * k + 4] = v5[3];
+			q[8 + 8 * k + 5] = v5[4];
+		}
+		gc.rec_np++;
+		gc.rec_nv += n;
+		gc.s_rec_ops++;
+		return;
+	}
+	if (!(h = gc_rec_alloc(GCBK_SIZE(n))))
+		return;
+	h->op = GCOP_BLK;
+	h->n = (UINT8)n;
+	h->ext = (UINT8)ext;
+	h->fl = 0;
+	h->size = (UINT16)((GCBK_SIZE(n) + 15u) & ~15u);
+	h->state = (UINT16)state;
+	h->light = light;
+	for (k = 0; k < 4; k++)
+		h->ex[k] = ext ? ex[k] : 0.0f;
+	gc_box(h->bb, &h->fl, verts, n);
+	d = (UINT32 *)(h + 1);
 	sp = (const UINT32 *)verts;
 	for (k = 0; k < n * 5u; k++)
 		d[k] = sp[k];
@@ -941,7 +1095,7 @@ static void HWR_GCRecTWall(const FOutVector *wallVerts, const FSurfaceInfo *pSur
 		return;
 	w->op = GCOP_TWALL;
 	w->fog = fogwall ? 1 : 0;
-	w->size = (UINT16)sizeof(gctw_t);
+	w->size = (UINT16)((sizeof(gctw_t) + 15u) & ~15u);
 	w->texnum = texnum;
 	w->src = (hwr_gc_src && texnum && texnum == hwr_gc_tnum) ? hwr_gc_src : 0; // (as the polygons: the number is patched at the replay)
 	if (w->src)
@@ -958,7 +1112,7 @@ static void HWR_GCRecTWall(const FOutVector *wallVerts, const FSurfaceInfo *pSur
 }
 
 // the record starts with its header and its key; the ops follow while the function runs
-static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
+static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw, boolean plane)
 {
 	gcrh_t *rh;
 
@@ -968,6 +1122,7 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	gc.rec_np = gc.rec_nv = gc.rec_nw = 0;
 	gc.rec_lastset = false;
 	gc.rec_hassrc = false;
+	gc.rec_plane = plane;
 	gc.rec_lsrc = gc.rec_ltnum = 0;
 	gc.rec_last = NULL;
 	hwr_gc_src = 0;
@@ -975,7 +1130,7 @@ static void gc_rec_begin(boolean scratch, const UINT32 *key, int keyw)
 	if ((rh = gc_rec_alloc((UINT32)(sizeof(gcrh_t) + 4u * (UINT32)keyw))) != NULL)
 	{
 		rh->keyw = (UINT16)keyw;
-		rh->opsoff = (UINT16)(sizeof(gcrh_t) + 4u * (UINT32)keyw);
+		rh->opsoff = (UINT16)((sizeof(gcrh_t) + 4u * (UINT32)keyw + 15u) & ~15u);
 		rh->npoly = rh->nvert = rh->nwall = rh->flags = 0;
 		rh->last = NULL;
 		rh->lsrc = rh->ltnum = 0;
@@ -1016,6 +1171,11 @@ static boolean gc_src_ok(const gcrh_t *rh, UINT32 len)
 			src = w->src;
 			tn = w->texnum;
 			step = w->size;
+		}
+		else if (*p == GCOP_BLK)
+		{
+			src = tn = 0; // (a polygon of a 3D floor's animated texture is not recorded as a block)
+			step = ((const gcbk_t *)p)->size;
 		}
 		else
 			return false;
@@ -1082,6 +1242,8 @@ static void gc_src_patch(gcrh_t *rh, UINT32 len)
 				w->texnum = R_GetTextureNum(sides[w->src - 1].midtexture);
 			p += w->size;
 		}
+		else if (*p == GCOP_BLK)
+			p += ((gcbk_t *)p)->size;
 		else
 			break;
 	}
@@ -1127,6 +1289,12 @@ static void gc_replay(const gcrh_t *rh, UINT32 len)
 			HWR_AddTransparentWall((FOutVector *)w->v, (FSurfaceInfo *)&w->surf, w->texnum, w->blend, w->fog != 0, w->lightlevel, w->cmap);
 			p += w->size;
 		}
+		else if (op == GCOP_BLK)
+		{
+			GLMipmap_t *lt = NULL;
+
+			p = HWR_GCReplayRun(p, end, view, &lt); // OPT13 IR: the polygons that follow, as the blocks of the collection
+		}
 		else
 			break; // (cannot happen: the records are written by the functions above)
 	}
@@ -1169,7 +1337,7 @@ static void gc_report_diff(const char *kind, UINT32 idx, const UINT8 *a, UINT32 
 
 		while (o < n && o + sizeof(gcphdr_t) <= n)
 		{
-			const UINT32 sz = a[o] == GCOP_TWALL ? (UINT32)sizeof(gctw_t) : ((const gcphdr_t *)(a + o))->size;
+			const UINT32 sz = a[o] == GCOP_TWALL ? (UINT32)((const gctw_t *)(a + o))->size : ((const gcphdr_t *)(a + o))->size;
 
 			if (i >= o && i < o + sz)
 			{

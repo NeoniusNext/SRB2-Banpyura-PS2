@@ -77,6 +77,7 @@ static UINT16 pb_xv[HWR_PB_XSLOTS];
 static int pb_x_dirty;
 static UINT32 pb_nogrow, pb_nfail; // PS2-HW-445: the pool could not grow (for the rest of the level); the batches cut for want of room (HWPROF50)
 static UINT32 pb_ngen, pb_nslow, pb_nfind, pb_ncreate, pb_nbuckets, pb_npolys, pb_nflush, pb_nbatches, pb_nplanned; // HWPROF50 (per window)
+static UINT32 pb_serial = 1; // OPT13 IR: the number of the batch being collected (bumped when the buckets are emptied): an interned state remembers the bucket it found in this one
 
 static inline int HWR_PBOn(void)
 {
@@ -150,8 +151,12 @@ static void HWR_PBAlloc(void)
 	pb_tab_dirty = pb_x_dirty = 0;
 }
 
+static void HWR_PBStFree(void);
+
 static void HWR_PBFree(void)
 {
+	pb_serial++;
+	HWR_PBStFree();
 	Z_Free(pb_pool);
 	Z_Free(pb_ent);
 	Z_Free(pb_plan);
@@ -170,6 +175,7 @@ static void HWR_PBFree(void)
 // what is collected is dropped (after the draw, or the benchmark)
 static void HWR_PBReset(void)
 {
+	pb_serial++;
 	pb_wr = pb_n = pb_nplan = pb_nb = 0;
 	if (pb_tab_dirty)
 	{
@@ -771,6 +777,608 @@ static int HWR_PBRender(void)
 	return 1;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------------------------------
+// OPT13 IR (RF-1, stored records v3, PS2-HW-480..): the polygons of the geometry cache (hw_gcache.inc) are stored as what this collection makes of them and put back into it without HWR_ProcessPolygon.
+//
+// A polygon of a record is (gcbk_t, hw_batching.h): its interned STATE (texture, flags, shader target, colours: everything the bucket of the polygon is found by, except the light level, which is a word
+// of the block), the box around its vertices, the words of the two header quadwords of its block, and its vertices as the engine made them (x y z s t). The replay finds the bucket from the state
+// (an interned state remembers the bucket it found in this batch: one stamp compare), moves the vertices into the pool as PBPut does, links the block. What that spares of the earlier replay
+// (HWR_GCReplayPoly -> HWR_ProcessPolygon -> PBFast: the state compared field by field, the polygon hashed to its bucket, texture and flags looked at again) is the larger part of its 650 cycles.
+// The bucket a state resolves to is found with the same functions as for a polygon that comes in whole (HWR_PBSlow and its cache), at the first polygon of the state in a batch, so the buckets, their
+// order and the blocks are exactly those the polygons would have made (the check mode of the cache compares the two, hw_gcache.inc). The box is tested against the view volume before anything is
+// done (PS2-HW-481): a polygon wholly outside one of its five planes is not collected (the driver would throw it away after the copy, the plan and the VU1 clip).
+// -hwgv N (hwr_gv_off): 1 the records are made the earlier way (calls of HWR_ProcessPolygon), 2 no box test, 4 the check mode of the cache replays a hit for real before it calculates it again.
+
+#define HWR_ST_CAP 1024u // interned states (64 bytes each)
+#define HWR_ST_SLOTS 4096u
+#define HWR_ST_NONE 0xFFFFu
+
+typedef struct
+{
+	FSurfaceInfo surf; // PolyColor, and with PF_ColorMapped the tint, fade, light table and fade range; not the light level (the block has it), not PolyFlags
+	GLMipmap_t *texture;
+	FBITFIELD polyFlags;
+	UINT32 ex; // shader target, horizon, sprite batch mode: as the buckets keep them
+	INT32 shader_target;
+	UINT32 tview; // the view of the cache in which the texture was last made current through this state
+	UINT32 bser, blight; // the batch (pb_serial) the bucket below was found in, and the light level it was found for
+	UINT16 bucket, bcare; // bcare: the bucket tells polygons of another light level apart (the VU1 program does not light them by rows)
+} hwr_pbs_t;
+
+static void *pb_stblk;
+static hwr_pbs_t *pb_st;
+static UINT16 *pb_sth;
+static UINT32 pb_nst;
+static int pb_v3_nocull; // the check mode replays without the box test
+static UINT32 pb_v3_cyc, pb_v3_cyc_cull, pb_v3_polys, pb_v3_culled, pb_v3_resolve, pb_v3_rec, pb_v3_recfail, pb_v3_cull[5], pb_v3_vchk, pb_v3_vbad, pb_v3_cullbad, pb_v3_runs, pb_v3_stfull, pb_v3_grow;
+
+
+static void HWR_PBStFree(void)
+{
+	if (pb_stblk)
+		Z_Free(pb_stblk);
+	pb_stblk = NULL;
+	pb_st = NULL;
+	pb_sth = NULL;
+	pb_nst = 0;
+}
+
+void HWR_PBStateFlush(void)
+{
+	HWR_PBStFree();
+}
+
+static int HWR_PBStAlloc(void)
+{
+	UINT8 *p;
+
+	if (!pb_stblk)
+	{
+		pb_st = NULL;
+		pb_sth = NULL;
+		pb_nst = 0;
+	}
+	if (pb_st)
+		return 1;
+	p = Z_TryMallocAlign((size_t)HWR_ST_CAP * sizeof(hwr_pbs_t) + (size_t)HWR_ST_SLOTS * sizeof(UINT16), PU_HWRPLANE, &pb_stblk, 4);
+	if (!p)
+	{
+		pb_stblk = NULL;
+		return 0;
+	}
+	pb_st = (hwr_pbs_t *)p;
+	pb_sth = (UINT16 *)(p + (size_t)HWR_ST_CAP * sizeof(hwr_pbs_t));
+	memset(pb_sth, 0, (size_t)HWR_ST_SLOTS * sizeof(UINT16));
+	pb_nst = 0;
+	return 1;
+}
+
+static inline UINT32 HWR_StHash(const GLMipmap_t *tex, UINT32 flags, UINT32 ex, INT32 target, const FSurfaceInfo *s)
+{
+	UINT32 h = (UINT32)(uintptr_t)tex * 0x9E3779B1u;
+
+	h = (h ^ flags) * 0x85EBCA6Bu;
+	h = (h ^ ex ^ ((UINT32)target << 12) ^ (s->PolyColor.rgba * 0x27D4EB2Fu)) * 0xC2B2AE35u;
+	if (flags & PF_ColorMapped)
+		h ^= (s->TintColor.rgba * 0x165667B1u) ^ (s->FadeColor.rgba * 0xD3A2646Cu) ^ (s->LightTableId * 0xFD7046C5u) ^ ((s->LightInfo.fade_start | (s->LightInfo.fade_end << 8)) * 0xB55A4F09u);
+	return (h * 0x9E3779B1u) >> 20; // (4096 slots)
+}
+
+static inline int HWR_StEq(const hwr_pbs_t *t, const FSurfaceInfo *s, const GLMipmap_t *tex, UINT32 flags, UINT32 ex, INT32 target)
+{
+	UINT32 d = ((UINT32)(uintptr_t)t->texture ^ (UINT32)(uintptr_t)tex) | (t->polyFlags ^ flags) | (t->ex ^ ex) | (UINT32)(t->shader_target ^ target) | (t->surf.PolyColor.rgba ^ s->PolyColor.rgba);
+
+	if (flags & PF_ColorMapped)
+		d |= (t->surf.TintColor.rgba ^ s->TintColor.rgba) | (t->surf.FadeColor.rgba ^ s->FadeColor.rgba) | (t->surf.LightTableId ^ s->LightTableId)
+			| (t->surf.LightInfo.fade_start ^ s->LightInfo.fade_start) | (t->surf.LightInfo.fade_end ^ s->LightInfo.fade_end);
+	return d == 0;
+}
+
+// the state of a polygon that comes in whole (a world polygon: no sprite batch), found or made; HWR_ST_NONE when the table is full or there is no memory
+static UINT32 HWR_PBIntern(const FSurfaceInfo *s, GLMipmap_t *tex, FBITFIELD flags, int shader_target, boolean horizon)
+{
+	const UINT32 ex = ((UINT32)shader_target & 0xFFu) | ((UINT32)horizon << 8);
+	UINT32 h, e;
+	hwr_pbs_t *t;
+
+	if (!HWR_PBStAlloc())
+		return HWR_ST_NONE;
+	h = HWR_StHash(tex, flags, ex, shader_target, s);
+	while ((e = pb_sth[h]) != 0)
+	{
+		if (HWR_StEq(&pb_st[e - 1], s, tex, flags, ex, shader_target))
+			return e - 1;
+		h = (h + 1) & (HWR_ST_SLOTS - 1);
+	}
+	if (pb_nst >= HWR_ST_CAP)
+	{
+		pb_v3_stfull++;
+		return HWR_ST_NONE;
+	}
+	t = &pb_st[pb_nst];
+	memset(t, 0, sizeof *t);
+	t->surf.PolyColor = s->PolyColor;
+	if (flags & PF_ColorMapped)
+	{
+		t->surf.TintColor = s->TintColor;
+		t->surf.FadeColor = s->FadeColor;
+		t->surf.LightTableId = s->LightTableId;
+		t->surf.LightInfo.fade_start = s->LightInfo.fade_start;
+		t->surf.LightInfo.fade_end = s->LightInfo.fade_end;
+	}
+	t->texture = tex;
+	t->polyFlags = flags;
+	t->ex = ex;
+	t->shader_target = shader_target;
+	pb_sth[h] = (UINT16)(++pb_nst);
+	return pb_nst - 1;
+}
+
+// does the bucket of a polygon with that texture and flags hold the extent of s, t? (HWR_PBNew: b->needext)
+static inline UINT32 HWR_PBNeedExt(const GLMipmap_t *tex, FBITFIELD flags)
+{
+	return (tex && !(flags & PF_NoTexture) && ((tex->flags & TF_WRAPXY) || (flags & (PF_ForceWrapX | PF_ForceWrapY)))) ? 1u : 0u;
+}
+
+// Called right after a polygon was collected whole while the cache records: the record gets the block (state, light, extent, vertices) instead of the call.
+static void HWR_PBRecLast(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader_target, boolean horizon)
+{
+	GLMipmap_t *const tex = current_texture;
+	UINT32 st;
+	const hwr_qw_t *blk;
+	UINT32 ext;
+
+	if (!pb_n || n > 250u || (st = HWR_PBIntern(s, tex, flags, shader_target, horizon)) == HWR_ST_NONE)
+	{
+		pb_v3_recfail++;
+		HWR_GCRecPoly(s, v, n, flags, shader_target, horizon);
+		return;
+	}
+	blk = pb_pool + pb_ent[pb_n - 1].blk;
+	ext = HWR_PBNeedExt(tex, flags);
+	pb_v3_rec++;
+	HWR_GCRecBlk(st, (flags & PF_ColorMapped) ? blk[0].w[1] : 0u, &blk[1].f[0], ext, v, n);
+}
+
+// The bucket (of this batch) of an interned state for a polygon of the light level `light` (the float of the header word): the lookup HWR_PBAdd makes for a polygon that comes in whole.
+static UINT32 __attribute__((noinline)) HWR_PBStBucket(hwr_pbs_t *st, UINT32 light)
+{
+	FSurfaceInfo s = st->surf;
+	GLMipmap_t *const tex = st->texture;
+	const UINT32 flags = st->polyFlags, ex = st->ex;
+	UINT32 h1, ci, e, bi;
+	union { UINT32 u; float f; } c;
+
+	c.u = light;
+	s.LightInfo.light_level = (FUINT)(INT32)c.f;
+	h1 = HWR_PBH1(tex, flags, s.PolyColor.rgba);
+	ci = h1 >> 23;
+	e = pb_cache[ci];
+	pb_v3_resolve++;
+	if (e && e <= pb_nb && HWR_PBMatch(&pb_bk[e - 1], &s, tex, flags, ex))
+		bi = e - 1;
+	else
+		bi = HWR_PBSlow(&s, tex, flags, ex, st->shader_target, h1, ci, 0);
+	st->bser = pb_serial; // (after: a flush made inside starts another batch)
+	st->bucket = (UINT16)bi;
+	st->blight = light;
+	st->bcare = pb_bk[bi].lmask ? 1u : 0u;
+	return bi;
+}
+
+// the pool and the buckets have room for a record of np polygons and nv vertices (grows the pool; false: the replay is not started - an allocation is where the zone may take the cache back)
+boolean HWR_PBRoomFor(UINT32 np, UINT32 nv)
+{
+	const UINT32 need = 2u * (np + nv);
+
+	if (!currently_batching || !pb_pool)
+		return false;
+	if (pb_nb + np + 2u >= HWR_PB_BMAX)
+		return false;
+	if (pb_wr + need > pb_cap)
+	{
+		pb_v3_grow++;
+		if (!HWR_PBGrow(need, pb_wr != 0))
+			return false;
+	}
+	return true;
+}
+
+UINT32 HWR_PBCount(void)
+{
+	return pb_n;
+}
+
+// is the box of a polygon wholly outside the view volume? The number of the plane + 1 that says so, 0 when it cannot be said. (Integer arithmetic: a float multiplication is 4 cycles on this
+// machine and nothing overlaps; the box and the planes are whole numbers, see HWR_FrViewSetup.)
+static inline UINT32 HWR_PBBoxOut(const INT32 *bb)
+{
+	UINT32 k;
+
+	for (k = 0; k < 5; k++)
+	{
+		const hwr_fbox_t *const p = &hwr_fbox[k];
+
+		if (p->a * bb[p->ox] + p->b * bb[p->oy] + p->c * bb[p->oz] > p->nd)
+			return k + 1u;
+	}
+	return 0;
+}
+
+// the extent of s, t of the n vertices of a record (x y z s t): the words PBPut makes
+static void HWR_PBExtent(const UINT32 *w, UINT32 n, float *o)
+{
+	UINT32 k;
+	float smin, smax, tmin, tmax;
+
+	smin = smax = hwr_i2f(w[3]);
+	tmin = tmax = hwr_i2f(w[4]);
+	for (k = 1; k < n; k++)
+	{
+		const float sf = hwr_i2f(w[5 * k + 3]), tf = hwr_i2f(w[5 * k + 4]);
+
+		smin = hwr_minf(smin, sf);
+		smax = hwr_maxf(smax, sf);
+		tmin = hwr_minf(tmin, tf);
+		tmax = hwr_maxf(tmax, tf);
+	}
+	o[0] = smin;
+	o[1] = tmin;
+	o[2] = smax - smin;
+	o[3] = tmax - tmin;
+}
+
+// the polygon of a record op as the engine's call (for the hash of -hwpolyhash, and for the exact test of what the box test left out)
+static void HWR_PBOpPoly(const gcbk_t *h, const hwr_pbs_t *st, FSurfaceInfo *s, FOutVector *v)
+{
+	union { UINT32 u; float f; } c;
+	UINT32 k;
+
+	*s = st->surf;
+	if (h->fl & 2)
+	{
+		const hwr_qw_t *q = (const hwr_qw_t *)(const void *)((const UINT8 *)h + GCBX_HDR);
+
+		c.u = q[0].w[1];
+		s->LightInfo.light_level = (FUINT)(INT32)c.f;
+		for (k = 0; k < h->n; k++)
+		{
+			v[k].x = q[2 + 2 * k].f[0];
+			v[k].y = q[2 + 2 * k].f[1];
+			v[k].z = q[2 + 2 * k].f[2];
+			v[k].s = q[3 + 2 * k].f[0];
+			v[k].t = q[3 + 2 * k].f[1];
+		}
+		return;
+	}
+	c.u = h->light;
+	s->LightInfo.light_level = (FUINT)(INT32)c.f;
+	for (k = 0; k < h->n; k++)
+	{
+		const float *w = (const float *)(const void *)(h + 1);
+
+		v[k].x = w[5 * k];
+		v[k].y = w[5 * k + 1];
+		v[k].z = w[5 * k + 2];
+		v[k].s = w[5 * k + 3];
+		v[k].t = w[5 * k + 4];
+	}
+}
+
+// 2 + 2n quadwords from a record into the pool (lq / sq: the record is on 16 bytes, so is the pool)
+static inline void HWR_PBQCopy(hwr_qw_t *dst, const hwr_qw_t *src, UINT32 cnt)
+{
+#ifdef __mips__
+	while (cnt >= 4)
+	{
+		__asm__ volatile(
+			"lq $8, 0(%1)\n lq $9, 16(%1)\n lq $10, 32(%1)\n lq $11, 48(%1)\n"
+			"sq $8, 0(%0)\n sq $9, 16(%0)\n sq $10, 32(%0)\n sq $11, 48(%0)\n"
+			: : "r"(dst), "r"(src) : "$8", "$9", "$10", "$11", "memory");
+		dst += 4;
+		src += 4;
+		cnt -= 4;
+	}
+	while (cnt--)
+	{
+		__asm__ volatile("lq $8, 0(%1)\n sq $8, 0(%0)\n" : : "r"(dst), "r"(src) : "$8", "memory");
+		dst++;
+		src++;
+	}
+#else
+	memcpy(dst, src, (size_t)cnt * sizeof(hwr_qw_t));
+#endif
+}
+
+// The polygons of a record that follow each other from p, as HWR_ProcessPolygon would have collected them (see above). Returns the first op that is not one. `view`: the view of the cache.
+void HWR_PBNoCull(int on)
+{
+	pb_v3_nocull = on;
+}
+
+// The box test costs about as much as it saves where few polygons are outside (D1: a quarter of them, break-even), and saves much where many are (D4: half): the gate looks at the share of
+// the polygons it culled in 16 views and, under a quarter of them, leaves the test out for the next 64 views (then it looks again). -hwgv 8: always on.
+static UINT32 pb_cg_tests, pb_cg_culls, pb_cg_views, pb_cg_off;
+
+void HWR_PBCullView(void)
+{
+	if (pb_cg_off)
+	{
+		if (!--pb_cg_off)
+			pb_cg_views = pb_cg_tests = pb_cg_culls = 0;
+		return;
+	}
+	if (++pb_cg_views >= 16)
+	{
+		if (pb_cg_tests >= 64 && pb_cg_culls * 100u < pb_cg_tests * 24u && !(hwr_gv_off & 8))
+			pb_cg_off = 64;
+		pb_cg_views = pb_cg_tests = pb_cg_culls = 0;
+	}
+}
+
+const UINT8 *HWR_GCReplayRun(const UINT8 *p, const UINT8 *end, UINT32 view, GLMipmap_t **lasttex)
+{
+	const int hash = hwr_ph_on > 0;
+	const int cull = hwr_fbox_on && !(hwr_gv_off & 2) && !(hash && !hwr_ph_vis) && !(hwr_ph_on == 2) && !pb_v3_nocull && (!pb_cg_off || hash);
+	GLMipmap_t *last = NULL;
+	const UINT32 rt0 = ps2hwp_now();
+
+	pb_v3_runs++;
+	while (p < end && *p == GCOP_BLK)
+	{
+		const gcbk_t *const h = (const gcbk_t *)p;
+		hwr_pbs_t *const st = &pb_st[h->state];
+		const UINT32 n = h->n, need = 2u + 2u * n;
+		const hwr_qw_t *const xq = (const hwr_qw_t *)(const void *)(p + GCBX_HDR); // (a plane: the block itself)
+		const UINT32 lightbits = (h->fl & 2) ? xq[0].w[1] : h->light;
+		hwr_pbk_t *b;
+		UINT32 bi;
+
+		last = st->texture;
+		if (cull && !(h->fl & 1))
+		{
+			const UINT32 pl = HWR_PBBoxOut(h->bb);
+
+			pb_cg_tests++;
+			if (pl)
+			{
+				pb_cg_culls++;
+				pb_v3_culled++;
+				pb_v3_cull[pl - 1]++;
+				if (hash && hwr_ph_vis)
+				{
+					FSurfaceInfo fs;
+					FOutVector fv[250];
+
+					HWR_PBOpPoly(h, st, &fs, fv);
+					if (!HWR_FrPolyOutside(fv, n))
+					{
+						pb_v3_cullbad++;
+						if (pb_v3_cullbad <= 8)
+							I_OutputMsg("HWGV CULL BAD: plane %u box %d..%d %d..%d %d..%d is not wholly outside by the exact test\n", (unsigned)pl, (int)h->bb[0], (int)h->bb[1], (int)h->bb[2], (int)h->bb[3], (int)h->bb[4], (int)h->bb[5]);
+					}
+				}
+				p += h->size;
+				continue;
+			}
+		}
+		if (st->tview != view)
+		{
+			GLMipmap_t *const m = st->texture;
+
+			st->tview = view;
+			if (m && m->ps2_gcv != view)
+			{
+				m->ps2_gcv = view;
+				PS2HWD_TouchTexture(m);
+				Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+			}
+		}
+		if (hash)
+		{
+			FSurfaceInfo fs;
+			FOutVector fv[250];
+
+			HWR_PBOpPoly(h, st, &fs, fv);
+			current_texture = st->texture;
+			HWR_PolyHashAdd(&fs, fv, n, st->polyFlags, st->shader_target, (boolean)((st->ex >> 8) & 1u));
+		}
+		for (;;)
+		{
+			if (st->bser == pb_serial && (!st->bcare || st->blight == lightbits))
+				bi = st->bucket;
+			else
+				bi = HWR_PBStBucket(st, lightbits);
+			if (pb_wr + need <= pb_cap)
+				break;
+			pb_nfail++; // (the room was made before the replay started: cannot happen; the batch is cut as HWR_PBAdd cuts it)
+			if (!HWR_PBGrow(need, pb_wr != 0))
+				HWR_PBFlushEarly();
+		}
+		b = &pb_bk[bi];
+		{
+			const UINT32 pidx = pb_n, blk = pb_wr;
+			hwr_qw_t *const o = pb_pool + blk, *const d = o + 2;
+			typedef UINT32 __attribute__((may_alias)) hwr_word_t;
+			const hwr_word_t *const w = (const hwr_word_t *)(const void *)(h + 1);
+
+			if (h->fl & 2)
+			{
+				// the block of a plane: moved whole, the header lanes included (the light level, the extent of s, t as it was)
+				HWR_PBQCopy(o, xq, need);
+				if (b->needext != (UINT32)h->ext)
+				{
+					if (b->needext)
+					{
+						float e4[4];
+						UINT32 k;
+						UINT32 tmp[250 * 5];
+
+						for (k = 0; k < n; k++)
+						{
+							tmp[5 * k + 3] = xq[3 + 2 * k].w[0];
+							tmp[5 * k + 4] = xq[3 + 2 * k].w[1];
+						}
+						HWR_PBExtent(tmp, n, e4);
+						o[1].f[0] = e4[0];
+						o[1].f[1] = e4[1];
+						o[1].f[2] = e4[2];
+						o[1].f[3] = e4[3];
+					}
+					else
+						o[1].f[0] = o[1].f[1] = o[1].f[2] = o[1].f[3] = 0.0f;
+				}
+				goto linked;
+			}
+#define HWR_PBBAR2 __asm__ volatile("" ::: "memory")
+#define HWR_PBR(i) do { const hwr_word_t *q_ = w + 5 * (i); hwr_qw_t *e_ = d + 2 * (i); const UINT32 x_ = q_[0], y_ = q_[1], z_ = q_[2], s_ = q_[3], t_ = q_[4]; \
+		e_[0].w[0] = x_; HWR_PBBAR2; e_[0].w[1] = y_; HWR_PBBAR2; e_[0].w[2] = z_; HWR_PBBAR2; e_[1].w[0] = s_; HWR_PBBAR2; e_[1].w[1] = t_; HWR_PBBAR2; } while (0)
+			if (n == 4)
+			{
+				HWR_PBR(0);
+				HWR_PBR(1);
+				HWR_PBR(2);
+				HWR_PBR(3);
+			}
+			else if (n == 3)
+			{
+				HWR_PBR(0);
+				HWR_PBR(1);
+				HWR_PBR(2);
+			}
+			else
+			{
+				UINT32 k;
+
+				for (k = 0; k < n; k++)
+					HWR_PBR(k);
+			}
+#undef HWR_PBR
+#undef HWR_PBBAR2
+			o[0].w[0] = n;
+			o[0].w[1] = h->light;
+			if (b->needext)
+			{
+				if (h->ext)
+				{
+					o[1].f[0] = h->ex[0];
+					o[1].f[1] = h->ex[1];
+					o[1].f[2] = h->ex[2];
+					o[1].f[3] = h->ex[3];
+				}
+				else
+					HWR_PBExtent((const UINT32 *)(const void *)w, n, &o[1].f[0]); // (the texture repeats now and did not when the record was made)
+			}
+			else
+				o[1].f[0] = o[1].f[1] = o[1].f[2] = o[1].f[3] = 0.0f;
+linked:
+			pb_ent[pidx].blk = blk;
+			pb_ent[pidx].next = HWR_PB_END;
+			if (b->cnt)
+				pb_ent[b->tail].next = pidx;
+			else
+				b->head = pidx;
+			b->tail = pidx;
+			b->cnt++;
+			if (b->planwant)
+			{
+				pb_plan[pb_nplan].blk = blk;
+				pb_plan[pb_nplan].bucket = bi;
+				pb_nplan++;
+			}
+			pb_n = pidx + 1;
+			pb_wr = blk + need;
+		}
+		pb_v3_polys++;
+		p += h->size;
+	}
+	if (last)
+	{
+		current_texture = last;
+		*lasttex = last;
+	}
+	pb_v3_cyc += ps2hwp_now() - rt0;
+	return p;
+}
+
+// The check mode of the cache (hw_gcache.inc, -hwgv 4): the polygons [a, a + k) were collected by the replay of a record, [a + k, a + 2k) by the calculation of the same seg or plane; they must be the
+// same blocks in the same buckets. Returns the number of differences (the first ones are printed).
+static UINT32 HWR_PBBucketOf(UINT32 idx)
+{
+	UINT32 i, p;
+
+	for (i = 0; i < pb_nb; i++)
+		for (p = pb_bk[i].head; p != HWR_PB_END; p = pb_ent[p].next)
+			if (p == idx)
+				return i;
+	return 0xFFFFFFFFu;
+}
+
+UINT32 HWR_GCVerifyPool(UINT32 a, UINT32 b, UINT32 c, const char *what, UINT32 id)
+{
+	UINT32 i, bad = 0, k = b - a;
+
+	if (a > b || b > c || c > pb_n)
+		return 0; // (the batch was cut in between)
+	if (c - b != k)
+	{
+		pb_v3_vbad++;
+		if (pb_v3_vbad <= 16)
+			I_OutputMsg("HWGV MISMATCH %s %u: the replay collected %u polygons, the calculation %u\n", what, (unsigned)id, (unsigned)k, (unsigned)(c - b));
+		return 1;
+	}
+	for (i = 0; i < k; i++)
+	{
+		const hwr_qw_t *x = pb_pool + pb_ent[a + i].blk, *y = pb_pool + pb_ent[b + i].blk;
+		const UINT32 nx = x[0].w[0], ny = y[0].w[0];
+		UINT32 j, bx, by;
+		int diff = 0;
+
+		pb_v3_vchk++;
+		if (nx != ny)
+			diff = 1;
+		else
+		{
+			bx = HWR_PBBucketOf(a + i);
+			by = HWR_PBBucketOf(b + i);
+			if (bx == 0xFFFFFFFFu || by == 0xFFFFFFFFu || (bx != by && pb_bk[bx].texture && !(pb_bk[bx].polyFlags & PF_NoTexture))) // (a polygon without a texture is a bucket of its own: the pair is two buckets)
+			{
+				diff = 2;
+				if (pb_v3_vbad < 6 && bx < pb_nb && by < pb_nb)
+				{
+					const hwr_pbk_t *q1 = &pb_bk[bx], *q2 = &pb_bk[by];
+
+					I_OutputMsg("HWGV buckets %u / %u: tex %d/%d vs %d/%d flags %x vs %x ex %x vs %x pc %08x vs %08x tint %08x/%08x fade %08x/%08x ltid %u/%u light %u/%u fs %u/%u fe %u/%u lmask %x/%x\n", (unsigned)bx, (unsigned)by,
+						q1->texture ? (int)q1->texture->regen_kind : -1, q1->texture ? (int)q1->texture->regen_id : -1, q2->texture ? (int)q2->texture->regen_kind : -1, q2->texture ? (int)q2->texture->regen_id : -1,
+						(unsigned)q1->polyFlags, (unsigned)q2->polyFlags, (unsigned)q1->ex, (unsigned)q2->ex, (unsigned)q1->surf.PolyColor.rgba, (unsigned)q2->surf.PolyColor.rgba,
+						(unsigned)q1->surf.TintColor.rgba, (unsigned)q2->surf.TintColor.rgba, (unsigned)q1->surf.FadeColor.rgba, (unsigned)q2->surf.FadeColor.rgba, (unsigned)q1->surf.LightTableId, (unsigned)q2->surf.LightTableId,
+						(unsigned)q1->surf.LightInfo.light_level, (unsigned)q2->surf.LightInfo.light_level, (unsigned)q1->surf.LightInfo.fade_start, (unsigned)q2->surf.LightInfo.fade_start,
+						(unsigned)q1->surf.LightInfo.fade_end, (unsigned)q2->surf.LightInfo.fade_end, (unsigned)q1->lmask, (unsigned)q2->lmask);
+				}
+			}
+			else
+			{
+				if (pb_bk[bx].polyFlags & PF_ColorMapped)
+					diff |= (x[0].w[1] != y[0].w[1]) ? 4 : 0; // (the light level of a polygon that is not lit by the shader is stack garbage in the call)
+				if (pb_bk[bx].needext)
+					for (j = 0; j < 4; j++)
+						diff |= (x[1].w[j] != y[1].w[j]) ? 8 : 0;
+				for (j = 0; j < nx; j++)
+					diff |= (x[2 + 2 * j].w[0] != y[2 + 2 * j].w[0] || x[2 + 2 * j].w[1] != y[2 + 2 * j].w[1] || x[2 + 2 * j].w[2] != y[2 + 2 * j].w[2]
+						|| x[3 + 2 * j].w[0] != y[3 + 2 * j].w[0] || x[3 + 2 * j].w[1] != y[3 + 2 * j].w[1]) ? 16 : 0;
+			}
+		}
+		if (diff)
+		{
+			bad++;
+			pb_v3_vbad++;
+			if (pb_v3_vbad <= 16)
+				I_OutputMsg("HWGV MISMATCH %s %u polygon %u of %u: diff bits %d (n %u / %u)\n", what, (unsigned)id, (unsigned)i, (unsigned)k, diff, (unsigned)nx, (unsigned)ny);
+		}
+	}
+	return bad;
+}
+
 // HWPROF50: the collection of a window of frames (called by the driver's profile print)
 void HWR_PBProf(unsigned int frames)
 {
@@ -780,4 +1388,18 @@ void HWR_PBProf(unsigned int frames)
 		pb_nslow / frames, pb_nfind / frames, pb_ncreate / frames, pb_nbatches / frames, pb_nplanned / frames, pb_cap, pb_nfail);
 	pb_nfail = 0;
 	pb_nplanned = pb_ngen = pb_nslow = pb_nfind = pb_ncreate = pb_nbuckets = pb_npolys = pb_nflush = pb_nbatches = 0;
+	I_OutputMsg("HWPROF70 stored records v3: blocks=%u culled=%u (planes right=%u left=%u top=%u bottom=%u near=%u gate off %u) resolved=%u runs=%u | recorded=%u not=%u stfull=%u states=%u grew=%u | verify=%u bad=%u cullbad=%u | cycles run=%u cull=%u\n",
+		pb_v3_polys / frames, pb_v3_culled / frames, pb_v3_cull[0] / frames, pb_v3_cull[1] / frames, pb_v3_cull[2] / frames, pb_v3_cull[3] / frames, pb_v3_cull[4] / frames, pb_cg_off,
+		pb_v3_resolve / frames, pb_v3_runs / frames, pb_v3_rec, pb_v3_recfail, pb_v3_stfull, pb_nst, pb_v3_grow, pb_v3_vchk, pb_v3_vbad, pb_v3_cullbad, pb_v3_cyc / frames, pb_v3_cyc_cull / frames);
+	{
+		extern UINT32 hwr_plc[4], hwr_plcyc[4], hwr_plkey, hwr_plhit, hwr_plhitn;
+
+		I_OutputMsg("HWPROF71 planes by kind a frame: sector %u (%u cycles) 3dfloor %u (%u) translucent %u (%u) translucent 3dfloor %u (%u)\n", hwr_plc[0] / frames, hwr_plcyc[0] / frames, hwr_plc[1] / frames, hwr_plcyc[1] / frames,
+			hwr_plc[2] / frames, hwr_plcyc[2] / frames, hwr_plc[3] / frames, hwr_plcyc[3] / frames);
+		I_OutputMsg("HWPROF72 planes served by the cache a frame: %u, key %u cycles, replay %u cycles\n", hwr_plhitn / frames, hwr_plkey / frames, hwr_plhit / frames);
+		hwr_plkey = hwr_plhit = hwr_plhitn = 0;
+		hwr_plc[0] = hwr_plc[1] = hwr_plc[2] = hwr_plc[3] = hwr_plcyc[0] = hwr_plcyc[1] = hwr_plcyc[2] = hwr_plcyc[3] = 0;
+	}
+	pb_v3_polys = pb_v3_culled = pb_v3_resolve = pb_v3_runs = pb_v3_grow = pb_v3_cyc = pb_v3_cyc_cull = 0;
+	pb_v3_cull[0] = pb_v3_cull[1] = pb_v3_cull[2] = pb_v3_cull[3] = pb_v3_cull[4] = 0;
 }

@@ -1,4 +1,8 @@
 // PS2 GS hardware renderer driver: VRAM pool, texture records, conversion and upload (included by ps2_hwd.c).
+
+// OPT13 IR: TF_TRANSPARENT of a map texture is an input of the key of the geometry cache (HWR_PS2_SideTexWord): hwr_texsig says it may have changed
+extern UINT32 hwr_texsig;
+#define HW_SET_TRANSPARENT(m_) do { if (!((m_)->flags & TF_TRANSPARENT)) { (m_)->flags |= TF_TRANSPARENT; hwr_texsig++; } } while (0)
 //
 // Palette indexed engine data (P_8, AP_88, ALPHA_8, and RGBA whose colours all come from the current palette) lives in the
 // pool as PSMT8 plus a CLUT; every other texture is CT32 with the GS alpha scale (0x80 = 1.0). Textures keep their exact
@@ -2366,7 +2370,7 @@ static int tex_upload(GLMipmap_t *m)
 		r->sxs = (float)(crop ? sw : W2) / (float)(1u << r->tw); // the engine's texture coordinate 1.0 is the whole block: sw texels, of which W2 are stored
 		r->sys = (float)(crop ? sh : H2) / (float)(1u << r->th);
 		if (holes && clut == 2 && (m->format == GL_TEXFMT_P_8 || m->format == GL_TEXFMT_AP_88))
-			m->flags |= TF_TRANSPARENT; // as r_opengl.c does for a chroma keyed texture with a hole
+			HW_SET_TRANSPARENT(m); // as r_opengl.c does for a chroma keyed texture with a hole
 		r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;
 		r->shareable = (u8)shareable;
 		r->has255 = (u8)has255;
@@ -2455,7 +2459,7 @@ static int tex_view(GLMipmap_t *m, int owner_rec)
 	r->wrapy = (m->flags & TF_WRAPY) ? 1 : 0;
 	r->clut = (u8)(((m->flags & TF_CHROMAKEYED) && o->has255) ? 2 : 1);
 	if (r->clut == 2)
-		m->flags |= TF_TRANSPARENT; // as tex_upload does for a chroma keyed texture with a hole
+		HW_SET_TRANSPARENT(m); // as tex_upload does for a chroma keyed texture with a hole
 	r->nearest_only = (m->flags & TF_TRANSPARENT) ? 1 : 0;
 	r->stamp = H.frame_no;
 	r->done = 0;
