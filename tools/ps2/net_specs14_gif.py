@@ -75,6 +75,16 @@ for tag, r in RENDERERS:
                                                                                           (950, 'down'), (970, 'down'), (990, 'down'), (1010, 'down'), (1100, 'cross'), *crosses(1300, 3000, 100))},
                                                                     cfg=f'masterserver "{MSURL}"\nsetcontrol "screenshot" "f8" "joy7"\n' + S.CFG_SYNC + cfg, start=10, may_exit=True)],
                                    'until': UNTIL, 'grace': 3})
+    # the same, the address typed on the on-screen keyboard (the bring-up of the network runs inside the menu handler there too)
+    mine(f'gif-osk-oldcfg-{tag}', {'timeout': 900, 'nodes': [pcsrv(start=0), ps2('cli', EMU1, ['-skipintro', '-netsync', '-netdebug', '-padscript', 'file:pad.txt'] + rnd(r), may_exit=True, start=8,
+                                                                  cfg=S.CFG_SYNC + 'setcontrol "screenshot" "f8" "joy7"\n' + cfg,
+                                                                  files={'pad.txt': pad((250, 'start'), (330, 'down'), (400, 'cross'), (520, 'down'), (570, 'triangle'), *_osk,
+                                                                                        (_end + 30, 'start'), *crosses(_end + 200, _end + 3000, 100))})],
+                                  'until': UNTIL, 'grace': 3})
+    # -connect with the old control table
+    mine(f'gif-conn-oldcfg-{tag}', {'timeout': 900, 'nodes': [pcsrv(start=0), ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt'] + rnd(r),
+                                                                    files={'pad.txt': pad(*crosses(200, 2000, 60))}, cfg=S.CFG_SYNC + 'setcontrol "screenshot" "f8" "joy7"\n' + cfg, start=8)],
+                                    'until': UNTIL, 'grace': 3})
     # explicit start/stop of the recording on the console
     mine(f'gif-rec-{tag}', {'timeout': 900, 'nodes': [pcsrv(start=0), ps2('cli', EMU1, ['-skipintro', '-connect', H, '-netsync', '-netdebug', '-padscript', 'file:pad.txt', '-netcmd', 'file:cmd.txt'] + rnd(r),
                                                                   files={'pad.txt': pad(*crosses(200, 1000, 60)), 'cmd.txt': '1300:startmovie|1500:stopmovie'}, cfg=S.CFG_SYNC + cfg, start=8)],
