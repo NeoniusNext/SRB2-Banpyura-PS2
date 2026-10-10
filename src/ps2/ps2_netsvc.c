@@ -42,17 +42,22 @@
 #define NSV_PRIO 5 // above lwIP's threads (6)
 #define NSV_STACK 16384
 #define NSV_MAIN_ALIVE_MS 150
+#define NSV_LOAD_MS 500      // OPT13-IO (RS-09): the game thread has not looked at the socket for this long: it is loading a level or an add-on
+#define NSV_KEEPALIVE_MS 1000 // and then the thread tells the server once a second that the client is still there
 
 static struct
 {
 	nsv_packet_t *ring;
 	volatile UINT32 head, tail;
 	volatile boolean stop, in_recv, joined;
+	volatile boolean connected; // a client in CL_CONNECTED in any game state (the intermission before a level load too): the keep-alive of a load may go out
 	volatile UINT64 main_beat;
 	int fd, tid;
 	nsv_stats_t st;
 	tic_t rx_needed; // the first tic the client still needs, as far as the thread knows (never behind the game thread's neededtic)
-} nsv = {NULL, 0, 0, false, false, false, 0, -1, -1, {0, 0, 0, 0, 0, 0}, 0};
+	UINT64 ka_t;     // when the last keep-alive of the load went out
+	boolean ka_off;  // -netnokeepalive: the A/B switch of the test
+} nsv = {NULL, 0, 0, false, false, false, false, 0, -1, -1, {0, 0, 0, 0, 0, 0, 0}, 0, 0, false};
 
 static nsv_packet_t scratch; // where a datagram goes when the ring is full (it is dropped, as lwIP would have)
 static UINT8 *nsv_stack; // from the heap while a game socket is open (not 16 KiB of bss for the single-player game)
@@ -113,6 +118,33 @@ static void EarlyAck(const nsv_packet_t *p, const struct sockaddr_in *from)
 		nsv.st.early_acks++;
 }
 
+// OPT13-IO (RS-09): the game thread loads a level (3..9 s from a disc or a stick) or an add-on and does not poll the network; the server drops a node that is silent for
+// cv_nettimeout (350 tics = 10 s) and the early acknowledgements above are off during a load. Here the thread answers a tic packet of the server with the packet the
+// original client sends during a fade (CL_SendClientKeepAlive: PT_BASICKEEPALIVE, a bare header, the server only moves the time-out of the node), at most once a second, and
+// only while the game thread is not polling and the client is joined. No tic is acknowledged: the protocol is not touched, and the packets are the ones the original sends.
+static void LoadKeepAlive(const nsv_packet_t *p, const struct sockaddr_in *from)
+{
+	const doomdata_t *d = (const doomdata_t *)p->data;
+	doomdata_t a;
+
+	if (!nsv.connected || nsv.ka_off || p->len < BASEPACKETSIZE + 6 || d->packettype != PT_SERVERTICS)
+		return;
+	if (nsv.main_beat == 0 || (INT64)(p->t - nsv.main_beat) <= (INT64)NSV_LOAD_MS * 147456)
+		return; // the game thread is looking at the network: it sends its own
+	if (nsv.ka_t && (INT64)(p->t - nsv.ka_t) < (INT64)NSV_KEEPALIVE_MS * 147456)
+		return;
+	if (Checksum(p->data, p->len) != d->checksum)
+		return;
+	memset(&a, 0, BASEPACKETSIZE);
+	a.packettype = PT_BASICKEEPALIVE;
+	a.checksum = Checksum((const UINT8 *)&a, BASEPACKETSIZE);
+	nsv.ka_t = p->t;
+	if (sendto(nsv.fd, &a, BASEPACKETSIZE, 0, (const struct sockaddr *)from, sizeof *from) < 0)
+		nsv.st.early_ack_errors++;
+	else if (++nsv.st.load_keepalives <= 3)
+		printf("NETSVC load keep-alive %u sent (the game thread has not polled for %u ms)\n", (unsigned)nsv.st.load_keepalives, (unsigned)((p->t - nsv.main_beat) / 147456));
+}
+
 static void SvcThread(void *arg)
 {
 	(void)arg;
@@ -142,6 +174,7 @@ static void SvcThread(void *arg)
 		if (full)
 		{
 			nsv.st.dropped++;
+			LoadKeepAlive(p, &from); // OPT13-IO (RS-09): a load fills the ring within 2 s (64 slots); the keep-alive must go on while the datagrams are dropped
 			continue;
 		}
 		BARRIER();
@@ -150,6 +183,7 @@ static void SvcThread(void *arg)
 		if ((UINT32)(head + 1 - nsv.tail) > nsv.st.max_depth)
 			nsv.st.max_depth = (UINT32)(head + 1 - nsv.tail);
 		EarlyAck(p, &from);
+		LoadKeepAlive(p, &from);
 	}
 	nsv.tid = -1; // the thread ends itself (the game thread waits for this in Stop)
 	ExitDeleteThread();
@@ -177,8 +211,11 @@ boolean PS2NetSvc_Start(int fd)
 	nsv.head = nsv.tail = 0;
 	nsv.stop = false;
 	nsv.joined = false;
+	nsv.connected = false;
 	nsv.main_beat = 0;
 	nsv.rx_needed = 0;
+	nsv.ka_t = 0;
+	nsv.ka_off = M_CheckParm("-netnokeepalive") != 0;
 	nsv.fd = fd;
 	memset(&nsv.st, 0, sizeof nsv.st);
 	flags = fcntl(fd, F_GETFL, 0);
@@ -221,6 +258,7 @@ void PS2NetSvc_Stop(void)
 		nsv.tid = -1;
 	}
 	nsv.joined = false;
+	nsv.connected = false;
 	if (nsv_stack)
 	{
 		free(nsv_stack); // the thread is deleted: nothing runs on it any more
@@ -256,6 +294,11 @@ void PS2NetSvc_SetClient(boolean joined)
 	if (joined && !nsv.joined)
 		nsv.rx_needed = 0;
 	nsv.joined = joined;
+}
+
+void PS2NetSvc_SetConnected(boolean connected)
+{
+	nsv.connected = connected;
 }
 
 void PS2NetSvc_MainBeat(void)
