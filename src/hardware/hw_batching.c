@@ -180,6 +180,10 @@ static inline void HWR_CopyVerts(FOutVector *dst, const FOutVector *src, FUINT n
 static int hwr_ph_on = -1;
 static UINT32 hwr_ph_a, hwr_ph_b, hwr_ph_n;
 static UINT32 hwr_ph_wa = 0x811c9dc5u, hwr_ph_wb = 0x9e3779b9u, hwr_ph_wn; // the same for the polygons with a map texture or flat only (-hwpolyhash: w=, nw=)
+extern int hwr_ph_spr; // hw_main.c
+extern unsigned int hwr_fr_off; // hw_front.inc (-hwfr)
+static UINT32 hwr_ph_ia, hwr_ph_ib; // -hwpolyhash 3: the sum of the hashes of the polygons drawn at once (the draw nodes)
+static int hwr_ph_vis; // -hwpolyhash 3: the polygons wholly outside the view volume are not hashed (OPT12 PS2-HW-400: HWR_FrPolyOutside)
 static UINT32 hwr_ph_calls, hwr_ph_lo, hwr_ph_hi; // -hwpolyhash 2 LO HI: every polygon of the frames LO..HI is printed with its parts (HWPP lines), to find what differs between two runs
 
 static inline void HWR_PH_W(UINT32 x)
@@ -197,7 +201,9 @@ static void HWR_PolyHashBody(const FSurfaceInfo *s, const FOutVector *v, FUINT n
 	HWR_PH_W(n | ((UINT32)horizon << 16));
 	HWR_PH_W(flags);
 	HWR_PH_W((UINT32)shader);
-	if (current_texture && !(flags & PF_NoTexture))
+	if (hwr_ph_vis && !currently_batching)
+		HWR_PH_W(0xFFFFFFFEu); // (-hwpolyhash 3: a polygon drawn at once - translucent walls and planes of the draw nodes - takes the texture the driver was told directly; current_texture is whatever the last batched polygon left)
+	else if (current_texture && !(flags & PF_NoTexture))
 	{
 		HWR_PH_W((UINT32)current_texture->regen_kind);
 		HWR_PH_W((UINT32)current_texture->regen_id);
@@ -225,6 +231,8 @@ static void HWR_PolyHashBody(const FSurfaceInfo *s, const FOutVector *v, FUINT n
 
 static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n, FBITFIELD flags, int shader, boolean horizon)
 {
+	if (hwr_ph_vis && (hwr_ph_spr || HWR_FrPolyOutside(v, n)))
+		return;
 	if (hwr_ph_on == 2 && hwr_ph_calls >= hwr_ph_lo && hwr_ph_calls <= hwr_ph_hi)
 	{
 		UINT32 vh = 0x811c9dc5u, k;
@@ -232,6 +240,21 @@ static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n,
 
 		for (k = 0; k < n * 5; k++)
 			vh = (vh ^ vw[k]) * 16777619u;
+		float bx0 = v[0].x, bx1 = v[0].x, by0 = v[0].y, by1 = v[0].y, bz0 = v[0].z, bz1 = v[0].z;
+
+		for (k = 1; k < n; k++)
+		{
+			bx0 = v[k].x < bx0 ? v[k].x : bx0; bx1 = v[k].x > bx1 ? v[k].x : bx1;
+			by0 = v[k].y < by0 ? v[k].y : by0; by1 = v[k].y > by1 ? v[k].y : by1;
+			bz0 = v[k].z < bz0 ? v[k].z : bz0; bz1 = v[k].z > bz1 ? v[k].z : bz1;
+		}
+		I_OutputMsg("HWPB c=%u i=%u src=%d x=%.1f..%.1f h=%.1f..%.1f y=%.1f..%.1f\n", hwr_ph_calls, hwr_ph_n,
+#ifdef PS2_HWDETAIL
+			hwr_fr_src,
+#else
+			-1,
+#endif
+			bx0, bx1, by0, by1, bz0, bz1);
 		I_OutputMsg("HWPP c=%u i=%u n=%u fl=%x sh=%d tex=%d/%d/%ux%u/%x col=%x/%x/%x lt=%d/%d/%d/%d v=%08x\n", hwr_ph_calls, hwr_ph_n, (unsigned)n, (unsigned)flags, shader,
 			(current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_kind : -1, (current_texture && !(flags & PF_NoTexture)) ? (int)current_texture->regen_id : -1,
 			(current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->width : 0u, (current_texture && !(flags & PF_NoTexture)) ? (unsigned)current_texture->height : 0u,
@@ -240,8 +263,23 @@ static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n,
 			s ? (int)s->LightTableId : 0, s ? (int)s->LightInfo.light_level : 0, s ? (int)s->LightInfo.fade_start : 0, s ? (int)s->LightInfo.fade_end : 0, vh);
 	}
 	hwr_ph_n++;
+	if (hwr_ph_vis && !currently_batching)
+	{
+		// -hwpolyhash 3: the polygons of the draw nodes (translucent planes and walls, drawn at once) are summed, not chained: the planes of a run that have the same height come out of qsort in an order
+		// that depends on how many nodes there are (coplanar water pieces that do not overlap); everything else of the stream is chained in order
+		const UINT32 sa = hwr_ph_a, sb = hwr_ph_b;
+
+		hwr_ph_a = 0x811c9dc5u;
+		hwr_ph_b = 0x9e3779b9u;
+		HWR_PolyHashBody(s, v, n, flags, shader, horizon);
+		hwr_ph_ia += hwr_ph_a;
+		hwr_ph_ib += hwr_ph_b;
+		hwr_ph_a = sa;
+		hwr_ph_b = sb;
+		return;
+	}
 	HWR_PolyHashBody(s, v, n, flags, shader, horizon);
-	if (current_texture && !(flags & PF_NoTexture) && current_texture->regen_kind) // the world: textures of the map and flats (the sprites of a static view are not the same in two runs: random particles)
+	if (current_texture && !(flags & PF_NoTexture) && current_texture->regen_kind && !(hwr_ph_vis && !currently_batching)) // the world: textures of the map and flats (the sprites of a static view are not the same in two runs: random particles)
 	{
 		const UINT32 sa = hwr_ph_a, sb = hwr_ph_b;
 
@@ -256,17 +294,31 @@ static void HWR_PolyHashAdd(const FSurfaceInfo *s, const FOutVector *v, FUINT n,
 	}
 }
 
+UINT32 HWR_PHFrameNo(void) // the number HWPH lines carry (OPT12: the culls print what they leave out of the frames -hwfrdbg names)
+{
+	return hwr_ph_calls;
+}
+
 void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_video.c)
 {
 	if (hwr_ph_on < 0)
 	{
 		hwr_ph_on = M_CheckParm("-hwpolyhash") ? 1 : 0;
-		if (hwr_ph_on && M_IsNextParm() && atoi(M_GetNextParm()) == 2)
+		if (hwr_ph_on && M_IsNextParm())
 		{
-			hwr_ph_on = 2;
-			hwr_ph_lo = M_IsNextParm() ? (UINT32)atoi(M_GetNextParm()) : 0;
-			hwr_ph_hi = M_IsNextParm() ? (UINT32)atoi(M_GetNextParm()) : 0;
+			const int mode = atoi(M_GetNextParm());
+
+			if (mode == 2)
+			{
+				hwr_ph_on = 2;
+				hwr_ph_lo = M_IsNextParm() ? (UINT32)atoi(M_GetNextParm()) : 0;
+				hwr_ph_hi = M_IsNextParm() ? (UINT32)atoi(M_GetNextParm()) : 0;
+			}
+			else if (mode == 3)
+				hwr_ph_vis = 1;
 		}
+		if (M_CheckParm("-hwphvis"))
+			hwr_ph_vis = 1; // (after the parameters of -hwpolyhash are read: M_CheckParm moves the "next parameter")
 	}
 	if (!hwr_ph_on)
 		return;
@@ -282,11 +334,14 @@ void HWR_PolyHashFrame(INT32 frame) // called at the end of every frame (ps2/i_v
 			sh = (sh ^ (UINT32)sectors[k].ceilingheight) * 16777619u;
 			sh = (sh ^ ((UINT32)(UINT16)sectors[k].lightlevel | ((UINT32)(UINT16)sectors[k].floorpic << 16))) * 16777619u;
 		}
+		hwr_ph_a ^= hwr_ph_ia;
+		hwr_ph_b ^= hwr_ph_ib;
 		I_OutputMsg("HWPH f=%d n=%u h=%08x%08x o=00000000 w=%u:%08x%08x s=%08x v=%d,%d,%d,%u\n", (int)frame, hwr_ph_n, hwr_ph_a, hwr_ph_b, hwr_ph_wn, hwr_ph_wa, hwr_ph_wb, sh, (int)viewx, (int)viewy, (int)viewz, (unsigned)viewangle);
 	}
 	hwr_ph_wa = 0x811c9dc5u;
 	hwr_ph_wb = 0x9e3779b9u;
 	hwr_ph_wn = 0;
+	hwr_ph_ia = hwr_ph_ib = 0;
 	hwr_ph_a = 0x811c9dc5u;
 	hwr_ph_b = 0x9e3779b9u;
 	hwr_ph_n = 0;
@@ -551,6 +606,9 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 {
 	if (iNumPts < 3)
 		return; // no triangles; do not advance the fan writer past its allocation
+#ifdef PS2_HWDETAIL
+	HWR_FrCensusPoly(pOutVerts, iNumPts); // OPT12 (hw_front.inc): the census of the polygons against the view volume
+#endif
 	if (currently_batching && !((UINT32)hwr_sprite_batch | (UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB)))
 	{
 		if (HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, 0))
@@ -558,21 +616,66 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 		HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 		return;
 	}
+#ifdef PS2_PROFILE
+	// OPT12 PS2-HW-403: an opaque sprite or a shadow of the sprite batch (the sprite stream is off, the default): what HWR_ProcessPolygonSlow does for it before it gets to the collection
+	// (the test of the blend mode, the stream, the counters) is nothing; -hwfr 64 switches this off
+	if (currently_batching && hwr_sprite_batch && !((UINT32)hwr_grec_on | (UINT32)(hwr_ph_on > 0) | (hwr_geo_off & HWR_GO_NOPB) | (hwr_fr_off & 64u)) && (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM)) && pSurf && !horizonSpecial)
+	{
+		const FBITFIELD blending = PolyFlags & PF_Blending;
+
+		if (hwr_sprite_shadow || ((blending == PF_Masked || (blending == PF_Translucent && pSurf->PolyColor.s.alpha == 0xFF)) && (PolyFlags & PF_Occlude)
+			&& !(PolyFlags & (PF_Invisible | PF_NoDepthTest | PF_Corona | PF_Ripple | PF_WireFrame | PF_NoTexture | PF_Decal))))
+		{
+			if (!HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, hwr_sprite_shadow ? 0u : 1u))
+				HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+			return;
+		}
+	}
+#endif
 	HWR_ProcessPolygonSlow(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 }
+
+#ifdef PS2_PROFILE
+// OPT13 IS (PS2-HW-700/701): the quad of a plain opaque sprite or of its drop shadow, straight into the collection of the sprite batch. What HWR_SetCurrentTexture and the sprite branch of
+// HWR_ProcessPolygon (PS2-HW-403, above) do for such a polygon, in one call: the texture is made current, the polygon goes to its bucket (the bucket cache, else the general entry). The
+// caller (hw_main.c, HWR_FX_SprFuse / HWR_FX_ShadowFuse) has the texture touched once per view, and has asked HWR_PBSprStatic once per view and has the batch of the sprites running
+// (currently_batching && hwr_sprite_batch): the geometry cache is not recording, no polygon hash is kept, the collection is the block collection, the sprite stream is off.
+boolean HWR_PBSprStatic(void)
+{
+	return !((UINT32)hwr_grec_on | (hwr_geo_off & HWR_GO_NOPB) | (hwr_fr_off & 64u)) && (ps2hwd_fx2 & (FX3_NOSPR | FX3_NOSTREAM)); // (-hwpolyhash is no reason: HWR_PBSprQuad hashes the polygon as HWR_ProcessPolygon does)
+}
+
+void HWR_PBSprQuad(GLMipmap_t *tex, const FSurfaceInfo *s, const FOutVector *v, FBITFIELD flags, int shader_target)
+{
+	current_texture = tex;
+	if (hwr_ph_on > 0)
+		HWR_PolyHashAdd(s, v, 4, flags, shader_target, false); // (-hwpolyhash: the stream of the polygons includes those of the fused builders; the picture of such a run is not looked at)
+	if (!HWR_PBFast(s, v, 4, flags, shader_target, false, hwr_sprite_shadow ? 0u : 1u))
+		HWR_PBAdd(s, v, 4, flags, shader_target, false);
+}
+#endif
 
 static void HWR_ProcessPolygonSlow(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
 #else
 void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPts, FBITFIELD PolyFlags, int shader_target, boolean horizonSpecial)
 #endif
 {
+#ifdef PS2_PROFILE
+	int rec_blk = 0; // OPT13 IR: the polygon is recorded as a block once the collection has it
+#endif
     if (iNumPts < 3)
         return; // no triangles; do not advance the fan writer past its allocation
 #ifdef PS2_PROFILE
 	if (hwr_ph_on > 0)
 		HWR_PolyHashAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
 	if (hwr_grec_on)
-		HWR_GCRecPoly(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // OPT11: the geometry cache records what the BSP walk hands to the batch
+	{
+		// OPT11: the geometry cache records what the BSP walk hands to the batch. OPT13 IR: a polygon the collection takes whole is recorded as the block it makes (below, after it is collected)
+		if (currently_batching && HWR_PBOn() && !hwr_sprite_batch && HWR_GCRecBlkOk(PolyFlags, horizonSpecial))
+			rec_blk = 1;
+		else
+			HWR_GCRecPoly(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial);
+	}
 	if (currently_batching && hwr_sprite_batch)
 	{
 		// PS2-HW-52: batched sprite polygons are drawn in texture order, not in depth order. That is the same picture for polygons that write the depth
@@ -614,6 +717,10 @@ void HWR_ProcessPolygon(FSurfaceInfo *pSurf, FOutVector *pOutVerts, FUINT iNumPt
 			ps2hwp_cnt[HWC_PROC_BATCH]--;
 			if (!HWR_PBFast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial, (hwr_sprite_batch && !hwr_sprite_shadow) ? 1u : 0u))
 				HWR_PBAdd(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // PS2-HW-233
+#ifdef PS2_PROFILE
+			if (rec_blk)
+				HWR_PBRecLast(pSurf, pOutVerts, iNumPts, PolyFlags, shader_target, horizonSpecial); // OPT13 IR
+#endif
 #ifdef PS2_HWDETAIL
 			if (hwr_sprite_batch)
 				ps2hwp_cyc[HWP_SF_COLLECT] += (unsigned int)(ps2hwp_now() - sf_t0);

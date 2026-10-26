@@ -1,0 +1,27 @@
+diff --git a/src/ps2/i_system.c b/src/ps2/i_system.c
+index 6885ff5..ad647df 100644
+--- a/src/ps2/i_system.c
++++ b/src/ps2/i_system.c
+@@ -183,7 +183,7 @@ void I_StartupTimer(void)
+ }
+ 
+ #ifdef PS2_PROFILE
+-extern unsigned long long ps2prof_sleep_cyc; // ps2_prof.c (OPT12 HWDRV, PS2-HW-440): the working cycles printed by HWPROF0 are the wall minus these sleeps and the waits of the driver
++unsigned long long ps2prof_sleep_cyc; // OPT13-RSYS RS-00: defined here (ps2_prof.c is linked only with --prof/--sample/...); read by HWPROF0 (i_video.c): working cycles = wall minus these sleeps and the waits of the driver
+ static inline unsigned int sleep_cyc_now(void) { unsigned int v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
+ #endif
+ 
+diff --git a/src/ps2/ps2_prof.c b/src/ps2/ps2_prof.c
+index 116496c..efeb297 100644
+--- a/src/ps2/ps2_prof.c
++++ b/src/ps2/ps2_prof.c
+@@ -358,8 +358,7 @@ static void Report(void)
+ 	tics = 0;
+ }
+ 
+-// OPT12 HWDRV (PS2-HW-440): the cycles the main loop spent asleep in I_Sleep / I_SleepDuration (i_system.c), read by the HWPROF line to print the working cycles (wall without waits)
+-unsigned long long ps2prof_sleep_cyc;
++// OPT12 HWDRV (PS2-HW-440): ps2prof_sleep_cyc (cycles asleep in I_Sleep / I_SleepDuration) is defined in i_system.c (OPT13-RSYS RS-00: this file is not part of the plain release link)
+ 
+ #ifdef PS2_PROF_DIRECT
+ // PS2-94: LTO profile build (no linker wrappers): I_FinishUpdate reports every displayed frame; everything is "other"

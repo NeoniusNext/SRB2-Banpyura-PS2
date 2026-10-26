@@ -452,30 +452,64 @@ typedef enum
 //
 typedef struct sector_s
 {
+	// OPT13 IQ-5: ordered by use, the cache line of the EE is 64 bytes. The first line is what the tic (P_CheckPosition, P_ZMovement, the thing lists) and the BSP walk of both
+	// renderers read for every sector; then the rest of the per-subsector reads of the renderers and the lighting, then the texture placement of the planes, then what is seldom touched.
+	// Every field is named everywhere (the savegame, Lua and the loaders), the order changes no value.
 	fixed_t floorheight;
 	fixed_t ceilingheight;
 	INT32 floorpic;
 	INT32 ceilingpic;
 	INT16 lightlevel;
 	INT16 special;
-	taglist_t tags;
-
-	// origin for any sounds played by the sector
-	// also considered the center for e.g. Mario blocks
-	degenmobj_t soundorg;
 
 	// if == validcount, already checked
 	size_t validcount;
 
+	INT32 heightsec; // other sector, or -1 if no other sector
+
+	// Improved fake floor hack
+	ffloor_t *ffloors;
+
+	// Eternity engine slope
+	pslope_t *f_slope; // floor slope
+	pslope_t *c_slope; // ceiling slope
+
 	// list of mobjs in sector
 	mobj_t *thinglist;
 
-	// thinker_ts for reversable actions
-	void *floordata; // floor move thinker
-	void *ceilingdata; // ceiling move thinker
-	void *lightingdata; // lighting change thinker
-	void *fadecolormapdata; // fade colormap thinker
+	// list of mobjs that are at least partially in the sector
+	// thinglist is a subset of touching_thinglist
+	struct msecnode_s *touching_thinglist;
 
+	sectorflags_t flags;
+	fixed_t gravity; // per-sector gravity factor
+	fixed_t friction;
+	UINT8 damagetype;
+	UINT8 triggerer; // who can trigger? (Linedef executor triggering)
+	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
+	boolean moved;
+
+	// ---- second line: the lighting and the lines of the sector
+	lightlist_t *lightlist;
+	INT32 numlights;
+	extracolormap_t *extra_colormap; // per-sector colormaps!
+
+	// floor and ceiling lighting
+	INT16 floorlightlevel, ceilinglightlevel;
+	boolean floorlightabsolute, ceilinglightabsolute; // absolute or relative to sector's light level?
+	boolean colormap_protected;
+	INT16 spawn_lightlevel; // for fade thinker
+	mtag_t triggertag; // tag to call upon triggering
+
+	size_t linecount;
+	struct line_s **lines; // [linecount] size
+
+	taglist_t tags;
+
+	UINT32 portal_floor; // portals
+	UINT32 portal_ceiling;
+
+	// ---- texture placement of the planes
 	// floor and ceiling texture offsets
 	fixed_t floorxoffset, flooryoffset;
 	fixed_t ceilingxoffset, ceilingyoffset;
@@ -488,50 +522,7 @@ typedef struct sector_s
 	angle_t floorangle;
 	angle_t ceilingangle;
 
-	INT32 heightsec; // other sector, or -1 if no other sector
-	INT32 camsec; // used for camera clipping
-
-	// floor and ceiling lighting
-	INT16 floorlightlevel, ceilinglightlevel;
-	boolean floorlightabsolute, ceilinglightabsolute; // absolute or relative to sector's light level?
-	INT32 floorlightsec, ceilinglightsec; // take floor/ceiling light level from another sector
-
-	INT32 crumblestate; // used for crumbling and bobbing
-
-	// list of mobjs that are at least partially in the sector
-	// thinglist is a subset of touching_thinglist
-	struct msecnode_s *touching_thinglist;
-
-	size_t linecount;
-	struct line_s **lines; // [linecount] size
-
-	// Improved fake floor hack
-	ffloor_t *ffloors;
-	size_t *attached;
-	boolean *attachedsolid;
-	size_t numattached;
-	size_t maxattached;
-	lightlist_t *lightlist;
-	INT32 numlights;
-	boolean moved;
-
-	// per-sector colormaps!
-	extracolormap_t *extra_colormap;
-	boolean colormap_protected;
-
-	fixed_t gravity; // per-sector gravity factor
-	fixed_t *gravityptr; // For binary format: Read gravity from floor height of master sector
-
-	sectorflags_t flags;
-	sectorspecialflags_t specialflags;
-	UINT8 damagetype;
-
-	// Linedef executor triggering
-	mtag_t triggertag; // tag to call upon triggering
-	UINT8 triggerer; // who can trigger?
-
-	fixed_t friction;
-
+	// ---- seldom
 	// Sprite culling feature
 	struct line_s *cullheight;
 
@@ -542,20 +533,30 @@ typedef struct sector_s
 	precipmobj_t *preciplist;
 	struct mprecipsecnode_s *touching_preciplist;
 
-	// Eternity engine slope
-	pslope_t *f_slope; // floor slope
-	pslope_t *c_slope; // ceiling slope
-	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
+	// thinker_ts for reversable actions
+	void *floordata; // floor move thinker
+	void *ceilingdata; // ceiling move thinker
+	void *lightingdata; // lighting change thinker
+	void *fadecolormapdata; // fade colormap thinker
 
-	// for fade thinker
-	INT16 spawn_lightlevel;
+	INT32 camsec; // used for camera clipping
+	INT32 floorlightsec, ceilinglightsec; // take floor/ceiling light level from another sector
+	INT32 crumblestate; // used for crumbling and bobbing
+
+	size_t *attached;
+	boolean *attachedsolid;
+	size_t numattached;
+	size_t maxattached;
+
+	fixed_t *gravityptr; // For binary format: Read gravity from floor height of master sector
+	sectorspecialflags_t specialflags;
 
 	// colormap structure
 	extracolormap_t *spawn_extra_colormap;
 
-	// portals
-	UINT32 portal_floor;
-	UINT32 portal_ceiling;
+	// origin for any sounds played by the sector
+	// also considered the center for e.g. Mario blocks
+	degenmobj_t soundorg;
 } sector_t;
 
 //
@@ -580,16 +581,44 @@ typedef enum
 
 typedef struct line_s
 {
+	// OPT13 IQ-5: the first 64 bytes (one line of the EE cache) are what the collision code (P_BlockLinesIterator, PIT_CheckLine) and the renderers read for every line they look at:
+	// ordered by use, no value changes (every field is named everywhere).
 	// Vertices, from v1 to v2.
 	vertex_t *v1;
 	vertex_t *v2;
 
 	fixed_t dx, dy; // Precalculated v2 - v1 for side checking.
-	angle_t angle; // Precalculated angle between dx and dy
+
+	fixed_t bbox[4]; // bounding box for the extent of the linedef
+
+	// Front and back sector.
+	// Note: redundant? Can be retrieved from SideDefs.
+	sector_t *frontsector;
+	sector_t *backsector;
+
+	size_t validcount; // if == validcount, already checked
+	polyobj_t *polyobj; // Belongs to a polyobject?
 
 	// Animation related.
 	INT16 flags;
 	INT16 special;
+#ifdef PS2_PROFILE
+	// PS2-507 (OPT12-CORE): the three small fields in one word (the order of the fields of this struct is not part of any format): 112 -> 104 bytes, 200 KB on MAP11
+	UINT8 blendmode; // blendmode
+	UINT8 slopetype; // slopetype_t (the enum is four bytes); to aid move clipping
+	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
+#else
+	UINT8 blendmode; // blendmode
+	slopetype_t slopetype; // To aid move clipping.
+	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
+#endif
+
+	// Visual appearance: sidedefs.
+	UINT32 sidenum[2]; // sidenum[1] will be NO_SIDEDEF if one-sided
+
+	// ---- the rest
+	angle_t angle; // Precalculated angle between dx and dy
+
 	taglist_t tags;
 #ifdef PS2_PROFILE
 	// PS2-143 (OPT10-S): 40 bytes per line only for the lines that have a non-zero argument (about 5% of them); the others share one zero block
@@ -601,26 +630,8 @@ typedef struct line_s
 #endif
 	char *stringargs[NUMLINESTRINGARGS];
 
-	// Visual appearance: sidedefs.
-	UINT32 sidenum[2]; // sidenum[1] will be NO_SIDEDEF if one-sided
 	fixed_t alpha; // translucency
-	UINT8 blendmode; // blendmode
 	INT32 executordelay;
-
-	fixed_t bbox[4]; // bounding box for the extent of the linedef
-
-	// To aid move clipping.
-	slopetype_t slopetype;
-
-	// Front and back sector.
-	// Note: redundant? Can be retrieved from SideDefs.
-	sector_t *frontsector;
-	sector_t *backsector;
-
-	size_t validcount; // if == validcount, already checked
-	polyobj_t *polyobj; // Belongs to a polyobject?
-
-	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
 
 	UINT32 secportal; // transferred sector portal
 
@@ -919,15 +930,13 @@ typedef struct seg_s
 	sector_t *backsector;
 
 	fixed_t length;	// precalculated seg length
-#ifdef HWRENDER
+#if defined(HWRENDER) && !defined(PS2_PROFILE)
 	// new pointers so that AdjustSegs doesn't mess with v1/v2
 	void *pv1; // polyvertex_t
 	void *pv2; // polyvertex_t
 	float flength; // length of the seg, used by hardware renderer
 
-#ifndef PS2_PROFILE // PS2-149 (OPT10-S): the static lightmaps (STATICLIGHT) are not built in this port: 4 bytes of every seg (49 592 on MAP11)
 	lightmap_t *lightmaps; // for static lightmap
-#endif
 #endif
 
 	polyobj_t *polyseg;
@@ -942,6 +951,26 @@ typedef struct seg_s
 #endif
 } seg_t;
 
+// OPT12-CORE (PS2-505): pv1 / pv2 / flength of a seg are used by the hardware renderer only. In the PS2 profile they are not in seg_t (12 of its 56 bytes: 595 KB of the zone
+// on MAP11, in software mode too) but in an array parallel to segs[] that HWR_LoadLevel allocates (PU_HWRPLANE, owner ps2_seghw: gone with the level or the renderer).
+// The hardware sources read and write them through these lvalue macros (tools/ps2/hw_seg_accessors.py rewrites new code); PC builds keep the fields.
+#if defined(HWRENDER) && defined(PS2_PROFILE)
+typedef struct
+{
+	void *pv1; // polyvertex_t
+	void *pv2; // polyvertex_t
+	float flength; // length of the seg, used by hardware renderer
+} seghw_t;
+extern seghw_t *ps2_seghw;
+#define SEG_PV1(s) (ps2_seghw[(s) - segs].pv1)
+#define SEG_PV2(s) (ps2_seghw[(s) - segs].pv2)
+#define SEG_FLENGTH(s) (ps2_seghw[(s) - segs].flength)
+#elif defined(HWRENDER)
+#define SEG_PV1(s) ((s)->pv1)
+#define SEG_PV2(s) ((s)->pv2)
+#define SEG_FLENGTH(s) ((s)->flength)
+#endif
+
 //
 // BSP node.
 //
@@ -951,11 +980,11 @@ typedef struct
 	fixed_t x, y;
 	fixed_t dx, dy;
 
+	// If NF_SUBSECTOR its a subsector.
+	UINT16 children[2]; // OPT13 IQ-5: next to the partition line: the descent of R_PointInSubsector and of the sight code reads these 20 bytes of a node and nothing else
+
 	// Bounding box for each child.
 	fixed_t bbox[2][4];
-
-	// If NF_SUBSECTOR its a subsector.
-	UINT16 children[2];
 } node_t;
 
 #if defined(_MSC_VER)
@@ -1001,6 +1030,8 @@ typedef struct
 //
 typedef struct drawseg_s
 {
+	// OPT13 IQ-5: the two arrays for the planes and walls of 3D floors (320 bytes, used by the drawsegs that have them) go last: the sprite clipping loops walk the drawsegs
+	// and read the first 60 bytes of each
 	seg_t *curline;
 	INT32 x1;
 	INT32 x2;
@@ -1023,21 +1054,23 @@ typedef struct drawseg_s
 	fixed_t *maskedtextureheight; // For handling sloped midtextures
 	fixed_t *invscale;
 
-	struct visplane_s *ffloorplanes[MAXFFLOORS];
 	INT32 numffloorplanes;
-	struct ffloor_s *thicksides[MAXFFLOORS];
-	fixed_t *thicksidecol;
 	INT32 numthicksides;
+	fixed_t *thicksidecol;
 #ifdef PS2_PROFILE
 	fixed_t *frontscale; // allocated only for drawsegs that own FOF planes
 	INT32 frontscalewidth;
-#else
-	fixed_t frontscale[MAXVIDWIDTH];
 #endif
 
 	UINT8 portalpass; // if > 0 and <= portalrender, do not affect sprite clipping
 
 	vertex_t leftpos, rightpos; // Used for rendering FOF walls with slopes
+
+	struct visplane_s *ffloorplanes[MAXFFLOORS];
+	struct ffloor_s *thicksides[MAXFFLOORS];
+#ifndef PS2_PROFILE
+	fixed_t frontscale[MAXVIDWIDTH];
+#endif
 } drawseg_t;
 
 #ifdef ROTSPRITE
@@ -1158,13 +1191,21 @@ typedef struct
 
 	// Lump to use for view angles 0-7/15.
 	lumpnum_t lumppat[16]; // lump number 16 : 16 wad : lump
+#ifdef PS2_PROFILE
+	UINT16 lumpid[16]; // id in the spriteoffset, spritewidth, etc. tables (PS2-506: 16 bits, R_InstallSpriteLump refuses more sprite lumps than that)
+#else
 	size_t lumpid[16]; // id in the spriteoffset, spritewidth, etc. tables
+#endif
 
 	// Flip bits (1 = flip) to use for view angles 0-7/15.
 	UINT16 flip;
 
 #ifdef ROTSPRITE
+#ifdef PS2_PROFILE
+	rotsprite_t **rotated; // Rotated patches: NULL, or the 16 pointers, allocated by the first rotated sprite of the frame (PS2-506: 64 bytes of every frame, 3 350 frames on MAP11)
+#else
 	rotsprite_t *rotated[16]; // Rotated patches
+#endif
 #endif
 } spriteframe_t;
 

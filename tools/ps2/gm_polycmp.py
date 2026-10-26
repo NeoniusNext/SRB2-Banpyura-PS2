@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Compare the polygon streams of two runs made with -hwpolyhash (OPT11 GEOM, hardware/hw_batching.c).
 
-usage: gm_polycmp.py RUN_A RUN_B [--runs DIR] [--show N] [--order] [--world]
+usage: gm_polycmp.py RUN_A RUN_B [--runs DIR] [--show N] [--order] [--world] [--bytic]
 Reads the HWPH lines (frame, polygon count, 64 bit hash of every polygon the engine handed to HWR_ProcessPolygon in the frame: flags, shader, texture
 identity, surface, vertices) of build/runs/RUN/boot.txt. Prints the number of frames compared, the number that differ and the first differences.
 With --order the order of the polygons after the sort of HWR_RenderBatches (o=, OPT11 round 2) is compared too: the order of the batches must not depend on the
 memory layout of the build.
 With --world only the polygons with a map texture or flat (w=, the world: walls, planes) are compared, not the sprites: a static view of a map has random particles,
 so two runs of one map differ in the sprites whatever the build does.
+With --bytic the frames are paired by the state of the game they were made from (s= the heights, lights and flats of all sectors, v= the view) instead of by the number of the frame: a demo
+run at full speed makes a frame of two tics now and then, whenever the machine is slower than the clock, so frame N of two runs is not the same tic (the same ELF with other arguments differs
+in the sprites of one frame in two); the frames of a tic that both runs drew are compared (a view that repeats in a run, a thing standing still, pairs the first of each).
 Exit code 0 when the streams are equal for every frame both runs have (the first frame is skipped: the switch is read at its end).
 """
 import re
@@ -32,6 +35,7 @@ def main():
     show = 10
     order = False
     world = False
+    bytic = False
     names = []
     i = 0
     while i < len(args):
@@ -39,6 +43,8 @@ def main():
             runs = Path(args[i + 1]); i += 2
         elif args[i] == '--world':
             world = True; i += 1
+        elif args[i] == '--bytic':
+            bytic = True; i += 1
         elif args[i] == '--order':
             order = True; i += 1
         elif args[i] == '--show':
@@ -47,6 +53,18 @@ def main():
             names.append(args[i]); i += 1
     a = load(runs / names[0] / 'boot.txt')
     b = load(runs / names[1] / 'boot.txt')
+    if bytic:
+        def keyed(d):
+            k = {}
+            for f in sorted(d):
+                if f > 1 and d[f][5] and (d[f][5], d[f][6]) not in k:
+                    k[(d[f][5], d[f][6])] = f
+            return k
+        ka, kb = keyed(a), keyed(b)
+        pairs = [(ka[k], kb[k]) for k in sorted(set(ka) & set(kb), key=lambda k: ka[k])]
+        # the frames of B are renumbered to those of A so that the report below reads as before
+        b = {fa: b[fb] for fa, fb in pairs}
+        a = {fa: a[fa] for fa, fb in pairs}
     common = sorted(set(a) & set(b))
     common = [f for f in common if f > 1]
     if world:

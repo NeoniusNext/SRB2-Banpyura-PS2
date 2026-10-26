@@ -58,7 +58,11 @@ static CV_PossibleValue_t masterserver_update_rate_cons_t[] = {
 	{0,NULL}
 };
 
-#ifdef PS2
+#if defined(NETSYNC_DIAG) || defined(PS2REF)
+// SAFETY (OPT14): test builds (the network scenarios of tools/ps2/) never default to the REAL master server: a server started by a scenario once tried to register on
+// ds.ms.srb2.org before its config.cfg had set the mock URL (Set_api runs on another thread). Scenarios give their own "masterserver" through config.cfg.
+consvar_t cv_masterserver = CVAR_INIT ("masterserver", "http://127.0.0.1:9/MS/0", CV_SAVE|CV_CALL, NULL, MasterServer_OnChange);
+#elif defined(PS2)
 // PS2-130: the PS2 HTTP client (src/ps2/ps2_curl.c) has no TLS; the official master server also answers on plain http (checked: 200 on GET /MS/0/rooms)
 consvar_t cv_masterserver = CVAR_INIT ("masterserver", "http://ds.ms.srb2.org/MS/0", CV_SAVE|CV_CALL, NULL, MasterServer_OnChange);
 #else

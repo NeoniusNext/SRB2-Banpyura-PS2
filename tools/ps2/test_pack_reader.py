@@ -7,6 +7,8 @@ usage: test_pack_reader.py [--lz4-src DIR]   (DIR with lz4.c/lz4.h; default buil
 import argparse
 import hashlib
 import json
+import os
+import re
 import struct
 import subprocess
 import sys
@@ -22,7 +24,24 @@ from verify_pack import PAIRS, derive  # noqa: E402  (name derivation: independe
 VCVARS = r'C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Auxiliary\Build\vcvars64.bat'
 
 
+def build_linux(out):
+    """PS2-LOAD: the same host test with gcc on Linux (no MSVC): w_pack.c unchanged, the LZ4 block decoders from tools/ps2/host_lz4_shim.c, lz4.h of the ps2sdk ports."""
+    out.mkdir(parents=True, exist_ok=True)
+    exe = out / 'pack_hosttest'
+    inc = os.environ.get('PS2DEV', '/opt/ps2dev-x/ps2dev') + '/ps2sdk/ports/include'
+    cmd = ['cc', '-O2', '-Wall', '-Wno-unused-function', '-Wno-sign-compare', '-DPS2_PROFILE', '-DNOHW', '-DNDEBUG', '-I' + str(ROOT / 'src'), '-I' + str(ROOT / 'build/host-gen'),
+           '-I' + inc, '-o', str(exe), str(ROOT / 'tools/ps2/pack_hosttest.c'), str(ROOT / 'src/w_pack.c'), str(ROOT / 'tools/ps2/host_lz4_shim.c')]
+    p = subprocess.run(cmd, capture_output=True, text=True)
+    (out / 'build.log').write_text(p.stdout + p.stderr, encoding='utf-8')
+    if p.returncode:
+        print(p.stdout, p.stderr)
+        raise SystemExit('host test build failed')
+    return exe
+
+
 def build(lz4, out):
+    if os.name != 'nt':
+        return build_linux(out)
     out.mkdir(parents=True, exist_ok=True)
     exe = out / 'pack_hosttest.exe'
     bat = out / 'build.bat'
@@ -127,11 +146,167 @@ def validation_tests(exe, out, report):
     return bad
 
 
+def v2_tests(exe, out, report):
+    """PS2-LOAD-5..11: SRP2 version 1 and 2 packs cooked from a small synthetic pk3 (head table, per-lump CRC table, dedup, order list, many lumps, blocked lumps)
+    are read back through the C reader (with the head table and after WPack_DropHeads) and compared with the zip; damaged v2 packs are rejected."""
+    import random
+    import cook
+    fixtures = out / 'v2'
+    fixtures.mkdir(exist_ok=True)
+    rnd = random.Random(7)
+    entries = [('Misc/EMPTY', b''), ('Misc/TINY', b'abc'), ('Misc/SIXTEEN', bytes(range(16))), ('Misc/SEVENTEEN', bytes(range(17)))]
+    entries += [('Misc/DUPA', b'same bytes ' * 50), ('Misc/DUPB', b'same bytes ' * 50), ('Misc/DUPC', b'same bytes ' * 50)]
+    entries += [('Misc/BIG', (b'compressible ' * 20000)[:200000]), ('Misc/RND', bytes(rnd.randrange(256) for _ in range(70000))),
+                ('Misc/BIGDUP', (b'compressible ' * 20000)[:200000])]
+    entries += [('Sprites/SPR%03dA0' % i, bytes(rnd.randrange(4) for _ in range(rnd.randrange(1, 400)))) for i in range(300)]  # (>= 256 lumps: the head table is written)
+    entries += [('Folder/', b'')]
+    src = fixtures / 'v2src.pk3'
+    with zipfile.ZipFile(src, 'w', zipfile.ZIP_DEFLATED) as z:
+        for name, data in entries:
+            z.writestr(name, data)
+    order = fixtures / 'order.txt'
+    order.write_text('\n'.join(n for n, _ in entries[-40:-1]) + '\n')
+    bad = 0
+    for version in (1, 2):
+        for dedup in (True, False):
+            for use_order in (False, True):
+                if version == 1 and (use_order or not dedup):
+                    continue
+                name = f'v{version}{"d" if dedup else "n"}{"o" if use_order else ""}'
+                dst = fixtures / (name + '.PAK')
+                names = [l.strip() for l in order.read_text().splitlines() if l.strip()] if use_order else None
+                cook.cook(src, dst, 1, order=names, version=version, dedup=dedup)
+                for mode in ('', 'nohead'):
+                    tsv = fixtures / (name + mode + '.tsv')
+                    p = subprocess.run([str(exe), str(dst), str(tsv)] + ([mode] if mode else []), capture_output=True, text=True)
+                    (fixtures / (name + mode + '.log')).write_text(p.stdout + p.stderr, encoding='utf-8')
+                    problems = int(p.returncode != 0)
+                    rows = [l.split('\t') for l in tsv.read_text(errors='replace').splitlines()[1:]] if tsv.exists() else []
+                    if len(rows) != len(entries):
+                        problems += 1
+                    for (ename, edata), r in zip(entries, rows):
+                        if len(r) != 8 or r[4] != ename or int(r[5]) != len(edata) or r[7] != f'{zlib.crc32(edata):08x}':
+                            problems += 1
+                            if problems < 4:
+                                report(f'  {name}{mode}: lump {ename}: {r}')
+                    report(f'v2 fixture {name}{mode or ""}: {len(rows)} lumps, {problems} problems (exit {p.returncode}, {dst.stat().st_size} bytes)')
+                    bad += problems
+    # a v2 pack with one damaged byte in every checksummed region has to be refused
+    good = (fixtures / 'v2d.PAK').read_bytes()
+    magic, version, hsize, flags, n, toff, poff, psize, doff, fsize, block = struct.unpack_from('<4s10I', good, 0)
+    spots = [('header-checksummed-field', 12), ('index-entry', toff + 24 * 5 + 4), ('string-pool', poff + 3)]
+    if version == 2:
+        spots.append(('header-extension', 64 + 4))
+    for label, off in spots:
+        data = bytearray(good)
+        data[off] ^= 0x40
+        path = fixtures / ('damaged-' + label + '.bin')
+        path.write_bytes(data)
+        p = subprocess.run([str(exe), '--reject-header', str(path)], capture_output=True, text=True)
+        (fixtures / ('damaged-' + label + '.log')).write_text(p.stdout + p.stderr, encoding='utf-8')
+        bad += int(p.returncode != 0)
+        report(f'v2 damage {label}: exit {p.returncode} ({p.stderr.strip()[:90]})')
+    data = bytearray(good)
+    struct.pack_into('<I', data, 4, 3)  # a version this engine does not know
+    path = fixtures / 'too-new.bin'
+    path.write_bytes(data)
+    p = subprocess.run([str(exe), '--reject-header', str(path)], capture_output=True, text=True)
+    bad += int(p.returncode != 0)
+    report(f'v2 too new (version 3): exit {p.returncode} ({p.stderr.strip()[:90]})')
+    report(f'v2 fixtures: {bad} failures')
+    return bad
+
+
+def io_tests(exe, out, report, pakdir):
+    """OPT13-IO (RS-01, RS-07): the window reader under every medium policy and odd window sizes gives the same table as the default policy; a device error is retried and
+    only the fourth failure in a row stops (the message names the pack); the open of a pack reads its index once (the stdio reader read it three times)."""
+    bad = 0
+    env0 = dict(os.environ)
+
+    def run(pak, tag, **env):
+        tsv = out / f'io-{pak}-{tag}.tsv'
+        e = dict(env0)
+        e.update(env)
+        p = subprocess.run([str(exe), str(Path(pakdir) / pak), str(tsv)], capture_output=True, text=True, env=e)
+        info = {}
+        for line in p.stderr.splitlines():
+            for key in ('open:', 'iostat'):
+                if line.startswith(key):
+                    info[key] = dict(kv.split('=') for kv in line.split()[1:] if '=' in kv)
+        return p, tsv, info
+
+    base = {}
+    for pak in ('ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+        p, tsv, info = run(pak, 'dvd')
+        base[pak] = tsv.read_bytes() if tsv.exists() else b''
+        if p.returncode:
+            report(f'io: {pak} default policy failed: {p.stderr[-300:]}')
+            bad += 1
+    policies = [('usb', {'PACK_TEST_MEDIUM': 'usb'}), ('sd', {'PACK_TEST_MEDIUM': 'sd'}), ('hdd', {'PACK_TEST_MEDIUM': 'hdd'}),
+                ('w8k', {'PACK_TEST_WIN': '8192,2048,4096,0'}), ('w4k', {'PACK_TEST_WIN': '4096,2048,2048,0'}), ('w64k', {'PACK_TEST_WIN': '65536,2048,65536,4294967295'})]
+    for tag, env in policies:
+        for pak in ('ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+            p, tsv, info = run(pak, tag, **env)
+            same = tsv.exists() and tsv.read_bytes() == base[pak]
+            if p.returncode or not same:
+                report(f'io: {pak} policy {tag}: exit {p.returncode}, table {"equal" if same else "DIFFERENT"}: {p.stderr[-300:]}')
+                bad += 1
+        report(f'io: policy {tag}: ZONES/CHARS/MUSIC read through the window, tables equal to the default policy')
+    if (Path(pakdir) / 'SRB2.PAK').exists():
+        p, tsv, info = run('SRB2.PAK', 'usb', PACK_TEST_MEDIUM='usb')
+        report(f'io: SRB2.PAK policy usb: exit {p.returncode}; open {info.get("open:")}, whole run {info.get("iostat")}')
+        bad += 1 if p.returncode else 0
+    # RS-02: a prefetch pass over every 3rd lump (and over all of them): the table is the same, the reads of the listed lumps are served from the block, and after the block is
+    # taken back (the zone's eviction) the window reads them as before
+    for pak in ('ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+        for tag, env in (('pf3', {'PACK_TEST_PREFETCH': '3', 'PACK_TEST_MEDIUM': 'usb'}), ('pf1', {'PACK_TEST_PREFETCH': '1'}),
+                         ('pf3drop', {'PACK_TEST_PREFETCH': '3', 'PACK_TEST_PREFETCH_DROP': '1', 'PACK_TEST_MEDIUM': 'usb'})):
+            p, tsv, info = run(pak, tag, **env)
+            same = tsv.exists() and tsv.read_bytes() == base[pak]
+            m = re.search(r'prefetchstat hits=(\d+) bytes=(\d+) ranges=(\d+) kept=(\d+)', p.stderr)
+            hits = int(m.group(1)) if m else -1
+            ok = p.returncode == 0 and same and (hits == 0 if tag == 'pf3drop' else hits > 0)
+            report(f'io: prefetch {tag} on {pak}: exit {p.returncode}, table {"equal" if same else "DIFFERENT"}, {hits} reads from the block: {"ok" if ok else "WRONG"}')
+            bad += 0 if ok else 1
+    # the open of a pack: header parsed once, index read once (sizes of the index area from the pack itself)
+    for pak in ('SRB2.PAK', 'ZONES.PAK', 'CHARS.PAK', 'MUSIC.PAK'):
+        data = (Path(pakdir) / pak).read_bytes()[:4096]
+        h = struct.unpack_from('<4s11I', data, 0)
+        numlumps, tableoffset, pooloffset, poolsize, dataoffset = h[4], h[5], h[6], h[7], h[8]
+        indexbytes = numlumps * 24 + poolsize
+        if h[1] >= 2 and h[3] & 2:
+            ext = struct.unpack_from('<8I', data, 64)
+            indexbytes += numlumps * ext[2]  # head table
+        _p, _tsv, info = run(pak, 'open', PACK_TEST_MEDIUM='dvd')
+        ob = int(info.get('open:', {}).get('bytes', 0))
+        # sector rounding of the 3 sections plus the first sector
+        limit = indexbytes + 40960
+        ok = 0 < ob <= limit
+        report(f'io: {pak} open reads {ob} bytes of an index area of {indexbytes} (limit {limit}): {"ok" if ok else "TOO MUCH"}')
+        bad += 0 if ok else 1
+    # RS-07: device errors
+    cases = [('one error at read 3', '3,1', 0, 1), ('error at the first read', '1,1', 0, 1), ('three in a row', '40,3', 0, 3), ('four in a row', '40,4', 1, 3)]
+    for name, inj, expect_fail, expect_retries in cases:
+        p, tsv, info = run('CHARS.PAK', 'inj', PACK_TEST_MEDIUM='usb', PACK_TEST_INJECT=inj)
+        st = info.get('iostat', {})
+        fails = int(st.get('failures', -1))
+        retries = int(st.get('retries', -1))
+        ok = fails == expect_fail and retries == expect_retries
+        if expect_fail:
+            ok = ok and 'CHARS.PAK' in p.stderr and 'failed 4 times' in p.stderr and p.returncode != 0
+        else:
+            ok = ok and p.returncode == 0 and tsv.exists() and tsv.read_bytes() == base['CHARS.PAK']
+        report(f'io: injected error ({name}): failures {fails}, retries {retries}, exit {p.returncode}: {"ok" if ok else "WRONG"}')
+        bad += 0 if ok else 1
+    report(f'io tests: {bad} failures')
+    return bad
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--lz4-src', default=str(ROOT / 'build/scratch/lz4src/lz4-4.4.5/lz4libs'))
+    ap.add_argument('--lz4-src', default=str(ROOT / 'build/scratch/lz4src/lz4-4.4.5/lz4libs'), help='Windows only; Linux uses tools/ps2/host_lz4_shim.c')
     ap.add_argument('--pak', default=str(ROOT / 'build/pak'))
-    ap.add_argument('--src', default=str(ROOT / 'srb2-assets'))
+    ap.add_argument('--src', default=str(ROOT / 'srb2-assets') if (ROOT / 'srb2-assets').exists() else '/opt/srb2-assets')
     ap.add_argument('--out', default=str(ROOT / 'build/agent-pack-g1'), help='isolated executable, tables and logs')
     a = ap.parse_args()
     out = Path(a.out).resolve()
@@ -198,6 +373,8 @@ def main():
         report(f'  {len(rows)} lumps: index/names/hash/longname/size/crc32 vs pk3 -> {bad} differences')
         total_bad += bad
     total_bad += validation_tests(exe, out, report)
+    total_bad += v2_tests(exe, out, report)
+    total_bad += io_tests(exe, out, report, a.pak)
     changed = [str(p) for p in inputs if sha256(p) != before[str(p)]]
     total_bad += len(changed)
     report(f'Input preservation: {len(inputs)} packs/archives/sidecars hashed before and after, {len(changed)} changed')

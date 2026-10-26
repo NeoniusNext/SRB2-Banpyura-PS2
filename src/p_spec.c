@@ -120,6 +120,23 @@ static void P_AddPlaneDisplaceThinker(INT32 type, fixed_t speed, INT32 control, 
 //SoM: 3/7/2000: New sturcture without limits.
 static anim_t *lastanim;
 static anim_t *anims = NULL; /// \todo free leak
+
+#ifdef PS2_PROFILE
+// OPT13 IZ (PS2-602): the pictures of the animation that texture `tex` belongs to (texture numbers *first..*last); false if it is not animated. The prefetch of a level's textures asks.
+boolean P_PS2_AnimRange(INT32 tex, INT32 *first, INT32 *last)
+{
+	const anim_t *anim;
+
+	for (anim = anims; anim && anim < lastanim; anim++)
+		if (tex >= anim->basepic && tex < anim->basepic + anim->numpics)
+		{
+			*first = anim->basepic;
+			*last = anim->basepic + anim->numpics - 1;
+			return true;
+		}
+	return false;
+}
+#endif
 static size_t maxanims;
 
 // Animating line specials
@@ -1900,7 +1917,7 @@ static void P_PlaySFX(INT32 sfxnum, mobj_t *mo, sector_t *callsec, INT16 tag, te
 	if (sfxnum == sfx_None)
 		return; // Do nothing!
 
-	if (sfxnum < sfx_None || sfxnum >= LIMIT_NUMSFX)
+	if (sfxnum < sfx_None || PS2_OOR_SFX(sfxnum))
 	{
 		CONS_Debug(DBG_GAMELOGIC, "Line type 414 Executor: sfx number %d is invalid!\n", sfxnum);
 		return;
@@ -2642,7 +2659,7 @@ static void P_ProcessLineSpecial(line_t *line, mobj_t *mo, sector_t *callsec)
 			if (mo && !mo->player)
 			{
 				statenum_t state = line->stringargs[0] ? get_number(line->stringargs[0]) : S_NULL;
-				if (state >= 0 && state < LIMIT_NUMSTATES)
+				if (state >= 0 && !PS2_OOR_STATE(state))
 					P_SetMobjState(mo, state);
 			}
 			break;
@@ -2904,17 +2921,17 @@ static void P_ProcessLineSpecial(line_t *line, mobj_t *mo, sector_t *callsec)
 		case 442: // Calls P_SetMobjState on mobjs of a given type in the tagged sectors
 		{
 			const mobjtype_t type = line->stringargs[0] ? get_number(line->stringargs[0]) : MT_NULL;
-			statenum_t state = LIMIT_NUMSTATES;
+			statenum_t state = NUMSTATES;
 			mobj_t *thing;
 
-			if (type < 0 || type >= LIMIT_NUMMOBJTYPES)
+			if (type < 0 || PS2_OOR_MOBJTYPE(type))
 				break;
 
 			if (!line->args[1])
 			{
 				state = line->stringargs[1] ? get_number(line->stringargs[1]) : S_NULL;
 
-				if (state < 0 || state >= LIMIT_NUMSTATES)
+				if (state < 0 || PS2_OOR_STATE(state))
 					break;
 			}
 
@@ -5332,6 +5349,10 @@ void P_CheckMobjTrigger(mobj_t *mobj, boolean pushable)
   *
   * \sa P_CheckTimeLimit, P_CheckPointLimit
   */
+#if defined(PS2_PROFILE) && defined(HWRENDER) // (the software-only build has no hw_cache.c)
+extern UINT32 hwr_texsig; // hardware/hw_cache.c
+#endif
+
 void P_UpdateSpecials(void)
 {
 	// LEVEL TIMER
@@ -5356,12 +5377,20 @@ void P_UpdateSpecials(void)
 #endif
 			if (idx >= n)
 				idx -= n;
+#if defined(PS2_PROFILE) && defined(HWRENDER) // (the software-only build has no hw_cache.c)
+			if (texturetranslation[anim->basepic+i] != anim->basepic + (INT32)idx)
+				hwr_texsig++; // OPT13 IR (hw_cache.c): the geometry cache keys hold the translated numbers of the side textures
+#endif
 			texturetranslation[anim->basepic+i] = anim->basepic + (INT32)idx;
 		}
 #else
 		for (INT32 i = 0; i < anim->numpics; i++)
 		{
 			INT32 pic = anim->basepic + ((leveltime/anim->speed + i) % anim->numpics);
+#if defined(PS2_PROFILE) && defined(HWRENDER) // (the software-only build has no hw_cache.c)
+			if (texturetranslation[anim->basepic+i] != pic)
+				hwr_texsig++; // OPT13 IR
+#endif
 			texturetranslation[anim->basepic+i] = pic;
 		}
 #endif
@@ -5522,7 +5551,14 @@ static ffloor_t *P_AddFakeFloor(sector_t *sec, sector_t *sec2, line_t *master, I
 	}
 
 	// Add the floor
+#ifdef PS2
+	{
+		static zlevelpool_t ps2_ffloorpool; // PS2-511: 3 919 of them on MAP11
+		fflr = Z_LevelPoolAlloc(&ps2_ffloorpool, sizeof (*fflr), 64);
+	}
+#else
 	fflr = Z_Calloc(sizeof (*fflr), PU_LEVEL, NULL);
+#endif
 	fflr->secnum = sec2 - sectors;
 	fflr->target = sec;
 	fflr->bottomheight = &sec2->floorheight;

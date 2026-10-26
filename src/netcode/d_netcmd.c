@@ -815,6 +815,9 @@ void D_RegisterClientCommands(void)
 	COM_AddCommand("displayplayer", Command_Displayplayer_f, COM_LUA);
 
 	// FIXME: not to be here.. but needs be done for config loading
+#ifdef PS2_PROFILE
+	V_DeferPaletteReload(true); // PS2-LOAD-13: see v_video.c
+#endif
 	CV_RegisterVar(&cv_globalgamma);
 	CV_RegisterVar(&cv_globalsaturation);
 
@@ -838,6 +841,9 @@ void D_RegisterClientCommands(void)
 	CV_RegisterVar(&cv_csaturation);
 	CV_RegisterVar(&cv_bsaturation);
 	CV_RegisterVar(&cv_msaturation);
+#ifdef PS2_PROFILE
+	V_DeferPaletteReload(false);
+#endif
 
 	// m_menu.c
 	CV_RegisterVar(&cv_compactscoreboard);

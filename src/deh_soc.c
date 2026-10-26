@@ -4287,7 +4287,7 @@ spritenum_t get_sprite(const char *word)
 	if (fastncmp("SPR_",word,4))
 		word += 4; // take off the SPR_
 	i = R_GetSpriteNumByName(word);
-	if (i != LIMIT_NUMSPRITES)
+	if (i != NUMSPRITES)
 		return i;
 	deh_warning("Couldn't find sprite named 'SPR_%s'",word);
 	return SPR_NULL;

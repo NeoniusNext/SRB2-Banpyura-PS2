@@ -92,7 +92,65 @@ polyobj_t *PolyObjects;
 INT32 numPolyObjects;
 
 // Polyobject Blockmap -- initialized in P_LoadBlockMap
+#ifdef PS2_PROFILE
+// PS2-508: see p_polyobj.h
+typedef struct polycell_s
+{
+	struct polycell_s *next;
+	INT32 cell;
+	polymaplink_t *head;
+} polycell_t;
+UINT32 *ps2_pcell_bits;
+static polycell_t *ps2_pcell_hash[256];
+static polycell_t *ps2_pcell_pool;
+static unsigned ps2_pcell_left;
+
+void Polyobj_ResetCells(void)
+{
+	ps2_pcell_bits = NULL; // (the zone freed it with the level)
+	memset(ps2_pcell_hash, 0, sizeof ps2_pcell_hash);
+	ps2_pcell_pool = NULL;
+	ps2_pcell_left = 0;
+}
+
+polymaplink_t **Polyobj_cellFind(INT32 offset)
+{
+	polycell_t *c;
+
+	for (c = ps2_pcell_hash[(unsigned)offset & 255]; c; c = c->next)
+		if (c->cell == offset)
+			return &c->head;
+	return NULL; // (cannot happen for a cell whose bit is set)
+}
+
+static polymaplink_t **Polyobj_cellSlot(INT32 offset)
+{
+	polycell_t *c;
+	unsigned h = (unsigned)offset & 255;
+
+	if (!ps2_pcell_bits)
+	{
+		const size_t words = ((size_t)bmapwidth * bmapheight + 31) / 32;
+		ps2_pcell_bits = Z_Calloc(words * sizeof (UINT32), PU_LEVEL, &ps2_pcell_bits);
+	}
+	if (ps2_pcell_bits[offset >> 5] & (1u << (offset & 31)))
+		return Polyobj_cellFind(offset);
+	if (!ps2_pcell_left)
+	{
+		ps2_pcell_pool = Z_Calloc(64 * sizeof (polycell_t), PU_LEVEL, NULL);
+		ps2_pcell_left = 64;
+	}
+	c = ps2_pcell_pool++;
+	ps2_pcell_left--;
+	c->cell = offset;
+	c->next = ps2_pcell_hash[h];
+	ps2_pcell_hash[h] = c;
+	ps2_pcell_bits[offset >> 5] |= 1u << (offset & 31);
+	return &c->head;
+}
+#else
 polymaplink_t **polyblocklinks;
+#endif
 #ifdef PS2_OPT_CORE
 INT32 ps2_polycells[4] = {1, 0, 1, 0}; // PS2-200: x1, x2, y1, y2 of the cells that hold (or held) a polyobject link; x1 > x2: none (see Polyobj_linkToBlockmap)
 #endif
@@ -741,14 +799,14 @@ static void Polyobj_linkToBlockmap(polyobj_t *po)
 			{
 				polymaplink_t  *l = Polyobj_getLink();
 
-#ifdef PS2_PROFILE
-				if (!polyblocklinks) // PS2-88
-					polyblocklinks = Z_Calloc(sizeof (*polyblocklinks) * bmapwidth * bmapheight, PU_LEVEL, NULL);
-#endif
 				l->po = po;
 
+#ifdef PS2_PROFILE
+				M_DLListInsert(&l->link, (mdllistitem_t **)Polyobj_cellSlot(y*bmapwidth + x)); // PS2-508
+#else
 				M_DLListInsert(&l->link,
 							(mdllistitem_t **)(&polyblocklinks[y*bmapwidth + x]));
+#endif
 			}
 		}
 	}
@@ -784,7 +842,7 @@ static void Polyobj_removeFromBlockmap(polyobj_t *po)
 		{
 			if (!(x < 0 || y < 0 || x >= bmapwidth || y >= bmapheight))
 			{
-				rover = polyblocklinks[y * bmapwidth + x];
+				rover = POLYBLOCKLINK(y * bmapwidth + x);
 
 				while (rover && rover->po != po)
 					rover = (polymaplink_t *)(rover->link.next);

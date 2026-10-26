@@ -753,6 +753,7 @@ void G_DefineDefaultControls(void)
 		gamecontroldefault[i][GC_CENTERVIEW   ][1] = KEY_JOY1+5; // RB
 #ifdef PS2 // PS2-137: Select talks (the chat line, with the on-screen keyboard) - a screenshot on a console has nowhere to go
 		gamecontroldefault[i][GC_TALKKEY      ][1] = KEY_JOY1+6; // Select
+		gamecontroldefault[i][GC_TEAMKEY      ][1] = KEY_JOY1+11; // OPT14-CHAT: R2 talks to the team (nothing else has R2 / L2)
 #else
 		gamecontroldefault[i][GC_SCREENSHOT   ][1] = KEY_JOY1+6; // Back
 #endif

@@ -1117,4 +1117,8 @@ void T_PlaneDisplace(planedisplace_t *pd);
 
 void P_CalcHeight(player_t *player);
 
+#ifdef PS2_PROFILE
+boolean P_PS2_AnimRange(INT32 tex, INT32 *first, INT32 *last); // OPT13 IZ (PS2-602): the texture numbers of the animation `tex` belongs to
+#endif
+
 #endif

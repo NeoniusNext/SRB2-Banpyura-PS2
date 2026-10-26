@@ -11,6 +11,7 @@
 /// \brief Tic command handling
 
 #include "tic_command.h"
+#include "netlat.h"
 #include "d_clisrv.h"
 #include "net_command.h"
 #include "client_connection.h"
@@ -193,6 +194,7 @@ void PT_ClientCmd(SINT8 nodenum, INT32 netconsole)
 	}
 
 	// Update the nettics
+	NetLat_ClientPacket(nodenum, node->tic, realend); // PS2-NET-1 (diagnostic)
 	node->tic = realend;
 
 	// This should probably still timeout though, as the node should always have a player 1 number
@@ -258,6 +260,9 @@ void PT_ServerTics(SINT8 node, INT32 netconsole)
 
 	realend = min(realend, gametic + CLIENTBACKUPTICS);
 	cl_packetmissed = realstart > neededtic;
+	if (cl_packetmissed)
+		NetLat_TicHole(); // PS2-NET-1 (diagnostic)
+	NetLat_ServerTics(realstart, realend, neededtic); // PS2-NET-1 (diagnostic)
 
 	if (realstart <= neededtic && realend > neededtic)
 	{
@@ -529,6 +534,7 @@ void SV_Maketic(void)
 			else
 			{
 				DEBFILE(va("MISS tic%4d for player %d\n", maketic, i));
+				NetLat_CmdMissed(i); // PS2-NET-1 (diagnostic)
 				// Copy the input from the previous tic
 				*ticcmd = *prevticcmd;
 				ticcmd->angleturn &= ~TICCMD_RECEIVED;
@@ -537,5 +543,6 @@ void SV_Maketic(void)
 	}
 
 	// All tics have been processed, make the next
+	NetLat_TicMade(maketic); // PS2-NET-1 (diagnostic)
 	maketic++;
 }

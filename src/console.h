@@ -18,6 +18,8 @@ void CON_Init(void);
 
 void CON_StartRefresh(void);
 void CON_StopRefresh(void);
+void CON_FlushStartup(void); // OPT13 IQ-7b: draws a start-up print that CONS_Printf held back (call it before a long job)
+void CON_EndStartup(void); // OPT13 IQ-7b: the start-up screen is over
 
 boolean CON_Responder(event_t *ev);
 

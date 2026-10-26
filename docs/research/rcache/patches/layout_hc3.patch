@@ -1,0 +1,453 @@
+diff -u -r a/src/p_mobj.h b/src/p_mobj.h
+--- a/src/p_mobj.h	2026-10-09 13:27:55.757334854 +0000
++++ b/src/p_mobj.h	2026-10-09 13:27:55.764808141 +0000
+@@ -289,139 +289,92 @@
+ // Map Object definition.
+ typedef struct mobj_s
+ {
+-	// List: thinker links.
++	// OPT13-RCACHE experiment 3: four groups of 64 bytes on the EE: [0,1] tick-hot, [2] tick-semi-hot, [3] drawing, then interpolation state, then the cold rest (semantics unchanged;
++	// thinker, x, y, z stay first: degenmobj_t shares this prefix)
+ 	thinker_t thinker;
+-
+-	// Info for drawing: position.
+ 	fixed_t x, y, z;
+-	fixed_t old_x, old_y, old_z; // position interpolation
+-	fixed_t old_x2, old_y2, old_z2;
+-
+-	// More list: links in sector (if needed)
+-	struct mobj_s *snext;
+-	struct mobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
+-
+-	// More drawing info: to determine current sprite.
+-	angle_t angle, pitch, roll; // orientation
+-	angle_t old_angle, old_pitch, old_roll; // orientation interpolation
+-	angle_t old_angle2, old_pitch2, old_roll2;
+-	angle_t spriteroll, old_spriteroll, old_spriteroll2;
+-	spritenum_t sprite; // used to find patch_t and flip value
+-	UINT32 frame; // frame number, plus bits see p_pspr.h
+-	UINT16 sprite2; // player sprites
+-	UINT16 anim_duration; // for FF_ANIMATE states
+-
+-	UINT32 renderflags; // render flags
+-	INT32 blendmode; // blend mode
+-	fixed_t alpha; // alpha
+-	fixed_t spritexscale, spriteyscale;
+-	fixed_t spritexoffset, spriteyoffset;
+-	fixed_t old_spritexscale, old_spriteyscale, old_spritexscale2, old_spriteyscale2;
+-	fixed_t old_spritexoffset, old_spriteyoffset, old_spritexoffset2, old_spriteyoffset2;
+-	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
+-
+-	struct msecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
+-
+-	struct subsector_s *subsector; // Subsector the mobj resides in.
+-
+-	// The closest interval over all contacted sectors (or things).
++	fixed_t momx, momy, momz;
+ 	fixed_t floorz; // Nearest floor below.
+ 	fixed_t ceilingz; // Nearest ceiling above.
+-	struct ffloor_s *floorrover; // FOF referred by floorz
+-	struct ffloor_s *ceilingrover; // FOF referred by ceilingz
+-
+-	// For movement checking.
+ 	fixed_t radius;
+ 	fixed_t height;
+-
+-	// Momentums, used to update position.
+-	fixed_t momx, momy, momz;
+-	fixed_t pmomz; // If you're on a moving floor, its "momz" would be here
+-
+ 	INT32 tics; // state tic counter
+-	state_t *state;
+ 	UINT32 flags; // flags from mobjinfo tables
+ 	UINT32 flags2; // MF2_ flags
+-	UINT16 eflags; // extra flags
+-
+-	void *skin; // overrides 'sprite' when non-NULL (for player bodies to 'remember' the skin)
+-
+-	// Player and mobj sprites in multiplayer modes are modified
+-	//  using an internal color lookup table for re-indexing.
+-	UINT16 color;
+-
+-	// This replaces MF_TRANSLATION. Use 0 for default (no translation).
+-	UINT16 translation;
+-
+-	struct player_s *drawonlyforplayer; // If set, hides the mobj for everyone except this player and their spectators
+-	struct mobj_s *dontdrawforviewmobj; // If set, hides the mobj if dontdrawforviewmobj is the current camera (first-person player or awayviewmobj)
+-
+-	// Interaction info, by BLOCKMAP.
+-	// Links in blocks (if needed).
+-	blocknode_t *blocknode;
+-
+-	// Additional pointers for NiGHTS hoops
+-	struct mobj_s *hnext;
+-	struct mobj_s *hprev;
+-
++	state_t *state;
++	struct subsector_s *subsector; // Subsector the mobj resides in.
+ 	mobjtype_t type;
+ 	const mobjinfo_t *info; // &mobjinfo[mobj->type]
+-
+-	INT32 health; // for player this is rings + 1 -- no it isn't, not any more!!
+-
+-	// Movement direction, movement generation (zig-zagging).
+-	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
+-	INT32 movecount; // when 0, select a new dir
+-
++	INT32 health;
+ 	struct mobj_s *target; // Thing being chased/attacked (or NULL), and originator for missiles.
+-
+-	INT32 reactiontime; // If not 0, don't attack yet.
+-
+-	INT32 threshold; // If >0, the target will be chased no matter what.
+-
+-	// Additional info record for player avatars only.
+-	// Only valid if type == MT_PLAYER
+-	struct player_s *player;
+-
+-	INT32 lastlook; // Player number last looked for.
+-
+-	mapthing_t *spawnpoint; // Used for CTF flags, objectplace, and a handful other applications.
+-
+ 	struct mobj_s *tracer; // Thing being chased/attacked for tracers.
+-
+-	fixed_t friction;
+-	fixed_t movefactor;
+-
++	UINT16 eflags; // extra flags
++	UINT16 sprite2; // player sprites
++	fixed_t scale;
++	struct mobj_s *snext;
++	struct mobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
++	angle_t angle; // orientation
+ 	INT32 fuse; // Does something in P_MobjThinker on reaching 0.
++	UINT32 frame; // frame number, plus bits see p_pspr.h
++	// ---- tick, less frequent
++	INT32 reactiontime; // If not 0, don't attack yet.
++	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
++	INT32 movecount; // when 0, select a new dir
++	struct player_s *player;
++	fixed_t pmomz; // If you're on a moving floor, its "momz" would be here
+ 	fixed_t watertop; // top of the water FOF the mobj is in
+ 	fixed_t waterbottom; // bottom of the water FOF the mobj is in
+-
+-	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
+-
+-	fixed_t scale;
++	struct pslope_s *standingslope;
++	struct msecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
++	blocknode_t *blocknode;
++	struct ffloor_s *floorrover; // FOF referred by floorz
++	struct ffloor_s *ceilingrover; // FOF referred by ceilingz
++	fixed_t friction;
++	fixed_t movefactor;
++	INT32 threshold; // If >0, the target will be chased no matter what.
++	INT32 lastlook; // Player number last looked for.
++	// ---- drawing
++	spritenum_t sprite; // used to find patch_t and flip value
++	UINT32 renderflags; // render flags
++	INT32 blendmode; // blend mode
++	fixed_t alpha; // alpha
++	fixed_t spritexscale, spriteyscale;
++	fixed_t spritexoffset, spriteyoffset;
++	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
++	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
++	UINT16 color;
++	UINT16 translation;
++	UINT16 anim_duration; // for FF_ANIMATE states
++	boolean resetinterp;
++	boolean colorized;
++	boolean mirrored;
++	angle_t pitch, roll; // orientation
++	angle_t spriteroll;
++	void *skin; // overrides 'sprite' when non-NULL (for player bodies to 'remember' the skin)
++	// ---- interpolation state (read by the drawing of a frame between two tics)
++	fixed_t old_x, old_y, old_z; // position interpolation
++	fixed_t old_x2, old_y2, old_z2;
++	angle_t old_angle, old_pitch, old_roll; // orientation interpolation
++	angle_t old_angle2, old_pitch2, old_roll2;
++	angle_t old_spriteroll, old_spriteroll2;
+ 	fixed_t old_scale; // interpolation
+ 	fixed_t old_scale2;
++	fixed_t old_spritexscale, old_spriteyscale, old_spritexscale2, old_spriteyscale2;
++	fixed_t old_spritexoffset, old_spriteyoffset, old_spritexoffset2, old_spriteyoffset2;
++	// ---- cold
++	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
++	struct player_s *drawonlyforplayer; // If set, hides the mobj for everyone except this player and their spectators
++	struct mobj_s *dontdrawforviewmobj; // If set, hides the mobj if dontdrawforviewmobj is the current camera (first-person player or awayviewmobj)
++	struct mobj_s *hnext; // Additional pointers for NiGHTS hoops
++	struct mobj_s *hprev;
++	mapthing_t *spawnpoint; // Used for CTF flags, objectplace, and a handful other applications.
++	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
+ 	fixed_t destscale;
+ 	fixed_t scalespeed;
+-
+-	// Extra values are for internal use for whatever you want
+ 	INT32 extravalue1;
+ 	INT32 extravalue2;
+-
+-	// Custom values are not to be altered by us!
+-	// They are for SOCs to store things in.
+ 	INT32 cusval;
+ 	INT32 cvmem;
+-
+-	struct pslope_s *standingslope; // The slope that the object is standing on (shouldn't need synced in savegames, right?)
+-
+-	boolean resetinterp; // if true, some fields should not be interpolated (see R_InterpolateMobjState implementation)
+-	boolean colorized; // Whether the mobj uses the rainbow colormap
+-	boolean mirrored; // The object's rotations will be mirrored left to right, e.g., see frame AL from the right and AR from the left
+-	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
+-	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
+-
+-	// WARNING: New fields must be added separately to savegame and Lua.
+ } mobj_t;
+ 
+ //
+diff -u -r a/src/r_defs.h b/src/r_defs.h
+--- a/src/r_defs.h	2026-10-09 13:27:55.764808141 +0000
++++ b/src/r_defs.h	2026-10-09 13:27:55.770016855 +0000
+@@ -452,110 +452,67 @@
+ //
+ typedef struct sector_s
+ {
++	// OPT13-RCACHE experiment: hot-first order (render fields, then tick fields); semantics unchanged
+ 	fixed_t floorheight;
+ 	fixed_t ceilingheight;
+ 	INT32 floorpic;
+ 	INT32 ceilingpic;
+ 	INT16 lightlevel;
+ 	INT16 special;
++	size_t validcount; // if == validcount, already checked
++	INT32 heightsec; // other sector, or -1 if no other sector
++	ffloor_t *ffloors;
++	lightlist_t *lightlist;
++	INT32 numlights;
++	extracolormap_t *extra_colormap;
++	pslope_t *f_slope; // floor slope
++	pslope_t *c_slope; // ceiling slope
++	INT16 floorlightlevel, ceilinglightlevel;
++	boolean floorlightabsolute, ceilinglightabsolute;
++	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
++	boolean moved;
++	mobj_t *thinglist; // list of mobjs in sector
++	// ---- second line: plane texture placement, lines, portals, tags
+ 	taglist_t tags;
+-
+-	// origin for any sounds played by the sector
+-	// also considered the center for e.g. Mario blocks
+-	degenmobj_t soundorg;
+-
+-	// if == validcount, already checked
+-	size_t validcount;
+-
+-	// list of mobjs in sector
+-	mobj_t *thinglist;
+-
+-	// thinker_ts for reversable actions
+-	void *floordata; // floor move thinker
+-	void *ceilingdata; // ceiling move thinker
+-	void *lightingdata; // lighting change thinker
+-	void *fadecolormapdata; // fade colormap thinker
+-
+-	// floor and ceiling texture offsets
+ 	fixed_t floorxoffset, flooryoffset;
+ 	fixed_t ceilingxoffset, ceilingyoffset;
+-
+-	// floor and ceiling texture scale
+ 	fixed_t floorxscale, flooryscale;
+ 	fixed_t ceilingxscale, ceilingyscale;
+-
+-	// flat angle
+ 	angle_t floorangle;
+ 	angle_t ceilingangle;
+-
+-	INT32 heightsec; // other sector, or -1 if no other sector
++	size_t linecount;
++	struct line_s **lines; // [linecount] size
++	UINT32 portal_floor;
++	UINT32 portal_ceiling;
++	// ---- the rest
++	degenmobj_t soundorg;
++	void *floordata; // floor move thinker
++	void *ceilingdata; // ceiling move thinker
++	void *lightingdata; // lighting change thinker
++	void *fadecolormapdata; // fade colormap thinker
+ 	INT32 camsec; // used for camera clipping
+-
+-	// floor and ceiling lighting
+-	INT16 floorlightlevel, ceilinglightlevel;
+-	boolean floorlightabsolute, ceilinglightabsolute; // absolute or relative to sector's light level?
+ 	INT32 floorlightsec, ceilinglightsec; // take floor/ceiling light level from another sector
+-
+ 	INT32 crumblestate; // used for crumbling and bobbing
+-
+-	// list of mobjs that are at least partially in the sector
+-	// thinglist is a subset of touching_thinglist
+ 	struct msecnode_s *touching_thinglist;
+-
+-	size_t linecount;
+-	struct line_s **lines; // [linecount] size
+-
+-	// Improved fake floor hack
+-	ffloor_t *ffloors;
+ 	size_t *attached;
+ 	boolean *attachedsolid;
+ 	size_t numattached;
+ 	size_t maxattached;
+-	lightlist_t *lightlist;
+-	INT32 numlights;
+-	boolean moved;
+-
+-	// per-sector colormaps!
+-	extracolormap_t *extra_colormap;
+ 	boolean colormap_protected;
+-
+ 	fixed_t gravity; // per-sector gravity factor
+ 	fixed_t *gravityptr; // For binary format: Read gravity from floor height of master sector
+-
+ 	sectorflags_t flags;
+ 	sectorspecialflags_t specialflags;
+ 	UINT8 damagetype;
+-
+-	// Linedef executor triggering
+ 	mtag_t triggertag; // tag to call upon triggering
+ 	UINT8 triggerer; // who can trigger?
+-
+ 	fixed_t friction;
+-
+-	// Sprite culling feature
+ 	struct line_s *cullheight;
+-
+-	// Current speed of ceiling/floor. For Knuckles to hold onto stuff.
+ 	fixed_t floorspeed, ceilspeed;
+-
+-	// list of precipitation mobjs in sector
+ 	precipmobj_t *preciplist;
+ 	struct mprecipsecnode_s *touching_preciplist;
+-
+-	// Eternity engine slope
+-	pslope_t *f_slope; // floor slope
+-	pslope_t *c_slope; // ceiling slope
+-	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
+-
+-	// for fade thinker
+ 	INT16 spawn_lightlevel;
+-
+-	// colormap structure
+ 	extracolormap_t *spawn_extra_colormap;
+-
+-	// portals
+-	UINT32 portal_floor;
+-	UINT32 portal_ceiling;
+ } sector_t;
+ 
+ //
+@@ -580,50 +537,33 @@
+ 
+ typedef struct line_s
+ {
+-	// Vertices, from v1 to v2.
++	// OPT13-RCACHE experiment: one hot line (render and collision fields), then the rest; semantics unchanged
+ 	vertex_t *v1;
+ 	vertex_t *v2;
+-
+ 	fixed_t dx, dy; // Precalculated v2 - v1 for side checking.
+-	angle_t angle; // Precalculated angle between dx and dy
+-
+-	// Animation related.
++	fixed_t bbox[4]; // bounding box for the extent of the linedef
++	sector_t *frontsector;
++	sector_t *backsector;
++	UINT32 sidenum[2]; // sidenum[1] will be NO_SIDEDEF if one-sided
++	size_t validcount; // if == validcount, already checked
+ 	INT16 flags;
+ 	INT16 special;
++	angle_t angle; // Precalculated angle between dx and dy
++	slopetype_t slopetype;
++	// ---- the rest
+ 	taglist_t tags;
+ #ifdef PS2_PROFILE
+-	// PS2-143 (OPT10-S): 40 bytes per line only for the lines that have a non-zero argument (about 5% of them); the others share one zero block
+-	// (lineargs_zero, p_setup.c). Written only while the level loads (private pool, P_CompactLineArgs) and by the savegame reader through
+-	// P_LineArgsW; Lua can only read them. MAP11 (25 100 lines): -0.9 MB of the arena.
+ 	INT32 *args;
+ #else
+ 	INT32 args[NUMLINEARGS];
+ #endif
+ 	char *stringargs[NUMLINESTRINGARGS];
+-
+-	// Visual appearance: sidedefs.
+-	UINT32 sidenum[2]; // sidenum[1] will be NO_SIDEDEF if one-sided
+ 	fixed_t alpha; // translucency
+ 	UINT8 blendmode; // blendmode
+ 	INT32 executordelay;
+-
+-	fixed_t bbox[4]; // bounding box for the extent of the linedef
+-
+-	// To aid move clipping.
+-	slopetype_t slopetype;
+-
+-	// Front and back sector.
+-	// Note: redundant? Can be retrieved from SideDefs.
+-	sector_t *frontsector;
+-	sector_t *backsector;
+-
+-	size_t validcount; // if == validcount, already checked
+ 	polyobj_t *polyobj; // Belongs to a polyobject?
+-
+-	INT16 callcount; // no. of calls left before triggering, for the "X calls" linedef specials, defaults to 0
+-
++	INT16 callcount;
+ 	UINT32 secportal; // transferred sector portal
+-
+ 	struct pslope_s *midtexslope;
+ } line_t;
+ 
+@@ -1001,43 +941,35 @@
+ //
+ typedef struct drawseg_s
+ {
++	// OPT13-RCACHE experiment: the 2 x MAXFFLOORS pointer arrays (320 bytes, used only by FOF walls) go last; semantics unchanged
+ 	seg_t *curline;
+ 	INT32 x1;
+ 	INT32 x2;
+-
+ 	fixed_t scale1;
+ 	fixed_t scale2;
+ 	fixed_t scalestep;
+-
+ 	INT32 silhouette; // 0 = none, 1 = bottom, 2 = top, 3 = both
+-
+ 	fixed_t bsilheight; // do not clip sprites above this
+ 	fixed_t tsilheight; // do not clip sprites below this
+-
+ 	fixed_t offsetx;
+-
+-	// Pointers to lists for sprite clipping, all three adjusted so [x1] is first value.
+ 	INT16 *sprtopclip;
+ 	INT16 *sprbottomclip;
+ 	fixed_t *maskedtexturecol;
+ 	fixed_t *maskedtextureheight; // For handling sloped midtextures
+ 	fixed_t *invscale;
+-
+-	struct visplane_s *ffloorplanes[MAXFFLOORS];
+ 	INT32 numffloorplanes;
+-	struct ffloor_s *thicksides[MAXFFLOORS];
+-	fixed_t *thicksidecol;
+ 	INT32 numthicksides;
++	fixed_t *thicksidecol;
+ #ifdef PS2_PROFILE
+ 	fixed_t *frontscale; // allocated only for drawsegs that own FOF planes
+ 	INT32 frontscalewidth;
+ #else
+ 	fixed_t frontscale[MAXVIDWIDTH];
+ #endif
+-
+ 	UINT8 portalpass; // if > 0 and <= portalrender, do not affect sprite clipping
+-
+ 	vertex_t leftpos, rightpos; // Used for rendering FOF walls with slopes
++	struct visplane_s *ffloorplanes[MAXFFLOORS];
++	struct ffloor_s *thicksides[MAXFFLOORS];
+ } drawseg_t;
+ 
+ #ifdef ROTSPRITE

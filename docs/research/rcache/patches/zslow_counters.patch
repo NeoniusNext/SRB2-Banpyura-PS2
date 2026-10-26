@@ -1,0 +1,86 @@
+diff -u -r a/src/z_zone.c b/src/z_zone.c
+--- a/src/z_zone.c	2026-10-09 14:07:43.337280244 +0000
++++ b/src/z_zone.c	2026-10-09 14:07:43.344946381 +0000
+@@ -100,7 +100,7 @@
+ static UINT32 zflush_total;
+ // PS2-73: what the policy costs (EE cycles, COP0 Count deltas): Z_EnsureFree at the start of a 3D view, Z_EvictLRU / Z_MakeRoom when an allocation fails
+ typedef struct { UINT32 calls; uint64_t cycles; } zcost_t;
+-static zcost_t zcost_ensure, zcost_evict, zcost_room;
++static zcost_t zcost_ensure, zcost_evict, zcost_room, zcost_front, zcost_slow, zcost_freetag;
+ #define ZCOST_BEGIN() const UINT32 zcost_t0 = PS2Mem_Cycles()
+ #define ZCOST_END(c) do { (c).calls++; (c).cycles += (UINT32)(PS2Mem_Cycles() - zcost_t0); } while (0)
+ static UINT32 zreport_interval, zreport_count; // -zreport N: memory report every N frames, level exits log a line
+@@ -376,8 +376,15 @@
+ }
+ 
+ // Frees every block with a tag in range. Never checks the heap, so allocation can call it under pressure.
++static void Z_FreeTagRangeInner(INT32 lowtag, INT32 hightag);
+ static void Z_FreeTagRange(INT32 lowtag, INT32 hightag)
+ {
++	ZCOST_BEGIN();
++	Z_FreeTagRangeInner(lowtag, hightag);
++	ZCOST_END(zcost_freetag);
++}
++static void Z_FreeTagRangeInner(INT32 lowtag, INT32 hightag)
++{
+ 	zablock_t *block;
+ 	const boolean purge = lowtag >= PU_PURGELEVEL && hightag >= ZA_MAXTAG;
+ 
+@@ -595,8 +602,16 @@
+ //  long-lived side (ZA_TOP): the span of free blocks and evictable caches that reaches the frontier gives its upper end to the long-lived zone;
+ //    the caches in it are evicted (they rebuild), a pinned block or a cache of this frame ends the span.
+ //  short-lived side (ZA_BOTTOM): the free block that holds the frontier gives the part the request needs to the cache zone.
++static boolean Z_MoveFrontierInner(size_t size, size_t align, int side);
+ static boolean Z_MoveFrontier(size_t size, size_t align, int side)
+ {
++	ZCOST_BEGIN();
++	const boolean r = Z_MoveFrontierInner(size, align, side);
++	ZCOST_END(zcost_front);
++	return r;
++}
++static boolean Z_MoveFrontierInner(size_t size, size_t align, int side)
++{
+ 	uint8_t *front = ZA_Frontier(), *as = NULL, *ae = NULL;
+ 	const size_t need = (size + ZA_HDR + 32 + align + 15) & ~(size_t)15;
+ 	zablock_t *b;
+@@ -669,12 +684,12 @@
+ }
+ 
+ // Gets `size` bytes from the arena, purging as the tags allow; NULL means out of memory.
++static void *Z_AllocBlockSlow(size_t size, INT32 tag, size_t align, int side, size_t want, void **pfrontier);
+ static void *Z_AllocBlock(size_t size, INT32 tag, size_t align)
+ {
+ 	const int side = Z_SideForTag(tag);
+-	void *p, *frontier = NULL;
++	void *p;
+ 	size_t want = size > SIZE_MAX - Z_EVICT_SLACK ? SIZE_MAX : size + Z_EVICT_SLACK;
+-	boolean hwlru_flushed = false;
+ 
+ 	if (zflush_period && ++zflush_count >= zflush_period)
+ 	{
+@@ -687,6 +702,16 @@
+ 	p = ZA_Alloc(size, align, side);
+ 	if (p)
+ 		return p;
++	ZCOST_BEGIN();
++	p = Z_AllocBlockSlow(size, tag, align, side, want, NULL);
++	ZCOST_END(zcost_slow);
++	return p;
++}
++static void *Z_AllocBlockSlow(size_t size, INT32 tag, size_t align, int side, size_t want, void **pfrontier)
++{
++	void *p, *frontier = NULL;
++	boolean hwlru_flushed = false;
++	(void)tag; (void)pfrontier;
+ 	if (ZA_Frontier())
+ 	{
+ 		if (Z_MoveFrontier(size, align, side) && (p = ZA_Alloc(size, align, side)) != NULL)
+@@ -846,6 +871,8 @@
+ 		(unsigned long)zcost_ensure.calls, (unsigned long)(zcost_ensure.cycles >> 10) << 10, (unsigned long)zcost_evict.calls,
+ 		(unsigned long)(zcost_evict.cycles >> 10) << 10, (unsigned long)zcost_room.calls, (unsigned long)(zcost_room.cycles >> 10) << 10,
+ 		zreclaim_hook ? "set" : "off");
++	I_OutputMsg("[zslow] failed-first-try allocations %lu cycles %lu | frontier moves %lu cycles %lu | free-tag walks %lu cycles %lu\n", (unsigned long)zcost_slow.calls, (unsigned long)(zcost_slow.cycles >> 10) << 10,
++		(unsigned long)zcost_front.calls, (unsigned long)(zcost_front.cycles >> 10) << 10, (unsigned long)zcost_freetag.calls, (unsigned long)(zcost_freetag.cycles >> 10) << 10);
+ 	I_OutputMsg("[zreg] cache registry %s: %lu candidates now (capacity %u), overflows %lu\n", zreg_ok ? "on" : "OFF (overflowed: arena walks)", (unsigned long)zreg_n,
+ 		(unsigned)Z_REG_MAX, (unsigned long)zreg_overflows);
+ 	{

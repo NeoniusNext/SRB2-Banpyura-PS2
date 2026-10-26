@@ -111,6 +111,11 @@ PS2ARGS = """# Start-up arguments, one per line ('#' starts a comment). Rename t
 # +name "PS2 player test"     (player name; "+command" lines go to the console; or type: name "PS2 player test")
 # -connect 192.168.1.10
 # -ntsc
+# Storage (OPT13-IO): the packs are read in windows that depend on the medium (auto: by the device name: mass: / mx4sio / hdd get small windows, a disc keeps 64 KB). To force one:
+# -pkmedium dvd          (dvd | usb | sd | hdd | auto)
+# To measure the medium (reads for ~20 s, shows the numbers and a -pkmedium suggestion, writes iobench.txt next to the saves): -iobench
+# To keep the next level's textures and sprites in one sorted read (costs 1-2 MB of cache, off by default): -pkprefetch
+# -iostat                (prints the device read counters of the packs at exit)
 """
 
 

@@ -1,0 +1,309 @@
+diff --git a/src/hardware/hw_cache.c b/src/hardware/hw_cache.c
+index 2d9af87..482b985 100644
+--- a/src/hardware/hw_cache.c
++++ b/src/hardware/hw_cache.c
+@@ -35,6 +35,9 @@
+ #include "../ps2/hw/ps2_hwd_dbg.h" // ps2hwd_dbg_flags: -hwdbg 0x1000000 checks the composition fast path against the original loops
+ 
+ static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
++boolean ps2hwt_comp_old; // OPT13 RDRV: -hwcomp 0 = the composition as before (A/B): the raw lump read per patch use, the GL structures and the patch built and freed for every placement
++typedef struct { UINT16 wad, lump; patch_t *p; } ps2_cpatch_t;
++#define PS2_CPATCH_MAX 32 // distinct patches held while one texture is composed (a placement of the same patch again in the texture finds it)
+ unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
+ static inline unsigned int ps2hwt_now(void)
+ {
+@@ -605,6 +608,104 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
+ 	return MakeBlockEx(grMipmap, false);
+ }
+ 
++#ifdef PS2_PROFILE
++// OPT13 RDRV: composition in column order. The posts of a Doom patch are columns and the block is row-major: the fast path above writes every texel of a post to another row
++// (banded by 64 rows, which makes the walk of the posts repeat for every band: a 64 x 1536 pipe walks them 24 times, 33 cycles per texel measured). Here the posts are copied
++// as they are into a scratch in column order (x * height + y: one memcpy per post, sequential), and the scratch is turned into the row-major block in 16 x 16 tiles once.
++// The same texels as the fast path (same clipping), for textures whose patches are all plain copies (AST_COPY, no vertical flip) in a P_8 block without a colormap.
++static boolean HWR_ColMajorOK(const GLMipmap_t *mipmap, const texture_t *texture)
++{
++	INT32 i;
++
++	if (ps2hwt_comp_old || ps2_slow_composite || format2bpp(mipmap->format) != 1 || mipmap->colormap)
++		return false;
++	for (i = 0; i < texture->patchcount; i++)
++		if (texture->patches[i].style != AST_COPY || (texture->patches[i].flip & 2))
++			return false;
++	return true;
++}
++
++static void HWR_DrawPatchColMajor(UINT8 *cm, INT32 pblockwidth, INT32 pblockheight, const texture_t *texture, const texpatch_t *patch, const patch_t *realpatch)
++{
++	INT32 x, x1, x2, col, ncols, sx0, j;
++	const INT32 width = realpatch->width, height = realpatch->height, originy = patch->originy;
++
++	if (texture->width <= 0 || texture->height <= 0)
++		return;
++	x1 = patch->originx;
++	x2 = x1 + width;
++	if (x1 > texture->width || x2 < 0)
++		return;
++	if (originy > texture->height || (originy + height) < 0)
++		return;
++	x = x1 < 0 ? 0 : x1;
++	if (x2 > texture->width)
++		x2 = texture->width;
++	col = x * pblockwidth / texture->width;
++	ncols = ((x2 - x) * pblockwidth) / texture->width;
++	sx0 = x1 < 0 ? -x1 : 0;
++	for (j = 0; j < ncols; j++)
++	{
++		const column_t *pc = (patch->flip & 1) ? &realpatch->columns[(width - 1) - (sx0 + j)] : &realpatch->columns[sx0 + j];
++		UINT8 *dcol = cm + (size_t)(col + j) * (size_t)pblockheight;
++		unsigned i;
++
++		for (i = 0; i < pc->num_posts; i++)
++		{
++			const post_t *post = &pc->posts[i];
++			INT32 position = originy + (INT32)post->topdelta, count = (INT32)post->length, srcoff = 0;
++			const UINT8 *src;
++
++			if (position < 0)
++			{
++				srcoff = -position;
++				count += position;
++				position = 0;
++			}
++			if (position + count > pblockheight)
++				count = pblockheight - position;
++			if (count <= 0)
++				continue;
++			src = pc->pixels + post->data_offset + srcoff;
++			if (count >= 32)
++				memcpy(dcol + position, src, (size_t)count);
++			else
++			{
++				UINT8 *d = dcol + position;
++
++				while (count--)
++					*d++ = *src++;
++			}
++		}
++	}
++}
++
++// dst[y * W + x] = cm[x * H + y], in tiles of 16 x 16
++static void HWR_TransposeBlock(UINT8 *dst, const UINT8 *cm, INT32 W, INT32 H)
++{
++	INT32 x0, y0, x, y;
++
++	for (y0 = 0; y0 < H; y0 += 16)
++	{
++		const INT32 yn = H - y0 < 16 ? H - y0 : 16;
++
++		for (x0 = 0; x0 < W; x0 += 16)
++		{
++			const INT32 xn = W - x0 < 16 ? W - x0 : 16;
++
++			for (x = 0; x < xn; x++)
++			{
++				const UINT8 *sp = cm + (size_t)(x0 + x) * (size_t)H + y0;
++				UINT8 *dp = dst + (size_t)y0 * (size_t)W + x0 + x;
++
++				for (y = 0; y < yn; y++, dp += W)
++					*dp = sp[y];
++			}
++		}
++	}
++}
++#endif
++
+ #ifdef PS2
+ // PS2-140 (OPT10-S): the picture of one entry of a composite texture, built as HWR_GenerateTexture below builds it but for lumps of this size
+ // and more, and NULL when the zone has no room for the lump or the patch (the texture is then made without that patch: a patch of 585 KB..1 MB
+@@ -668,6 +769,11 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t
+ #ifdef PS2
+ 	INT32 missing; // PS2-140: patches that could not be read for lack of memory
+ #endif
++#ifdef PS2_PROFILE
++	ps2_cpatch_t held[PS2_CPATCH_MAX]; // OPT13 RDRV: patches read for this texture, kept until it is composed
++	INT32 nheld = 0, h;
++	UINT8 *cm = NULL; // OPT13 RDRV: the column order scratch (HWR_DrawPatchColMajor)
++#endif
+ 
+ 	INT32 i;
+ 
+@@ -694,6 +800,17 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t
+ 	block = MakeBlock(mipmap);
+ #endif
+ 
++#ifdef PS2_PROFILE
++	if (HWR_ColMajorOK(mipmap, texture))
++	{
++		cm = Z_TryMallocAlign((size_t)blocksize, PU_RENDERWORK, NULL, 16);
++		if (cm)
++			memset(cm, HWR_PATCHES_CHROMAKEY_COLORINDEX, (size_t)blocksize);
++	}
++#define HWR_DRAWPATCH(tp) do { if (cm) HWR_DrawPatchColMajor(cm, blockwidth, blockheight, texture, patch, (tp)); else HWR_DrawTexturePatchInCache(mipmap, blockwidth, blockheight, texture, patch, (tp)); } while (0)
++#else
++#define HWR_DRAWPATCH(tp) HWR_DrawTexturePatchInCache(mipmap, blockwidth, blockheight, texture, patch, (tp))
++#endif
+ 	// Composite the columns together.
+ 	for (i = 0, patch = texture->patches; i < texture->patchcount; i++, patch++)
+ 	{
+@@ -707,7 +824,7 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t
+ 
+ 			if (tp)
+ 			{
+-				HWR_DrawTexturePatchInCache(mipmap, blockwidth, blockheight, texture, patch, tp);
++				HWR_DRAWPATCH(tp);
+ 				if (dispose)
+ 					Patch_Free(tp);
+ 			}
+@@ -716,7 +833,13 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t
+ 			continue;
+ 		}
+ #endif
++#if defined(PS2_PROFILE) && defined(NO_PNG_LUMPS)
++		// OPT13 RDRV: without PNG lumps the raw lump is read for a flat only (Picture_Convert below); for a Doom patch it was read in full (4 M cycles when the zone had
++		// dropped it) and never looked at: W_CachePatchNumPwad reads the lump again
++		UINT8 *pdata = (ps2hwt_comp_old || texture->type == TEXTURETYPE_FLAT) ? W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE) : NULL;
++#else
+ 		UINT8 *pdata = W_CacheLumpNumPwad(wadnum, lumpnum, PU_CACHE);
++#endif
+ 		patch_t *realpatch = NULL;
+ 		boolean free_patch = true;
+ #ifdef PS2_PROFILE
+@@ -740,14 +863,43 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t
+ 			// Otherwise, we load it here.
+ 			if (realpatch == NULL)
+ 			{
+-				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
+ #ifdef PS2_PROFILE
+-				loaded_here = true;
++				if (!ps2hwt_comp_old)
++				{
++					// OPT13 RDRV: a patch placed again in the same texture is built once (THROCK4: 81 placements of 23 patches, SKY4: 151 placements), and no GL structure is made
++					// for a patch that is only composed (W_CachePatchNumPwad runs Patch_CreateGL, which allocates the GL patch and mipmap and Patch_Free frees them again)
++					for (h = 0; h < nheld; h++)
++						if (held[h].wad == wadnum && held[h].lump == lumpnum)
++						{
++							realpatch = held[h].p;
++							break;
++						}
++					if (!realpatch)
++					{
++						realpatch = W_CachePatchNumPwadNoGL(wadnum, lumpnum, PU_PATCH);
++						if (realpatch && nheld < PS2_CPATCH_MAX)
++						{
++							held[nheld].wad = wadnum;
++							held[nheld].lump = lumpnum;
++							held[nheld].p = realpatch;
++							nheld++;
++						}
++						else
++							loaded_here = true; // no room in the list: freed after this patch as before
++					}
++				}
++				else
++				{
++					realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
++					loaded_here = true;
++				}
++#else
++				realpatch = W_CachePatchNumPwad(wadnum, lumpnum, PU_PATCH);
+ #endif
+ 			}
+ 		}
+ 
+-		HWR_DrawTexturePatchInCache(mipmap, blockwidth, blockheight, texture, patch, realpatch);
++		HWR_DRAWPATCH(realpatch);
+ 
+ 		if (free_patch)
+ 			Patch_Free(realpatch);
+@@ -759,6 +911,15 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t
+ 			Patch_Free(realpatch);
+ #endif
+ 	}
++#ifdef PS2_PROFILE
++	if (cm)
++	{
++		HWR_TransposeBlock(block, cm, blockwidth, blockheight);
++		Z_Free(cm);
++	}
++	for (h = 0; h < nheld; h++)
++		Patch_Free(held[h].p); // OPT13 RDRV: the patches this texture was composed from are not kept (PS2-146: the arena would fill with the patches of every texture seen)
++#endif
+ #ifdef PS2
+ 	if (missing)
+ 	{
+@@ -794,9 +955,15 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t
+ 		GLMapTexture_t tmp = *grtex;
+ 
+ 		chk.data = NULL;
+-		ps2_slow_composite = true;
+-		HWR_GenerateTexture(texnum, &tmp, &chk);
+-		ps2_slow_composite = false;
++		{
++			const boolean svold = ps2hwt_comp_old;
++
++			ps2_slow_composite = true;
++			ps2hwt_comp_old = true; // OPT13 RDRV: the check composes with the original patch handling as well
++			HWR_GenerateTexture(texnum, &tmp, &chk);
++			ps2hwt_comp_old = svold;
++			ps2_slow_composite = false;
++		}
+ 		checked++;
+ 		if (!chk.data || memcmp(chk.data, mipmap->data, (size_t)blocksize))
+ 		{
+diff --git a/src/ps2/hw/ps2_hwd.c b/src/ps2/hw/ps2_hwd.c
+index cbcf9be..a1180ca 100644
+--- a/src/ps2/hw/ps2_hwd.c
++++ b/src/ps2/hw/ps2_hwd.c
+@@ -67,6 +67,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
+ #include "ps2_hw_plan.inc"
+ #include "ps2_hw_fx2.inc" // OPT11 round 2 (FX2): the sphere test data of the things, -hwfx
+ extern INT32 ps2hwt_patchtag; // hardware/hw_cache.c (PS2-HW-442)
++extern boolean ps2hwt_comp_old; // hardware/hw_cache.c (OPT13 RDRV: -hwcomp 0 = the composition of a texture as before)
+ static void settex_now(GLMipmap_t *TexInfo); // (below)
+ #include "ps2_hw_spr.inc" // OPT11 round 3 (FX3): the sprite stream (VU1 sprite program)
+ #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
+@@ -349,6 +350,7 @@ boolean PS2HWD_Init(void)
+ 	if (vu_nocut && M_CheckParm("-hwnocut") && M_IsNextParm())
+ 		vu_nocut = atoi(M_GetNextParm()) != 0;
+ 	pk_oldtail = M_CheckParm("-hwoldtail") != 0;
++	ps2hwt_comp_old = M_CheckParm("-hwcomp") && M_IsNextParm() && atoi(M_GetNextParm()) == 0; // OPT13 RDRV: 0 = the original composition (A/B on one ELF)
+ 	if (M_CheckParm("-hwvudump") && M_IsNextParm())
+ 		vu_dump_frame = (u32)atoi(M_GetNextParm());
+ 	if (M_CheckParm("-hwvustop") && M_IsNextParm())
+diff --git a/src/w_wad.c b/src/w_wad.c
+index d3a0c3c..da34b8e 100644
+--- a/src/w_wad.c
++++ b/src/w_wad.c
+@@ -2772,6 +2772,16 @@ void *W_TryCachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag)
+ }
+ #endif
+ 
++#ifdef PS2_PROFILE
++// OPT13 RDRV: W_CachePatchNumPwad without Patch_CreateGL, for a caller that only draws the patch into a composite texture (hw_cache.c HWR_GenerateTexture)
++void *W_CachePatchNumPwadNoGL(UINT16 wad, UINT16 lump, INT32 tag)
++{
++	if (!TestValidLump(wad, lump))
++		return NULL;
++	return (void *)W_GetPatchPwad(wad, lump, tag);
++}
++#endif
++
+ void *W_CachePatchNum(lumpnum_t lumpnum, INT32 tag)
+ {
+ 	return W_CachePatchNumPwad(WADFILENUM(lumpnum),LUMPNUM(lumpnum),tag);
+diff --git a/src/w_wad.h b/src/w_wad.h
+index 55419dd..f00afc7 100644
+--- a/src/w_wad.h
++++ b/src/w_wad.h
+@@ -267,6 +267,9 @@ void *W_CachePatchName(const char *name, INT32 tag);
+ void *W_CachePatchLongName(const char *name, INT32 tag);
+ 
+ void *W_CachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag);
++#ifdef PS2_PROFILE
++void *W_CachePatchNumPwadNoGL(UINT16 wad, UINT16 lump, INT32 tag); // OPT13 RDRV
++#endif
+ #ifdef PS2
+ void *W_TryCachePatchNumPwad(UINT16 wad, UINT16 lump, INT32 tag); // PS2-140: NULL when there is no room
+ #endif

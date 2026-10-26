@@ -10,6 +10,9 @@ boolean PS2OSK_Responder(const event_t *ev); // true: the event was consumed (ca
 void PS2OSK_Draw(void); // after the menu was drawn
 boolean PS2OSK_Active(void);
 void PS2OSK_TestClose(void); // (the crawler of ps2_menuhints.c: the next menu starts without the keyboard)
+void PS2OSK_ChatOpened(boolean team); // OPT14-CHAT: the chat line was opened (hu_stuff.c): the keyboard comes up on it when the last button came from the pad
+boolean PS2OSK_ChatUp(void); // OPT14-CHAT: the keyboard of the chat line is up (it stands on the bottom edge; PS2OSK_ChatTop: the y of its top, in the 320x200 picture snapped to the bottom edge)
+INT32 PS2OSK_ChatTop(void);
 void PS2OSK_TestOpen(void); // PS2-336: opens the keyboard without a text field (the test card "ps2_icons 2" takes its picture)
 
 // m_menu.c: the highlighted menu item takes typed text

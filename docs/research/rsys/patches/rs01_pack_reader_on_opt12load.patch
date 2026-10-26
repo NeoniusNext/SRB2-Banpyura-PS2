@@ -1,0 +1,422 @@
+diff --git a/src/w_pack.c b/src/w_pack.c
+index c9ce7d4..4bc043f 100644
+--- a/src/w_pack.c
++++ b/src/w_pack.c
+@@ -88,48 +88,176 @@ struct wpack_s
+ #define HEADTABLE_MINLUMPS 256 // packs with fewer lumps do not keep a head table (MUSIC.PAK: 215 lumps)
+ #define WPACK_SECTOR 2048
+ 
+-// All file reads bounce through aligned, whole-sector requests. Caller buffers may be unaligned.
+-static UINT8 *iobuf, *cbuf, *sbuf;
++// OPT13-RSYS (research PoC, docs/research/rsys/OPT13_RSYS.md, RS-04): the packs are read without the C library's 64 KiB stream buffer. Every pack stream is unbuffered
++// (setvbuf _IONBF); this unit keeps a window per stream. A request that lies in the window is a memcpy. A miss reads the 2 KiB sectors it needs and nothing more,
++// unless it continues exactly where the previous read of that stream ended (a sequential run: the start-up, the pack index): then a whole window is read.
++// Random reads (a texture or a sprite met for the first time while playing) cost one small read instead of a 64 KiB one.
++#define WPACK_SECTOR 2048
++#define PKW_SLOTS 4
++#define PKW_CAP 32768 // window size; also the largest read-ahead
++#define PKW_MINREQ 4096
++#define PKW_FWD 131072 // a miss this close in front of the last read still counts as a sequential run
++
++typedef struct
++{
++	FILE *fp;
++	UINT8 *buf;
++	long start;   // file offset of buf[0]
++	size_t len;   // valid bytes in buf
++	long lastend; // where the last device read ended
++} pkwin_t;
++
++static pkwin_t pkw[PKW_SLOTS];
++static unsigned pkw_next;
++
++static UINT8 *iobuf, *cbuf, *sbuf; // iobuf: bounce for reads of a window size and more
++
++static pkwin_t *PkwFor(FILE *fp)
++{
++	unsigned i;
+ 
+-static boolean ReadBytes(FILE *handle, void *dest, size_t size)
++	for (i = 0; i < PKW_SLOTS; i++)
++		if (pkw[i].fp == fp)
++			return &pkw[i];
++	for (i = 0; i < PKW_SLOTS; i++)
++		if (!pkw[i].fp)
++			break;
++	if (i == PKW_SLOTS)
++		i = pkw_next++ % PKW_SLOTS; // more streams than slots (add-on packs): the oldest slot is reused
++	pkw[i].fp = fp;
++	pkw[i].start = 0;
++	pkw[i].len = 0;
++	pkw[i].lastend = -1;
++	return &pkw[i];
++}
++
++static void PkwDrop(FILE *fp)
++{
++	unsigned i;
++
++	for (i = 0; i < PKW_SLOTS; i++)
++		if (pkw[i].fp == fp)
++		{
++			pkw[i].fp = NULL;
++			pkw[i].len = 0;
++		}
++}
++
++// Device read of [start, start + req) (sector aligned start) into dst; returns the bytes read
++static size_t PkDevRead(FILE *fp, long start, void *dst, size_t req)
++{
++	if (fseek(fp, start, SEEK_SET) != 0)
++		return 0;
++	return fread(dst, 1, req, fp);
++}
++
++static boolean ReadAt(FILE *fp, long pos, void *dest, size_t size)
+ {
+ 	UINT8 *out = dest;
+-	long pos = ftell(handle);
+-	size_t done = 0;
++	pkwin_t *w = PkwFor(fp);
+ 
+ 	if (pos < 0 || size > (size_t)(LONG_MAX - pos))
+ 		return false;
+-	if (!iobuf)
+-		iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+-	if (!iobuf)
+-		return false;
+-	while (done < size)
++	if (size >= PKW_CAP) // a big read (an LZ4 block of a big lump): straight through the 64 KiB bounce buffer, as before but without a stream buffer
+ 	{
+-		size_t skip = (size_t)pos % WPACK_SECTOR;
+-		size_t want = min(size - done, WPACK_BLOCK - skip);
+-		size_t request = (skip + want + WPACK_SECTOR - 1) & ~(size_t)(WPACK_SECTOR - 1);
+-		size_t got;
+-
+-		LP_BEGIN(lpr);
++		size_t done = 0;
+ 
+-		if (fseek(handle, pos - (long)skip, SEEK_SET) != 0)
+-			return false;
+-		got = fread(iobuf, 1, request, handle);
+-		LP_END(PK_FREAD, lpr);
+-		if (got < skip + want) // never copy bytes not actually read (signature probes may see short files)
++		if (!iobuf)
++			iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
++		if (!iobuf)
+ 			return false;
+-		memcpy(out + done, iobuf + skip, want);
+-		done += want;
+-		pos += (long)want;
++		while (done < size)
++		{
++			size_t skip = (size_t)(pos % WPACK_SECTOR);
++			size_t want = min(size - done, WPACK_BLOCK - skip);
++			size_t request = (skip + want + WPACK_SECTOR - 1) & ~(size_t)(WPACK_SECTOR - 1);
++			size_t got = PkDevRead(fp, pos - (long)skip, iobuf, request);
++
++			if (got < skip + want)
++				return false;
++			memcpy(out + done, iobuf + skip, want);
++			done += want;
++			pos += (long)want;
++		}
++		w->lastend = pos;
++		return true;
++	}
++	while (size)
++	{
++		size_t n;
++
++		if (w->buf && w->len && pos >= w->start && pos < w->start + (long)w->len)
++		{
++			n = min(size, (size_t)(w->start + (long)w->len - pos));
++			memcpy(out, w->buf + (pos - w->start), n);
++			out += n;
++			pos += (long)n;
++			size -= n;
++		}
++		else
++		{
++			long s = pos - pos % WPACK_SECTOR;
++			size_t need = (size_t)(pos - s) + size;
++			size_t req = (need + WPACK_SECTOR - 1) & ~(size_t)(WPACK_SECTOR - 1), got;
++
++			if (!w->buf)
++				w->buf = WPACK_ALIGNED_ALLOC(PKW_CAP);
++			if (!w->buf)
++				return false;
++			if (w->lastend >= 0 && s >= w->lastend && s - w->lastend <= PKW_FWD && req < PKW_CAP) // close behind the previous read: a sequential run, read ahead
++				req = PKW_CAP;
++			if (req < PKW_MINREQ)
++				req = PKW_MINREQ;
++			if (req > PKW_CAP)
++				req = PKW_CAP;
++			got = PkDevRead(fp, s, w->buf, req);
++			w->start = s;
++			w->len = got;
++			w->lastend = s + (long)got;
++			if (got <= (size_t)(pos - s)) // nothing of the wanted bytes: end of file
++				return false;
++		}
+ 	}
+-	return fseek(handle, pos, SEEK_SET) == 0;
++	return true;
++}
++
++// A pointer to [pos, pos + n) inside the window of the stream (reading it from the device when the window does not hold it), or NULL if the span is too big for a window
++// or cannot be read. The pointer is good until the next read of the same stream.
++static const UINT8 *PeekAt(FILE *fp, long pos, size_t n)
++{
++	pkwin_t *w = PkwFor(fp);
++	long s;
++	size_t need, req, got;
++
++	if (pos < 0 || n == 0 || n > PKW_CAP - WPACK_SECTOR)
++		return NULL;
++	if (w->buf && w->len && pos >= w->start && pos + (long)n <= w->start + (long)w->len)
++		return w->buf + (pos - w->start);
++	s = pos - pos % WPACK_SECTOR;
++	need = (size_t)(pos - s) + n;
++	req = (need + WPACK_SECTOR - 1) & ~(size_t)(WPACK_SECTOR - 1);
++	if (!w->buf)
++		w->buf = WPACK_ALIGNED_ALLOC(PKW_CAP);
++	if (!w->buf)
++		return NULL;
++	if (w->lastend >= 0 && s >= w->lastend && s - w->lastend <= PKW_FWD && req < PKW_CAP)
++		req = PKW_CAP;
++	if (req < PKW_MINREQ)
++		req = PKW_MINREQ;
++	got = PkDevRead(fp, s, w->buf, req);
++	w->start = s;
++	w->len = got;
++	w->lastend = s + (long)got;
++	if (got < need)
++		return NULL;
++	return w->buf + (pos - s);
+ }
+ 
+ boolean WPack_Detect(FILE *handle)
+ {
+ 	char magic[4];
+ 
+-	if (fseek(handle, 0, SEEK_SET) != 0 || !ReadBytes(handle, magic, sizeof magic))
++	if (!ReadAt(handle, 0, magic, sizeof magic))
+ 		return false;
+ 	if (memcmp(magic, "SRP2", 4) == 0)
+ 		return true;
+@@ -140,9 +268,10 @@ boolean WPack_Detect(FILE *handle)
+ 
+ void *WPack_SetupHandle(FILE *handle)
+ {
+-	void *buf = WPACK_ALIGNED_ALLOC(65536);
++	void *buf = malloc(16); // the callers free() what they get; the stream itself is unbuffered (see ReadAt)
+ 
+-	if (buf && setvbuf(handle, buf, _IOFBF, 65536) != 0)
++	PkwDrop(handle);
++	if (buf && setvbuf(handle, NULL, _IONBF, 0) != 0)
+ 	{
+ 		free(buf);
+ 		buf = NULL;
+@@ -191,7 +320,7 @@ static boolean ReadHeader(FILE *handle, const char *name, srp2_header_t *h, srp2
+ 	long end;
+ 	UINT8 first[SRP2_HEADER_SIZE + sizeof (srp2_ext_t)];
+ 
+-	if (fseek(handle, 0, SEEK_SET) != 0 || !ReadBytes(handle, first, SRP2_HEADER_SIZE))
++	if (!ReadAt(handle, 0, first, SRP2_HEADER_SIZE))
+ 	{
+ 		CONS_Alert(CONS_ERROR, "%s: cannot read the pack header\n", name);
+ 		return false;
+@@ -234,7 +363,7 @@ static boolean ReadHeader(FILE *handle, const char *name, srp2_header_t *h, srp2
+ 	memset(ext, 0, sizeof *ext);
+ 	if (h->version >= 2)
+ 	{
+-		if (fseek(handle, SRP2_HEADER_SIZE, SEEK_SET) != 0 || !ReadBytes(handle, ext, sizeof *ext))
++		if (!ReadAt(handle, SRP2_HEADER_SIZE, ext, sizeof *ext))
+ 		{
+ 			CONS_Alert(CONS_ERROR, "%s: cannot read the pack header extension\n", name);
+ 			return false;
+@@ -316,7 +445,7 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
+ 
+ 	// one block for every name of the pack (instead of two mallocs per lump)
+ 	pool = Z_Malloc(h.poolsize, PU_STATIC, NULL);
+-	if (fseek(handle, h.pooloffset, SEEK_SET) != 0 || !ReadBytes(handle, pool, h.poolsize) || pool[h.poolsize - 1] != '\0')
++	if (!ReadAt(handle, (long)h.pooloffset, pool, h.poolsize) || pool[h.poolsize - 1] != '\0')
+ 	{
+ 		CONS_Alert(CONS_ERROR, "%s: pack string pool is corrupt\n", shortname);
+ 		Z_Free(pool);
+@@ -334,18 +463,12 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
+ 	}
+ 
+ 	lump_p = lumpinfo = Z_Malloc(n * sizeof (*lumpinfo), PU_STATIC, NULL);
+-	if (fseek(handle, h.tableoffset, SEEK_SET) != 0)
+-	{
+-		Z_Free(lumpinfo);
+-		Z_Free(pool);
+-		return NULL;
+-	}
+ 
+ 	for (done = 0; done < n; done += ENTRY_CHUNK)
+ 	{
+ 		UINT32 count = min(n - done, ENTRY_CHUNK);
+ 
+-		if (!ReadBytes(handle, chunk, sizeof (srp2_entry_t) * count))
++		if (!ReadAt(handle, (long)h.tableoffset + (long)done * (long)sizeof (srp2_entry_t), chunk, sizeof (srp2_entry_t) * count))
+ 		{
+ 			CONS_Alert(CONS_ERROR, "%s: failed to read the pack table\n", shortname);
+ 			Z_Free(lumpinfo);
+@@ -455,7 +578,7 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
+ 			pk->head = Z_TryMallocAlign(bytes, PU_STATIC, NULL, 2);
+ 			if (pk->head)
+ 			{
+-				if (fseek(handle, ext.headoffset, SEEK_SET) != 0 || !ReadBytes(handle, pk->head, bytes))
++				if (!ReadAt(handle, (long)ext.headoffset, pk->head, bytes))
+ 				{
+ 					CONS_Alert(CONS_ERROR, "%s: failed to read the pack head table\n", shortname);
+ 					Z_Free(pk->head);
+@@ -500,13 +623,25 @@ void WPack_Shutdown(void)
+ 	free(cbuf);
+ 	free(sbuf);
+ 	iobuf = cbuf = sbuf = NULL;
++	{
++		unsigned i;
++
++		for (i = 0; i < PKW_SLOTS; i++)
++		{
++			free(pkw[i].buf);
++			pkw[i].buf = NULL;
++			pkw[i].fp = NULL;
++			pkw[i].len = 0;
++		}
++	}
+ }
+ 
+-// Delivers decoded bytes [lo, hi) of one block (decoded size bsize, stored in csize bytes at the current file position)
++// Delivers decoded bytes [lo, hi) of one block (decoded size bsize, stored in csize bytes at file offset *pos; *pos moves past the block)
+ // to dst (which receives byte lo). Returns false on a read/decode error.
+-static boolean ReadBlock(FILE *handle, boolean raw, UINT32 csize, UINT32 bsize, UINT32 lo, UINT32 hi, UINT8 *dst)
++static boolean ReadBlock(FILE *handle, long *pos, boolean raw, UINT32 csize, UINT32 bsize, UINT32 lo, UINT32 hi, UINT8 *dst)
+ {
+ 	UINT32 want;
++	const UINT8 *src;
+ 
+ 	if (csize == 0 || csize > WPACK_BLOCK || bsize > WPACK_BLOCK || lo > hi || hi > bsize)
+ 		return false;
+@@ -516,23 +651,30 @@ static boolean ReadBlock(FILE *handle, boolean raw, UINT32 csize, UINT32 bsize,
+ 	{
+ 		if (csize != bsize)
+ 			return false;
+-		if (!ReadBytes(handle, cbuf, csize))
++		if (!ReadAt(handle, *pos, cbuf, csize))
+ 			return false;
++		*pos += (long)csize;
+ 		memcpy(dst, cbuf + lo, want);
+ 		return true;
+ 	}
+ 
+-	if (!ReadBytes(handle, cbuf, csize))
+-		return false;
++	src = PeekAt(handle, *pos, csize); // decode straight from the window when the block is in it: no copy into cbuf
++	if (!src)
++	{
++		if (!ReadAt(handle, *pos, cbuf, csize))
++			return false;
++		src = cbuf;
++	}
++	*pos += (long)csize;
+ 	{
+ 		boolean ok;
+ 		LP_BEGIN(lpz);
+ 
+ 		if (lo == 0 && want == bsize) // whole block straight into the destination
+-			ok = LZ4_decompress_safe((const char *)cbuf, (char *)dst, (int)csize, (int)bsize) == (int)bsize;
++			ok = LZ4_decompress_safe((const char *)src, (char *)dst, (int)csize, (int)bsize) == (int)bsize;
+ 		else if (lo == 0) // head of the block (patch headers etc): stop as soon as enough is decoded
+-			ok = LZ4_decompress_safe_partial((const char *)cbuf, (char *)dst, (int)csize, (int)want, (int)want) == (int)want;
+-		else if (LZ4_decompress_safe((const char *)cbuf, (char *)sbuf, (int)csize, (int)bsize) != (int)bsize)
++			ok = LZ4_decompress_safe_partial((const char *)src, (char *)dst, (int)csize, (int)want, (int)want) == (int)want;
++		else if (LZ4_decompress_safe((const char *)src, (char *)sbuf, (int)csize, (int)bsize) != (int)bsize)
+ 			ok = false;
+ 		else
+ 		{
+@@ -559,18 +701,18 @@ size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size
+ 		return 0;
+ 	if (l->compression == CM_NOCOMPRESSION)
+ 	{
+-		if (l->disksize != usize || fseek(handle, (long)(l->position + offset), SEEK_SET) != 0)
++		if (l->disksize != usize)
+ 			return 0;
+-		return ReadBytes(handle, dest, size) ? size : 0;
++		return ReadAt(handle, (long)(l->position + offset), dest, size) ? size : 0;
+ 	}
+ 	if (l->compression != CM_LZ4 || !AllocBuffers())
+ 		return 0;
+ 
+ 	if (usize <= WPACK_BLOCK) // one LZ4 block, no index
+ 	{
+-		if (fseek(handle, (long)l->position, SEEK_SET) != 0)
+-			return 0;
+-		return ReadBlock(handle, false, (UINT32)l->disksize, usize, (UINT32)offset, (UINT32)(offset + size), out) ? size : 0;
++		long p1 = (long)l->position;
++
++		return ReadBlock(handle, &p1, false, (UINT32)l->disksize, usize, (UINT32)offset, (UINT32)(offset + size), out) ? size : 0;
+ 	}
+ 
+ 	// u32 index[nb] (bit 31: stored raw) followed by the blocks
+@@ -586,7 +728,7 @@ size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size
+ 			return 0;
+ 	}
+ 
+-	if (fseek(handle, (long)l->position, SEEK_SET) != 0 || !ReadBytes(handle, idx, nb * sizeof *idx))
++	if (!ReadAt(handle, (long)l->position, idx, nb * sizeof *idx))
+ 		goto end;
+ 
+ 	pos = (long)(l->position + nb * sizeof *idx);
+@@ -606,8 +748,6 @@ size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size
+ 	if (remaining != 0)
+ 		goto end;
+ 
+-	if (fseek(handle, pos, SEEK_SET) != 0) // blocks first..last are contiguous: no seeks in between
+-		goto end;
+ 
+ 	for (b = first; b <= last; b++)
+ 	{
+@@ -617,7 +757,7 @@ size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size
+ 		UINT32 lo = (UINT32)max(offset, bstart) - bstart;
+ 		UINT32 hi = (UINT32)min(offset + size, (size_t)bstart + bsize) - bstart;
+ 
+-		if (!ReadBlock(handle, (entry & SRP2_RAWBLOCK) != 0, entry & ~SRP2_RAWBLOCK, bsize, lo, hi, out + done))
++		if (!ReadBlock(handle, &pos, (entry & SRP2_RAWBLOCK) != 0, entry & ~SRP2_RAWBLOCK, bsize, lo, hi, out + done))
+ 			break;
+ 		done += hi - lo;
+ 	}
+@@ -714,7 +854,7 @@ UINT32 WPack_Verify(wpack_t *pk, FILE *handle, const lumpinfo_t *lumps, UINT32 n
+ 		crctab[i] = c;
+ 	}
+ 	table = malloc((size_t)numlumps * 4);
+-	if (!table || fseek(handle, pk->crcoffset, SEEK_SET) != 0 || !ReadBytes(handle, table, (size_t)numlumps * 4))
++	if (!table || !ReadAt(handle, (long)pk->crcoffset, table, (size_t)numlumps * 4))
+ 	{
+ 		free(table);
+ 		report(0xFFFFFFFFu, "cannot read the CRC table");
+diff --git a/src/w_wad.c b/src/w_wad.c
+index f3092f4..0333e61 100644
+--- a/src/w_wad.c
++++ b/src/w_wad.c
+@@ -1172,6 +1172,16 @@ UINT16 W_InitFile(const char *filename, boolean mainfile, boolean startup, boole
+ 		I_Error("Cannot allocate resource I/O buffer");
+ #endif
+ 
++#ifdef PS2_PROFILE
++	// OPT13-RSYS (RS-03): a cooked pack is checked through the stream that is open already (W_VerifyNMUSlumps opens the file a second time and reads the header again)
++	if (WPack_Detect(handle))
++	{
++		important = WPack_VerifyNMUS(handle);
++		if (important == -1)
++			W_InitFileError(filename, startup);
++	}
++	else
++#endif
+ 	important = W_VerifyNMUSlumps(filename, startup);
+ 
+ 	if (important == -1)

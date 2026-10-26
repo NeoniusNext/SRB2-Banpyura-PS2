@@ -1,0 +1,36 @@
+sampler total 9173 kcyc/frame; with modelled misses 16068 kcyc/frame (x1.75); functions with host data: 56 of 80
+hw#  function                         stage                     emu K  Dmiss K  Imiss K     hw K  hw/emu  emu#
+1    R_RenderSegLoopX                 render:walls             1543.3    571.2    373.9   2488.4   1.61x     1
+2    R_StoreWallRange                 render:walls              778.0    307.6    758.8   1844.4   2.37x     2
+3    R_DrawColumn_8                   render:drawers(col/span)    729.0    917.5      8.3   1654.9   2.27x     3
+4    R_DrawSpan_8                     render:drawers(col/span)    459.5    479.3      1.3    940.0   2.05x     4
+5    R_AddSprites                     render:sprites/masked     398.3    174.9    266.5    839.8   2.11x     6
+6    R_RenderBSPNode                  render:bsp/setup          251.2    207.6    224.8    683.6   2.72x     9
+7    R_ClipSprites                    render:sprites/masked     409.6    221.7      2.5    633.8   1.55x     5
+8    R_FindPlane                      render:planes             245.0    152.1    173.8    570.9   2.33x    10
+9    R_RenderMaskedSegRange           render:walls              388.4    146.4      4.6    539.5   1.39x     7
+10   R_DrawMaskedColumn               render:sprites/masked     353.0     91.9      0.7    445.6   1.26x     8
+11   P_MobjThinker                    tick:thinkers             186.3    211.4     11.4    409.2   2.20x    13
+12   R_AddLine                        render:bsp/setup          147.3    131.2     62.9    341.4   2.32x    16
+13   R_PointToAngle64                 tick:collision/sight      195.6     54.5     52.4    302.5   1.55x    12
+14   R_DrawTiltedSpan_8               render:drawers(col/span)    175.7     63.2      4.7    243.6   1.39x    14
+15   R_DrawMasked                     render:sprites/masked     204.6     31.4      1.5    237.5   1.16x    11
+16   R_DrawSinglePlane                render:planes             172.6     36.3      8.5    217.4   1.26x    15
+17   PS2_FixedDivMag                  tick:collision/sight       97.9      8.1     91.4    197.4   2.02x    22
+18   R_ScaleFromGlobalAngle           render:walls              106.1     32.1     43.2    181.4   1.71x    20
+19   P_CrossBSPNode                   tick:collision/sight       83.6     91.3      1.5    176.4   2.11x    25
+20   V_DrawStretchyFixedPatch         render:hud/video          119.6     54.3      2.2    176.1   1.47x    18
+21   R_MapPlane                       render:planes             107.2     44.4      1.9    153.5   1.43x    19
+22   R_FakeFlat                       render:bsp/setup           62.2     42.3     28.8    133.3   2.14x    28
+23   R_GetColumn                      -                         129.3      0.0      0.0    129.3   1.00x    17
+24   R_PointToDist2                   tick:collision/sight       84.5     13.8     24.0    122.3   1.45x    24
+25   memcpy                           -                         105.3      0.0      0.0    105.3   1.00x    21
+26   R_CalcSlopeLight                 render:drawers(col/span)     86.5      3.1      3.7     93.2   1.08x    23
+27   P_CycleMobjState                 tick:thinkers              44.1     39.8      1.2     85.1   1.93x    37
+28   P_Ticker                         tick:thinkers              43.5     39.9      1.3     84.7   1.95x    38
+29   R_RenderThickSideRange           render:walls               57.8     21.4      5.4     84.6   1.46x    30
+30   mapping0_inverse                 -                          81.3      0.0      0.0     81.3   1.00x    26
+31   Portal_AddPlanePortals           render:bsp/setup           30.9     44.1      0.7     75.7   2.45x    44
+32   R_DrawWaterSpan_8                render:drawers(col/span)     53.8     20.6      0.8     75.2   1.40x    31
+33   R_CheckPlane                     render:planes              32.7     13.9     23.4     70.1   2.14x    43
+34   R_SetSlopePlaneVectors           -                          69.6      0.0      0.0     69.6   1.00x    27

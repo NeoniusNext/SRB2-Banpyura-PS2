@@ -5305,6 +5305,23 @@ extern mobjinfo_t *mobjinfo;
 extern mobjinfo_t mobjinfo[NUMMOBJTYPES];
 #endif
 
+#ifdef PS2_DYNLIMITS
+// PS2-LUA: every number a script, a SOC file, a save game or a demo can see is the PC value (NUMSTATES, NUMMOBJTYPES, ...); LIMIT_* is only the size of the table that is live.
+// An index that is valid on the PC but past the live table (reading mobjinfo[MT_FIRSTFREESLOT + 500], SPAWNSTATE = 9000, a hook for MT_FIRSTFREESLOT + 100) grows the tables to the PC
+// size first (PS2Limits_Grow, once), then every check is the PC check. PS2_OOR_x(i): "i is out of range for the PC" (evaluates i once more than the plain comparison).
+#define PS2_WIDEN(i, limit, num) ((!ps2_fulllimits && (INT64)(i) >= (INT64)(limit) && (INT64)(i) < (INT64)(num)) ? PS2Limits_Grow() : (void)0)
+#define PS2_OOR_STATE(i) (PS2_WIDEN(i, LIMIT_NUMSTATES, NUMSTATES), (i) >= NUMSTATES)
+#define PS2_OOR_MOBJTYPE(i) (PS2_WIDEN(i, LIMIT_NUMMOBJTYPES, NUMMOBJTYPES), (i) >= NUMMOBJTYPES)
+#define PS2_OOR_SPRITE(i) (PS2_WIDEN(i, LIMIT_NUMSPRITES, NUMSPRITES), (i) >= NUMSPRITES)
+#define PS2_OOR_SPR2(i) (PS2_WIDEN(i, LIMIT_NUMPLAYERSPRITES, NUMPLAYERSPRITES), (i) >= NUMPLAYERSPRITES)
+#else
+#define PS2_WIDEN(i, limit, num) ((void)0)
+#define PS2_OOR_STATE(i) ((i) >= NUMSTATES)
+#define PS2_OOR_MOBJTYPE(i) ((i) >= NUMMOBJTYPES)
+#define PS2_OOR_SPRITE(i) ((i) >= NUMSPRITES)
+#define PS2_OOR_SPR2(i) ((i) >= NUMPLAYERSPRITES)
+#endif
+
 void P_PatchInfoTables(void);
 void P_PatchInfoRange(INT32 oldslots, INT32 newslots, INT32 oldcolors, INT32 newcolors, INT32 which); // PS2-104 (ps2_limits.c)
 

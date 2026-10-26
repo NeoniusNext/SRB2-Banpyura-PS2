@@ -1,0 +1,634 @@
+diff --git a/src/hardware/hw_gcache.inc b/src/hardware/hw_gcache.inc
+index d72f8dc..44610a9 100644
+--- a/src/hardware/hw_gcache.inc
++++ b/src/hardware/hw_gcache.inc
+@@ -517,6 +517,8 @@ UINT32 hwr_geo_off;
+ static void HWR_GCacheParse(void)
+ {
+ 	HWR_FrInit(); // OPT12 (hw_front.inc): -hwfr
++	HWR_RfInit(); // OPT13 research
++	HWR_RfdInit();
+ 	if (M_CheckParm("-hwgo") && M_IsNextParm())
+ 		hwr_geo_off = (UINT32)atoi(M_GetNextParm());
+ 	gc.mode_set = true;
+diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
+index 0d4f8a7..66cb828 100644
+--- a/src/hardware/hw_main.c
++++ b/src/hardware/hw_main.c
+@@ -524,6 +524,7 @@ static UINT8 HWR_CeilingLightLevel(sector_t *sector, INT16 base_lightlevel)
+ // OPT11 (GEOM, PS2-HW-80): the geometry cache of the BSP walk replaces the plane cache of PS2-HW-55 (hw_gcache.inc)
+ static INT32 hwr_gc_src, hwr_gc_tnum; // the side (number + 1) whose midtexture the polygons being made take (3D floors), and the translated texture number: set by HWR_ProcessSeg, read by the records of the cache
+ #include "hw_front.inc" // OPT12 HWFRONT (PS2-HW-400..439)
++#include "hw_rf.inc" // OPT13 RFRONT research
+ #include "hw_gcache.inc"
+ 
+ static UINT8 *subhoriz; // per subsector: 0 = not looked at, 1 = no horizon line, 2 = a horizon line (camera dependent geometry: never cached)
+@@ -640,6 +641,10 @@ static void HWR_RenderPlane(subsector_t *subsector, extrasubsector_t *xsub, bool
+ 
+ 	if (nrPlaneVerts < 3) // not even a triangle?
+ 		return;
++#ifdef PS2_PROFILE
++	if (subsector)
++		HWR_RfPlane(((size_t)(xsub - extrasubsectors)) * 2u + (isceiling ? 1u : 0u));
++#endif
+ 
+ 	// Get the slope pointer to simplify future code
+ 	if (FOFsector)
+@@ -2344,6 +2349,7 @@ static void HWR_ProcessSegC(void)
+ 	HWP_SPAN_BEGIN(t);
+ 	seg_t *sg = gl_curline;
+ 
++	HWR_RfSeg((size_t)(sg - segs));
+ 
+ 	HWC_ADD(HWC_SEGS);
+ 	if (hwr_geo_off & 16384) // (measurement only, -hwgo 16384: the walk without the walls and planes - the floor of what the front can cost)
+@@ -2719,6 +2725,9 @@ static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle
+ 
+ 	if (!line->backsector)
+     {
++#ifdef PS2_PROFILE
++		if (!rf.noocc) // OPT13 research: -hwnoocc: solid walls do not occlude (a frustum-only walk)
++#endif
+ 		gld_clipper_SafeAddClipRange(angle2, angle1);
+     }
+     else
+@@ -2751,6 +2760,9 @@ static void __attribute__((noinline)) HWR_AddLineSeen(seg_t *line, angle_t angle
+ 
+ 		if (CheckClip(line, gl_frontsector, gl_backsector))
+ 		{
++#ifdef PS2_PROFILE
++			if (!rf.noocc)
++#endif
+ 			gld_clipper_SafeAddClipRange(angle2, angle1);
+ 			checkforemptylines = false;
+ 		}
+@@ -3165,6 +3177,9 @@ static void HWR_Subsector(size_t num)
+ 		        numsubsectors);*/
+ #endif
+ 
++#ifdef PS2_PROFILE
++	HWR_RfSub(num);
++#endif
+ 	if (num < numsubsectors)
+ 	{
+ 		// subsector
+@@ -3451,6 +3466,10 @@ static void HWR_Subsector(size_t num)
+ 	sub->validcount = validcount;
+ }
+ 
++#ifdef PS2_PROFILE
++#include "hw_rf2.inc" // OPT13 research: the dry walk with a margin
++#endif
++
+ //
+ // Renders all subsectors below a given node,
+ //  traversing subtree recursively.
+@@ -8382,6 +8401,9 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
+ 
+ 	drawcount = 0;
+ 
++#ifdef PS2_PROFILE
++	HWR_RfDry(fpov); // OPT13 research (-hwdry)
++#endif
+ 	if (rendermode == render_opengl)
+ 	{
+ 		angle_t a1 = gld_FrustumAngle(fpov, gl_aimingangle);
+@@ -8417,6 +8439,9 @@ void HWR_RenderPlayerView(INT32 viewnumber, player_t *player)
+ 	HWR_FrViewSetup(); // OPT12 PS2-HW-400: the volume of this view for the culls before building
+ #endif
+ 	HWR_RenderBSPNode((INT32)numnodes-1);
++#ifdef PS2_PROFILE
++	HWR_RfFrameEnd();
++#endif
+ 
+ 	PS_STOP_TIMING(ps_bsptime);
+ 	HWP_LAP(HWP_BSP);
+diff --git a/src/hardware/hw_rf.inc b/src/hardware/hw_rf.inc
+new file mode 100644
+index 0000000..1510697
+--- /dev/null
++++ b/src/hardware/hw_rf.inc
+@@ -0,0 +1,117 @@
++// RESEARCH (OPT13 RFRONT), NOT FOR THE PRODUCT: temporal coherence of the BSP walk (-hwcoh) and spikes. Included by hw_main.c after hw_front.inc.
++//
++// -hwcoh [N]: for every frame of the main view the sets of subsectors walked, segs that reached HWR_ProcessSeg and planes built are kept as bit sets; at the end of the walk they are
++// compared with the sets of the previous frame (A) and the frame before it (A2): HWCOH line. N = print every Nth frame (default 1).
++#ifdef PS2_PROFILE
++
++static struct
++{
++	int on, every, noocc;
++	size_t nsub, nseg, npl;
++	UINT32 *sub[3], *seg[3], *pl[3]; // 0 = this frame, 1 = A, 2 = A2
++	UINT32 have; // frames recorded
++	UINT32 calls_seg, calls_sub, calls_pl;
++	UINT32 verts_pl;
++} rf;
++
++static void HWR_RfdInit(void); // hw_rf2.inc
++
++static void HWR_RfInit(void)
++{
++	rf.noocc = M_CheckParm("-hwnoocc") != 0;
++	if (M_CheckParm("-hwcoh"))
++	{
++		rf.on = 1;
++		rf.every = M_IsNextParm() ? atoi(M_GetNextParm()) : 1;
++		if (rf.every < 1)
++			rf.every = 1;
++	}
++}
++
++static void HWR_RfSize(void)
++{
++	const size_t ns = numsubsectors, ng = numsegs, np = numsubsectors * 2;
++	int k;
++
++	if (rf.nsub == ns && rf.nseg == ng && rf.sub[0])
++		return;
++	for (k = 0; k < 3; k++)
++	{
++		free(rf.sub[k]); free(rf.seg[k]); free(rf.pl[k]);
++		rf.sub[k] = calloc((ns + 31) / 32, 4);
++		rf.seg[k] = calloc((ng + 31) / 32, 4);
++		rf.pl[k] = calloc((np + 31) / 32, 4);
++	}
++	rf.nsub = ns;
++	rf.nseg = ng;
++	rf.npl = np;
++	rf.have = 0;
++}
++
++static inline void HWR_RfSub(size_t n)
++{
++	if (rf.on && !ps2hwp_skyview && n < rf.nsub)
++		rf.sub[0][n >> 5] |= 1u << (n & 31);
++}
++
++static inline void HWR_RfSeg(size_t n)
++{
++	if (rf.on && !ps2hwp_skyview && n < rf.nseg)
++		rf.seg[0][n >> 5] |= 1u << (n & 31);
++}
++
++static inline void HWR_RfPlane(size_t n)
++{
++	if (rf.on && !ps2hwp_skyview && n < rf.npl)
++		rf.pl[0][n >> 5] |= 1u << (n & 31);
++}
++
++static void rf_cnt(const UINT32 *b, const UINT32 *a, const UINT32 *a2, size_t nbits, UINT32 *out) // out: |B|, |A|, |A&B|, |B\A|, |B\(A|A2)|, |A|A2|
++{
++	const size_t nw = (nbits + 31) / 32;
++	size_t i;
++	UINT32 nb = 0, na = 0, ab = 0, nw1 = 0, nw2 = 0, ua = 0;
++
++	for (i = 0; i < nw; i++)
++	{
++		const UINT32 x = b[i], y = a[i], z = a2[i];
++
++		nb += __builtin_popcount(x);
++		na += __builtin_popcount(y);
++		ab += __builtin_popcount(x & y);
++		nw1 += __builtin_popcount(x & ~y);
++		nw2 += __builtin_popcount(x & ~(y | z));
++		ua += __builtin_popcount(y | z);
++	}
++	out[0] = nb; out[1] = na; out[2] = ab; out[3] = nw1; out[4] = nw2; out[5] = ua;
++}
++
++static void HWR_RfFrameEnd(void)
++{
++	static UINT32 nframe;
++	UINT32 s[6], g[6], p[6];
++	UINT32 *t;
++	int k;
++
++	if (!rf.on)
++		return;
++	HWR_RfSize();
++	if (rf.have >= 2 && !(nframe++ % (UINT32)rf.every))
++	{
++		rf_cnt(rf.sub[0], rf.sub[1], rf.sub[2], rf.nsub, s);
++		rf_cnt(rf.seg[0], rf.seg[1], rf.seg[2], rf.nseg, g);
++		rf_cnt(rf.pl[0], rf.pl[1], rf.pl[2], rf.npl, p);
++		I_OutputMsg("HWCOH lt=%d frac=%d view=%d,%d,%d,%u | sub B=%u A=%u both=%u new=%u new2=%u uni=%u | seg B=%u A=%u both=%u new=%u new2=%u uni=%u | plane B=%u A=%u both=%u new=%u new2=%u uni=%u\n",
++			(int)leveltime, (int)rendertimefrac, (int)(viewx >> 16), (int)(viewy >> 16), (int)(viewz >> 16), (unsigned)(viewangle >> 20),
++			s[0], s[1], s[2], s[3], s[4], s[5], g[0], g[1], g[2], g[3], g[4], g[5], p[0], p[1], p[2], p[3], p[4], p[5]);
++	}
++	// rotate: A2 <- A <- this <- (cleared old A2)
++	for (k = 0; k < 3; k++)
++		;
++	t = rf.sub[2]; rf.sub[2] = rf.sub[1]; rf.sub[1] = rf.sub[0]; rf.sub[0] = t; memset(t, 0, ((rf.nsub + 31) / 32) * 4);
++	t = rf.seg[2]; rf.seg[2] = rf.seg[1]; rf.seg[1] = rf.seg[0]; rf.seg[0] = t; memset(t, 0, ((rf.nseg + 31) / 32) * 4);
++	t = rf.pl[2]; rf.pl[2] = rf.pl[1]; rf.pl[1] = rf.pl[0]; rf.pl[0] = t; memset(t, 0, ((rf.npl + 31) / 32) * 4);
++	rf.have++;
++}
++
++#endif
+diff --git a/src/hardware/hw_rf2.inc b/src/hardware/hw_rf2.inc
+new file mode 100644
+index 0000000..f379452
+--- /dev/null
++++ b/src/hardware/hw_rf2.inc
+@@ -0,0 +1,287 @@
++// RESEARCH (OPT13 RFRONT), NOT FOR THE PRODUCT: the "dry" BSP walk with a safety margin (-hwdry). Included by hw_main.c just before HWR_RenderBSPNode.
++//
++// For the main view of every frame the walk is made without building anything (the same decisions as HWR_RenderBSPNode / HWR_Subsector / HWR_AddLine: the angle clipper, the
++// back-face test, CheckClip, R_IsEmptyLine), five times: margin 0 (the exact walk, E) and margins 3, 6, 10, 15 degrees (W_d: the field of view is d degrees wider on both
++// sides, the ranges that solid walls add to the clipper are d degrees narrower on both ends). It answers: if the walk of frame t is made with margin d and its result (leaves,
++// segs that reach HWR_ProcessSeg) is used for frame t+1 or t+2, how much of the exact result E(t+1) is missing (holes) and how much bigger than E(t) is the list.
++// The HWDRY line is printed for every frame.
++#ifdef PS2_PROFILE
++
++#define RFD_N 8
++static const int rfd_fov[RFD_N] = {0, 30, 60, 100, 0, 0, 0, 30}; // tenths of a degree: the field of view is wider by this on both sides
++static const int rfd_shr[RFD_N] = {0, 0, 0, 0, 5, 10, 20, 10}; // tenths of a degree: the ranges that solid walls add are narrower by this on both ends
++
++static struct
++{
++	int on;
++	UINT32 *leaf[RFD_N][3], *seg[RFD_N][3]; // [margin][0 = this frame, 1 = previous, 2 = the one before]
++	size_t nleaf, nseg;
++	UINT32 have;
++	UINT32 cur_leaf, cur_seg;
++	UINT32 *vis_leaf, *vis_seg;
++	angle_t shrink;
++	sector_t tmp;
++} rfd;
++
++static void HWR_RfdInit(void)
++{
++	rfd.on = M_CheckParm("-hwdry") != 0;
++}
++
++static void HWR_RfdSize(void)
++{
++	int m, k;
++
++	if (rfd.nleaf == numsubsectors && rfd.nseg == numsegs && rfd.leaf[0][0])
++		return;
++	for (m = 0; m < RFD_N; m++)
++		for (k = 0; k < 3; k++)
++		{
++			free(rfd.leaf[m][k]);
++			free(rfd.seg[m][k]);
++			rfd.leaf[m][k] = calloc((numsubsectors + 31) / 32, 4);
++			rfd.seg[m][k] = calloc((numsegs + 31) / 32, 4);
++		}
++	rfd.nleaf = numsubsectors;
++	rfd.nseg = numsegs;
++	rfd.have = 0;
++}
++
++static void rfd_line(seg_t *line)
++{
++	angle_t angle1, angle2;
++	fixed_t v1x, v1y, v2x, v2y;
++	sector_t *back;
++
++	if (line->polyseg && !(line->polyseg->flags & POF_RENDERSIDES))
++		return;
++	gl_curline = line;
++	if (line->pv1)
++	{
++		v1x = FLOAT_TO_FIXED(((polyvertex_t *)line->pv1)->x);
++		v1y = FLOAT_TO_FIXED(((polyvertex_t *)line->pv1)->y);
++	}
++	else
++	{
++		v1x = line->v1->x;
++		v1y = line->v1->y;
++	}
++	if (line->pv2)
++	{
++		v2x = FLOAT_TO_FIXED(((polyvertex_t *)line->pv2)->x);
++		v2y = FLOAT_TO_FIXED(((polyvertex_t *)line->pv2)->y);
++	}
++	else
++	{
++		v2x = line->v2->x;
++		v2y = line->v2->y;
++	}
++	angle1 = R_PointToAngle64(v1x, v1y);
++	angle2 = R_PointToAngle64(v2x, v2y);
++	if (angle2 - angle1 < ANGLE_180)
++		return;
++	if (!gld_clipper_SafeCheckRange(angle2, angle1))
++		return;
++	checkforemptylines = true;
++	back = line->backsector;
++	bothceilingssky = bothfloorssky = false;
++	if (!back)
++	{
++		const angle_t span = angle1 - angle2;
++
++		if (span > 2u * rfd.shrink)
++			gld_clipper_SafeAddClipRange(angle2 + rfd.shrink, angle1 - rfd.shrink);
++	}
++	else
++	{
++		back = R_FakeFlat(back, &rfd.tmp, NULL, NULL, true);
++		gl_backsector = back;
++		if (back->ceilingpic == skyflatnum && gl_frontsector->ceilingpic == skyflatnum
++		&& !(P_SectorHasCeilingPortal(back) || P_SectorHasCeilingPortal(gl_frontsector)))
++			bothceilingssky = true;
++		if (back->floorpic == skyflatnum && gl_frontsector->floorpic == skyflatnum
++		&& !(P_SectorHasFloorPortal(back) || P_SectorHasFloorPortal(gl_frontsector)))
++			bothfloorssky = true;
++		if (bothceilingssky && bothfloorssky)
++		{
++			if (!line->polyseg && !line->sidedef->midtexture
++				&& ((!gl_frontsector->ffloors && !back->ffloors) || Tag_Compare(&gl_frontsector->tags, &back->tags)))
++				return;
++		}
++		else
++		{
++			if (CheckClip(line, gl_frontsector, back))
++			{
++				const angle_t span = angle1 - angle2;
++
++				if (span > 2u * rfd.shrink)
++					gld_clipper_SafeAddClipRange(angle2 + rfd.shrink, angle1 - rfd.shrink);
++				checkforemptylines = false;
++			}
++			if (checkforemptylines && R_IsEmptyLine(line, gl_frontsector, back))
++				return;
++		}
++	}
++	{
++		const size_t n = (size_t)(line - segs);
++
++		if (n < rfd.nseg)
++			rfd.vis_seg[n >> 5] |= 1u << (n & 31);
++		rfd.cur_seg++;
++	}
++}
++
++static void rfd_leaf(size_t num)
++{
++	static sector_t tempsec;
++	INT32 fl, cl;
++	subsector_t *sub;
++	seg_t *line;
++	INT16 count;
++
++	if (num >= numsubsectors)
++		return;
++	rfd.vis_leaf[num >> 5] |= 1u << (num & 31);
++	rfd.cur_leaf++;
++	sub = &subsectors[num];
++	gl_frontsector = R_FakeFlat(sub->sector, &tempsec, &fl, &cl, false);
++	count = sub->numlines;
++	line = &segs[sub->firstline];
++	while (count--)
++	{
++		if (!line->glseg && !line->polyseg)
++			rfd_line(line);
++		line++;
++	}
++}
++
++static boolean rfd_checkbbox(fixed_t *bspcoord)
++{
++	INT32 boxpos;
++	fixed_t px1, py1, px2, py2;
++	angle_t angle1, angle2;
++
++	if (viewx <= bspcoord[BOXLEFT])
++		boxpos = 0;
++	else if (viewx < bspcoord[BOXRIGHT])
++		boxpos = 1;
++	else
++		boxpos = 2;
++	if (viewy >= bspcoord[BOXTOP])
++		boxpos |= 0;
++	else if (viewy > bspcoord[BOXBOTTOM])
++		boxpos |= 1<<2;
++	else
++		boxpos |= 2<<2;
++	if (boxpos == 5)
++		return true;
++	px1 = bspcoord[checkcoord[boxpos][0]];
++	py1 = bspcoord[checkcoord[boxpos][1]];
++	px2 = bspcoord[checkcoord[boxpos][2]];
++	py2 = bspcoord[checkcoord[boxpos][3]];
++	angle1 = R_PointToAngle64(px1, py1);
++	angle2 = R_PointToAngle64(px2, py2);
++	return gld_clipper_SafeCheckRange(angle2, angle1);
++}
++
++static void rfd_node(INT32 bspnum)
++{
++	node_t *bsp;
++	INT32 side;
++
++	if (bspnum & NF_SUBSECTOR)
++	{
++		rfd_leaf(bspnum == -1 ? 0 : (size_t)(bspnum & (~NF_SUBSECTOR)));
++		return;
++	}
++	bsp = &nodes[bspnum];
++	side = R_PointOnSide(viewx, viewy, bsp);
++	rfd_node(bsp->children[side]);
++	if (rfd_checkbbox(bsp->bbox[side^1]))
++		rfd_node(bsp->children[side^1]);
++}
++
++static void rfd_cnt(const UINT32 *a, const UINT32 *b, size_t nbits, UINT32 *nb, UINT32 *miss) // |b|, |b \ a|
++{
++	const size_t nw = (nbits + 31) / 32;
++	size_t i;
++	UINT32 x = 0, y = 0;
++
++	for (i = 0; i < nw; i++)
++	{
++		x += __builtin_popcount(b[i]);
++		y += __builtin_popcount(b[i] & ~a[i]);
++	}
++	*nb = x;
++	*miss = y;
++}
++
++// called for the main view before the clipper is set up for the real walk
++static void HWR_RfDry(float fpov)
++{
++	int m, k;
++	char buf[900];
++	int len = 0;
++	UINT32 e_leaf = 0, e_seg = 0;
++
++	if (!rfd.on)
++		return;
++	HWR_RfdSize();
++	for (m = 0; m < RFD_N; m++)
++	{
++		angle_t a1 = gld_FrustumAngle(fpov, gl_aimingangle);
++		const angle_t d = (angle_t)((UINT64)rfd_fov[m] * ANG1 / 10u);
++
++		if (a1 != 0xffffffff)
++		{
++			a1 += d;
++			if (a1 >= ANGLE_180)
++				a1 = 0xffffffff;
++		}
++		rfd.vis_leaf = rfd.leaf[m][0];
++		rfd.vis_seg = rfd.seg[m][0];
++		memset(rfd.vis_leaf, 0, ((rfd.nleaf + 31) / 32) * 4);
++		memset(rfd.vis_seg, 0, ((rfd.nseg + 31) / 32) * 4);
++		rfd.cur_leaf = rfd.cur_seg = 0;
++		rfd.shrink = (angle_t)((UINT64)rfd_shr[m] * ANG1 / 10u);
++		gld_clipper_Clear();
++		gld_clipper_SafeAddClipRange(viewangle + a1, viewangle - a1);
++		rfd_node((INT32)numnodes - 1);
++		if (m == 0)
++		{
++			e_leaf = rfd.cur_leaf;
++			e_seg = rfd.cur_seg;
++		}
++	}
++	gld_clipper_Clear();
++	// the exact walk of this frame (margin 0) against the walks of the frames before with margin m: holes (missing) and size
++	if (rfd.have >= 2)
++	{
++		len += snprintf(buf + len, sizeof buf - len, "HWDRY lt=%d E leaf=%u seg=%u", (int)leveltime, e_leaf, e_seg);
++		for (m = 0; m < RFD_N; m++)
++		{
++			UINT32 nl, ml1, ml2, ns, ms1, ms2, wl, ws;
++
++			rfd_cnt(rfd.leaf[m][1], rfd.leaf[0][0], rfd.nleaf, &nl, &ml1);
++			rfd_cnt(rfd.leaf[m][2], rfd.leaf[0][0], rfd.nleaf, &nl, &ml2);
++			rfd_cnt(rfd.seg[m][1], rfd.seg[0][0], rfd.nseg, &ns, &ms1);
++			rfd_cnt(rfd.seg[m][2], rfd.seg[0][0], rfd.nseg, &ns, &ms2);
++			rfd_cnt(rfd.leaf[0][0], rfd.leaf[m][1], rfd.nleaf, &wl, &nl); // wl = |W_m(t-1)|
++			rfd_cnt(rfd.seg[0][0], rfd.seg[m][1], rfd.nseg, &ws, &ns);
++			len += snprintf(buf + len, sizeof buf - len, " | f%d/s%d W leaf=%u seg=%u miss1 leaf=%u seg=%u miss2 leaf=%u seg=%u", rfd_fov[m], rfd_shr[m], wl, ws, ml1, ms1, ml2, ms2);
++		}
++		I_OutputMsg("%s\n", buf);
++	}
++	// rotate the history
++	for (m = 0; m < RFD_N; m++)
++	{
++		UINT32 *t;
++
++		t = rfd.leaf[m][2]; rfd.leaf[m][2] = rfd.leaf[m][1]; rfd.leaf[m][1] = rfd.leaf[m][0]; rfd.leaf[m][0] = t;
++		t = rfd.seg[m][2]; rfd.seg[m][2] = rfd.seg[m][1]; rfd.seg[m][1] = rfd.seg[m][0]; rfd.seg[m][0] = t;
++	}
++	rfd.have++;
++	(void)k;
++}
++
++#endif
+diff --git a/src/ps2/i_video.c b/src/ps2/i_video.c
+index af860da..0d06e32 100644
+--- a/src/ps2/i_video.c
++++ b/src/ps2/i_video.c
+@@ -30,6 +30,7 @@
+ #include "../console.h"
+ #include "../command.h"
+ #include "../d_main.h" // D_PostEvent
++#include "../r_main.h" // rendertimefrac (OPT13 research)
+ #include "../keys.h"
+ #include "../netcode/d_netcmd.h" // cv_showping
+ #include "../netcode/tic_command.h" // simulated_lag
+@@ -959,6 +960,87 @@ static void Impl_HWProf(void)
+ 	ps2hwd_stats_t st;
+ 	ps2hwd_info_t info;
+ 
++	// OPT13 RFRONT research (-hwspike): the per-frame cost of the window, the worst frames with the stages that make them
++	{
++		static int spike = -1;
++		static UINT32 wf[105], top[4][24], ntop;
++		static UINT64 pc[12];
++		static UINT32 pst[8];
++		const UINT32 dw = (UINT32)(now - last_count);
++
++		if (spike < 0)
++			spike = M_CheckParm("-hwspike") != 0;
++		if (spike)
++		{
++			ps2hwd_stats_t s0;
++			UINT64 c[12];
++			UINT32 q[8], e[24];
++			int k;
++
++			c[0] = ps2hwp_cyc[HWP_CLEAR]; c[1] = ps2hwp_cyc[HWP_BSP]; c[2] = ps2hwp_cyc[HWP_BATCH]; c[3] = ps2hwp_cyc[HWP_SPRITES]; c[4] = ps2hwp_cyc[HWP_NODES];
++			c[5] = ps2hwp_cyc[HWP_SEG]; c[6] = ps2hwp_cyc[HWP_PLANE]; c[7] = ps2hwp_cyc[HWP_ADDSPR]; c[8] = ps2hwp_cyc[HWP_SPRDRAW]; c[9] = ps2hwp_cyc[HWP_SETUP];
++			c[10] = ps2hwp_cyc[HWP_B_PLAN]; c[11] = ps2hwp_cyc[HWP_SPRSORT];
++			PS2HWD_GetStats(&s0, 0);
++			q[0] = s0.cyc_tex; q[1] = s0.cyc_draw; q[2] = s0.cyc_wait; q[3] = s0.cyc_flipwait; q[4] = s0.uploads; q[5] = s0.tex_regen; q[6] = s0.evictions; q[7] = s0.tex_missing;
++			e[0] = dw;
++			for (k = 0; k < 12; k++)
++				e[1 + k] = (UINT32)(c[k] - pc[k]);
++			for (k = 0; k < 8; k++)
++				e[13 + k] = q[k] - pst[k];
++			e[21] = (UINT32)frames;
++			e[22] = (UINT32)leveltime;
++			e[23] = (UINT32)rendertimefrac;
++			wf[frames < 105 ? frames : 104] = dw;
++			// keep the 4 worst frames of the window
++			{
++				int worst = -1;
++				UINT32 wmin = ~0u;
++
++				if (ntop < 4)
++					worst = (int)ntop++;
++				else
++					for (k = 0; k < 4; k++)
++						if (top[k][0] < wmin && top[k][0] < dw)
++						{
++							wmin = top[k][0];
++							worst = k;
++						}
++				if (worst >= 0)
++					memcpy(top[worst], e, sizeof e);
++			}
++			for (k = 0; k < 12; k++)
++				pc[k] = c[k];
++			for (k = 0; k < 8; k++)
++				pst[k] = q[k];
++			if (frames + 1 >= 105)
++			{
++				UINT32 sorted[105];
++				int i, j;
++
++				memcpy(sorted, wf, sizeof sorted);
++				for (i = 1; i < 105; i++)
++				{
++					UINT32 v = sorted[i];
++
++					for (j = i; j > 0 && sorted[j - 1] > v; j--)
++						sorted[j] = sorted[j - 1];
++					sorted[j] = v;
++				}
++				{
++					extern size_t R_RfInterpCount(void);
++					I_OutputMsg("HWSPIKE nmobj=%u\n", (unsigned)R_RfInterpCount());
++				}
++				I_OutputMsg("HWSPIKE win=%d p50=%u p90=%u p99=%u max=%u\n", (int)windows, sorted[52], sorted[94], sorted[103], sorted[104]);
++				for (i = 0; i < (int)ntop; i++)
++					I_OutputMsg("HWSPIKE  f=%u lt=%u frac=%u wall=%u | clear=%u bsp=%u batch=%u spr=%u nodes=%u | seg=%u plane=%u addspr=%u sprdraw=%u setup=%u plan=%u sprsort=%u | drv tex=%u draw=%u wait=%u flipwait=%u uploads=%u regen=%u evict=%u missing=%u\n",
++						top[i][21], top[i][22], top[i][23], top[i][0], top[i][1], top[i][2], top[i][3], top[i][4], top[i][5], top[i][6], top[i][7], top[i][8], top[i][9], top[i][10], top[i][11], top[i][12],
++						top[i][13], top[i][14], top[i][15], top[i][16], top[i][17], top[i][18], top[i][19], top[i][20]);
++				ntop = 0;
++				memset(pc, 0, sizeof pc);
++				memset(pst, 0, sizeof pst);
++			}
++		}
++	}
+ 	wall += (UINT32)(now - last_count);
+ 	last_count = now;
+ 	if (++frames < 105)
+diff --git a/src/r_fps.c b/src/r_fps.c
+index c6d6abc..c3d84ad 100644
+--- a/src/r_fps.c
++++ b/src/r_fps.c
+@@ -975,6 +975,8 @@ void R_RemoveMobjInterpolator(mobj_t *mobj)
+ 	}
+ }
+ 
++size_t R_RfInterpCount(void) { return interpolated_mobjs_len; } // RESEARCH (OPT13 RFRONT)
++
+ void R_InitMobjInterpolators(void)
+ {
+ 	// apparently it's not acceptable to free something already unallocated

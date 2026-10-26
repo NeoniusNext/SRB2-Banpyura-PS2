@@ -6,6 +6,7 @@ Result: build/panels/<tag>_<scenario>_<n>.png and <tag>.json (MAD etc., the titl
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -37,11 +38,12 @@ def main():
     ap.add_argument('--timeout', default='1200')
     a = ap.parse_args()
     res = {}
+    (ROOT / 'build/panels').mkdir(parents=True, exist_ok=True)
     names = [n for n in (a.only.split(',') if a.only else SCEN) if n]
     for n in names:
         shots, pkeys, hkeys, warp, tags = SCEN[n]
         pc = f'scr_{n}'
-        cmd = [sys.executable, str(T / 'pcshot.py'), pc, '--shots', shots, '--cmd', 'con_hudlines~0', '--exe', str(ROOT / 'build/pc-ref/bin/lsdlsrb2_claude/lucid-mayer-1izlqe'), '--size', '320x200']
+        cmd = [sys.executable, str(T / 'pcshot.py'), pc, '--shots', shots, '--cmd', 'con_hudlines~0', '--exe', os.environ.get('SRB2_PCEXE') or str(ROOT / 'build/pc-ref/bin/lsdlsrb2_claude/lucid-mayer-1izlqe'), '--size', '320x200']
         if warp:
             cmd += ['--warp', warp]
         if pkeys:

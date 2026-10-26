@@ -471,8 +471,33 @@ void V_SetPaletteLump(const char *pal)
 		I_SetPalette(pLocalPalette);
 }
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-13: the 18 palette cvars are registered one after the other (d_netcmd.c) and every registration reloads the palette. The ones not registered yet
+// are still 0 while their default is not (hue 4..20, saturation 10), so the colour cube is "on" for most of those reloads: 16 times a soft-double cube pass
+// over 256 colours, 240 M cycles of the start-up. The palette of the last reload is the only one that survives, so the registration block asks for that one.
+static boolean palette_defer, palette_pending;
+
+void V_DeferPaletteReload(boolean defer)
+{
+	palette_defer = defer;
+	if (!defer && palette_pending)
+	{
+		palette_pending = false;
+		LoadMapPalette();
+		V_SetPalette(0);
+	}
+}
+#endif
+
 static void CV_palette_OnChange(void)
 {
+#ifdef PS2_PROFILE
+	if (palette_defer)
+	{
+		palette_pending = true;
+		return;
+	}
+#endif
 	// reload palette
 	LoadMapPalette();
 	V_SetPalette(0);

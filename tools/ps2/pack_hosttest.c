@@ -22,11 +22,23 @@ void *Z_MallocAlign(size_t size, INT32 tag, void *user, INT32 alignbits)
 		I_Error("Host test: allocation failed");
 	return p;
 }
+void *Z_CallocAlign(size_t size, INT32 tag, void *user, INT32 alignbits)
+{
+	(void)tag; (void)user; (void)alignbits;
+	return calloc(1, size);
+}
 void Z_Free(void *p) { free(p); }
 void CONS_Alert(alerttype_t level, const char *fmt, ...)
 {
 	va_list ap;
 	(void)level;
+	va_start(ap, fmt);
+	vfprintf(stderr, fmt, ap);
+	va_end(ap);
+}
+void I_OutputMsg(const char *fmt, ...)
+{
+	va_list ap;
 	va_start(ap, fmt);
 	vfprintf(stderr, fmt, ap);
 	va_end(ap);
@@ -56,6 +68,10 @@ static UINT32 rnd(void)
 	return rngstate >> 8;
 }
 
+static wpack_t *pk; /* v2: head table */
+static UINT32 curlump; /* index of the lump being read, for the head table */
+static const lumpinfo_t *alllumps;
+
 /* same contract as W_ReadLumpHeaderPwad after its clamping */
 static size_t read_lump(FILE *f, const lumpinfo_t *l, void *dest, size_t size, size_t offset)
 {
@@ -63,7 +79,12 @@ static size_t read_lump(FILE *f, const lumpinfo_t *l, void *dest, size_t size, s
 		return 0;
 	if (!size || size > l->size - offset)
 		size = l->size - offset;
-	return WPack_ReadLump(f, l, dest, size, offset);
+	return WPack_ReadLumpN(pk, f, (UINT32)(l - alllumps), l, dest, size, offset);
+}
+
+static void verify_report(UINT32 lump, const char *what)
+{
+	fprintf(stderr, "verify: lump %u: %s\n", (unsigned)lump, what);
 }
 
 static boolean guarded(const UINT8 *buf, size_t off, size_t len, size_t capacity)
@@ -88,6 +109,7 @@ int main(int argc, char **argv)
 	unsigned long partial = 0, bad = 0, lz4lumps = 0;
 	UINT32 k, j;
 	boolean rejectheader, rejectread, rejectindex;
+	int nohead = 0;
 
 	for (k = 0; k < 256; k++)
 	{
@@ -97,6 +119,8 @@ int main(int argc, char **argv)
 		crctab[k] = c;
 	}
 
+	if (argc == 4 && !strcmp(argv[3], "nohead")) /* the same checks after WPack_DropHeads: every read takes the file path */
+		argc = 3, nohead = 1;
 	if (argc != 3)
 		return 3;
 	rejectheader = strcmp(argv[1], "--reject-header") == 0;
@@ -106,10 +130,29 @@ int main(int argc, char **argv)
 	f = fopen(argv[rejectheader || rejectread ? 2 : 1], "rb");
 	if (!f)
 		return 3;
-	iobuf = WPack_SetupHandle(f); // setvbuf must precede detection or any other stream I/O
+	{	/* OPT13-IO: the medium (window policy) and the error injection of RS-07 come from the environment; the path is what the engine passes to the reader */
+		const char *m = getenv("PACK_TEST_MEDIUM"), *w = getenv("PACK_TEST_WIN"), *inj = getenv("PACK_TEST_INJECT");
+		unsigned a, b, c, d;
+
+		if (m && !WPack_SetMedium(m))
+			return 3;
+		if (w && sscanf(w, "%u,%u,%u,%u", &a, &b, &c, &d) == 4)
+			WPack_SetWindow(a, b, c, d);
+		if (inj && sscanf(inj, "%u,%u", &a, &b) == 2)
+			WPack_InjectErrors(a, b);
+	}
+	iobuf = WPack_SetupHandleEx(f, argv[rejectheader || rejectread ? 2 : 1]); // setvbuf must precede detection or any other stream I/O
 	if (!WPack_Detect(f))
 		return 4;
-	li = WPack_GetLumps(f, &n, &pool, &nonmusic);
+	li = WPack_GetLumps(f, argv[rejectheader || rejectread ? 2 : 1], &n, &pool, &nonmusic, &pk);
+	alllumps = li;
+	if (!rejectheader && !rejectread)
+	{
+		wpack_iostat_t st;
+
+		WPack_GetStats(&st);
+		fprintf(stderr, "open: cmds=%u bytes=%llu\n", (unsigned)st.cmds, (unsigned long long)st.bytes);
+	}
 	if (rejectheader || rejectread)
 	{
 		boolean rejected = rejectheader && li == NULL && n == 0 && pool == NULL;
@@ -144,6 +187,27 @@ int main(int argc, char **argv)
 	}
 	if (!li)
 		return 5;
+	if (pk)
+		WPack_Register(pk);
+	if (nohead)
+		WPack_DropHeads();
+	if (getenv("PACK_TEST_PREFETCH")) /* OPT13-IO RS-02: every Nth lump is read by the prefetch pass first; PACK_TEST_PREFETCH_DROP: and then the block is taken back (the zone's eviction) */
+	{
+		unsigned every = (unsigned)atoi(getenv("PACK_TEST_PREFETCH")), kept;
+		wpack_iostat_t st0, st1;
+
+		if (!every)
+			every = 1;
+		WPack_GetStats(&st0);
+		WPack_PrefetchBegin();
+		for (i = 0; i < n; i += every)
+			WPack_PrefetchAdd(f, &li[i]);
+		kept = WPack_PrefetchRun(64u << 20, NULL);
+		WPack_GetStats(&st1);
+		fprintf(stderr, "prefetch: kept %u bytes in %u device reads\n", kept, (unsigned)(st1.cmds - st0.cmds));
+		if (getenv("PACK_TEST_PREFETCH_DROP"))
+			WPack_PrefetchDrop();
+	}
 	out = fopen(argv[2], "wb");
 	if (!out)
 		return 3;
@@ -160,7 +224,7 @@ int main(int argc, char **argv)
 		got = size ? read_lump(f, &li[i], buf, 0, 0) : 0;
 		if (got != size || !guarded(storage, 1, size, size + 128))
 		{
-			fprintf(stderr, "lump %u: read %lu of %lu\n", (unsigned)i, (unsigned long)got, (unsigned long)size);
+			fprintf(stderr, "lump %u: read %lu of %lu (%s)\n", (unsigned)i, (unsigned long)got, (unsigned long)size, WPack_LastError());
 			bad++;
 		}
 		if (li[i].compression == CM_LZ4)
@@ -200,8 +264,32 @@ int main(int argc, char **argv)
 		free(part);
 	}
 	fclose(out);
-	fprintf(stderr, "%u lumps (%lu LZ4), %lu partial reads, %lu failures\n", (unsigned)n, lz4lumps, partial, bad);
+	if (pk)
+	{
+		UINT32 vb = WPack_Verify(pk, f, li, n, verify_report);
+
+		fprintf(stderr, "verify (CRC32 table of the pack): %u damaged lumps\n", (unsigned)vb);
+		bad += vb;
+	}
+	fprintf(stderr, "%u lumps (%lu LZ4), %lu partial reads, %lu failures%s\n", (unsigned)n, lz4lumps, partial, bad, pk ? (nohead ? " [v2, no head table]" : " [v2]") : " [v1]");
+	{
+		wpack_iostat_t st;
+
+		WPack_GetStats(&st);
+		fprintf(stderr, "iostat cmds=%u hits=%u misses=%u bulk=%u retries=%u failures=%u injected=%u bytes=%llu\n", (unsigned)st.cmds, (unsigned)st.hits, (unsigned)st.misses,
+			(unsigned)st.bulk, (unsigned)st.retries, (unsigned)st.failures, (unsigned)st.injected, (unsigned long long)st.bytes);
+		if (st.failures)
+			fprintf(stderr, "last error: %s\n", WPack_LastError());
+		if (getenv("PACK_TEST_PREFETCH"))
+		{
+			UINT32 hits, hitbytes, ranges, kept;
+
+			WPack_PrefetchStats(&hits, &hitbytes, &ranges, &kept);
+			fprintf(stderr, "prefetchstat hits=%u bytes=%u ranges=%u kept=%u\n", (unsigned)hits, (unsigned)hitbytes, (unsigned)ranges, (unsigned)kept);
+		}
+	}
 	WPack_Shutdown();
+	WPack_Close(pk);
 	Z_Free(li);
 	Z_Free(pool);
 	fclose(f);

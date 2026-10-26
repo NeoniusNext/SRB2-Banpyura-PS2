@@ -14,6 +14,6 @@ rm -rf "$W"; mkdir -p "$W/home/.srb2"
 cp "$ROOT/golden/phase0-v2/$D.lmp" "$W/home/.srb2/$D.lmp"
 printf 'fpscap "35"\nfullscreen "Off"\nshowfps "Off"\nshowping "Off"\nrollingdemos "Off"\n' > "$W/home/.srb2/reference.cfg"
 cd "$W"
-SRB2WADDIR=$PAK SDL_AUDIODRIVER=dummy xvfb-run -a -s "-screen 0 800x600x24" valgrind --tool=callgrind --toggle-collect=TryRunTics --callgrind-out-file="$OUT/$D.cg" \
+SRB2WADDIR=$PAK SDL_AUDIODRIVER=dummy xvfb-run -a -s "-screen 0 800x600x24" valgrind --tool=callgrind --toggle-collect=${CG_FUNC:-P_Ticker} --callgrind-out-file="$OUT/$D.%p.cg" \
   "$EXE" -ps2ref "$W" -home "$W/home" -config reference.cfg -nolog -noendtxt -win -width 320 -height 200 -timedemo $D.lmp > stdout.log 2>&1 || true
 ls -la "$OUT/$D.cg"

@@ -318,7 +318,7 @@ static void SetChannelsNum(void)
 	}
 #endif
 	if (cv_numChannels.value)
-		channels = (channel_t *)Z_Malloc(cv_numChannels.value * sizeof (channel_t), PU_STATIC, NULL);
+		channels = (channel_t *)Z_Calloc(cv_numChannels.value * sizeof (channel_t), PU_STATIC, NULL);
 	numofchannels = cv_numChannels.value;
 
 	// Free all channels for use
@@ -441,7 +441,7 @@ void S_StartCaption(sfxenum_t sfx_id, INT32 cnum, UINT16 lifespan)
 
 	// check for bogus sound #
 	// I_Assert(sfx_id >= 0); -- allowing sfx_None; this shouldn't be allowed directly if S_StartCaption is ever exposed to Lua by itself
-	I_Assert(sfx_id < LIMIT_NUMSFX);
+	I_Assert((INT32)sfx_id < (INT32)LIMIT_NUMSFX); // OPT14: the debug build did not compile (sign-compare)
 
 	sfx = &S_sfx[sfx_id];
 
@@ -593,7 +593,7 @@ void S_StartSoundAtVolume(const void *origin_p, sfxenum_t sfx_id, INT32 volume)
 
 	// check for bogus sound #
 	I_Assert(sfx_id >= 1);
-	I_Assert(sfx_id < LIMIT_NUMSFX);
+	I_Assert((INT32)sfx_id < (INT32)LIMIT_NUMSFX); // OPT14: the debug build did not compile (sign-compare)
 
 	sfx = &S_sfx[sfx_id];
 

@@ -132,7 +132,7 @@ def write_stub_sources(work):
     rd = (ROOT / 'src/r_data.c').read_text(encoding='utf-8', errors='replace').replace('\r\n', '\n')
     vv = (ROOT / 'src/v_video.c').read_text(encoding='utf-8', errors='replace').replace('\r\n', '\n')
     rp = (ROOT / 'src/r_patch.c').read_text(encoding='utf-8', errors='replace').replace('\r\n', '\n')
-    (work / 'strip_nearest.inc').write_text(_slice(rd, 'UINT8 NearestPaletteColor(UINT8 r, UINT8 g, UINT8 b, RGBA_t *palette)', '#ifdef EXTRACOLORMAPLUMPS\nconst char *R_NameForColormap'), encoding='utf-8')
+    (work / 'strip_nearest.inc').write_text(_slice(rd, 'UINT8 NearestPaletteColor(UINT8 r, UINT8 g, UINT8 b, RGBA_t *palette)\n{\n\tint dr, dg, db;', '#endif\n\n#ifdef EXTRACOLORMAPLUMPS\nconst char *R_NameForColormap'), encoding='utf-8')  # the original loop (PS2-LOAD-14 put a PS2_PROFILE variant before it)
     (work / 'strip_clut.inc').write_text(_slice(vv, '// Generates a RGB565 color look-up table\nvoid InitColorLUT', '// V_Init\n// old software stuff'), encoding='utf-8')
     (work / 'strip_patch.inc').write_text(_slice(rp, 'patch_t *Patch_Create(INT16 width, INT16 height)', '//\n// Frees a patch from memory.'), encoding='utf-8')
 

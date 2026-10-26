@@ -122,7 +122,7 @@ static void ChoosePaths(int argc, char **argv)
 	if (IsRoot(ps2boot.datadir, "cdfs"))
 	{
 		strlcpy(ps2boot.homedir, "mc0:", sizeof ps2boot.homedir);
-		printf("PS2BOOT WARNING: boot device is read-only; home is mc0: but mcman/mcserv are not loaded yet\n");
+		printf("PS2BOOT boot device is read-only; home is mc0: (mcman/mcserv load from <data>/modules at the first use of the home, I_GetEnv)\n");
 	}
 	else
 		strlcpy(ps2boot.homedir, ps2boot.datadir, sizeof ps2boot.homedir);
@@ -270,6 +270,13 @@ void PS2Boot_Init(int *argc, char ***argv)
 	snprintf(path, sizeof path, "%s/ps2args", ps2boot.datadir);
 	fromfile = ReadArgFile(path, &nv, &nn, &cap);
 
+	// OPT13-IO (S-02): -home DEVICE: puts the config, saves, replays and downloads on another device ("mc0:"); the way to try the memory card path from host: in an emulator
+	for (i = 1; i + 1 < nn; i++)
+		if (!strcasecmp(nv[i], "-home"))
+		{
+			strlcpy(ps2boot.homedir, nv[i + 1], sizeof ps2boot.homedir);
+			printf("PS2BOOT -home: home is %s\n", ps2boot.homedir);
+		}
 	*argc = nn;
 	*argv = nv;
 	if (!HasFlag(nn, nv, "-nousb")) // also from <datadir>/ps2args

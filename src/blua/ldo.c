@@ -379,6 +379,9 @@ int luaD_poscall (lua_State *L, StkId firstResult) {
 ** When returns, all the results are on the stack, starting at the original
 ** function position.
 */
+#ifdef PS2
+extern size_t ps2lua_stackfloor;  /* lua_script.c: the lowest address of the main stack that Lua may still call from (0: no check) */
+#endif
 void luaD_call (lua_State *L, StkId func, int nResults) {
   if (++L->nCcalls >= LUAI_MAXCCALLS) {
     if (L->nCcalls == LUAI_MAXCCALLS)
@@ -386,6 +389,16 @@ void luaD_call (lua_State *L, StkId func, int nResults) {
     else if (L->nCcalls >= (LUAI_MAXCCALLS + (LUAI_MAXCCALLS>>3)))
       luaD_throw(L, LUA_ERRERR);  /* error while handing stack error */
   }
+#ifdef PS2
+  else if (ps2lua_stackfloor) {
+    /* OPT14 (PS2-LUA-5): LUAI_MAXCCALLS is 200 C levels, ~1.5 KB each on the EE (a gsub callback holds a 1 KiB luaL_Buffer): 340 KB of the 384 KiB stack in the worst case measured,
+       and an overflow of the stack of the EE corrupts memory silently. Within 40 KiB of the end the call is refused with the same error as the 200th level. */
+    size_t sp;
+    __asm__ volatile("move %0,$sp" : "=r"(sp));
+    if (sp < ps2lua_stackfloor)
+      luaG_runerror(L, "C stack overflow");
+  }
+#endif
   if (luaD_precall(L, func, nResults) == PCRLUA)  /* is a Lua function? */
     luaV_execute(L, 1);  /* call it */
   L->nCcalls--;

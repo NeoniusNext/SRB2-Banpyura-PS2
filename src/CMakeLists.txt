@@ -119,7 +119,7 @@ if(SRB2_CONFIG_PS2PROFILE)
 		list(FILTER SRB2_ENGINE_SOURCES EXCLUDE REGEX "^(lua_.*|deh_lua)\\.c$")
 		list(APPEND SRB2_ENGINE_SOURCES ps2/lua_stub.c)
 	endif()
-	list(APPEND SRB2_ENGINE_SOURCES ps2/soc_numbers.c ps2/net_stub.c w_pack.c ps2/ps2_ftest.c)
+	list(APPEND SRB2_ENGINE_SOURCES ps2/soc_numbers.c ps2/net_stub.c w_pack.c ps2/ps2_ftest.c ps2/ps2_texc.c ps2/ps2_safefile.c)
 endif()
 add_executable(SRB2SDL2 MACOSX_BUNDLE WIN32 ${SRB2_ENGINE_SOURCES})
 

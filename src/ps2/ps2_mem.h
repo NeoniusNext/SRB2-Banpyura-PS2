@@ -106,6 +106,8 @@ int ZA_Resize(void *payload, size_t size);
 void *ZA_Free(void *payload);
 void ZA_SetFrontier(void *addr); // PS2-75: short-lived requests are placed below, long-lived ones above (NULL: no zones); two-sided policy only
 void *ZA_Frontier(void);
+zablock_t *ZA_FrontBlock(void); // PS2-600: the block that holds the frontier (NULL without one), found from an anchor kept by the frees, not from the arena start
+void ZA_SetAnchor(zablock_t *b); // a block start at or below the frontier the caller knows
 zablock_t *ZA_PrevFree(zablock_t *b); // PS2-76: the free block that ends where b starts (b's header says so), NULL when the block before b is used
 zablock_t *ZA_LargestFreeBlock(void); // NULL when full
 void ZA_NoteEvict(size_t bytes); // statistics only
@@ -115,6 +117,7 @@ zablock_t *ZA_First(void);
 zablock_t *ZA_Next(zablock_t *b); // NULL after the last block
 zablock_t *ZA_BlockAt(void *addr); // the block starting at addr (a value ZA_Free returned), NULL at the arena end
 size_t ZA_FreeBytes(void);
+size_t ZA_Capacity(void); // PS2-600: bytes of the arena
 size_t ZA_LargestFree(void); // largest free block, header included (0 when full)
 void ZA_Stats(zastats_t *st);
 // 0 if consistent, else a message in `msg` (structure, coalescing, free lists, red zones).

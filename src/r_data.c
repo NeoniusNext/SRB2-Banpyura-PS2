@@ -30,6 +30,16 @@
 #include "f_finale.h" // wipes
 #include "byteptr.h"
 #include "dehacked.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1
+#ifdef PS2_PROFILE
+#include "w_pack.h" // OPT13-IO (RS-02): WPack_Prefetch*
+#include "netcode/d_clisrv.h" // NetKeepAlive
+#include "r_skins.h"
+#endif
+#ifdef PS2_PROFILE
+#include "ps2/ps2_nearest.h" // PS2-LOAD-14
+#include "m_argv.h" // -loadhash (the check of the light table steps)
+#endif
 
 #ifdef HWRENDER
 #include "hardware/hw_glob.h" // HWR_ClearLightTables
@@ -280,12 +290,50 @@ static void R_InitSpriteLumps(void)
 // R_CreateFadeColormaps
 //
 
+#ifdef PS2_PROFILE
+// PS2-LOAD-13: the fade colormaps are a function of the first row of COLORMAP, the colours of the master palette and (when the lumps are there) FADECMAP /
+// FADEWMAP, and every level calls R_ReInitColormaps: 16384 nearest colour searches each time. The result is kept while those inputs are the same ones.
+typedef struct
+{
+	UINT8 row0[256];
+	UINT8 rgb[256][3];
+	lumpnum_t black, white;
+} fadeinputs_t;
+static fadeinputs_t fadeinputs;
+static boolean fadeinputs_valid;
+
+static void FadeInputs(fadeinputs_t *in)
+{
+	int i;
+
+	memset(in, 0, sizeof *in);
+	memcpy(in->row0, colormaps, 256);
+	for (i = 0; i < 256; i++)
+	{
+		in->rgb[i][0] = pMasterPalette[i].s.red;
+		in->rgb[i][1] = pMasterPalette[i].s.green;
+		in->rgb[i][2] = pMasterPalette[i].s.blue;
+	}
+	in->black = W_CheckNumForName("FADECMAP");
+	in->white = W_CheckNumForName("FADEWMAP");
+}
+#endif
+
+#ifdef PS2_PROFILE
+#define R_CreateFadeColormaps R_CreateFadeColormapsRaw
+#endif
 static void R_CreateFadeColormaps(void)
 {
 	UINT8 px, fade;
 	RGBA_t rgba;
 	INT32 r, g, b;
 	size_t len, i;
+#ifdef PS2_PROFILE
+	static ps2nearest_t fadectx; // (the original asked NearestColor, i.e. the master palette, 16384 times)
+	const ps2nearest_t *nearest = &fadectx;
+
+	PS2Nearest_Build(&fadectx, pMasterPalette);
+#endif
 
 	len = (256 * FADECOLORMAPROWS);
 	fadecolormap = Z_MallocAlign(len*2, PU_STATIC, NULL, 8);
@@ -338,7 +386,11 @@ static void R_CreateFadeColormaps(void)
 		if (b < 0) b = 0;
 
 		// find nearest color in palette
+#ifdef PS2_PROFILE
+		fadecolormap[i] = PS2Nearest_Find(nearest, r, g, b);
+#else
 		fadecolormap[i] = NearestColor(r,g,b);
+#endif
 	}
 
 	// to white
@@ -359,10 +411,34 @@ static void R_CreateFadeColormaps(void)
 		if (b > 255) b = 255;
 
 		// find nearest color in palette
+#ifdef PS2_PROFILE
+		fadecolormap[i] = PS2Nearest_Find(nearest, r, g, b);
+#else
 		fadecolormap[i] = NearestColor(r,g,b);
+#endif
 	}
 #undef GETCOLOR
 }
+
+#ifdef PS2_PROFILE
+#undef R_CreateFadeColormaps
+// Builds the fade colormaps unless the ones that exist were made from the same inputs (the old table is freed here, not by the caller)
+static void R_CreateFadeColormaps(void)
+{
+	fadeinputs_t in;
+
+	FadeInputs(&in);
+	if (fadeinputs_valid && fadecolormap && !memcmp(&in, &fadeinputs, sizeof in))
+		return;
+	if (fadecolormap)
+		Z_Free(fadecolormap);
+	fadecolormap = NULL; // PS2-173: the allocation below can jump out
+	fadeinputs_valid = false;
+	R_CreateFadeColormapsRaw();
+	fadeinputs = in;
+	fadeinputs_valid = true;
+}
+#endif
 
 //
 // R_InitColormaps
@@ -409,12 +485,16 @@ void R_ReInitColormaps(UINT16 num)
 	}
 
 	W_ReadLumpHeader(lump, colormaps, W_LumpLength(basecolormaplump), 0U);
+#ifdef PS2_PROFILE
+	R_CreateFadeColormaps(); // PS2-LOAD-13: keeps the table of the earlier level when its inputs are the same (and frees the old one otherwise)
+#else
 	if (fadecolormap)
 		Z_Free(fadecolormap);
 #ifdef PS2
 	fadecolormap = NULL; // PS2-173: the allocation below can jump out (z_zone.h Z_GUARD_TRY): not a pointer to freed memory
 #endif
 	R_CreateFadeColormaps();
+#endif
 
 	// Init Boom colormaps.
 	R_ClearColormaps();
@@ -704,10 +784,19 @@ static colorlookup_t *lighttable_lutp;
 static colorlookup_t lighttable_lut;
 #endif
 
+#ifdef PS2_PROFILE
+static ps2nearest_t lighttable_nctx; // PS2-LOAD-14: built once per colormap (8704 searches), not checked per search
+
+static UINT8 LightTableNearest(UINT8 r, UINT8 g, UINT8 b)
+{
+	return PS2Nearest_Find(&lighttable_nctx, r, g, b);
+}
+#else
 static UINT8 LightTableNearest(UINT8 r, UINT8 g, UINT8 b)
 {
 	return NearestColor(r, g, b);
 }
+#endif
 
 static UINT8 LightTableNearest_LUT(UINT8 r, UINT8 g, UINT8 b)
 {
@@ -720,6 +809,100 @@ lighttable_t *R_CreateLightTable(extracolormap_t *extra_colormap)
 	R_GenerateLightTable(extra_colormap, false);
 	return extra_colormap->colormap;
 }
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-13: the light table of the default colormap (no tint, fade to black) is rebuilt at every level (R_ClearColormaps): 8704 colours through soft-double
+// arithmetic, ~40 M cycles. It depends on the colours of the master palette only, so the table of the last time is kept while they are the same.
+static double cbright_cache[256];
+static UINT8 cbright_pal[256][3];
+static boolean cbright_valid;
+static UINT8 deflight_table[256 * 34];
+static UINT8 deflight_pal[256][3];
+static boolean deflight_valid;
+
+static void DefLightSig(UINT8 pal[256][3])
+{
+	int i;
+
+	for (i = 0; i < 256; i++)
+	{
+		pal[i][0] = pMasterPalette[i].s.red;
+		pal[i][1] = pMasterPalette[i].s.green;
+		pal[i][2] = pMasterPalette[i].s.blue;
+	}
+}
+
+static boolean DefLightGet(UINT8 *dest)
+{
+	UINT8 sig[256][3];
+
+	if (!deflight_valid)
+		return false;
+	DefLightSig(sig);
+	if (memcmp(sig, deflight_pal, sizeof sig))
+		return false;
+	memcpy(dest, deflight_table, sizeof deflight_table);
+	return true;
+}
+
+static void DefLightPut(const UINT8 *src)
+{
+	DefLightSig(deflight_pal);
+	memcpy(deflight_table, src, sizeof deflight_table);
+	deflight_valid = true;
+}
+#endif
+
+#ifdef PS2_PROFILE
+// PS2-LOAD-22: the 34 x 256 x 3 channel steps of R_GenerateLightTable on the bit patterns of the doubles (src/ps2/ps2_dbl.h: exact IEEE subtraction, comparison
+// and M_RoundUp in 64-bit integer arithmetic; the soft double of the EE did 40 M cycles of this per table). Gives the bytes the double code gives, or returns false
+// (a value that is not a zero or a normal finite number) and the double loop below runs. With -loadhash both run and are compared: a difference is an error.
+#include "ps2/ps2_dbl.h"
+
+typedef struct { UINT8 (*f)(UINT8, UINT8, UINT8); } lightnear_t;
+
+static uint8_t LightNearestCall(void *ctx, uint8_t r, uint8_t g, uint8_t b)
+{
+	return ((lightnear_t *)ctx)->f(r, g, b);
+}
+
+static UINT8 *lightcheck_buf; // (-loadhash only: allocated for the check)
+static boolean lightcheck_pending;
+
+static boolean R_LightStepsFast(UINT8 *dest, double cdestr, double cdestg, double cdestb, UINT8 fadestart, UINT8 (*nearestf)(UINT8, UINT8, UINT8))
+{
+	dblbits_t mb[256][3], db[256][3], destb[3];
+	lightnear_t ln;
+	int i, c;
+	boolean check = ps2lp_on && M_CheckParm("-loadhash");
+
+	if (check && !lightcheck_buf)
+		lightcheck_buf = Z_Malloc(256 * 34, PU_STATIC, NULL);
+
+	for (i = 0; i < 256; i++)
+		for (c = 0; c < 3; c++)
+		{
+			mb[i][c] = Dbl_Bits(map[i][c]);
+			db[i][c] = Dbl_Bits(deltas[i][c]);
+		}
+	destb[0] = Dbl_Bits(cdestr);
+	destb[1] = Dbl_Bits(cdestg);
+	destb[2] = Dbl_Bits(cdestb);
+	ln.f = nearestf;
+	if (!Dbl_LightSteps(mb, db, destb, fadestart, check ? lightcheck_buf : dest, LightNearestCall, &ln))
+	{
+		if (check)
+			I_OutputMsg("LCHECK light table: the double code ran (a value was not a normal number)\n");
+		return false;
+	}
+	if (check)
+	{
+		lightcheck_pending = true; // the double loop runs too; R_GenerateLightTable compares afterwards
+		return false;
+	}
+	return true;
+}
+#endif
 
 void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 {
@@ -739,6 +922,15 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 		fadedist = extra_colormap->fadeend - extra_colormap->fadestart;
 
 	size_t i;
+
+#ifdef PS2_PROFILE
+	const boolean defparams = !uselookup && extra_colormap->rgba == 0 && (UINT32)extra_colormap->fadergba == 0xFF000000u && extra_colormap->fadestart == 0 && extra_colormap->fadeend == 31;
+
+	if (defparams && DefLightGet((UINT8 *)extra_colormap->colormap))
+		return;
+#endif
+
+	LP_BEGIN(lpg);
 
 	/////////////////////
 	// Calc the RGBA mask
@@ -791,19 +983,48 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 			NearestColorFunc = LightTableNearest_LUT;
 		}
 		else
+		{
+#ifdef PS2_PROFILE
+			PS2Nearest_Build(&lighttable_nctx, pMasterPalette);
+#endif
 			NearestColorFunc = LightTableNearest;
+		}
 
 		// Initialise the map and delta arrays
 		// map[i] stores an RGB color (as double) for index i,
 		//  which is then converted to SRB2's palette later
 		// deltas[i] stores a corresponding fade delta between the RGB color and the final fade color;
 		//  map[i]'s values are decremented by after each use
+#ifdef PS2_PROFILE
+		// PS2-LOAD-22: the 256 square roots (14 000 cycles each in the soft double sqrt of newlib) only depend on the palette: kept while it is the same
+		{
+			UINT8 sig[256][3];
+
+			DefLightSig(sig);
+			if (!cbright_valid || memcmp(sig, cbright_pal, sizeof sig))
+			{
+				for (i = 0; i < 256; i++)
+				{
+					r = sig[i][0];
+					g = sig[i][1];
+					b = sig[i][2];
+					cbright_cache[i] = sqrt((r*r) + (g*g) + (b*b));
+				}
+				memcpy(cbright_pal, sig, sizeof sig);
+				cbright_valid = true;
+			}
+		}
+#endif
 		for (i = 0; i < 256; i++)
 		{
 			r = pMasterPalette[i].s.red;
 			g = pMasterPalette[i].s.green;
 			b = pMasterPalette[i].s.blue;
+#ifdef PS2_PROFILE
+			cbrightness = cbright_cache[i];
+#else
 			cbrightness = sqrt((r*r) + (g*g) + (b*b));
+#endif
 
 			map[i][0] = (cbrightness * cmaskr) + (r * othermask);
 			if (map[i][0] > 255.0l)
@@ -827,6 +1048,9 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 
 		// Calculate the palette index for each palette index, for each light level
 		// (as well as the two unused colormap lines we inherited from Doom)
+#ifdef PS2_PROFILE
+		if (!R_LightStepsFast((UINT8 *)colormap_p, cdestr, cdestg, cdestb, fadestart, NearestColorFunc))
+#endif
 		for (p = 0; p < 34; p++)
 		{
 			for (i = 0; i < 256; i++)
@@ -857,6 +1081,19 @@ void R_GenerateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
 			}
 		}
 	}
+#ifdef PS2_PROFILE
+	if (lightcheck_pending)
+	{
+		lightcheck_pending = false;
+		if (memcmp(lightcheck_buf, extra_colormap->colormap, 256 * 34))
+			I_Error("R_GenerateLightTable: the integer steps give a different table than the double code (rgba %08x fade %08x)", (unsigned)extra_colormap->rgba, (unsigned)extra_colormap->fadergba);
+		I_OutputMsg("LCHECK light table rgba %08x fade %08x start %u end %u: integer steps == double code\n", (unsigned)extra_colormap->rgba, (unsigned)extra_colormap->fadergba,
+			(unsigned)extra_colormap->fadestart, (unsigned)extra_colormap->fadeend);
+	}
+	if (defparams)
+		DefLightPut((const UINT8 *)extra_colormap->colormap);
+#endif
+	LP_END(R_LIGHTGEN, lpg);
 }
 
 void R_UpdateLightTable(extracolormap_t *extra_colormap, boolean uselookup)
@@ -1151,6 +1388,23 @@ extracolormap_t *R_AddColormaps(extracolormap_t *exc_augend, extracolormap_t *ex
 
 // Thanks to quake2 source!
 // utils3/qdata/images.c
+#ifdef PS2_PROFILE
+// PS2-LOAD-14: the same answer (the lowest index among the palette entries nearest to the colour) from a luma-sorted search instead of 256 distance
+// computations (ps2_nearest.c, compared with this loop for all 2^24 colours on 9 palettes by tools/ps2/nearest_hosttest.c). The context of the palette of the
+// last call is kept and re-checked against the colours (a palette that was freed and made again at the same address is a different palette).
+static ps2nearest_t nearest_ctx;
+
+UINT8 NearestPaletteColor(UINT8 r, UINT8 g, UINT8 b, RGBA_t *palette)
+{
+	// Use master palette if none specified
+	if (palette == NULL)
+		palette = pMasterPalette;
+
+	if (!PS2Nearest_Same(&nearest_ctx, palette))
+		PS2Nearest_Build(&nearest_ctx, palette);
+	return PS2Nearest_Find(&nearest_ctx, r, g, b);
+}
+#else
 UINT8 NearestPaletteColor(UINT8 r, UINT8 g, UINT8 b, RGBA_t *palette)
 {
 	int dr, dg, db;
@@ -1178,6 +1432,7 @@ UINT8 NearestPaletteColor(UINT8 r, UINT8 g, UINT8 b, RGBA_t *palette)
 
 	return (UINT8)bestcolor;
 }
+#endif
 
 #ifdef EXTRACOLORMAPLUMPS
 const char *R_NameForColormap(extracolormap_t *extra_colormap)
@@ -1200,22 +1455,163 @@ const char *R_NameForColormap(extracolormap_t *extra_colormap)
 //
 void R_InitData(void)
 {
+	LP_BEGIN(lp0);
+
 	CONS_Printf("R_LoadParsedTranslations()...\n");
 	R_LoadParsedTranslations();
+	LP_END(R_OTHER, lp0);
 
 	CONS_Printf("R_LoadTextures()...\n");
+	LP_RESTART(lp0);
+	LP_SAMPLE(22);
 	R_LoadTextures();
+	LP_SAMPLE(23);
+	LP_END(R_TEXTURES, lp0);
 
 	CONS_Printf("P_InitPicAnims()...\n");
+	LP_RESTART(lp0);
 	P_InitPicAnims();
+	LP_END(R_FLATS, lp0);
 
 	CONS_Printf("R_InitSprites()...\n");
+	LP_RESTART(lp0);
+	LP_SAMPLE(24);
 	R_InitSpriteLumps();
 	R_InitSprites();
+	LP_SAMPLE(25);
+	LP_END(R_SPRITES, lp0);
 
 	CONS_Printf("R_InitColormaps()...\n");
+	LP_RESTART(lp0);
+	LP_SAMPLE(26);
 	R_InitColormaps();
+	LP_SAMPLE(27);
+	LP_END(R_COLORMAPS, lp0);
 }
+#ifdef PS2_PROFILE
+// OPT13-IO (RS-02): the lumps a level will probably need, in one sorted pass over the packs (w_pack.c, WPack_PrefetchRun). Off unless -pkprefetch [KB] (default budget 2048 KB of
+// stored bytes, PU_CACHE: the zone takes the block back under pressure). The list is the one R_PrecacheLevel walks (the patches of every texture on a side, of every flat of the
+// level and of the sky; every frame of every sprite a mobj of the level uses) plus the sprites of the skins in the game.
+static void R_PrefetchSprite(lumpnum_t lump)
+{
+	if (lump != LUMPERROR)
+		W_PrefetchLump(WADFILENUM(lump), LUMPNUM(lump));
+}
+
+static void R_PrefetchSpriteDef(const spritedef_t *def)
+{
+	size_t j, k;
+
+	if (!def || !def->spriteframes)
+		return;
+	for (j = 0; j < def->numframes; j++)
+	{
+		const spriteframe_t *sf = &def->spriteframes[j];
+
+		switch (sf->rotate)
+		{
+		case SRF_SINGLE:
+			R_PrefetchSprite(sf->lumppat[0]);
+			break;
+		case SRF_2D:
+			R_PrefetchSprite(sf->lumppat[2]);
+			R_PrefetchSprite(sf->lumppat[6]);
+			break;
+		default:
+			for (k = (sf->rotate & SRF_3DGE ? 16 : 8); k--;)
+				R_PrefetchSprite(sf->lumppat[k]);
+			break;
+		}
+	}
+}
+
+static void R_PrefetchPump(void)
+{
+	if (netgame)
+		NetKeepAlive(); // RS-09: a long pass over the medium must not make the server drop the node
+}
+
+void R_PrefetchLevel(void)
+{
+	static INT32 enabled = -1;
+	static UINT32 budget = 2048 * 1024;
+	char *texturepresent, *spritepresent;
+	size_t i, j;
+	thinker_t *th;
+
+	if (enabled < 0)
+	{
+		enabled = M_CheckParm("-pkprefetch") != 0;
+		if (enabled && M_IsNextParm())
+		{
+			const INT32 kb = atoi(M_GetNextParm());
+
+			if (kb > 0)
+				budget = (UINT32)kb * 1024;
+		}
+	}
+	if (!enabled || dedicated)
+		return;
+	texturepresent = calloc(numtextures, sizeof (*texturepresent));
+	spritepresent = calloc(numsprites, sizeof (*spritepresent));
+	if (!texturepresent || !spritepresent)
+	{
+		free(texturepresent);
+		free(spritepresent);
+		return;
+	}
+	WPack_PrefetchBegin();
+	for (j = 0; j < numsides; j++)
+	{
+		if (sides[j].toptexture >= 0 && sides[j].toptexture < numtextures)
+			texturepresent[sides[j].toptexture] = 1;
+		if (sides[j].midtexture >= 0 && sides[j].midtexture < numtextures)
+			texturepresent[sides[j].midtexture] = 1;
+		if (sides[j].bottomtexture >= 0 && sides[j].bottomtexture < numtextures)
+			texturepresent[sides[j].bottomtexture] = 1;
+	}
+	if (skytexture >= 0 && skytexture < numtextures)
+		texturepresent[skytexture] = 1;
+	for (j = 0; j < numlevelflats; j++)
+		if (levelflats[j].type == LEVELFLAT_TEXTURE && levelflats[j].texture_id >= 0 && levelflats[j].texture_id < numtextures)
+			texturepresent[levelflats[j].texture_id] = 1;
+	for (j = 0; j < (size_t)numtextures; j++)
+	{
+		INT32 k;
+
+		if (!texturepresent[j] || !textures[j])
+			continue;
+		for (k = 0; k < textures[j]->patchcount; k++)
+			W_PrefetchLump(textures[j]->patches[k].wad, textures[j]->patches[k].lump);
+	}
+	for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next)
+		if (th->function != (actionf_p1)P_RemoveThinkerDelayed && ((mobj_t *)th)->sprite < numsprites)
+			spritepresent[((mobj_t *)th)->sprite] = 1;
+	for (i = 0; i < numsprites; i++)
+		if (spritepresent[i])
+			R_PrefetchSpriteDef(&sprites[i]);
+	for (j = 0; j < MAXPLAYERS; j++) // the skins in the game: their frames are met the first time the player moves
+	{
+		const skin_t *sk;
+		INT32 k;
+
+		if (!playeringame[j] || players[j].skin >= numskins || !(sk = skins[players[j].skin]))
+			continue;
+		for (k = 0; k < LIMIT_NUMPLAYERSPRITES; k++)
+			R_PrefetchSpriteDef(&sk->sprites[k]);
+	}
+	free(texturepresent);
+	free(spritepresent);
+	{
+		const UINT32 kept = WPack_PrefetchRun(budget, R_PrefetchPump);
+		UINT32 hits, hitbytes, ranges, held;
+
+		WPack_PrefetchStats(&hits, &hitbytes, &ranges, &held);
+		CONS_Printf("Prefetch: %u KB of stored lumps in %u reads (budget %u KB)\n", (unsigned)(kept >> 10), (unsigned)ranges, (unsigned)(budget >> 10));
+	}
+}
+#endif
+
 
 //
 // R_PrecacheLevel

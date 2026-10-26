@@ -1,6 +1,6 @@
-"""PS2-177 (NOT APPLIED, NOT VERIFIED): two-pass column loop for plain textured wall ranges (docs/GATES/g1/opt10-SW.md, section 3.18).
+"""PS2-177 (APPLIED AND VERIFIED BIT-EXACT BY OPT11-CORE AND OPT12-CORE, NO GAIN: 0.5 %, NOT KEPT, see docs/GATES/g1/opt12-CORE.md section 4): two-pass column loop for plain textured wall ranges (docs/GATES/g1/opt10-SW.md, section 3.18).
 Run from the repository root: python3 tools/ps2/sw_segloop2.patch.py   (edits src/r_segs.c in place; revert with git checkout src/r_segs.c).
-Status: only compiled to assembly (tools/ps2/sw_segasm.sh); no host A/B, no golden, no timing. Do not merge without the full gate."""
+Status: bit-exact (host A/B and EE golden on 4 demos), measured: D1 -0.5 %, D2 -0.1 %, D4 0. Not worth 368 lines in the hottest loop: not merged."""
 p = 'src/r_segs.c'
 s = open(p).read()
 

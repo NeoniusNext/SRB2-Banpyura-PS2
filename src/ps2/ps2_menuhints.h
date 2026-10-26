@@ -44,6 +44,8 @@ typedef enum
 	PS2MH_VIDEOMODE,  // the video mode list
 	PS2MH_CHANGE,     // an item that left / right change (a play style, a character, a page, a skin or a colour)
 	PS2MH_VMCONFIRM,  // the video mode that is being tried: Enter keeps it, Escape returns
+	PS2MH_CHAT,       // "Chat" of the pause menu of a netgame (OPT14-CHAT): Cross opens the chat line with the keyboard; the quick button is the one bound to Talk
+	PS2MH_TEAMCHAT,   // "Team Chat": the same for the team (the button bound to Talk (Team only))
 	PS2MH_NONE,       // nothing: the menu is a picture over the whole screen
 	PS2MH_NUMKINDS
 } ps2mh_kind_t;

@@ -1,0 +1,182 @@
+samples 598441 (reported 598441), cycles/frame covered 10.66 M
+
+function (self)                           samples kcyc/frame      %
+HWR_Subsector.lto_priv.0                    44155      786.5   7.38
+HWR_ProcessPolygon.part.0                   32654      581.6   5.46
+P_MobjThinker                               31834      567.0   5.32
+PS2HWD_DrawBlocks                           28322      504.5   4.73
+HWR_ProjectPlain.lto_priv.0                 21297      379.4   3.56
+HWR_RenderPlane.lto_priv.0                  20059      357.3   3.35
+HWR_DrawSprite                              14233      253.5   2.38
+HWR_ProcessSegC                             13147      234.2   2.20
+HWR_FrPlaneCulled                           12234      217.9   2.04
+PIT_DoCheckThing                            10419      185.6   1.74
+tex_upload.lto_priv.0                       10262      182.8   1.71
+HWR_PBAdd                                   10163      181.0   1.70
+HWR_AddLine                                 10097      179.9   1.69
+R_PointToAngle64                             9399      167.4   1.57
+HWR_Lighting                                 8738      155.6   1.46
+begin_draw_inner.lto_priv.0                  7612      135.6   1.27
+HWR_AddLineSeen                              7371      131.3   1.23
+vu_plan_setup.lto_priv.0                     7318      130.4   1.22
+HWR_RenderBSPNode                            6884      122.6   1.15
+fill_ap88                                    6713      119.6   1.12
+P_CheckPosition                              6332      112.8   1.06
+hw_RenderSkyDome                             6138      109.3   1.03
+HWR_DrawDropShadowGen                        6126      109.1   1.02
+?                                            5268       93.8   0.88
+vc_split.constprop.0                         5101       90.9   0.85
+RotatedPatch_DoRotation                      5020       89.4   0.84
+Picture_PatchConvert                         4963       88.4   0.83
+mapping0_inverse                             4932       87.9   0.82
+HWR_DrawSprites                              4838       86.2   0.81
+plan_measure_blk                             4535       80.8   0.76
+R_RemoveMobjInterpolator                     4306       76.7   0.72
+hw_DrawPolygon.lto_priv.0                    4155       74.0   0.69
+plan_part.lto_priv.0                         4124       73.5   0.69
+HWR_RenderBatches                            4120       73.4   0.69
+HWR_PBSlow                                   3979       70.9   0.66
+HWR_FX_SpriteHiddenCheap                     3927       69.9   0.66
+HWR_PS2_SideTexWord                          3739       66.6   0.62
+P_SetThingPosition                           3580       63.8   0.60
+R_PointInSubsector                           3546       63.2   0.59
+vu_cut_blk_run.lto_priv.0                    3540       63.1   0.59
+gld_clipper_IsRangeVisible                   3526       62.8   0.59
+gc_replay.lto_priv.0                         3374       60.1   0.56
+R_Prep3DFloors                               3364       59.9   0.56
+dec_level                                    3314       59.0   0.55
+WaitSema                                     3273       58.3   0.55
+P_Ticker                                     3024       53.9   0.51
+PS2HWD_PalLit                                3001       53.5   0.50
+EIntr                                        2987       53.2   0.50
+emit_poly.constprop.0                        2919       52.0   0.49
+vu_key_make.lto_priv.0                       2905       51.7   0.49
+LZ4_decompress_safe                          2842       50.6   0.47
+P_CreateSecNodeList                          2807       50.0   0.47
+ps2_book_decodevv2_add                       2583       46.0   0.43
+R_ThingWithinDist                            2499       44.5   0.42
+P_MobjRegularThink                           2459       43.8   0.41
+P_PlayerThink                                2410       42.9   0.40
+R_CheckSectorLightLists.part.0               2340       41.7   0.39
+HWR_SortVisSprites                           2325       41.4   0.39
+PS2_MusicRender.constprop.0                  2280       40.6   0.38
+vc_put.lto_priv.0                            2273       40.5   0.38
+poly_plane.lto_priv.0                        2260       40.3   0.38
+pass_setup.constprop.0                       2239       39.9   0.37
+MakeBlockEx                                  2123       37.8   0.35
+PS2HWD_TouchTexture                          2098       37.4   0.35
+A_AttractChase.part.0                        2085       37.1   0.35
+P_BlockLinesIterator                         2044       36.4   0.34
+R_GetShadowZInterp                           2015       35.9   0.34
+HWR_PlaneHasHorizon.lto_priv.0               2006       35.7   0.34
+floor1_inverse2                              1939       34.5   0.32
+clip_poly.constprop.1                        1896       33.8   0.32
+__wrap_memcpy                                1895       33.8   0.32
+plan_tex_touch.lto_priv.0                    1851       33.0   0.31
+vu_pbegin.lto_priv.0                         1825       32.5   0.30
+state_flush.lto_priv.0                       1808       32.2   0.30
+PS2HWD_PlanBlock                             1805       32.2   0.30
+Picture_GetPatchPixel                        1777       31.7   0.30
+Z_ChangeTag                                  1765       31.4   0.29
+HWR_GetLevelFlat                             1743       31.0   0.29
+vu_poly.lto_priv.0                           1718       30.6   0.29
+plan_clip.constprop.0                        1642       29.2   0.27
+HWR_PBNew                                    1602       28.5   0.27
+vu_consts_send.lto_priv.0                    1574       28.0   0.26
+memcpy                                       1573       28.0   0.26
+hw_SetTexture                                1546       27.5   0.26
+P_GetSlopeZAt                                1539       27.4   0.26
+vu_chunk_end.lto_priv.0                      1516       27.0   0.25
+HWR_GetMappedPatch                           1492       26.6   0.25
+lit_fast_poly.lto_priv.0                     1484       26.4   0.25
+gc_sector_base                               1406       25.0   0.23
+P_UpdateSpecials                             1374       24.5   0.23
+
+category (by source file)                     samples kcyc/frame      %
+ps2 platform                                   154543     2752.8  25.82
+other:src/hardware/hw_main.c                   152376     2714.2  25.46
+tick: p_*/g_*                                   82077     1462.0  13.72
+other:src/hardware/hw_pbatch.inc                47206      840.9   7.89
+render: main/data/textures                      27217      484.8   4.55
+other:src/hardware/hw_gcache.inc                17161      305.7   2.87
+audio decoders (vorbis/mp3)                     14194      252.8   2.37
+other:src/hardware/hw_front.inc                 13203      235.2   2.21
+other:src/hardware/hw_cache.c                   10646      189.6   1.78
+other:src/hardware/hw_batching.c                 9488      169.0   1.59
+audio engine (mixer, music, s_sound)             5996      106.8   1.00
+newlib (memcpy/memset/libc)                      5968      106.3   1.00
+other:src/hardware/../m_fixed.h                  5854      104.3   0.98
+render: sprites/masked                           5592       99.6   0.93
+render: walls/bsp                                5523       98.4   0.92
+other:??                                         5268       93.8   0.88
+other:src/kernel.S                               5113       91.1   0.85
+other:src/hardware/hw_clip.c                     4981       88.7   0.83
+libgcc (soft double / 64-bit helpers)            4893       87.2   0.82
+other:src/z_zone.c                               3776       67.3   0.63
+other:src/glue.c                                 3232       57.6   0.54
+other:src/build/lz4/lib/lz4.c                    2842       50.6   0.47
+other:src/m_fixed.h                              2332       41.5   0.39
+other:src/hardware/../ps2/hw/ps2_hw_prof.h       1509       26.9   0.25
+other:src/lua_hook.h                             1378       24.5   0.23
+
+source line (blocks starting there)                 samples kcyc/frame      %
+src/p_local.h:308 (discriminator 2)                    6525      116.2   1.09
+??:0                                                   5268       93.8   0.88
+src/ps2/hw/ps2_hw_tex.inc:1386                         5187       92.4   0.87
+src/r_fps.c:965 (discriminator 1)                      4305       76.7   0.72
+src/hardware/hw_pbatch.inc:435                         4269       76.0   0.71
+src/ps2/hw/ps2_hw_vu1.inc:1645                         4131       73.6   0.69
+src/hardware/hw_pbatch.inc:432                         3991       71.1   0.67
+src/hardware/../m_fixed.h:131                          3605       64.2   0.60
+src/p_mobj.c:7597                                      3582       63.8   0.60
+src/hardware/hw_front.inc:234                          3568       63.6   0.60
+src/hardware/hw_pbatch.inc:509                         3539       63.0   0.59
+src/kernel.S:381                                       3273       58.3   0.55
+src/hardware/hw_front.inc:227 (discriminator 1)        3218       57.3   0.54
+src/hardware/hw_main.c:180 (discriminator 2)           3117       55.5   0.52
+src/hardware/hw_main.c:6351 (discriminator 2)          3009       53.6   0.50
+src/hardware/hw_front.inc:233 (discriminator 1)        3001       53.5   0.50
+src/glue.c:52                                          2987       53.2   0.50
+src/hardware/hw_main.c:6382                            2979       53.1   0.50
+src/hardware/hw_main.c:6671                            2935       52.3   0.49
+src/hardware/hw_main.c:2617                            2889       51.5   0.48
+src/ps2/hw/ps2_hw_vu1.inc:1165                         2855       50.9   0.48
+src/hardware/hw_pbatch.inc:383                         2648       47.2   0.44
+src/r_picformats.c:402                                 2563       45.7   0.43
+src/ps2/ps2_rdraw.h:29                                 2519       44.9   0.42
+src/p_mobj.c:10382                                     2507       44.7   0.42
+src/hardware/hw_pbatch.inc:401                         2467       43.9   0.41
+src/hardware/hw_pbatch.inc:365                         2444       43.5   0.41
+src/ps2/hw/ps2_hw_tex.inc:479                          2351       41.9   0.39
+src/ps2/hw/ps2_hw_vu1.inc:559                          2340       41.7   0.39
+src/hardware/hw_pbatch.inc:451                         2266       40.4   0.38
+src/ps2/hw/ps2_hw_vu1.inc:1163                         2215       39.5   0.37
+src/hardware/hw_main.c:3446                            2214       39.4   0.37
+src/hardware/../m_fixed.h:136                          2156       38.4   0.36
+src/hardware/hw_cache.c:581                            2117       37.7   0.35
+src/hardware/hw_main.c:6354                            2067       36.8   0.35
+src/hardware/hw_main.c:3609 (discriminator 1)          1998       35.6   0.33
+src/hardware/hw_main.c:2476 (discriminator 2)          1984       35.3   0.33
+src/hardware/hw_main.c:840 (discriminator 1)           1979       35.3   0.33
+src/p_mobj.c:10451                                     1965       35.0   0.33
+src/r_main.c:379 (discriminator 1)                     1913       34.1   0.32
+src/ps2/hw/ps2_hw_vu1.inc:1686                         1897       33.8   0.32
+src/p_tick.c:442                                       1881       33.5   0.31
+src/hardware/hw_main.c:2672 (discriminator 2)          1850       33.0   0.31
+src/ps2/hw/ps2_hw_vu1.inc:713 (discriminator 1)        1826       32.5   0.31
+src/m_fixed.h:230                                      1801       32.1   0.30
+src/ps2/hw/ps2_hw_vu1.inc:1257                         1785       31.8   0.30
+src/hardware/hw_main.c:2672 (discriminator 1)          1737       30.9   0.29
+src/hardware/hw_main.c:4521                            1729       30.8   0.29
+src/ps2/hw/ps2_hw_vu1.inc:1653 (discriminator 3)       1704       30.4   0.28
+src/p_map.c:771                                        1665       29.7   0.28
+src/r_patchrotation.c:228 (discriminator 2)            1665       29.7   0.28
+src/ps2/hw/ps2_hw_tex.inc:1860                         1606       28.6   0.27
+src/hardware/hw_cache.c:926                            1589       28.3   0.27
+src/hardware/hw_pbatch.inc:479                         1554       27.7   0.26
+src/p_slopes.c:974                                     1541       27.4   0.26
+src/ps2/hw/ps2_hw_tex.inc:1875                         1541       27.4   0.26
+src/hardware/hw_main.c:173                             1532       27.3   0.26
+src/hardware/../ps2/hw/ps2_hw_prof.h:101               1509       26.9   0.25
+src/ps2/hw/ps2_hw_plan.inc:296                         1472       26.2   0.25
+src/hardware/hw_pbatch.inc:752 (discriminator 3)       1432       25.5   0.24

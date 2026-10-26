@@ -6,6 +6,7 @@ usage: hwrun.py [--elf ELF] [--timeout S] [--par] NAME=DEMO_00n[:until] ... -- <
 Every run gets '-renderer Hardware -zreserve 3072 -ps2prof' plus the engine args after '--'. Runs go to build/runs/NAME, the log is build/runs/NAME.out.
 Without ':until' a demo runs to the end of the timedemo ('gametics in').
 """
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -60,6 +61,8 @@ def main():
             until = parts[1] if len(parts) > 1 else 'gametics in'
         if until:
             cmd += ['--until', until]
+        if os.environ.get('FX_EMU'):
+            cmd += ['--emu', os.environ['FX_EMU']] # (pins the run to one emulator copy: a copy shared by several runs at once stops at start)
         cmd += ['--', '-renderer', 'Hardware'] + ([] if '-zreserve' in per_run + extra else ['-zreserve', '3072']) + ['-ps2prof'] + per_run + extra  # (OPT11 round 2: -zreserve N in the engine args replaces the default)
         out = open(ROOT / 'build/runs' / (name + '.out'), 'w') if (ROOT / 'build/runs').exists() else open('/dev/null', 'w')
         p = subprocess.Popen(cmd, stdout=out, stderr=subprocess.STDOUT)

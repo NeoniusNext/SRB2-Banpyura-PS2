@@ -7,12 +7,14 @@ instruction count of each basic-block run between sampled addresses. Use it to r
 time single instructions (see sample_report.py).
 """
 import argparse
+import os
 import re
 import subprocess
 from pathlib import Path
 
-BIN = Path('D:/ps2dev/ee/bin')
-ENVP = {'PATH': str(BIN) + ';C:/Windows/System32'}
+IS_WIN = os.name == 'nt'  # OPT13 IR: Linux container too (like sample_report.py)
+BIN = Path('D:/ps2dev/ee/bin' if IS_WIN else os.environ.get('PS2DEV', '/opt/ps2dev-x/ps2dev') + '/ee/bin')
+ENVP = {'PATH': str(BIN) + (';C:/Windows/System32' if IS_WIN else ':/usr/bin:/bin')}
 
 
 def main():
@@ -40,7 +42,7 @@ def main():
     args = ['-d', '-C', '--disassemble=' + a.func, str(a.elf)]
     if a.source:
         args.insert(1, '-l')
-    out = subprocess.run([str(BIN / 'mips64r5900el-ps2-elf-objdump.exe'), *args], capture_output=True, text=True, env=ENVP).stdout
+    out = subprocess.run([str(BIN / ('mips64r5900el-ps2-elf-objdump' + ('.exe' if IS_WIN else ''))), *args], capture_output=True, text=True, env=ENVP).stdout
     tot = 0.0
     for l in out.splitlines():
         m = re.match(r'^\s*([0-9a-f]+):\s', l)

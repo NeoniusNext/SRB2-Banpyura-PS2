@@ -9,5 +9,6 @@ d_net.c
 d_netcmd.c
 d_netfil.c
 http-mserv.c
+netlat.c
 i_tcp.c
 mserv.c

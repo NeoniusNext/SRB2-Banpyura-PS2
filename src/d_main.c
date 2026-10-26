@@ -42,8 +42,10 @@
 
 #include "doomdef.h"
 #include "ps2ref.h"
+#include "ps2/ps2_loadprof.h" // PS2-LOAD-1: load-time profiler (-loadprof); empty macros outside the PS2 profile
 #ifdef PS2_PROFILE
 #include "ps2/ps2_ftest.h"
+#include "w_pack.h" // PS2-LOAD-10
 #endif
 #include "am_map.h"
 #include "console.h"
@@ -71,6 +73,7 @@
 #include "z_zone.h"
 #include "d_main.h"
 #include "netcode/d_netfil.h"
+#include "netcode/netlat.h"
 #include "m_cheat.h"
 #include "y_inter.h"
 #include "p_local.h" // chasecam
@@ -211,11 +214,27 @@ void D_ProcessEvents(void)
 	mouse.buttons &= ~(MB_SCROLLUP|MB_SCROLLDOWN);
 	mouse2.buttons &= ~(MB_SCROLLUP|MB_SCROLLDOWN);
 
+#ifdef PS2
+	// OPT14-GIF: the event leaves the queue BEFORE the responders see it. A responder may run a blocking network request whose "please wait" screen
+	// empties the queue itself (ps2_netui.c Poll, the connection loop): with the old "step on after the body" loop the tail then jumped over the head
+	// (tail == head + 1) and this loop replayed the whole ring - 127 slots of old events and of never written ones, i.e. keydown events with key 0 -
+	// which M_ScreenshotResponder took for the unbound second key of Toggle GIF Recording (or Screenshot): the first network use after the start-up from a
+	// menu (server list, Connect) switched a GIF recording on and off 119 times in a row and left it on (with the default controls: one screenshot).
+	// A copy of the event: the nested loop may post more than MAXEVENTS events over the slot while the responder runs.
+	while (eventtail != eventhead)
+#else
 	for (; eventtail != eventhead; eventtail = (eventtail+1) & (MAXEVENTS-1))
+#endif
 	{
 		boolean hooked = false;
+#ifdef PS2
+		event_t evcopy = events[eventtail];
 
+		eventtail = (eventtail+1) & (MAXEVENTS-1);
+		ev = &evcopy;
+#else
 		ev = &events[eventtail];
+#endif
 
 		// Set mouse buttons early in case event is eaten later
 		if (ev->type == ev_keydown || ev->type == ev_keyup || ev->type == ev_text)
@@ -743,6 +762,7 @@ void D_SRB2Loop(void)
 	oldentertics = I_GetTime();
 
 	// end of loading screen: CONS_Printf() will no more call FinishUpdate()
+	CON_EndStartup();
 	con_refresh = false;
 	con_startup = false;
 
@@ -841,6 +861,7 @@ static void D_RunFrame(void)
 		}
 
 		I_UpdateTime(cv_timescale.value);
+		NetLat_Frame(); // PS2-NET-1 (diagnostic: -netlat)
 
 		if (lastwipetic)
 		{
@@ -870,6 +891,10 @@ static void D_RunFrame(void)
 
 		interp = R_UsingFrameInterpolation() && !dedicated;
 		doDisplay = false;
+#ifdef PS2
+		const tic_t ps2_gametic0 = gametic; // PS2-NET-6: did this pass run tics?
+		const boolean ps2_early = realtics <= 0 && !singletics && D_NetEarlyTic(false); // a tic of the server is waiting and the clock has not ticked: run it now
+#endif
 
 #ifdef HW3SOUND
 		HW3S_BeginFrameUpdate();
@@ -877,7 +902,11 @@ static void D_RunFrame(void)
 
 		refreshdirmenu = 0; // not sure where to put this, here as good as any?
 
+#ifdef PS2
+		if (realtics > 0 || singletics || ps2_early)
+#else
 		if (realtics > 0 || singletics)
+#endif
 		{
 			// don't skip more than 10 frames at a time
 			// (fadein / fadeout cause massive frame skip!)
@@ -888,13 +917,20 @@ static void D_RunFrame(void)
 #endif
 				realtics = 1;
 
+#ifdef PS2
+			NetLat_Pass(ps2_early ? 1 : 0, (INT32)realtics);
+#endif
 			// process tics (but maybe not if realtic == 0)
 			PS2SUB_B(33);
 #ifdef PS2_PROF_DIRECT
 			{
 				const UINT32 pc0 = PS2Prof_Cyc();
+				UINT32 pcd;
 				TryRunTics(realtics);
-				ps2prof_c_tick += PS2Prof_Cyc() - pc0;
+				pcd = PS2Prof_Cyc() - pc0;
+				ps2prof_c_tick += pcd;
+				if (pcd > ps2prof_c_tickmax) // OPT13 IQ: the longest TryRunTics call of the window (a spike of one tic is invisible in the window sum)
+					ps2prof_c_tickmax = pcd;
 			}
 #else
 			TryRunTics(realtics);
@@ -929,11 +965,22 @@ static void D_RunFrame(void)
 			}
 
 			renderisnewtic = true;
+#ifdef PS2
+			if (gametic == ps2_gametic0 && ps2_early)
+				renderisnewtic = false;
+#endif
 		}
 		else
 		{
 			renderisnewtic = false;
 		}
+#ifdef PS2
+		if (gametic != ps2_gametic0)
+			NetLat_RunPass();
+		D_NetEarlyPassEnd(gametic != ps2_gametic0);
+		if (gametic != ps2_gametic0 && D_NetEarlyActive())
+			hu_stopped = false; // TryRunTics only clears it on a clock pass; a tic run early has moved the picture on
+#endif
 
 		if (interp)
 		{
@@ -946,7 +993,11 @@ static void D_RunFrame(void)
 
 			if (!(paused || P_AutoPause()) && deltatics < 1.0 && !hu_stopped)
 			{
+#ifdef PS2
+				rendertimefrac = D_NetEarlyActive() ? D_NetEarlyFrac() : g_time.timefrac; // PS2-NET-6: from the time of the last run of a tic
+#else
 				rendertimefrac = g_time.timefrac;
+#endif
 			}
 			else
 			{
@@ -1553,6 +1604,7 @@ void D_SRB2Main(void)
 	// any wad file is added, as they may contain colors themselves
 	M_InitPlayerSetupColors();
 
+	LP_LAP(B_EARLY);
 	CONS_Printf("Z_Init(): Init zone memory allocation daemon. \n");
 	Z_Init();
 
@@ -1634,9 +1686,11 @@ void D_SRB2Main(void)
 #endif
 
 	// load wad, including the main wad file
+	LP_LAP(B_ZINIT);
 	CONS_Printf("W_InitMultipleFiles(): Adding IWAD and main PWADs.\n");
 	W_InitMultipleFiles(&startupwadfiles);
 	D_CleanFile(&startupwadfiles);
+	LP_LAP(B_WADMAIN);
 
 #if !defined(DEVELOP) && !defined(PS2_PROFILE) // md5s last updated 22/02/20 (ddmmyy)
 
@@ -1652,12 +1706,14 @@ void D_SRB2Main(void)
 #endif //ifndef DEVELOP
 
 	cht_Init();
+	LP_LAP(B_GFX0);
 
 	//---------------------------------------------------- READY SCREEN
 	// we need to check for dedicated before initialization of some subsystems
 
 	CONS_Printf("I_StartupGraphics()...\n");
 	I_StartupGraphics();
+	LP_LAP(B_GFX1);
 
 #ifdef HWRENDER
 	// Lactozilla: Add every hardware mode CVAR and CCMD.
@@ -1671,10 +1727,14 @@ void D_SRB2Main(void)
 	SCR_Startup();
 
 	PaletteRemap_Init();
+	LP_LAP(B_GFX2);
 
+	LP_SAMPLE(6);
 	HU_Init();
+	LP_LAP(B_HUINIT);
 
 	CON_Init();
+	LP_LAP(B_CONINIT);
 
 	D_RegisterServerCommands();
 	D_RegisterClientCommands(); // be sure that this is called before D_CheckNetGame
@@ -1684,23 +1744,32 @@ void D_SRB2Main(void)
 	I_RegisterSysCommands();
 
 	CON_StopRefresh(); // Temporarily stop refreshing the screen for wad loading
+	LP_LAP(B_GFX3);
+	LP_SAMPLE(7);
 
 #ifdef HAS_ADDONS
 	if (startuppwads.numfiles)
 	{
 		CONS_Printf("W_InitMultipleFiles(): Adding extra PWADs.\n");
+		LP_SAMPLE(16);
 		W_InitMultipleFiles(&startuppwads);
+		LP_SAMPLE(17);
 		D_CleanFile(&startuppwads);
 	}
 #endif
 
 	CON_StartRefresh(); // Restart the refresh!
+	LP_LAP(B_WADEXTRA);
 
 	CONS_Printf("HU_LoadGraphics()...\n");
+	CON_FlushStartup(); // OPT13 IQ-7b: the start-up screen shares a redraw between prints less than 40 ms apart; a print that precedes a long job is drawn first
 	HU_LoadGraphics();
+	LP_LAP(B_HULOAD);
 
 	//--------------------------------------------------------- CONFIG.CFG
+	CON_FlushStartup();
 	M_FirstLoadConfig(); // WARNING : this do a "COM_BufExecute()"
+	LP_LAP(B_CONFIG);
 
 	if (M_CheckParm("-gamedata") && M_IsNextParm())
 	{
@@ -1716,6 +1785,7 @@ void D_SRB2Main(void)
 
 	// set user default mode or mode set at cmdline
 	SCR_CheckDefaultMode();
+	LP_LAP(B_GAMEDATA);
 
 	wipegamestate = gamestate;
 
@@ -1757,9 +1827,14 @@ void D_SRB2Main(void)
 
 	CONS_Printf("M_Init(): Init miscellaneous info.\n");
 	M_Init();
+	LP_LAP(B_MINIT);
 
 	CONS_Printf("R_Init(): Init SRB2 refresh daemon.\n");
+	CON_FlushStartup();
+	LP_SAMPLE(4);
 	R_Init();
+	LP_LAP(B_RINIT);
+	LP_SAMPLE(5);
 
 	// setting up sound
 	if (dedicated)
@@ -1797,15 +1872,19 @@ void D_SRB2Main(void)
 	 ))
 	{
 		CONS_Printf("S_InitSfxChannels(): Setting up sound channels.\n");
+		CON_FlushStartup();
 		I_StartupSound();
 		I_InitMusic();
 		S_InitSfxChannels(cv_soundvolume.value);
 	}
 
 	S_InitMusicDefs();
+	LP_LAP(B_SOUND);
 
 	CONS_Printf("ST_Init(): Init status bar.\n");
+	CON_FlushStartup();
 	ST_Init();
+	LP_LAP(B_STINIT);
 
 #ifdef PS2_PROFILE
 	PS2FTest_Startup(); // PS2-110: -ftest-* diagnostics of the content systems (nothing without the parameters)
@@ -1826,6 +1905,7 @@ void D_SRB2Main(void)
 
 	// init all NETWORK
 	CONS_Printf("D_CheckNetGame(): Checking network game status.\n");
+	CON_FlushStartup();
 	if (D_CheckNetGame())
 		autostart = true;
 
@@ -1850,6 +1930,7 @@ void D_SRB2Main(void)
 		COM_ImmedExecute(va("exec \"%s"PATHSEP"adedserv.cfg\"\n", srb2home));
 	else
 		COM_ImmedExecute(va("exec \"%s"PATHSEP"autoexec.cfg\" -noerror\n", srb2home));
+	LP_LAP(B_NET);
 
 	if (!autostart)
 		M_PushSpecialParameters(); // push all "+" parameters at the command buffer
@@ -1887,6 +1968,10 @@ void D_SRB2Main(void)
 
 		G_SetGamestate(GS_NULL);
 		wipegamestate = GS_NULL;
+#ifdef PS2_PROFILE
+		WPack_DropHeads();
+#endif
+		LP_LAP(B_START);
 		return;
 	}
 
@@ -1979,6 +2064,10 @@ void D_SRB2Main(void)
 		F_StartIntro(); // Tails 03-03-2002
 
 	CON_ToggleOff();
+#ifdef PS2_PROFILE
+	WPack_DropHeads(); // PS2-LOAD-10: the start-up reads are done: the head tables of the packs give their memory back
+#endif
+	LP_LAP(B_START);
 
 	if (dedicated && server)
 	{

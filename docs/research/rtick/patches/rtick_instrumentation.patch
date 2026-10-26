@@ -1,0 +1,2056 @@
+diff --git a/src/p_map.c b/src/p_map.c
+index 7f76f70..c7e2b17 100644
+--- a/src/p_map.c
++++ b/src/p_map.c
+@@ -18,6 +18,8 @@
+ #include "m_bbox.h"
+ #include "m_random.h"
+ #include "p_local.h"
++#include "rt_census.h"
++#include "rt_memo.h"
+ #include "p_setup.h" // NiGHTS stuff
+ #include "r_fps.h"
+ #include "r_state.h"
+@@ -54,6 +56,15 @@ boolean floatok;
+ 
+ fixed_t tmfloorz, tmceilingz;
+ static fixed_t tmdropoffz, tmdrpoffceilz; // drop-off floor/ceiling heights
++#ifdef RT_MEMO
++// transfer function of tmdrpoffceilz over one pair: (set, H): post = set ? H : max(pre, H)
++fixed_t rt_drp_H; boolean rt_drp_set;
++#define RT_DRP_MAX(h) do { if ((h) > rt_drp_H) rt_drp_H = (h); } while (0)
++#define RT_DRP_SET(v) do { rt_drp_set = true; rt_drp_H = (v); } while (0)
++#else
++#define RT_DRP_MAX(h) ((void)0)
++#define RT_DRP_SET(v) ((void)0)
++#endif
+ mobj_t *tmfloorthing; // the thing corresponding to tmfloorz or NULL if tmfloorz is from a sector
+ mobj_t *tmhitthing; // the solid thing you bumped into (for collisions)
+ ffloor_t *tmfloorrover, *tmceilingrover;
+@@ -746,6 +757,9 @@ enum
+ static unsigned PIT_DoCheckThing(mobj_t *thing)
+ {
+ 	fixed_t blockdist;
++#ifdef RT_CENSUS
++	rt.cp_things_called++;
++#endif
+ 
+ 	// don't clip against self
+ 	if (thing == tmthing)
+@@ -770,6 +784,12 @@ static unsigned PIT_DoCheckThing(mobj_t *thing)
+ #endif
+ 		if (abs(thing->x - tmx) >= bd || abs(thing->y - tmy) >= bd)
+ 			return CHECKTHING_NOCOLLIDE;
++#ifdef RT_CENSUS
++		rt.cp_things_pass++;
++#endif
++#ifdef RT_MEMO
++		rt_memo_things_pass++;
++#endif
+ 	}
+ #endif
+ 
+@@ -1914,6 +1934,7 @@ static boolean PIT_CheckCameraLine(line_t *ld)
+ 		tmfloorz = openbottom;
+ 	}
+ 
++	RT_DRP_MAX(highceiling);
+ 	if (highceiling > tmdrpoffceilz)
+ 		tmdrpoffceilz = highceiling;
+ 
+@@ -1929,15 +1950,24 @@ static boolean PIT_CheckCameraLine(line_t *ld)
+ //
+ static boolean PIT_CheckLine(line_t *ld)
+ {
++#ifdef RT_CENSUS
++	rt.cp_lines_called++;
++#endif
+ 	if (ld->polyobj && !(ld->polyobj->flags & POF_SOLID))
+ 		return true;
+ 
+ 	if (tmbbox[BOXRIGHT] <= ld->bbox[BOXLEFT] || tmbbox[BOXLEFT] >= ld->bbox[BOXRIGHT]
+ 	|| tmbbox[BOXTOP] <= ld->bbox[BOXBOTTOM] || tmbbox[BOXBOTTOM] >= ld->bbox[BOXTOP])
+ 		return true;
++#ifdef RT_CENSUS
++	rt.cp_lines_bbox++;
++#endif
+ 
+ 	if (P_BoxOnLineSide(tmbbox, ld) != -1)
+ 		return true;
++#ifdef RT_CENSUS
++	rt.cp_lines_hit++;
++#endif
+ 
+ 	if (tmthing->flags & MF_PAPERCOLLISION) // Caution! Turning whilst up against a wall will get you stuck. You probably shouldn't give the player this flag.
+ 	{
+@@ -2024,6 +2054,7 @@ static boolean PIT_CheckLine(line_t *ld)
+ 		tmfloorslope = openbottomslope;
+ 	}
+ 
++	RT_DRP_MAX(highceiling);
+ 	if (highceiling > tmdrpoffceilz)
+ 		tmdrpoffceilz = highceiling;
+ 
+@@ -2043,6 +2074,10 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
+ 	boolean blockval = true;
+ 
+ 	ps_checkposition_calls.value.i++;
++#ifdef RT_CENSUS
++	rt.cp_total++; rt.cp_site[rt.site & 7]++; rt.site = 0;
++	if (rt.tickn < 1200) rt.per_tick_cp[rt.tickn]++;
++#endif
+ 
+ 	I_Assert(thing != NULL);
+ #ifdef PARANOIA
+@@ -2189,6 +2224,7 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
+ 				&& !(rover->fofflags & FOF_PLATFORM)
+ 				&& !(thing->type == MT_SKIM && (rover->fofflags & FOF_SWIMMABLE)))
+ 			{
++				RT_DRP_SET(bottomheight);
+ 				tmceilingz = tmdrpoffceilz = bottomheight;
+ 				tmceilingrover = rover;
+ 				tmceilingslope = *rover->b_slope;
+@@ -2307,6 +2343,7 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
+ 						}
+ 
+ 						if (polybottom < tmceilingz && abs(delta1) >= abs(delta2)) {
++							RT_DRP_SET(polybottom);
+ 							tmceilingz = tmdrpoffceilz = polybottom;
+ 							tmceilingslope = NULL;
+ 							tmceilingrover = NULL;
+@@ -2331,6 +2368,10 @@ boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y)
+ 		return true;
+ 
+ 	// Check things first.
++#ifdef RT_CENSUS
++	if (!(thing->flags & MF_NOCLIPTHING)) rt.cp_cells_t += (unsigned long)(xh - xl + 1) * (yh - yl + 1);
++	rt.cp_cells_l += (unsigned long)(xh - xl + 1) * (yh - yl + 1);
++#endif
+ 	if (!(thing->flags & MF_NOCLIPTHING))
+ 	{
+ 		for (bx = xl; bx <= xh; bx++)
+@@ -5246,3 +5287,31 @@ extracolormap_t *P_GetSectorColormapAt(fixed_t x, fixed_t y, fixed_t z)
+ {
+ 	return P_GetColormapFromSectorAt(R_PointInSubsector(x, y)->sector, x, y, z);
+ }
++
++#ifdef RT_CENSUS
++fixed_t RT_GetDrpoff(void) { return tmdrpoffceilz; }
++#endif
++
++#ifdef RT_MEMO
++fixed_t RT_MemoGetDrpoff(void) { return tmdrpoffceilz; }
++void RT_MemoSetDrpoff(fixed_t v) { tmdrpoffceilz = v; }
++// post-state of the tm* globals of one P_CheckPosition (record) / replay of it (skip); tmthing goes through P_SetTarget as in the real call
++void RT_MemoSaveTM(void *rec, size_t vcdelta)
++{
++	struct { fixed_t bbox[4], x, y, floorz, ceilingz, dropoffz; INT32 flags; void *fr, *cr, *fs, *cs, *floorthing, *hitthing, *cline, *bline; size_t vcdelta; } *r = rec;
++	memset(r, 0, sizeof *r);
++	r->bbox[0] = tmbbox[0]; r->bbox[1] = tmbbox[1]; r->bbox[2] = tmbbox[2]; r->bbox[3] = tmbbox[3];
++	r->x = tmx; r->y = tmy; r->floorz = tmfloorz; r->ceilingz = tmceilingz; r->dropoffz = tmdropoffz; r->flags = tmflags;
++	r->fr = tmfloorrover; r->cr = tmceilingrover; r->fs = tmfloorslope; r->cs = tmceilingslope;
++	r->floorthing = tmfloorthing; r->hitthing = tmhitthing; r->cline = ceilingline; r->bline = blockingline; r->vcdelta = vcdelta;
++}
++void RT_MemoLoadTM(const void *rec, mobj_t *m)
++{
++	const struct { fixed_t bbox[4], x, y, floorz, ceilingz, dropoffz; INT32 flags; void *fr, *cr, *fs, *cs, *floorthing, *hitthing, *cline, *bline; size_t vcdelta; } *r = rec;
++	P_SetTarget(&tmthing, m);
++	tmbbox[0] = r->bbox[0]; tmbbox[1] = r->bbox[1]; tmbbox[2] = r->bbox[2]; tmbbox[3] = r->bbox[3];
++	tmx = r->x; tmy = r->y; tmfloorz = r->floorz; tmceilingz = r->ceilingz; tmdropoffz = r->dropoffz; tmflags = r->flags;
++	tmfloorrover = r->fr; tmceilingrover = r->cr; tmfloorslope = r->fs; tmceilingslope = r->cs;
++	tmfloorthing = r->floorthing; tmhitthing = r->hitthing; ceilingline = r->cline; blockingline = r->bline; validcount += r->vcdelta;
++}
++#endif
+diff --git a/src/p_maputl.c b/src/p_maputl.c
+index 9f48a84..2c516fa 100644
+--- a/src/p_maputl.c
++++ b/src/p_maputl.c
+@@ -16,6 +16,8 @@
+ #include "doomstat.h"
+ 
+ #include "p_local.h"
++#include "rt_census.h"
++#include "rt_memo.h"
+ #include "r_main.h"
+ #include "r_data.h"
+ #include "r_textures.h"
+@@ -762,6 +764,9 @@ static void P_ReleaseBlockNode(blocknode_t *node)
+ //
+ void P_UnsetThingPosition(mobj_t *thing)
+ {
++#ifdef RT_CENSUS
++	rt.unsetpos++;
++#endif
+ 	I_Assert(thing != NULL);
+ 	I_Assert(!P_MobjWasRemoved(thing));
+ 
+@@ -803,6 +808,12 @@ void P_UnsetThingPosition(mobj_t *thing)
+ 
+ 		while (block != NULL)
+ 		{
++#ifdef RT_CENSUS
++			RT_CellVer(block->blockindex);
++#endif
++#ifdef RT_MEMO
++			RT_MemoCellVer(block->blockindex);
++#endif
+ 			if (block->mnext != NULL)
+ 				block->mnext->mprev = block->mprev;
+ 			*(block->mprev) = block->mnext;
+@@ -837,6 +848,9 @@ void P_SetThingPosition(mobj_t *thing)
+ 	subsector_t *ss;
+ 	sector_t *oldsec = NULL;
+ 	fixed_t tfloorz, tceilz;
++#ifdef RT_CENSUS
++	RT_SetPos(thing);
++#endif
+ 
+ 	I_Assert(thing != NULL);
+ 	I_Assert(!P_MobjWasRemoved(thing));
+@@ -904,6 +918,12 @@ void P_SetThingPosition(mobj_t *thing)
+ 				{
+ 					blocknode_t **link = &blocklinks[y*bmapwidth + x];
+ 					blocknode_t *node = P_CreateBlockNode(thing, x, y);
++#ifdef RT_CENSUS
++					RT_CellVer(y*bmapwidth + x);
++#endif
++#ifdef RT_MEMO
++					RT_MemoCellVer(y*bmapwidth + x);
++#endif
+ 
+ 					// Link in to block
+ 					if ((node->mnext = *link) != NULL)
+diff --git a/src/p_mobj.c b/src/p_mobj.c
+index 775a265..52b0ae8 100644
+--- a/src/p_mobj.c
++++ b/src/p_mobj.c
+@@ -18,6 +18,13 @@
+ #include "st_stuff.h"
+ #include "hu_stuff.h"
+ #include "p_local.h"
++#include "rt_census.h"
++#include "rt_eeprof.h"
++#include "rt_memo.h"
++#ifdef RT_MEMO
++static boolean RT_MemoBegin(mobj_t *m);
++static void RT_MemoEnd(mobj_t *m);
++#endif
+ #include "p_setup.h"
+ #include "r_fps.h"
+ #include "r_main.h"
+@@ -553,6 +560,9 @@ static boolean P_SetPlayerMobjState(mobj_t *mobj, statenum_t state)
+ boolean P_SetMobjState(mobj_t *mobj, statenum_t state)
+ {
+ 	state_t *st;
++#ifdef RT_EEPROF
++	rt_ss_n++;
++#endif
+ 
+ #ifdef PS2_PROFILE
+ 	statenum_t seenlist[LIMIT_NUMSTATES]; // PS2-42, see P_SetPlayerMobjState
+@@ -10431,14 +10441,28 @@ void P_MobjThinker(mobj_t *mobj)
+ 	PS2_TYPESTAT_N(0, mobj);
+ 	I_Assert(mobj != NULL);
+ 	I_Assert(!P_MobjWasRemoved(mobj));
++#ifdef RT_CENSUS
++	rt.tick_calls[0]++;
++	{ extern UINT16 rt_tc[1200][800]; if (rt.tickn < 1200 && (unsigned)mobj->type < 800) rt_tc[rt.tickn][mobj->type]++; }
++#endif
+ 
+ #if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK)
+ 	if ((mobj->flags & (MF_NOTHINK|MF_BOSS|MF_SCENERY|MF_BOXICON)) == MF_SCENERY && P_SceneryQuick(mobj)) // (the flags test is P_SceneryQuick's first, here so that no call is made for the rest)
++	{
++#ifdef RT_CENSUS
++		rt.tick_calls[2]++;
++#endif
+ 		return;
++	}
+ #endif
+ 
+ 	if (mobj->flags & MF_NOTHINK)
++	{
++#ifdef RT_CENSUS
++		rt.tick_calls[1]++;
++#endif
+ 		return;
++	}
+ 
+ 	if ((mobj->flags & MF_BOSS) && mobj->spawnpoint && (bossdisabled & (1<<mobj->spawnpoint->args[0])))
+ 		return;
+@@ -10487,9 +10511,15 @@ void P_MobjThinker(mobj_t *mobj)
+ 	// Special thinker for scenery objects
+ 	if (mobj->flags & MF_SCENERY)
+ 	{
++#ifdef RT_CENSUS
++		rt.tick_calls[3]++;
++#endif
+ 		P_MobjSceneryThink(mobj);
+ 		return;
+ 	}
++#ifdef RT_CENSUS
++	if (mobj->flags & MF_PUSHABLE) rt.tick_calls[6]++; else if (mobj->flags & MF_BOSS) rt.tick_calls[7]++; else if (mobj->health <= 0) rt.tick_calls[5]++; else rt.tick_calls[4]++;
++#endif
+ 
+ 	// Check for a Lua thinker first
+ 	if (!mobj->player)
+@@ -10564,11 +10594,45 @@ void P_MobjThinker(mobj_t *mobj)
+ 		|| P_IsObjectInGoop(mobj))
+ 	{
+ 		PS2_TYPESTAT_N(1, mobj);
++#ifdef RT_CENSUS
++		RT_PairBegin(mobj, 1);
++#endif
++#ifdef RT_EEPROF
++		const UINT32 rt_p0 = RT_Cyc();
++		const mobjtype_t rt_pty = mobj->type;
++#endif
++#ifdef RT_MEMO
++		if (!RT_MemoBegin(mobj))
++		{
++#endif
+ 		if (!P_ZMovement(mobj))
++		{
++#ifdef RT_CENSUS
++			rt_ps.valid = false;
++#endif
+ 			return; // mobj was removed
++		}
++#ifdef RT_CENSUS
++		rt.site = 1;
++#endif
+ 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
+ 		if (P_MobjWasRemoved(mobj))
++		{
++#ifdef RT_CENSUS
++			rt_ps.valid = false;
++#endif
+ 			return;
++		}
++#ifdef RT_MEMO
++		RT_MemoEnd(mobj);
++		}
++#endif
++#ifdef RT_CENSUS
++		RT_PairEnd(mobj);
++#endif
++#ifdef RT_EEPROF
++		if (rt_pty < RT_MAXTY) { rt_ty_pair[rt_pty] += RT_Cyc() - rt_p0; rt_ty_pn[rt_pty]++; }
++#endif
+ 	}
+ 	else
+ 	{
+@@ -10747,6 +10811,9 @@ void P_PushableThinker(mobj_t *mobj)
+ void P_SceneryThinker(mobj_t *mobj)
+ {
+ 	PS2_TYPESTAT_N(2, mobj);
++#ifdef RT_CENSUS
++	rt.scen_thinker++;
++#endif
+ 	if (mobj->flags & MF_BOXICON)
+ 	{
+ 		if (!(mobj->eflags & MFE_VERTICALFLIP))
+@@ -10782,15 +10849,49 @@ void P_SceneryThinker(mobj_t *mobj)
+ 		|| P_IsObjectInGoop(mobj))
+ 	{
+ 		PS2_TYPESTAT_N(3, mobj);
++#ifdef RT_CENSUS
++		RT_PairBegin(mobj, 2);
++#endif
++#ifdef RT_EEPROF
++		const UINT32 rt_p0 = RT_Cyc();
++		const mobjtype_t rt_pty = mobj->type;
++#endif
++#ifdef RT_MEMO
++		if (!RT_MemoBegin(mobj))
++		{
++#endif
+ 		if (!P_SceneryZMovement(mobj))
++		{
++#ifdef RT_CENSUS
++			rt_ps.valid = false;
++#endif
+ 			return; // mobj was removed
++		}
++#ifdef RT_CENSUS
++		rt.site = 2;
++#endif
+ 		P_CheckPosition(mobj, mobj->x, mobj->y); // Need this to pick up objects!
+ 		if (P_MobjWasRemoved(mobj))
++		{
++#ifdef RT_CENSUS
++			rt_ps.valid = false;
++#endif
+ 			return;
++		}
+ 		mobj->floorz = tmfloorz;
+ 		mobj->ceilingz = tmceilingz;
+ 		mobj->floorrover = tmfloorrover;
+ 		mobj->ceilingrover = tmceilingrover;
++#ifdef RT_MEMO
++		RT_MemoEnd(mobj);
++		}
++#endif
++#ifdef RT_CENSUS
++		RT_PairEnd(mobj);
++#endif
++#ifdef RT_EEPROF
++		if (rt_pty < RT_MAXTY) { rt_ty_pair[rt_pty] += RT_Cyc() - rt_p0; rt_ty_pn[rt_pty]++; }
++#endif
+ 	}
+ 	else
+ 	{
+@@ -10936,6 +11037,12 @@ mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type, ...)
+ 
+ 	if (type == MT_NULL)
+ 		return NULL;
++#ifdef RT_CENSUS
++	{ extern UINT16 rt_ts[1200][800]; if (rt.tickn < 1200 && (unsigned)type < 800) rt_ts[rt.tickn][type]++; }
++#endif
++#ifdef RT_EEPROF
++	rt_sp_n++;
++#endif
+ 
+ 	if (mobjcache != NULL)
+ 	{
+@@ -11480,6 +11587,9 @@ size_t iquehead, iquetail;
+ #endif
+ void P_RemoveMobj(mobj_t *mobj)
+ {
++#ifdef RT_CENSUS
++	{ extern UINT16 rt_tr[1200][800]; if (rt.tickn < 1200 && (unsigned)mobj->type < 800) rt_tr[rt.tickn][mobj->type]++; }
++#endif
+ 	I_Assert(mobj != NULL);
+ 	if (P_MobjWasRemoved(mobj) || mobj->thinker.removing)
+ 		return; // Something already removed or is removing this mobj.
+@@ -14678,3 +14788,858 @@ mobj_t *P_SpawnMobjFromMobj(mobj_t *mobj, fixed_t xofs, fixed_t yofs, fixed_t zo
+ 
+ 	return newmobj;
+ }
++
++#ifdef RT_CENSUS
++#include "rt_census.h"
++#include "m_random.h"
++rt_stats_t rt;
++rt_pairsnap_t rt_ps;
++extern fixed_t RT_GetDrpoff(void);
++
++
++// ---- memo simulator: what share of the pair calls could be skipped if every input of the pair were versioned (sector signature scan, cell versions, polyobject epoch, own key)
++typedef struct { fixed_t x, y, z, momx, momy, momz, pmomz, radius, height, floorz, ceilingz, scale, destscale; UINT32 flags, flags2; UINT32 eflags; INT32 type, health, fuse;
++	void *standingslope, *target, *subsector, *floorrover, *ceilingrover, *tracer; } rt_key_t;
++typedef struct { void *mo; int valid; rt_key_t key; UINT32 secsig, cellsum, polyep; } rt_memo_t;
++static rt_memo_t rt_memo[1<<15];
++static UINT32 *rt_sec_chg;
++static UINT32 *rt_cellver;
++static UINT32 rt_polyep = 1;
++static UINT32 *rt_poly_chg; static UINT32 *rt_poly_prev;
++static UINT32 rt_now = 1;
++typedef struct { fixed_t f, c; void *fs, *cs; fixed_t fsv[6], csv[6]; UINT32 ffh, misc; } rt_secsig_t;
++static rt_secsig_t *rt_sec_prev;
++static UINT32 rt_polyh_prev;
++unsigned long rt_geom_ticks_changed, rt_geom_sectors_changed_total;
++static unsigned long *rt_sec_nchg;
++
++static void rt_slopesig(pslope_t *sl, fixed_t *v)
++{
++	if (!sl) { memset(v, 0, 6 * sizeof(fixed_t)); return; }
++	v[0] = sl->o.x; v[1] = sl->o.y; v[2] = sl->o.z; v[3] = sl->normal.x; v[4] = sl->normal.y; v[5] = sl->normal.z;
++}
++
++static void rt_calc_secsig(size_t i, rt_secsig_t *g)
++{
++	sector_t *sc = &sectors[i];
++	ffloor_t *r;
++	memset(g, 0, sizeof *g);
++	g->f = sc->floorheight; g->c = sc->ceilingheight; g->fs = sc->f_slope; g->cs = sc->c_slope;
++	rt_slopesig(sc->f_slope, g->fsv); rt_slopesig(sc->c_slope, g->csv);
++	g->misc = (UINT32)sc->flags * 31u + (UINT32)sc->damagetype * 131u + (UINT32)sc->special * 7u + (UINT32)sc->heightsec + (UINT32)sc->gravity;
++	for (r = sc->ffloors; r; r = r->next)
++	{
++		sector_t *cs = &sectors[r->secnum];
++		fixed_t v1[6], v2[6];
++		UINT32 h = (UINT32)r->fofflags * 2654435761u;
++		h ^= (UINT32)cs->floorheight * 40503u; h ^= (UINT32)cs->ceilingheight * 9973u;
++		rt_slopesig(r->t_slope ? *r->t_slope : NULL, v1); rt_slopesig(r->b_slope ? *r->b_slope : NULL, v2);
++		{ int k; for (k = 0; k < 6; k++) { h = h * 31u + (UINT32)v1[k]; h = h * 31u + (UINT32)v2[k]; } }
++		h ^= (UINT32)(size_t)r->t_slope + (UINT32)(size_t)r->b_slope;
++		g->ffh = g->ffh * 17u + h;
++	}
++}
++
++void RT_GeomScan(void)
++{
++	size_t i;
++	UINT32 ph = 0;
++	int nch = 0;
++	extern polyobj_t *PolyObjects;
++	extern INT32 numPolyObjects;
++	rt_now++;
++	if (!rt_sec_prev || !rt_sec_chg)
++	{
++		rt_sec_prev = calloc(numsectors, sizeof *rt_sec_prev);
++		rt_sec_chg = calloc(numsectors, sizeof *rt_sec_chg);
++		rt_sec_nchg = calloc(numsectors, sizeof *rt_sec_nchg);
++		for (i = 0; i < numsectors; i++) rt_calc_secsig(i, &rt_sec_prev[i]);
++		rt_cellver = calloc((size_t)bmapwidth * bmapheight + 1, sizeof *rt_cellver);
++	}
++	for (i = 0; i < numsectors; i++)
++	{
++		rt_secsig_t g;
++		rt_calc_secsig(i, &g);
++		if (memcmp(&g, &rt_sec_prev[i], sizeof g))
++		{
++			rt_sec_prev[i] = g;
++			rt_sec_chg[i] = rt_now;
++			rt_sec_nchg[i]++;
++			nch++;
++		}
++	}
++	if (numPolyObjects && !rt_poly_chg) { rt_poly_chg = calloc(numPolyObjects, sizeof(UINT32)); rt_poly_prev = calloc(numPolyObjects, sizeof(UINT32)); }
++	for (i = 0; i < (size_t)numPolyObjects; i++)
++	{
++		polyobj_t *po = &PolyObjects[i];
++		UINT32 h = (UINT32)po->centerPt.x * 31u + (UINT32)po->centerPt.y * 7u + (UINT32)po->angle + (UINT32)po->flags + (UINT32)po->blockbox[0] * 13u + (UINT32)po->blockbox[1] + (UINT32)po->blockbox[2] * 5u + (UINT32)po->blockbox[3] * 3u;
++		if (h != rt_poly_prev[i]) { rt_poly_prev[i] = h; rt_poly_chg[i] = rt_now; }
++		ph += h;
++	}
++	if (ph != rt_polyh_prev) { rt_polyh_prev = ph; rt_polyep = rt_now; }
++	if (nch) rt_geom_ticks_changed++;
++	rt_geom_sectors_changed_total += nch;
++}
++
++void RT_CellVer(int cell)
++{
++	if (rt_cellver) rt_cellver[cell]++;
++}
++
++static void rt_key_of(const mobj_t *m, rt_key_t *k)
++{
++	memset(k, 0, sizeof *k);
++	k->x = m->x; k->y = m->y; k->z = m->z; k->momx = m->momx; k->momy = m->momy; k->momz = m->momz; k->pmomz = m->pmomz; k->radius = m->radius; k->height = m->height;
++	k->floorz = m->floorz; k->ceilingz = m->ceilingz; k->scale = m->scale; k->destscale = m->destscale; k->flags = m->flags; k->flags2 = m->flags2; k->eflags = m->eflags;
++	k->type = m->type; k->health = m->health; k->fuse = m->fuse; k->standingslope = m->standingslope; k->target = m->target; k->subsector = m->subsector;
++	k->floorrover = m->floorrover; k->ceilingrover = m->ceilingrover; k->tracer = m->tracer;
++}
++
++static UINT32 rt_polysig_of(const mobj_t *m)
++{
++	extern polyobj_t *PolyObjects;
++	extern INT32 numPolyObjects;
++	UINT32 mx = 0;
++	INT32 i, xl, xh, yl, yh;
++	polyobj_t *po;
++	if (!numPolyObjects || !rt_poly_chg)
++		return 0;
++	xl = (unsigned)(m->x - m->radius - bmaporgx)>>MAPBLOCKSHIFT; xh = (unsigned)(m->x + m->radius - bmaporgx)>>MAPBLOCKSHIFT;
++	yl = (unsigned)(m->y - m->radius - bmaporgy)>>MAPBLOCKSHIFT; yh = (unsigned)(m->y + m->radius - bmaporgy)>>MAPBLOCKSHIFT;
++	for (i = 0; i < numPolyObjects; i++)
++	{
++		const fixed_t *bb = PolyObjects[i].blockbox;
++		// blockbox is in blockmap cells in SRB2 (see Polyobj_getBlockbox): BOXTOP, BOXBOTTOM, BOXLEFT, BOXRIGHT
++		if (xh >= (INT32)bb[BOXLEFT] && xl <= (INT32)bb[BOXRIGHT] && yh >= (INT32)bb[BOXBOTTOM] && yl <= (INT32)bb[BOXTOP])
++			if (rt_poly_chg[i] > mx) mx = rt_poly_chg[i];
++	}
++	if (m->subsector)
++		for (po = m->subsector->polyList; po; po = (polyobj_t *)(po->link.next))
++			if (rt_poly_chg[po - PolyObjects] > mx) mx = rt_poly_chg[po - PolyObjects];
++	return mx;
++}
++
++static UINT32 rt_secsig_of(const mobj_t *m)
++{
++	UINT32 mx = 0;
++	msecnode_t *n;
++	if (m->subsector && rt_sec_chg)
++	{
++		size_t si = (size_t)(m->subsector->sector - sectors);
++		if (rt_sec_chg[si] > mx) mx = rt_sec_chg[si];
++	}
++	if (!(m->flags & MF_NOCLIP) && rt_sec_chg)
++		for (n = m->touching_sectorlist; n; n = n->m_sectorlist_next)
++		{
++			size_t si = (size_t)(n->m_sector - sectors);
++			if (rt_sec_chg[si] > mx) mx = rt_sec_chg[si];
++		}
++	return mx;
++}
++
++static UINT32 rt_cellsum_of(const mobj_t *m)
++{
++	INT32 xl, xh, yl, yh, bx, by;
++	UINT32 sum = 0;
++	if ((m->flags & MF_NOCLIP) || !rt_cellver) return 0;
++	xl = (unsigned)(m->x - m->radius - bmaporgx)>>MAPBLOCKSHIFT; xh = (unsigned)(m->x + m->radius - bmaporgx)>>MAPBLOCKSHIFT;
++	yl = (unsigned)(m->y - m->radius - bmaporgy)>>MAPBLOCKSHIFT; yh = (unsigned)(m->y + m->radius - bmaporgy)>>MAPBLOCKSHIFT;
++	for (bx = xl; bx <= xh; bx++) for (by = yl; by <= yh; by++)
++		if (bx >= 0 && by >= 0 && bx < bmapwidth && by < bmapheight) sum = sum * 3u + rt_cellver[by * bmapwidth + bx] + 1u;
++	return sum;
++}
++
++void RT_PairBegin(mobj_t *mo, int site)
++{
++	rt_ps.before = *mo;
++	rt_ps.seed = P_GetRandSeed();
++	rt_ps.drpoff = RT_GetDrpoff();
++	rt_ps.lines = rt.cp_lines_called; rt_ps.lines_bbox = rt.cp_lines_bbox; rt_ps.lines_hit = rt.cp_lines_hit;
++	rt_ps.things = rt.cp_things_called; rt_ps.things_pass = rt.cp_things_pass; rt_ps.cells = rt.cp_cells_t + rt.cp_cells_l;
++	rt_ps.valid = true;
++	rt_ps.pred = 0;
++	{
++		rt_memo_t *me = &rt_memo[(((size_t)mo) >> 4) & 0x7FFF];
++		rt_ptype_t *t = &rt.ptype[mo->type < RT_MAXT ? mo->type : 0];
++		rt_key_t k;
++		rt_key_of(mo, &k);
++		if (me->mo != mo || !me->valid) t->memo_miss_first++;
++		else if (memcmp(&k, &me->key, sizeof k)) t->memo_miss_key++;
++		else if (rt_secsig_of(mo) > me->secsig && 0) t->memo_miss_sec++;
++		else
++		{
++			UINT32 ss = rt_secsig_of(mo), cs = rt_cellsum_of(mo);
++			if (ss != me->secsig) t->memo_miss_sec++;
++			else if (cs != me->cellsum) t->memo_miss_cell++;
++			else if (rt_polysig_of(mo) != me->polyep) t->memo_miss_poly++;
++			else rt_ps.pred = 1;
++		}
++	}
++	if (site == 1) rt.pair_m++; else rt.pair_s++;
++}
++
++#define CMPF(f) (rt_ps.before.f != mo->f)
++void RT_PairEnd(mobj_t *mo)
++{
++	rt_ptype_t *t = &rt.ptype[mo->type < RT_MAXT ? mo->type : 0];
++	mobj_t a = rt_ps.before, b = *mo;
++	int ch_named = 0;
++	if (!rt_ps.valid) return;
++	rt_ps.valid = false;
++	t->n++;
++	if (b.flags & MF_NOCLIP) t->noclip++;
++	if (b.flags & MF_NOBLOCKMAP) t->noblockmap++;
++	if (b.flags & MF_NOGRAVITY) t->nogravity++;
++	if (a.eflags & MFE_ONGROUND) t->onground++;
++	if (b.subsector)
++	{
++		sector_t *sc = b.subsector->sector;
++		int ff = sc->ffloors != NULL, sl = (sc->f_slope != NULL) || (sc->c_slope != NULL), po = b.subsector->polyList != NULL;
++		t->has_ff += ff; t->has_slope += sl; t->has_poly += po;
++		t->plain += !(ff || sl || po);
++		t->special_sector += (sc->flags & MSF_TRIGGERLINE_MOBJ) != 0;
++		{
++			ffloor_t *r;
++			int inert = 1;
++			for (r = sc->ffloors; r; r = r->next)
++				if ((r->fofflags & FOF_EXISTS) && ((r->fofflags & (FOF_BLOCKOTHERS|FOF_QUICKSAND)) || (r->fofflags & (FOF_SWIMMABLE|FOF_GOOWATER)) == (FOF_SWIMMABLE|FOF_GOOWATER)))
++					inert = 0;
++			if (b.subsector->polyList)
++				inert = 0;
++			if ((b.flags & MF_NOCLIP) && inert && !b.player && b.type != MT_SKIM)
++			{
++				t->cls_noclip_inert++;
++				if (!a.momz && !(a.eflags & MFE_APPLYPMOMZ) && !a.standingslope && (b.flags & MF_NOGRAVITY) && !(b.flags & MF_FLOAT) && !(b.flags & MF_NOCLIPHEIGHT)
++					&& sc->damagetype != SD_DEATHPITTILT && sc->damagetype != SD_DEATHPITNOTILT
++					&& a.z > a.floorz && a.z + a.height < a.ceilingz && !(a.eflags & MFE_VERTICALFLIP) && !(a.flags2 & MF2_CLASSICPUSH))
++					t->cls_zm_noop++;
++			}
++		}
++	}
++	if (!a.momz) t->zmom0++;
++	if (a.z != b.z) { t->z_ch++; ch_named = 1; }
++	if (a.floorz != b.floorz) { t->floorz_ch++; ch_named = 1; }
++	if (a.ceilingz != b.ceilingz) { t->ceilz_ch++; ch_named = 1; }
++	if (a.eflags != b.eflags) { t->eflags_ch++; ch_named = 1; }
++	if (a.momz != b.momz) { t->momz_ch++; ch_named = 1; }
++	if (rt_ps.seed != P_GetRandSeed()) { t->rng_ch++; ch_named = 1; }
++	// everything else: mask the fields the pair is allowed to rewrite to the same value (thinker links, references)
++	a.thinker = b.thinker;
++	a.z = b.z; a.floorz = b.floorz; a.ceilingz = b.ceilingz; a.eflags = b.eflags; a.momz = b.momz;
++	if (memcmp(&a, &b, sizeof(mobj_t)))
++	{
++		t->other_ch++;
++		ch_named = 1;
++	}
++	if (!ch_named)
++	{
++		t->same++;
++		if (rt_ps.drpoff == RT_GetDrpoff())
++			t->same_all++;
++	}
++	{
++		rt_memo_t *me = &rt_memo[(((size_t)mo) >> 4) & 0x7FFF];
++		if (rt_ps.pred)
++		{
++			t->memo_pred++;
++			if (ch_named)
++			{
++				static int shown;
++				t->memo_viol++;
++				if (shown++ < 5)
++					fprintf(stderr, "RTC MEMO VIOLATION type %d: z %d->%d floorz %d->%d ceilingz %d->%d eflags %x->%x momz %d->%d other_ch=%d\n", (int)mo->type, (int)rt_ps.before.z, (int)mo->z,
++						(int)rt_ps.before.floorz, (int)mo->floorz, (int)rt_ps.before.ceilingz, (int)mo->ceilingz, (unsigned)rt_ps.before.eflags, (unsigned)mo->eflags, (int)rt_ps.before.momz, (int)mo->momz, (int)(memcmp(&a, &b, sizeof(mobj_t)) != 0));
++			}
++		}
++		if (!ch_named && rt_ps.drpoff == RT_GetDrpoff() && rt.cp_things_pass == rt_ps.things_pass)
++		{
++			rt_key_t k;
++			rt_key_of(mo, &k);
++			me->mo = mo; me->valid = 1; me->key = k; me->secsig = rt_secsig_of(mo); me->cellsum = rt_cellsum_of(mo); me->polyep = rt_polysig_of(mo);
++		}
++		else
++			me->valid = 0;
++	}
++	t->lines += rt.cp_lines_called - rt_ps.lines;
++	t->lines_bbox += rt.cp_lines_bbox - rt_ps.lines_bbox;
++	t->lines_hit += rt.cp_lines_hit - rt_ps.lines_hit;
++	t->things += rt.cp_things_called - rt_ps.things;
++	t->things_pass += rt.cp_things_pass - rt_ps.things_pass;
++	t->cells += (rt.cp_cells_t + rt.cp_cells_l) - rt_ps.cells;
++}
++
++typedef struct { fixed_t x, y, r; void *mo; } rt_last_t;
++static rt_last_t rt_last[1<<16];
++void RT_SetPos(mobj_t *mo)
++{
++	size_t h = (((size_t)mo) >> 4) & 0xFFFF;
++	rt_last_t *l = &rt_last[h];
++	rt.setpos++;
++	rt.setpos_type[mo->type < RT_MAXT ? mo->type : 0]++;
++	if (l->mo == mo && l->x == mo->x && l->y == mo->y && l->r == mo->radius)
++	{
++		rt.setpos_same_xyr++;
++		rt.setpos_same_type[mo->type < RT_MAXT ? mo->type : 0]++;
++	}
++	l->mo = mo; l->x = mo->x; l->y = mo->y; l->r = mo->radius;
++	if (rt.tickn < 1200) rt.per_tick_setpos[rt.tickn]++;
++}
++
++static int rt_cmp_n(const void *pa, const void *pb)
++{
++	const rt_ptype_t *a = &rt.ptype[*(const int *)pa], *b = &rt.ptype[*(const int *)pb];
++	return (a->n < b->n) - (a->n > b->n);
++}
++
++static void rt_pct(unsigned long *v, unsigned n, double *p50, double *p90, double *p99, double *mx)
++{
++	unsigned long *c = malloc(n * sizeof *c);
++	unsigned i, j;
++	for (i = 0; i < n; i++) c[i] = v[i];
++	for (i = 1; i < n; i++) { unsigned long x = c[i]; for (j = i; j > 0 && c[j-1] > x; j--) c[j] = c[j-1]; c[j] = x; }
++	*p50 = c[n/2]; *p90 = c[n*9/10]; *p99 = c[n*99/100]; *mx = c[n-1];
++	free(c);
++}
++
++#define RT_TYN 800
++unsigned long rt_rm_it[1200], rt_rm_n[1200];
++unsigned long rt_tickn_for_rm(void) { return rt.tickn; }
++UINT16 rt_tc[1200][RT_TYN], rt_ts[1200][RT_TYN], rt_tr[1200][RT_TYN];
++void RT_Dump(void)
++{
++	int idx[RT_MAXT], i, k;
++	unsigned long tp = 0, ts = 0, tsame = 0, tsameall = 0, tnoclip = 0;
++	unsigned n = rt.tickn > 1200 ? 1200 : (unsigned)rt.tickn;
++	double T = rt.tickn ? (double)rt.tickn : 1.0;
++	double a, b, c, d;
++	fprintf(stderr, "RTC ===== census over %lu tics =====\n", rt.tickn);
++	{
++		extern size_t numvertexes, numsegs, numsectors, numsubsectors, numnodes, numlines, numsides, nummapthings;
++		extern INT32 bmapwidth, bmapheight;
++		extern INT32 numPolyObjects;
++		extern UINT16 *ps2_blockmaplists;
++		size_t nth = 0, nff = 0, nsl = 0, i2;
++		thinker_t *th;
++		extern thinker_t thlist[];
++		for (th = thlist[THINK_MOBJ].next; th != &thlist[THINK_MOBJ]; th = th->next) nth++;
++		for (i2 = 0; i2 < numsectors; i2++) { ffloor_t *r; for (r = sectors[i2].ffloors; r; r = r->next) nff++; if (sectors[i2].f_slope || sectors[i2].c_slope) nsl++; }
++		fprintf(stderr, "RTL level: vertexes %zu segs %zu sectors %zu subsectors %zu nodes %zu lines %zu sides %zu things %zu blockmap %dx%d polyobjs %d mobj-thinkers %zu ffloor-links %zu sectors-with-slope %zu\n",
++			numvertexes, numsegs, numsectors, numsubsectors, numnodes, numlines, numsides, nummapthings, (int)bmapwidth, (int)bmapheight, (int)numPolyObjects, nth, nff, nsl);
++	}
++	fprintf(stderr, "RTC mobj thinker entries/tic: %.1f  NOTHINK %.1f  scenery-quick %.1f  scenery %.1f  regular %.1f dead %.1f pushable %.1f boss %.1f ; P_SceneryThinker %.1f\n",
++		rt.tick_calls[0]/T, rt.tick_calls[1]/T, rt.tick_calls[2]/T, rt.tick_calls[3]/T, rt.tick_calls[4]/T, rt.tick_calls[5]/T, rt.tick_calls[6]/T, rt.tick_calls[7]/T, rt.scen_thinker/T);
++	fprintf(stderr, "RTC pairs/tic: P_MobjThinker %.1f  P_SceneryThinker %.1f\n", rt.pair_m/T, rt.pair_s/T);
++	fprintf(stderr, "RTC P_CheckPosition/tic: %.1f  (pairmobj %.1f pairscen %.1f, other %.1f); cells things %.1f lines %.1f; PIT_CheckLine calls %.1f (bbox-pass %.1f, hit %.1f); PIT_DoCheckThing calls %.1f (radius-pass %.1f)\n",
++		rt.cp_total/T, rt.cp_site[1]/T, rt.cp_site[2]/T, (rt.cp_total - rt.cp_site[1] - rt.cp_site[2])/T, rt.cp_cells_t/T, rt.cp_cells_l/T, rt.cp_lines_called/T, rt.cp_lines_bbox/T, rt.cp_lines_hit/T, rt.cp_things_called/T, rt.cp_things_pass/T);
++	fprintf(stderr, "RTC SetThingPosition/tic %.1f, with x,y,radius equal to the previous link %.1f (%.1f%%) ; Unset %.1f\n", rt.setpos/T, rt.setpos_same_xyr/T, 100.0*rt.setpos_same_xyr/(rt.setpos?rt.setpos:1), rt.unsetpos/T);
++	for (i = 0; i < RT_MAXT; i++) { idx[i] = i; tp += rt.ptype[i].n; tsame += rt.ptype[i].same; tsameall += rt.ptype[i].same_all; tnoclip += rt.ptype[i].noclip; }
++	fprintf(stderr, "RTC pairs total %lu (%.1f/tic); changed nothing: %lu (%.1f%%), and tmdrpoffceilz unchanged: %lu (%.1f%%); NOCLIP pairs %lu (%.1f%%)\n", tp, tp/T, tsame, 100.0*tsame/(tp?tp:1), tsameall, 100.0*tsameall/(tp?tp:1), tnoclip, 100.0*tnoclip/(tp?tp:1));
++	qsort(idx, RT_MAXT, sizeof idx[0], rt_cmp_n);
++	fprintf(stderr, "RTC top pair types:  type name  n/tic  same%%  noclip%% noblk%% nograv%% onground%% zmom0%% | z_ch floorz_ch ceilz_ch eflags_ch momz_ch other_ch rng_ch (per 100 pairs) | lines/pair bbox/pair hit/pair things/pair thpass/pair cells/pair\n");
++	for (k = 0; k < 28 && rt.ptype[idx[k]].n; k++)
++	{
++		rt_ptype_t *t = &rt.ptype[idx[k]];
++		double n100 = 100.0 / t->n;
++		fprintf(stderr, "RTC   %4d %-26s %7.1f  %5.1f  %5.1f %5.1f %5.1f %5.1f %5.1f | %5.1f %5.1f %5.1f %5.1f %5.1f %5.1f %5.1f | %5.1f %5.1f %5.1f %5.1f %5.1f %5.1f\n", idx[k],
++			"", t->n/T, t->same*n100, t->noclip*n100, t->noblockmap*n100, t->nogravity*n100, t->onground*n100, t->zmom0*n100,
++			t->z_ch*n100, t->floorz_ch*n100, t->ceilz_ch*n100, t->eflags_ch*n100, t->momz_ch*n100, t->other_ch*n100, t->rng_ch*n100,
++			(double)t->lines/t->n, (double)t->lines_bbox/t->n, (double)t->lines_hit/t->n, (double)t->things/t->n, (double)t->things_pass/t->n, (double)t->cells/t->n);
++	}
++	fprintf(stderr, "RTC pair sector kind (per 100 pairs): plain  has_ffloors  has_slope  has_polyobj ; type n/tic\n");
++	for (k = 0; k < 28 && rt.ptype[idx[k]].n; k++)
++	{
++		rt_ptype_t *t = &rt.ptype[idx[k]];
++		double n100 = 100.0 / t->n;
++		fprintf(stderr, "RTC   %4d  %5.1f %5.1f %5.1f %5.1f   %7.1f\n", idx[k], t->plain*n100, t->has_ff*n100, t->has_slope*n100, t->has_poly*n100, t->n/T);
++	}
++	fprintf(stderr, "RTC class stats per pair type (per 100 pairs): NOCLIP && FOF-inert sector (no BLOCKOTHERS/QUICKSAND/goo rover, no polyobj) ; whole pair provably a no-op by static predicate (class A)\n");
++	{
++		unsigned long tn = 0, ti = 0, ta = 0;
++		for (i = 0; i < RT_MAXT; i++) { tn += rt.ptype[i].n; ti += rt.ptype[i].cls_noclip_inert; ta += rt.ptype[i].cls_zm_noop; }
++		fprintf(stderr, "RTC   ALL: pairs %lu  NOCLIP&inert %lu (%.1f%%)  class A %lu (%.1f%%) => per tic %.1f / %.1f\n", tn, ti, 100.0*ti/(tn?tn:1), ta, 100.0*ta/(tn?tn:1), ti/T, ta/T);
++	}
++	for (k = 0; k < 14 && rt.ptype[idx[k]].n; k++)
++	{
++		rt_ptype_t *t = &rt.ptype[idx[k]];
++		double n100 = 100.0 / t->n;
++		fprintf(stderr, "RTC   %4d  inert %5.1f  classA %5.1f\n", idx[k], t->cls_noclip_inert*n100, t->cls_zm_noop*n100);
++	}
++	{
++		unsigned long tp2 = 0, pred = 0, viol = 0, pn = 0, pnn = 0, vn = 0, vnn = 0, mf = 0, mk = 0, ms = 0, mc = 0, mp = 0;
++		unsigned long predn_tot = 0;
++		for (i = 0; i < RT_MAXT; i++)
++		{
++			rt_ptype_t *t = &rt.ptype[i];
++			tp2 += t->n; pred += t->memo_pred; viol += t->memo_viol; mf += t->memo_miss_first; mk += t->memo_miss_key; ms += t->memo_miss_sec; mc += t->memo_miss_cell; mp += t->memo_miss_poly;
++			pn += t->noclip; pnn += t->n - t->noclip;
++		}
++		(void)predn_tot; (void)vn; (void)vnn;
++		fprintf(stderr, "RTC MEMO (own key + sector signature + cell versions + polyobject epoch): pairs %lu predicted-no-op %lu (%.1f%%), violations %lu ; misses: first %lu key %lu sector %lu cell %lu poly %lu\n",
++			tp2, pred, 100.0*pred/(tp2?tp2:1), viol, mf, mk, ms, mc, mp);
++		fprintf(stderr, "RTC MEMO geometry scan: ticks with any sector signature change %lu of %lu, sectors changed total %lu (%.2f per tick); sectors that ever changed:", rt_geom_ticks_changed, rt.tickn, rt_geom_sectors_changed_total, rt_geom_sectors_changed_total/T);
++		{ size_t ii, nc = 0; for (ii = 0; rt_sec_nchg && ii < numsectors; ii++) if (rt_sec_nchg[ii]) nc++; fprintf(stderr, " %zu of %zu\n", nc, numsectors); }
++		for (k = 0; k < 14 && rt.ptype[idx[k]].n; k++)
++		{
++			rt_ptype_t *t = &rt.ptype[idx[k]];
++			fprintf(stderr, "RTC   %4d  n/tic %7.1f  predicted %5.1f%%  viol %lu  noclip %5.1f%% | miss first %lu key %lu sec %lu cell %lu poly %lu\n", idx[k], t->n/T, 100.0*t->memo_pred/t->n, t->memo_viol, 100.0*t->noclip/t->n,
++				t->memo_miss_first, t->memo_miss_key, t->memo_miss_sec, t->memo_miss_cell, t->memo_miss_poly);
++		}
++	}
++	for (i = 0; i < RT_MAXT; i++)
++		if (rt.ptype[i].n)
++			fprintf(stderr, "RTP %d %lu %lu %lu %lu %lu %lu\n", i, rt.ptype[i].n, rt.ptype[i].memo_pred, rt.ptype[i].memo_viol, rt.ptype[i].noclip, rt.ptype[i].cls_zm_noop, rt.ptype[i].cls_noclip_inert);
++	fprintf(stderr, "RTC top SetThingPosition types: type  n/tic  samexyr%%\n");
++	{
++		int idx2[RT_MAXT];
++		for (i = 0; i < RT_MAXT; i++) idx2[i] = i;
++		for (i = 0; i < 12; i++)
++		{
++			int best = i, j;
++			for (j = i + 1; j < RT_MAXT; j++) if (rt.setpos_type[idx2[j]] > rt.setpos_type[idx2[best]]) best = j;
++			{ int tmp = idx2[i]; idx2[i] = idx2[best]; idx2[best] = tmp; }
++			if (rt.setpos_type[idx2[i]]) fprintf(stderr, "RTC   %4d %7.1f %5.1f\n", idx2[i], rt.setpos_type[idx2[i]]/T, 100.0*rt.setpos_same_type[idx2[i]]/rt.setpos_type[idx2[i]]);
++		}
++	}
++	if (n > 10)
++	{
++		rt_pct(rt.per_tick_pairs, n, &a, &b, &c, &d); fprintf(stderr, "RTC per-tick pairs p50 %.0f p90 %.0f p99 %.0f max %.0f\n", a, b, c, d);
++		rt_pct(rt.per_tick_cp, n, &a, &b, &c, &d); fprintf(stderr, "RTC per-tick CheckPosition p50 %.0f p90 %.0f p99 %.0f max %.0f\n", a, b, c, d);
++		rt_pct(rt.per_tick_lines, n, &a, &b, &c, &d); fprintf(stderr, "RTC per-tick PIT_CheckLine p50 %.0f p90 %.0f p99 %.0f max %.0f\n", a, b, c, d);
++		rt_pct(rt.per_tick_things, n, &a, &b, &c, &d); fprintf(stderr, "RTC per-tick PIT_DoCheckThing p50 %.0f p90 %.0f p99 %.0f max %.0f\n", a, b, c, d);
++		rt_pct(rt.per_tick_setpos, n, &a, &b, &c, &d); fprintf(stderr, "RTC per-tick SetThingPosition p50 %.0f p90 %.0f p99 %.0f max %.0f\n", a, b, c, d);
++		{
++			unsigned long *arrs[3] = { rt.per_tick_setpos, rt.per_tick_cp, rt.per_tick_things };
++			const char *nm[3] = { "SetThingPosition", "CheckPosition", "PIT_DoCheckThing" };
++			int k, q, r;
++			for (k = 0; k < 3; k++)
++			{
++				unsigned char used[1200]; memset(used, 0, sizeof used);
++				fprintf(stderr, "RTC top ticks by %s:", nm[k]);
++				for (q = 0; q < 10; q++) { int bi = -1; for (r = 0; r < (int)n && r < 1200; r++) if (!used[r] && (bi < 0 || arrs[k][r] > arrs[k][bi])) bi = r; if (bi < 0) break; used[bi] = 1; fprintf(stderr, " %d:%lu", bi, arrs[k][bi]); }
++				fprintf(stderr, "\n");
++			}
++		}
++		{
++			{ unsigned long a2 = 0, b2 = 0; int t2; for (t2 = 0; t2 < (int)n && t2 < 1200; t2++) { a2 += rt_rm_n[t2]; b2 += rt_rm_it[t2]; } fprintf(stderr, "RTC R_RemoveMobjInterpolator total calls %lu iterations %lu (%.0f per call, %.1f iterations per tick)\n", a2, b2, a2 ? (double)b2 / a2 : 0.0, (double)b2 / n); }
++			static const int spk[] = { 516, 525, 1018, 371, 453, 966, 474, 392, 987, 923, 925, 928, 170, 2, 7 };
++			int si, ty, q, r;
++			for (si = 0; si < (int)(sizeof spk / sizeof spk[0]); si++)
++			{
++				int t = spk[si];
++				if (t >= (int)n || t >= 1200) continue;
++				fprintf(stderr, "RTC spike tick %d: setpos %lu cp %lu things %lu lines %lu pairs %lu ; R_RemoveMobjInterpolator calls %lu loop iterations %lu\n", t, rt.per_tick_setpos[t], rt.per_tick_cp[t], rt.per_tick_things[t], rt.per_tick_lines[t], rt.per_tick_pairs[t], rt_rm_n[t], rt_rm_it[t]);
++				{
++					const char *lab[3] = { "thinks", "spawns", "removes" };
++					UINT16 (*arr[3])[800] = { rt_tc, rt_ts, rt_tr };
++					int kk;
++					for (kk = 0; kk < 3; kk++)
++					{
++						int bestd[6], bestt[6], nb = 0;
++						for (ty = 0; ty < 800; ty++)
++						{
++							int vals[1200], m, med, d;
++							for (m = 0; m < (int)n && m < 1200; m++) vals[m] = arr[kk][m][ty];
++							/* median by counting sort-free selection: partial sort of a copy */
++							{ int a2, b2, tmp; for (a2 = 1; a2 < (int)n && a2 < 1200; a2++) { tmp = vals[a2]; for (b2 = a2 - 1; b2 >= 0 && vals[b2] > tmp; b2--) vals[b2 + 1] = vals[b2]; vals[b2 + 1] = tmp; } }
++							med = vals[((int)n < 1200 ? (int)n : 1200) / 2];
++							d = (int)arr[kk][t][ty] - med;
++							if (d <= 0) continue;
++							for (q = 0; q < nb && bestd[q] >= d; q++) ;
++							if (q < 6) { for (r = (nb < 6 ? nb : 5); r > q; r--) { bestd[r] = bestd[r - 1]; bestt[r] = bestt[r - 1]; } bestd[q] = d; bestt[q] = ty; if (nb < 6) nb++; }
++						}
++						fprintf(stderr, "RTC    %s above median:", lab[kk]);
++						for (q = 0; q < nb; q++) fprintf(stderr, " type%d:+%d(now %d)", bestt[q], bestd[q], (int)arr[kk][t][bestt[q]]);
++						fprintf(stderr, "\n");
++					}
++				}
++			}
++		}
++	}
++	(void)ts;
++}
++#endif
++
++#ifdef RT_EEPROF
++UINT64 rt_ty_cyc[RT_MAXTY], rt_ty_pair[RT_MAXTY];
++UINT32 rt_ty_n[RT_MAXTY], rt_ty_pn[RT_MAXTY];
++UINT64 rt_oth_cyc; UINT32 rt_oth_n;
++UINT32 rt_tk_total[RT_MAXTK], rt_tk_think[RT_MAXTK], rt_tk_pl[RT_MAXTK], rt_tk_post[RT_MAXTK], rt_tk_lua[RT_MAXTK];
++UINT32 rt_tn;
++int rt_widx[RT_MAXTY]; UINT32 rt_wtype[RT_NW]; UINT32 rt_wacc[RT_NW]; UINT32 rt_wser[RT_NW][RT_MAXTK];
++UINT32 rt_ss_n, rt_ss_ser[RT_MAXTK];
++UINT32 rt_sp_n, rt_sp_ser[RT_MAXTK];
++void RT_EEDump(void)
++{
++	int k, i, used[RT_MAXTY];
++	UINT64 tot = 0, totn = 0;
++	memset(used, 0, sizeof used);
++	for (i = 0; i < RT_MAXTY; i++) { tot += rt_ty_cyc[i]; totn += rt_ty_n[i]; }
++	for (k = 0; k < RT_NW; k++)
++	{
++		I_OutputMsg("RTW type %u", (unsigned)rt_wtype[k]);
++		for (i = 100; i < (int)rt_tn && i < RT_MAXTK; i++) I_OutputMsg(" %u", (unsigned)rt_wser[k][i]);
++		I_OutputMsg("\n");
++	}
++	I_OutputMsg("RTW setstate/tic");
++	for (i = 0; i < (int)rt_tn && i < RT_MAXTK; i++) I_OutputMsg(" %u", (unsigned)rt_ss_ser[i]);
++	I_OutputMsg("\n");
++	I_OutputMsg("RTW spawn/tic");
++	for (i = 0; i < (int)rt_tn && i < RT_MAXTK; i++) I_OutputMsg(" %u", (unsigned)rt_sp_ser[i]);
++	I_OutputMsg("\n");
++	#ifdef RT_MEMO
++	{
++		extern UINT64 rt_mc_bskip, rt_mc_bnoskip, rt_mc_end; extern UINT32 rt_mc_nbskip, rt_mc_nbnoskip, rt_mc_nend;
++		I_OutputMsg("RTM begin(skipped) calls %u cyc/call %.0f ; begin(not skipped) calls %u cyc/call %.0f ; end calls %u cyc/call %.0f ; per tic: skipped %.1f, begin %.1f K, end %.1f K\n",
++			rt_mc_nbskip, rt_mc_nbskip ? (double)rt_mc_bskip / rt_mc_nbskip : 0.0, rt_mc_nbnoskip, rt_mc_nbnoskip ? (double)rt_mc_bnoskip / rt_mc_nbnoskip : 0.0, rt_mc_nend, rt_mc_nend ? (double)rt_mc_end / rt_mc_nend : 0.0,
++			(double)rt_mc_nbskip / rt_tn, (double)(rt_mc_bskip + rt_mc_bnoskip) / rt_tn / 1000.0, (double)rt_mc_end / rt_tn / 1000.0);
++	}
++#endif
++	I_OutputMsg("RTT ===== mobj thinker cycles over %u tics: mobj calls %llu, cycles %llu (%.3f M/tic); other thinkers calls %u cycles %llu (%.3f M/tic)\n", (unsigned)rt_tn,
++		(unsigned long long)totn, (unsigned long long)tot, tot / 1e6 / rt_tn, (unsigned)rt_oth_n, (unsigned long long)rt_oth_cyc, rt_oth_cyc / 1e6 / rt_tn);
++	for (k = 0; k < 45; k++)
++	{
++		int best = -1;
++		for (i = 0; i < RT_MAXTY; i++)
++			if (!used[i] && rt_ty_n[i] && (best < 0 || rt_ty_cyc[i] > rt_ty_cyc[best]))
++				best = i;
++		if (best < 0)
++			break;
++		used[best] = 1;
++		I_OutputMsg("RTT type %4d calls/tic %7.1f cyc/call %6u K/tic %7.1f  | pairs/tic %7.1f cyc/pair %6u K/tic %7.1f\n", best, (double)rt_ty_n[best] / rt_tn,
++			(unsigned)(rt_ty_cyc[best] / rt_ty_n[best]), rt_ty_cyc[best] / 1e3 / rt_tn, (double)rt_ty_pn[best] / rt_tn, rt_ty_pn[best] ? (unsigned)(rt_ty_pair[best] / rt_ty_pn[best]) : 0,
++			rt_ty_pair[best] / 1e3 / rt_tn);
++	}
++	for (k = 0; k < (int)rt_tn && k < RT_MAXTK; k += 16)
++	{
++		I_OutputMsg("RTS %4d total", k);
++		for (i = k; i < k + 16 && i < (int)rt_tn; i++) I_OutputMsg(" %u", (unsigned)rt_tk_total[i]);
++		I_OutputMsg("\n");
++		I_OutputMsg("RTS %4d think", k);
++		for (i = k; i < k + 16 && i < (int)rt_tn; i++) I_OutputMsg(" %u", (unsigned)rt_tk_think[i]);
++		I_OutputMsg("\n");
++		I_OutputMsg("RTS %4d player", k);
++		for (i = k; i < k + 16 && i < (int)rt_tn; i++) I_OutputMsg(" %u", (unsigned)rt_tk_pl[i]);
++		I_OutputMsg("\n");
++		I_OutputMsg("RTS %4d post", k);
++		for (i = k; i < k + 16 && i < (int)rt_tn; i++) I_OutputMsg(" %u", (unsigned)rt_tk_post[i]);
++		I_OutputMsg("\n");
++		I_OutputMsg("RTS %4d lua", k);
++		for (i = k; i < k + 16 && i < (int)rt_tn; i++) I_OutputMsg(" %u", (unsigned)rt_tk_lua[i]);
++		I_OutputMsg("\n");
++	}
++}
++#endif
++
++#ifdef RT_MEMO
++// ===== pair memo prototype (see rt_memo.h) =====
++UINT32 rt_memo_things_pass;
++UINT32 rt_memo_now = 1;
++static UINT32 *rt_m_secgen;      // per sector: tick of the last change of its signature
++static UINT32 *rt_m_cellgen;     // per blockmap cell: counter of links/unlinks
++static UINT32 *rt_m_polygen;     // per polyobject: tick of the last change
++static UINT32 *rt_m_polyprev;
++typedef struct { fixed_t f, c; void *fs, *cs; fixed_t fsv[6], csv[6]; UINT32 ffh, misc; } rt_m_secsig_t;
++static rt_m_secsig_t *rt_m_secprev;
++unsigned long rt_m_stat[16]; // 0 pairs seen, 1 predicted, 2 skipped, 3 recorded, 4 shadow violations, 5 miss key, 6 miss sec, 7 miss cell, 8 miss poly, 9 miss invalid, 10 not recorded (changed/overlap/drpoff)
++
++static void rt_m_slopesig(pslope_t *sl, fixed_t *v)
++{
++	if (!sl) { memset(v, 0, 6 * sizeof(fixed_t)); return; }
++	v[0] = sl->o.x; v[1] = sl->o.y; v[2] = sl->o.z; v[3] = sl->normal.x; v[4] = sl->normal.y; v[5] = sl->normal.z;
++}
++
++static void rt_m_calc_secsig(size_t i, rt_m_secsig_t *g)
++{
++	sector_t *sc = &sectors[i];
++	ffloor_t *r;
++	memset(g, 0, sizeof *g);
++	g->f = sc->floorheight; g->c = sc->ceilingheight; g->fs = sc->f_slope; g->cs = sc->c_slope;
++	rt_m_slopesig(sc->f_slope, g->fsv); rt_m_slopesig(sc->c_slope, g->csv);
++	g->misc = (UINT32)sc->flags * 31u + (UINT32)sc->damagetype * 131u + (UINT32)sc->special * 7u + (UINT32)sc->heightsec + (UINT32)sc->gravity;
++	for (r = sc->ffloors; r; r = r->next)
++	{
++		sector_t *cs = &sectors[r->secnum];
++		fixed_t v1[6], v2[6];
++		UINT32 h = (UINT32)r->fofflags * 2654435761u;
++		h ^= (UINT32)cs->floorheight * 40503u; h ^= (UINT32)cs->ceilingheight * 9973u;
++		rt_m_slopesig(r->t_slope ? *r->t_slope : NULL, v1); rt_m_slopesig(r->b_slope ? *r->b_slope : NULL, v2);
++		{ int k; for (k = 0; k < 6; k++) { h = h * 31u + (UINT32)v1[k]; h = h * 31u + (UINT32)v2[k]; } }
++		h ^= (UINT32)(size_t)r->t_slope + (UINT32)(size_t)r->b_slope;
++		g->ffh = g->ffh * 17u + h;
++	}
++}
++
++static void rt_m_dump(void)
++{
++	fprintf(stderr, "RTM pairs seen %lu, memo valid+key ok %lu (predicted no-op), skipped %lu, recorded %lu, shadow violations %lu\n", rt_m_stat[0], rt_m_stat[1], rt_m_stat[2], rt_m_stat[3], rt_m_stat[4]);
++	fprintf(stderr, "RTM misses: invalid %lu key %lu sector %lu cell %lu poly %lu ; not recorded (changed/overlap/drpoff) %lu\n", rt_m_stat[9], rt_m_stat[5], rt_m_stat[6], rt_m_stat[7], rt_m_stat[8], rt_m_stat[10]);
++	fprintf(stderr, "RTM stale-generation events (touched sector changed after the tick-start scan, pair predicted no-op): %lu\n", rt_m_stat[11]);
++}
++
++void RT_MemoTickStart(void)
++{
++	size_t i;
++	extern polyobj_t *PolyObjects;
++	extern INT32 numPolyObjects;
++	static int reg;
++	if (!reg) { reg = 1; atexit(rt_m_dump); }
++	rt_memo_now++;
++	if (!rt_m_secprev)
++	{
++		rt_m_secprev = calloc(numsectors, sizeof *rt_m_secprev);
++		rt_m_secgen = calloc(numsectors, sizeof *rt_m_secgen);
++		for (i = 0; i < numsectors; i++) rt_m_calc_secsig(i, &rt_m_secprev[i]);
++		rt_m_cellgen = calloc((size_t)bmapwidth * bmapheight + 1, sizeof *rt_m_cellgen);
++		if (numPolyObjects) { rt_m_polygen = calloc(numPolyObjects, sizeof(UINT32)); rt_m_polyprev = calloc(numPolyObjects, sizeof(UINT32)); }
++	}
++	for (i = 0; i < numsectors; i++)
++	{
++		rt_m_secsig_t g;
++		rt_m_calc_secsig(i, &g);
++		if (memcmp(&g, &rt_m_secprev[i], sizeof g)) { rt_m_secprev[i] = g; rt_m_secgen[i] = rt_memo_now; }
++	}
++	for (i = 0; i < (size_t)numPolyObjects; i++)
++	{
++		polyobj_t *po = &PolyObjects[i];
++		UINT32 h = (UINT32)po->centerPt.x * 31u + (UINT32)po->centerPt.y * 7u + (UINT32)po->angle + (UINT32)po->flags + (UINT32)po->blockbox[0] * 13u + (UINT32)po->blockbox[1] + (UINT32)po->blockbox[2] * 5u + (UINT32)po->blockbox[3] * 3u;
++		if (h != rt_m_polyprev[i]) { rt_m_polyprev[i] = h; rt_m_polygen[i] = rt_memo_now; }
++	}
++}
++
++void RT_MemoCellVer(int cell) { if (rt_m_cellgen) rt_m_cellgen[cell]++; }
++
++static inline UINT32 rt_m_mix(UINT32 h, UINT32 w) { h ^= w; h *= 0x9E3779B1u; return h ^ (h >> 15); }
++
++static void __attribute__((unused)) rt_m_hash(const mobj_t *m, UINT32 *o1, UINT32 *o2)
++{
++	UINT32 a = 0x811C9DC5u, b = 0x01000193u;
++	const UINT32 w[] = {
++		(UINT32)m->x, (UINT32)m->y, (UINT32)m->z, (UINT32)m->momx, (UINT32)m->momy, (UINT32)m->momz, (UINT32)m->pmomz, (UINT32)m->radius, (UINT32)m->height,
++		(UINT32)m->floorz, (UINT32)m->ceilingz, (UINT32)m->scale, (UINT32)m->destscale, m->flags, m->flags2, (UINT32)m->eflags, (UINT32)m->type, (UINT32)m->health, (UINT32)m->fuse,
++		(UINT32)(size_t)m->standingslope, (UINT32)(size_t)m->target, (UINT32)(size_t)m->subsector, (UINT32)(size_t)m->floorrover, (UINT32)(size_t)m->ceilingrover, (UINT32)(size_t)m->tracer,
++		(UINT32)(size_t)m->state, (UINT32)m->angle, (UINT32)m->watertop, (UINT32)m->waterbottom, (UINT32)m->threshold, (UINT32)m->reactiontime, (UINT32)m->movecount,
++		(UINT32)m->movedir, (UINT32)m->extravalue1, (UINT32)m->extravalue2, (UINT32)m->cusval, (UINT32)(size_t)m->player, (UINT32)(size_t)m->hnext, (UINT32)(size_t)m->hprev,
++		(UINT32)m->lastlook, (UINT32)m->friction, (UINT32)m->movefactor
++	};
++	size_t i;
++	for (i = 0; i < sizeof w / sizeof w[0]; i++) { a = rt_m_mix(a, w[i]); b = rt_m_mix(b + 0x7F4A7C15u, w[i] ^ (UINT32)i); }
++	*o1 = a; *o2 = b;
++}
++
++static UINT32 rt_m_secsig(const mobj_t *m)
++{
++	UINT32 mx = 0;
++	msecnode_t *n;
++	if (m->subsector) { UINT32 g = rt_m_secgen[m->subsector->sector - sectors]; if (g > mx) mx = g; }
++	if (!(m->flags & MF_NOCLIP))
++		for (n = m->touching_sectorlist; n; n = n->m_sectorlist_next) { UINT32 g = rt_m_secgen[n->m_sector - sectors]; if (g > mx) mx = g; }
++	return mx;
++}
++
++static UINT32 rt_m_cellsig(const mobj_t *m)
++{
++	INT32 xl, xh, yl, yh, bx, by;
++	UINT32 sum = 0;
++	if (m->flags & MF_NOCLIP) return 0;
++	xl = (unsigned)(m->x - m->radius - bmaporgx)>>MAPBLOCKSHIFT; xh = (unsigned)(m->x + m->radius - bmaporgx)>>MAPBLOCKSHIFT;
++	yl = (unsigned)(m->y - m->radius - bmaporgy)>>MAPBLOCKSHIFT; yh = (unsigned)(m->y + m->radius - bmaporgy)>>MAPBLOCKSHIFT;
++	for (bx = xl; bx <= xh; bx++) for (by = yl; by <= yh; by++)
++		if (bx >= 0 && by >= 0 && bx < bmapwidth && by < bmapheight) sum = sum * 3u + rt_m_cellgen[by * bmapwidth + bx] + 1u;
++	return sum;
++}
++
++static UINT32 rt_m_polysig(const mobj_t *m)
++{
++	// polyobjects the pair can see: those linked into the cells of the box (the loop of P_CheckPosition) and those in the subsector's polyList.
++	// The signature is a hash over (index, generation) of every link, not a maximum: a polyobject that leaves the cells must change it.
++	extern polyobj_t *PolyObjects;
++	extern INT32 numPolyObjects;
++	UINT32 sig = 0;
++	INT32 xl, xh, yl, yh, bx, by;
++	polyobj_t *po;
++	if (!numPolyObjects || !rt_m_polygen) return 0;
++	if (PS2_HAVE_POLYBLOCKS)
++	{
++		xl = (unsigned)(m->x - m->radius - bmaporgx)>>MAPBLOCKSHIFT; xh = (unsigned)(m->x + m->radius - bmaporgx)>>MAPBLOCKSHIFT;
++		yl = (unsigned)(m->y - m->radius - bmaporgy)>>MAPBLOCKSHIFT; yh = (unsigned)(m->y + m->radius - bmaporgy)>>MAPBLOCKSHIFT;
++		if (xh >= bmapwidth) xh = bmapwidth - 1;
++		if (yh >= bmapheight) yh = bmapheight - 1;
++		for (by = yl; by <= yh; by++)
++			for (bx = xl; bx <= xh; bx++)
++			{
++				polymaplink_t *plink;
++				for (plink = POLYBLOCKLINK((size_t)by * bmapwidth + bx); plink; plink = (polymaplink_t *)(plink->link.next))
++					sig = sig * 31u + rt_m_polygen[plink->po - PolyObjects] + (UINT32)(plink->po - PolyObjects) * 65537u + 1u;
++			}
++	}
++	if (m->subsector)
++		for (po = m->subsector->polyList; po; po = (polyobj_t *)(po->link.next))
++			sig = sig * 37u + rt_m_polygen[po - PolyObjects] + (UINT32)(po - PolyObjects) * 65537u + 7u;
++	return sig;
++}
++
++// state saved by RT_MemoBegin for RT_MemoEnd
++static mobj_t rt_m_before __attribute__((unused));
++static UINT32 rt_m_seed, rt_m_h1 __attribute__((unused)), rt_m_h2 __attribute__((unused)), rt_m_things0;
++static fixed_t rt_m_drpoff0;
++static int rt_m_pred;
++extern fixed_t rt_drp_H; extern boolean rt_drp_set;
++void RT_MemoSetDrpoff(fixed_t v);
++void RT_MemoSaveTM(void *rec, size_t vcdelta);
++void RT_MemoLoadTM(const void *rec, mobj_t *m);
++static size_t rt_m_vc0;
++static struct { fixed_t bbox[4], x, y, floorz, ceilingz, dropoffz; INT32 flags; void *fr, *cr, *fs, *cs, *floorthing, *hitthing, *cline, *bline; size_t vcdelta; } rt_m_tmnow __attribute__((unused));
++static fixed_t rt_m_drp_apply(const mobj_t *m, fixed_t pre) { return m->rt_mdrpset ? m->rt_mdrpH : (m->rt_mdrpH > pre ? m->rt_mdrpH : pre); }
++
++#ifdef RT_MEMO_BLOCK
++static inline int rt_m_keydiff_w(const void *a, const void *b, size_t n)
++{
++	const UINT8 *pa = (const UINT8 *)a, *pb = (const UINT8 *)b;
++	size_t i = 0;
++	for (; i + 16 <= n; i += 16)
++	{
++		UINT64 x0, x1, y0, y1;
++		memcpy(&x0, pa + i, 8); memcpy(&x1, pa + i + 8, 8); memcpy(&y0, pb + i, 8); memcpy(&y1, pb + i + 8, 8);
++		if ((x0 ^ y0) | (x1 ^ y1)) return 1;
++	}
++	for (; i < n; i++) if (pa[i] != pb[i]) return 1;
++	return 0;
++}
++#ifdef RT_EEPROF
++typedef unsigned int rt_u128 __attribute__((mode(TI), aligned(16)));
++// both pointers 16-byte aligned, n a multiple of 16: lq / lq / (xor, or) per 16 bytes, no early exit
++static inline int rt_m_keydiff_q(const void *a, const void *b, size_t n)
++{
++	const rt_u128 *pa = (const rt_u128 *)a, *pb = (const rt_u128 *)b;
++	rt_u128 acc = 0;
++	size_t i;
++	for (i = 0; i < n / 16; i++) acc |= pa[i] ^ pb[i];
++	return acc != 0;
++}
++extern UINT32 rt_tn;
++#define rt_m_keydiff(a, b, n) (rt_tn >= 520 ? rt_m_keydiff_q((a), (b), (n)) : rt_m_keydiff_w((a), (b), (n)))
++#else
++#define rt_m_keydiff(a, b, n) rt_m_keydiff_w((a), (b), (n))
++#endif
++#define RT_KEY_OFF offsetof(mobj_t, flags)
++/* rounded up to 16: the extra bytes after movefactor can only cause a false mismatch (lost skip), never a false match */
++#define RT_KEY_LEN ((offsetof(mobj_t, movefactor) + sizeof(((mobj_t *)0)->movefactor) - RT_KEY_OFF + 15) & ~(size_t)15)
++static UINT8 rt_m_pre[224] __attribute__((aligned(16))); static state_t *rt_m_prestate;
++#endif
++// returns true: skip the pair (LIVE) / the pair will be checked afterwards (SHADOW)
++static boolean RT_MemoBegin_(mobj_t *m)
++{
++	UINT32 h1 __attribute__((unused)), h2 __attribute__((unused));
++	rt_m_stat[0]++;
++	rt_m_pred = 0;
++#ifndef RT_MEMO_BLOCK
++	rt_m_hash(m, &h1, &h2);
++	rt_m_h1 = h1; rt_m_h2 = h2;
++#else
++	(void)h1; (void)h2;
++#endif
++	if (!rt_m_secgen || !rt_m_cellgen) rt_m_stat[9]++; // P_PreTicker runs the thinkers before the first P_Ticker: no tables yet
++	else if (!m->rt_mvalid) rt_m_stat[9]++;
++#ifdef RT_MEMO_BLOCK
++	else if (m->rt_mstate != m->state || rt_m_keydiff((const UINT8 *)m + RT_KEY_OFF, m->rt_mkey, RT_KEY_LEN)) rt_m_stat[5]++;
++#else
++	else if (m->rt_mh1 != h1 || m->rt_mh2 != h2) rt_m_stat[5]++;
++#endif
++	else if (m->rt_msec != rt_m_secsig(m)) rt_m_stat[6]++;
++	else if (m->rt_mcell != rt_m_cellsig(m)) rt_m_stat[7]++;
++	else if (m->rt_mpoly != rt_m_polysig(m)) rt_m_stat[8]++;
++	else rt_m_pred = 1;
++	if (rt_m_pred) rt_m_stat[1]++;
++#ifdef RT_MEMO_SHADOW
++	if (rt_m_pred) // oracle for the generation scheme: the signatures of the touched sectors, computed now, must equal the tick-start snapshot the generations describe
++	{
++		msecnode_t *n;
++		rt_m_secsig_t g;
++		size_t si;
++		if (m->subsector) { si = m->subsector->sector - sectors; rt_m_calc_secsig(si, &g); if (memcmp(&g, &rt_m_secprev[si], sizeof g)) rt_m_stat[11]++; }
++		if (!(m->flags & MF_NOCLIP))
++			for (n = m->touching_sectorlist; n; n = n->m_sectorlist_next) { si = n->m_sector - sectors; rt_m_calc_secsig(si, &g); if (memcmp(&g, &rt_m_secprev[si], sizeof g)) rt_m_stat[11]++; }
++	}
++#endif
++#ifdef RT_MEMO_LIVE
++	if (rt_m_pred) { rt_m_stat[2]++; RT_MemoSetDrpoff(rt_m_drp_apply(m, RT_MemoGetDrpoff())); RT_MemoLoadTM(&m->rt_mtm, m); return true; }
++#else
++	if (rt_m_pred) rt_m_before = *m;
++#endif
++#ifdef RT_MEMO_BLOCK
++	memcpy(rt_m_pre, (const UINT8 *)m + RT_KEY_OFF, RT_KEY_LEN); rt_m_prestate = m->state;
++#endif
++	rt_m_seed = P_GetRandSeed();
++	rt_drp_set = false; rt_drp_H = (fixed_t)0x80000000; rt_m_vc0 = validcount;
++	rt_m_drpoff0 = RT_MemoGetDrpoff();
++	rt_m_things0 = rt_memo_things_pass;
++	return false;
++}
++
++static void RT_MemoEnd_(mobj_t *m)
++{
++	UINT32 h1 __attribute__((unused)) = 0, h2 __attribute__((unused)) = 0;
++#ifndef RT_MEMO_BLOCK
++	rt_m_hash(m, &h1, &h2);
++#endif
++#ifdef RT_MEMO_SHADOW
++	if (rt_m_pred)
++	{
++		mobj_t a = rt_m_before, b = *m;
++		a.thinker = b.thinker; // references / links
++		a.rt_mh1 = b.rt_mh1; a.rt_mh2 = b.rt_mh2; a.rt_msec = b.rt_msec; a.rt_mcell = b.rt_mcell; a.rt_mpoly = b.rt_mpoly; a.rt_mvalid = b.rt_mvalid; a.rt_mdrpset = b.rt_mdrpset; a.rt_mdrpH = b.rt_mdrpH; memcpy(&a.rt_mtm, &b.rt_mtm, sizeof a.rt_mtm);
++		RT_MemoSaveTM(&rt_m_tmnow, validcount - rt_m_vc0);
++		if (memcmp(&a, &b, sizeof(mobj_t)) || memcmp(&rt_m_tmnow, &b.rt_mtm, sizeof rt_m_tmnow) || P_GetRandSeed() != rt_m_seed || RT_MemoGetDrpoff() != rt_m_drp_apply(&b, rt_m_drpoff0))
++		{
++			rt_m_stat[4]++;
++			{ size_t q; const unsigned char *pa = (const unsigned char *)&a, *pb = (const unsigned char *)&b; for (q = 0; q < sizeof(mobj_t); q++) if (pa[q] != pb[q]) fprintf(stderr, "RTM diff byte off %zu: %02x -> %02x\n", q, pa[q], pb[q]); fprintf(stderr, "RTM seed %u -> %u drpoff %d -> %d\n", rt_m_seed, P_GetRandSeed(), (int)rt_m_drpoff0, (int)RT_MemoGetDrpoff()); }
++			fprintf(stderr, "RT_MEMO shadow: predicted no-op but the pair changed mobj type %d (z %d->%d floorz %d->%d ceilingz %d->%d eflags %x->%x) tic %u\n", (int)m->type, (int)rt_m_before.z, (int)m->z,
++				(int)rt_m_before.floorz, (int)m->floorz, (int)rt_m_before.ceilingz, (int)m->ceilingz, (unsigned)rt_m_before.eflags, (unsigned)m->eflags, (unsigned)rt_memo_now);
++			fflush(stderr); _Exit(3);
++		}
++	}
++#endif
++#ifdef RT_MEMO_BLOCK
++#define RT_KEYSAME (m->state == rt_m_prestate && !rt_m_keydiff((const UINT8 *)m + RT_KEY_OFF, rt_m_pre, RT_KEY_LEN))
++#else
++#define RT_KEYSAME (h1 == rt_m_h1 && h2 == rt_m_h2)
++#endif
++	if (rt_m_secgen && rt_m_cellgen && !((m->flags & MF_FLOAT) && m->target) /* P_ZMovement reads target->x,y,z,health (p_mobj.c:2452) */ && RT_KEYSAME && P_GetRandSeed() == rt_m_seed && rt_memo_things_pass == rt_m_things0)
++	{
++		m->rt_mdrpset = rt_drp_set; m->rt_mdrpH = rt_drp_H; RT_MemoSaveTM(&m->rt_mtm, validcount - rt_m_vc0);
++#ifdef RT_MEMO_BLOCK
++		memcpy(m->rt_mkey, (const UINT8 *)m + RT_KEY_OFF, RT_KEY_LEN); m->rt_mstate = m->state;
++#else
++		m->rt_mh1 = h1; m->rt_mh2 = h2;
++#endif
++		m->rt_msec = rt_m_secsig(m); m->rt_mcell = rt_m_cellsig(m); m->rt_mpoly = rt_m_polysig(m); m->rt_mvalid = 1;
++		rt_m_stat[3]++;
++	}
++	else
++	{
++		m->rt_mvalid = 0;
++		rt_m_stat[10]++;
++	}
++}
++
++#ifdef RT_EEPROF
++UINT64 rt_mc_bskip, rt_mc_bnoskip, rt_mc_end; UINT32 rt_mc_nbskip, rt_mc_nbnoskip, rt_mc_nend;
++static boolean RT_MemoBegin(mobj_t *m)
++{
++	const UINT32 t0 = RT_Cyc();
++	const boolean r = RT_MemoBegin_(m);
++	const UINT32 d = RT_Cyc() - t0;
++	if (r) { rt_mc_bskip += d; rt_mc_nbskip++; } else { rt_mc_bnoskip += d; rt_mc_nbnoskip++; }
++	return r;
++}
++static void RT_MemoEnd(mobj_t *m)
++{
++	const UINT32 t0 = RT_Cyc();
++	RT_MemoEnd_(m);
++	rt_mc_end += RT_Cyc() - t0; rt_mc_nend++;
++}
++#else
++static boolean RT_MemoBegin(mobj_t *m) { return RT_MemoBegin_(m); }
++static void RT_MemoEnd(mobj_t *m) { RT_MemoEnd_(m); }
++#endif
++#endif
+diff --git a/src/p_mobj.h b/src/p_mobj.h
+index ecb29ed..dc1dcfb 100644
+--- a/src/p_mobj.h
++++ b/src/p_mobj.h
+@@ -287,6 +287,233 @@ typedef struct blocknode_s
+ } blocknode_t;
+ 
+ // Map Object definition.
++#if defined(RT_REORDER_KEY)
++typedef struct mobj_s
++{
++	// RTICK reorder (key): shared prefix with precipmobj_t, then ONE contiguous block of the fields the pair reads (memcmp-able), then the other tick-hot, then the rest
++	// shared prefix with precipmobj_t
++	thinker_t thinker;
++	UINT32 frame; // frame number, plus bits see p_pspr.h
++	spritenum_t sprite; // used to find patch_t and flip value
++	UINT16 sprite2; // player sprites
++	UINT16 anim_duration; // for FF_ANIMATE states
++	INT32 tics; // state tic counter
++	state_t *state;
++	UINT32 rt_keypad[2]; // RTICK: puts the key block on a 16-byte boundary (quadword compare)
++	// pair key block: flags .. movefactor are contiguous (RT_KEY_OFF / RT_KEY_LEN in rt_memo.h)
++	UINT32 flags; // flags from mobjinfo tables
++	UINT32 flags2; // MF2_ flags
++	UINT16 eflags; // extra flags
++	mobjtype_t type;
++	fixed_t x;
++	fixed_t y;
++	fixed_t z;
++	fixed_t momx;
++	fixed_t momy;
++	fixed_t momz;
++	fixed_t pmomz; // If you're on a moving floor, its "momz" would be here
++	fixed_t radius;
++	fixed_t height;
++	fixed_t floorz; // Nearest floor below.
++	fixed_t ceilingz; // Nearest ceiling above.
++	fixed_t scale;
++	fixed_t destscale;
++	INT32 health; // for player this is rings + 1 -- no it isn't, not any more!!
++	INT32 fuse; // Does something in P_MobjThinker on reaching 0.
++	struct pslope_s *standingslope; // The slope that the object is standing on (shouldn't need synced in savegames, right?)
++	struct mobj_s *target; // Thing being chased/attacked (or NULL), and originator for missiles.
++	struct subsector_s *subsector; // Subsector the mobj resides in.
++	struct ffloor_s *floorrover; // FOF referred by floorz
++	struct ffloor_s *ceilingrover; // FOF referred by ceilingz
++	struct mobj_s *tracer; // Thing being chased/attacked for tracers.
++	angle_t angle; // orientation
++	fixed_t watertop; // top of the water FOF the mobj is in
++	fixed_t waterbottom; // bottom of the water FOF the mobj is in
++	INT32 threshold; // If >0, the target will be chased no matter what.
++	INT32 reactiontime; // If not 0, don't attack yet.
++	INT32 movecount; // when 0, select a new dir
++	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
++	INT32 extravalue1;
++	INT32 extravalue2;
++	INT32 cusval;
++	struct player_s *player;
++	struct mobj_s *hnext;
++	struct mobj_s *hprev;
++	INT32 lastlook; // Player number last looked for.
++	fixed_t friction;
++	fixed_t movefactor;
++	// other tick-hot
++	const mobjinfo_t *info; // &mobjinfo[mobj->type]
++	struct mobj_s *dontdrawforviewmobj; // If set, hides the mobj if dontdrawforviewmobj is the current camera (first-person player or awayviewmobj)
++	struct mobj_s *snext;
++	struct mobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
++	// cold for the tick
++	fixed_t old_x; // position interpolation
++	fixed_t old_y; // position interpolation
++	fixed_t old_z; // position interpolation
++	fixed_t old_x2;
++	fixed_t old_y2;
++	fixed_t old_z2;
++	angle_t pitch; // orientation
++	angle_t roll; // orientation
++	angle_t old_angle; // orientation interpolation
++	angle_t old_pitch; // orientation interpolation
++	angle_t old_roll; // orientation interpolation
++	angle_t old_angle2;
++	angle_t old_pitch2;
++	angle_t old_roll2;
++	angle_t spriteroll;
++	angle_t old_spriteroll;
++	angle_t old_spriteroll2;
++	UINT32 renderflags; // render flags
++	INT32 blendmode; // blend mode
++	fixed_t alpha; // alpha
++	fixed_t spritexscale;
++	fixed_t spriteyscale;
++	fixed_t spritexoffset;
++	fixed_t spriteyoffset;
++	fixed_t old_spritexscale;
++	fixed_t old_spriteyscale;
++	fixed_t old_spritexscale2;
++	fixed_t old_spriteyscale2;
++	fixed_t old_spritexoffset;
++	fixed_t old_spriteyoffset;
++	fixed_t old_spritexoffset2;
++	fixed_t old_spriteyoffset2;
++	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
++	struct msecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
++	void *skin; // overrides 'sprite' when non-NULL (for player bodies to 'remember' the skin)
++	UINT16 color;
++	UINT16 translation;
++	struct player_s *drawonlyforplayer; // If set, hides the mobj for everyone except this player and their spectators
++	blocknode_t *blocknode;
++	mapthing_t *spawnpoint; // Used for CTF flags, objectplace, and a handful other applications.
++	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
++	fixed_t old_scale; // interpolation
++	fixed_t old_scale2;
++	fixed_t scalespeed;
++	INT32 cvmem;
++	boolean resetinterp; // if true, some fields should not be interpolated (see R_InterpolateMobjState implementation)
++	boolean colorized; // Whether the mobj uses the rainbow colormap
++	boolean mirrored; // The object's rotations will be mirrored left to right, e.g., see frame AL from the right and AR from the left
++	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
++	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
++#if defined(RT_MEMO_SHADOW) || defined(RT_MEMO_LIVE)
++	UINT32 rt_mh1, rt_mh2, rt_msec, rt_mcell, rt_mpoly; UINT8 rt_mvalid; UINT8 rt_mdrpset; fixed_t rt_mdrpH;
++	UINT8 rt_mkey[224] __attribute__((aligned(16))); state_t *rt_mstate;
++	struct { fixed_t bbox[4], x, y, floorz, ceilingz, dropoffz; INT32 flags; void *fr, *cr, *fs, *cs, *floorthing, *hitthing, *cline, *bline; size_t vcdelta; } rt_mtm;
++#endif
++} mobj_t;
++#elif defined(RT_REORDER)
++typedef struct mobj_s
++{
++	// RTICK reorder: shared prefix with precipmobj_t, then the tick-hot fields, then the rest
++	thinker_t thinker;
++	UINT32 frame; // frame number, plus bits see p_pspr.h
++	spritenum_t sprite; // used to find patch_t and flip value
++	UINT16 sprite2; // player sprites
++	UINT16 anim_duration; // for FF_ANIMATE states
++	INT32 tics; // state tic counter
++	state_t *state;
++	// tick-hot
++	UINT32 flags; // flags from mobjinfo tables
++	UINT32 flags2; // MF2_ flags
++	UINT16 eflags; // extra flags
++	mobjtype_t type;
++	fixed_t x;
++	fixed_t y;
++	fixed_t z;
++	fixed_t momx;
++	fixed_t momy;
++	fixed_t momz;
++	fixed_t pmomz; // If you're on a moving floor, its "momz" would be here
++	fixed_t floorz; // Nearest floor below.
++	fixed_t ceilingz; // Nearest ceiling above.
++	fixed_t radius;
++	fixed_t height;
++	struct subsector_s *subsector; // Subsector the mobj resides in.
++	INT32 health; // for player this is rings + 1 -- no it isn't, not any more!!
++	struct player_s *player;
++	const mobjinfo_t *info; // &mobjinfo[mobj->type]
++	struct mobj_s *target; // Thing being chased/attacked (or NULL), and originator for missiles.
++	struct mobj_s *tracer; // Thing being chased/attacked for tracers.
++	struct mobj_s *hnext;
++	struct mobj_s *hprev;
++	struct mobj_s *dontdrawforviewmobj; // If set, hides the mobj if dontdrawforviewmobj is the current camera (first-person player or awayviewmobj)
++	struct pslope_s *standingslope; // The slope that the object is standing on (shouldn't need synced in savegames, right?)
++	INT32 fuse; // Does something in P_MobjThinker on reaching 0.
++	fixed_t scale;
++	fixed_t destscale;
++	fixed_t watertop; // top of the water FOF the mobj is in
++	fixed_t waterbottom; // bottom of the water FOF the mobj is in
++	struct mobj_s *snext;
++	struct mobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
++	// cold for the tick
++	fixed_t old_x; // position interpolation
++	fixed_t old_y; // position interpolation
++	fixed_t old_z; // position interpolation
++	fixed_t old_x2;
++	fixed_t old_y2;
++	fixed_t old_z2;
++	angle_t angle; // orientation
++	angle_t pitch; // orientation
++	angle_t roll; // orientation
++	angle_t old_angle; // orientation interpolation
++	angle_t old_pitch; // orientation interpolation
++	angle_t old_roll; // orientation interpolation
++	angle_t old_angle2;
++	angle_t old_pitch2;
++	angle_t old_roll2;
++	angle_t spriteroll;
++	angle_t old_spriteroll;
++	angle_t old_spriteroll2;
++	UINT32 renderflags; // render flags
++	INT32 blendmode; // blend mode
++	fixed_t alpha; // alpha
++	fixed_t spritexscale;
++	fixed_t spriteyscale;
++	fixed_t spritexoffset;
++	fixed_t spriteyoffset;
++	fixed_t old_spritexscale;
++	fixed_t old_spriteyscale;
++	fixed_t old_spritexscale2;
++	fixed_t old_spriteyscale2;
++	fixed_t old_spritexoffset;
++	fixed_t old_spriteyoffset;
++	fixed_t old_spritexoffset2;
++	fixed_t old_spriteyoffset2;
++	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
++	struct msecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
++	struct ffloor_s *floorrover; // FOF referred by floorz
++	struct ffloor_s *ceilingrover; // FOF referred by ceilingz
++	void *skin; // overrides 'sprite' when non-NULL (for player bodies to 'remember' the skin)
++	UINT16 color;
++	UINT16 translation;
++	struct player_s *drawonlyforplayer; // If set, hides the mobj for everyone except this player and their spectators
++	blocknode_t *blocknode;
++	angle_t movedir; // dirtype_t 0-7; also used by Deton for up/down angle
++	INT32 movecount; // when 0, select a new dir
++	INT32 reactiontime; // If not 0, don't attack yet.
++	INT32 threshold; // If >0, the target will be chased no matter what.
++	INT32 lastlook; // Player number last looked for.
++	mapthing_t *spawnpoint; // Used for CTF flags, objectplace, and a handful other applications.
++	fixed_t friction;
++	fixed_t movefactor;
++	UINT32 mobjnum; // A unique number for this mobj. Used for restoring pointers on save games.
++	fixed_t old_scale; // interpolation
++	fixed_t old_scale2;
++	fixed_t scalespeed;
++	INT32 extravalue1;
++	INT32 extravalue2;
++	INT32 cusval;
++	INT32 cvmem;
++	boolean resetinterp; // if true, some fields should not be interpolated (see R_InterpolateMobjState implementation)
++	boolean colorized; // Whether the mobj uses the rainbow colormap
++	boolean mirrored; // The object's rotations will be mirrored left to right, e.g., see frame AL from the right and AR from the left
++	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
++	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
++} mobj_t;
++#else
+ typedef struct mobj_s
+ {
+ 	// List: thinker links.
+@@ -416,13 +643,22 @@ typedef struct mobj_s
+ 	struct pslope_s *standingslope; // The slope that the object is standing on (shouldn't need synced in savegames, right?)
+ 
+ 	boolean resetinterp; // if true, some fields should not be interpolated (see R_InterpolateMobjState implementation)
++#ifdef RT_O1
++	UINT32 interpidx; // OPT13 (RTICK): index of this mobj in interpolated_mobjs (r_fps.c), a hint for O(1) removal; verified before use
++#endif
+ 	boolean colorized; // Whether the mobj uses the rainbow colormap
+ 	boolean mirrored; // The object's rotations will be mirrored left to right, e.g., see frame AL from the right and AR from the left
+ 	fixed_t shadowscale; // If this object casts a shadow, and the size relative to radius
+ 	INT32 dispoffset; // copy of info->dispoffset, so mobjs can be sorted independently of their type
+ 
++#if defined(RT_MEMO_SHADOW) || defined(RT_MEMO_LIVE)
++	UINT32 rt_mh1, rt_mh2, rt_msec, rt_mcell, rt_mpoly; UINT8 rt_mvalid; UINT8 rt_mdrpset; fixed_t rt_mdrpH;
++	struct { fixed_t bbox[4], x, y, floorz, ceilingz, dropoffz; INT32 flags; void *fr, *cr, *fs, *cs, *floorthing, *hitthing, *cline, *bline; size_t vcdelta; } rt_mtm; // post-state of the tm* globals after the recorded pair
++#endif
++
+ 	// WARNING: New fields must be added separately to savegame and Lua.
+ } mobj_t;
++#endif
+ 
+ //
+ // For precipitation
+@@ -431,6 +667,71 @@ typedef struct mobj_s
+ // so please keep the start of the
+ // structure the same.
+ //
++#ifdef RT_REORDER
++typedef struct precipmobj_s
++{
++	// RTICK reorder: same shared prefix as mobj_t
++	thinker_t thinker;
++	UINT32 frame; // frame number, plus bits see p_pspr.h
++	spritenum_t sprite; // used to find patch_t and flip value
++	UINT16 sprite2; // player sprites
++	UINT16 anim_duration; // for FF_ANIMATE states
++	INT32 tics; // state tic counter
++	state_t *state;
++	fixed_t x;
++	fixed_t y;
++	fixed_t z;
++	fixed_t old_x; // position interpolation
++	fixed_t old_y; // position interpolation
++	fixed_t old_z; // position interpolation
++	fixed_t old_x2;
++	fixed_t old_y2;
++	fixed_t old_z2;
++	struct precipmobj_s *snext;
++	struct precipmobj_s **sprev; // killough 8/11/98: change to ptr-to-ptr
++	angle_t angle; // orientation
++	angle_t pitch; // orientation
++	angle_t roll; // orientation
++	angle_t old_angle; // orientation interpolation
++	angle_t old_pitch; // orientation interpolation
++	angle_t old_roll; // orientation interpolation
++	angle_t old_angle2;
++	angle_t old_pitch2;
++	angle_t old_roll2;
++	angle_t spriteroll;
++	angle_t old_spriteroll;
++	angle_t old_spriteroll2;
++	UINT32 renderflags; // render flags
++	INT32 blendmode; // blend mode
++	fixed_t alpha; // alpha
++	fixed_t spritexscale;
++	fixed_t spriteyscale;
++	fixed_t spritexoffset;
++	fixed_t spriteyoffset;
++	fixed_t old_spritexscale;
++	fixed_t old_spriteyscale;
++	fixed_t old_spritexscale2;
++	fixed_t old_spriteyscale2;
++	fixed_t old_spritexoffset;
++	fixed_t old_spriteyoffset;
++	fixed_t old_spritexoffset2;
++	fixed_t old_spriteyoffset2;
++	struct pslope_s *floorspriteslope; // The slope that the floorsprite is rotated by
++	struct mprecipsecnode_s *touching_sectorlist; // a linked list of sectors where this object appears
++	struct subsector_s *subsector; // Subsector the mobj resides in.
++	fixed_t floorz; // Nearest floor below.
++	fixed_t ceilingz; // Nearest ceiling above.
++	struct ffloor_s *floorrover; // FOF referred by floorz
++	struct ffloor_s *ceilingrover; // FOF referred by ceilingz
++	fixed_t radius; // Fixed at 2*FRACUNIT
++	fixed_t height; // Fixed at 4*FRACUNIT
++	fixed_t momx;
++	fixed_t momy;
++	fixed_t momz;
++	fixed_t precipflags; // fixed_t so it uses the same spot as "pmomz" even as we use precipflags_t for it
++	INT32 flags; // flags from mobjinfo tables
++} precipmobj_t;
++#else
+ typedef struct precipmobj_s
+ {
+ 	// List: thinker links.
+@@ -486,6 +787,7 @@ typedef struct precipmobj_s
+ 	state_t *state;
+ 	INT32 flags; // flags from mobjinfo tables
+ } precipmobj_t;
++#endif
+ 
+ typedef struct actioncache_s
+ {
+diff --git a/src/p_tick.c b/src/p_tick.c
+index c2e4400..19e2d68 100644
+--- a/src/p_tick.c
++++ b/src/p_tick.c
+@@ -12,6 +12,9 @@
+ /// \brief Archiving: SaveGame I/O, Thinker, Ticker
+ 
+ #include "doomstat.h"
++#include "rt_census.h"
++#include "rt_eeprof.h"
++#include "rt_memo.h"
+ #include "g_game.h"
+ #include "p_local.h"
+ #include "z_zone.h"
+@@ -493,7 +496,27 @@ static inline void P_RunThinkers(void)
+ 				continue;
+ 			}
+ #endif
++#ifdef RT_EEPROF
++			if (currentthinker->function == (actionf_p1)P_MobjThinker)
++			{
++				const UINT32 t0 = RT_Cyc();
++				const mobjtype_t ty = ((mobj_t *)currentthinker)->type;
++				currentthinker->function(currentthinker);
++				{
++					const UINT32 d = RT_Cyc() - t0;
++					if (ty < RT_MAXTY) { rt_ty_cyc[ty] += d; rt_ty_n[ty]++; if (rt_widx[ty] >= 0) rt_wacc[rt_widx[ty]] += d; }
++				}
++			}
++			else
++			{
++				const UINT32 t0 = RT_Cyc();
++				currentthinker->function(currentthinker);
++				rt_oth_cyc += RT_Cyc() - t0;
++				rt_oth_n++;
++			}
++#else
+ 			currentthinker->function(currentthinker);
++#endif
+ 		}
+ 		PS_STOP_TIMING(ps_thlist_times[i]);
+ 		if (i == THINK_MOBJ)
+@@ -776,6 +799,10 @@ extern UINT32 ps2_ingamemask; // p_enemy.c, PS2-97
+ void P_Ticker(boolean run)
+ {
+ 	INT32 i;
++#ifdef RT_EEPROF
++	const UINT32 rt_t_entry = RT_Cyc();
++	UINT32 rt_t_think = 0, rt_t_pl = 0, rt_t_lua = 0, rt_t_post0 = 0, rt_t_scan __attribute__((unused)) = 0;
++#endif
+ 
+ #ifdef PS2_OPT_PTICK
+ 	{
+@@ -845,7 +872,14 @@ void P_Ticker(boolean run)
+ 		ps_checkposition_calls.value.i = 0;
+ 
+ 		PS_START_TIMING(ps_lua_prethinkframe_time);
++#ifdef RT_EEPROF
++		rt_t_lua = RT_Cyc();
++#endif
+ 		LUA_HookPreThinkFrame();
++#ifdef RT_EEPROF
++		rt_t_lua = RT_Cyc() - rt_t_lua;
++		rt_t_pl = RT_Cyc();
++#endif
+ 		PS_STOP_TIMING(ps_lua_prethinkframe_time);
+ 
+ 		{
+@@ -855,6 +889,9 @@ void P_Ticker(boolean run)
+ 			if (playeringame[i] && players[i].mo && !P_MobjWasRemoved(players[i].mo))
+ 				P_PlayerThink(&players[i]);
+ 		PS_STOP_TIMING(ps_playerthink_time);
++#ifdef RT_EEPROF
++		rt_t_pl = RT_Cyc() - rt_t_pl;
++#endif
+ 		PS2_CYC_ADD(9, t_pt);
+ 		}
+ 	}
+@@ -874,9 +911,35 @@ void P_Ticker(boolean run)
+ 
+ 	if (run)
+ 	{
++#ifdef RT_CENSUS
++		static int dumped_reg;
++		unsigned long p0 = rt.pair_m + rt.pair_s, l0 = rt.cp_lines_called, t0 = rt.cp_things_called;
++		if (!dumped_reg) { dumped_reg = 1; atexit(RT_Dump); }
++		RT_GeomScan();
++#endif
++#ifdef RT_EEPROF
++		rt_t_think = RT_Cyc();
++#endif
++#if defined(RT_MEMO) && defined(RT_EEPROF)
++		{ const UINT32 rt_s0 = RT_Cyc(); RT_MemoTickStart(); rt_t_scan = RT_Cyc() - rt_s0; }
++#elif defined(RT_MEMO)
++		RT_MemoTickStart();
++#endif
+ 		PS_START_TIMING(ps_thinkertime);
+ 		P_RunThinkers();
+ 		PS_STOP_TIMING(ps_thinkertime);
++#ifdef RT_EEPROF
++		rt_t_think = RT_Cyc() - rt_t_think;
++#ifdef RT_MEMO
++		rt_t_think -= rt_t_scan; // the geometry scan of the prototype is reported in the 'lua' column (product: writer hooks instead)
++		rt_t_lua = rt_t_scan;
++#endif
++		rt_t_post0 = RT_Cyc();
++#endif
++#ifdef RT_CENSUS
++		if (rt.tickn < 1200) { rt.per_tick_pairs[rt.tickn] = rt.pair_m + rt.pair_s - p0; rt.per_tick_lines[rt.tickn] = rt.cp_lines_called - l0; rt.per_tick_things[rt.tickn] = rt.cp_things_called - t0; }
++		rt.tickn++;
++#endif
+ 
+ 		// Run any "after all the other thinkers" stuff
+ 		for (i = 0; i < MAXPLAYERS; i++)
+@@ -996,6 +1059,51 @@ void P_Ticker(boolean run)
+ 	}
+ 
+ 	P_MapEnd();
++#ifdef RT_QUIT_TICS
++	if (run && leveltime >= RT_QUIT_TICS)
++		exit(0);
++#endif
++#ifdef RT_EEPROF
++	if (run)
++	{
++		const UINT32 now = RT_Cyc();
++		if (rt_tn < RT_MAXTK)
++		{
++			rt_tk_total[rt_tn] = now - rt_t_entry;
++			rt_tk_think[rt_tn] = rt_t_think;
++			rt_tk_pl[rt_tn] = rt_t_pl;
++			rt_tk_lua[rt_tn] = rt_t_lua;
++			rt_tk_post[rt_tn] = rt_t_post0 ? now - rt_t_post0 : 0;
++		}
++		{
++			int w;
++			if (rt_tn < RT_MAXTK)
++			{
++				for (w = 0; w < RT_NW; w++) { rt_wser[w][rt_tn] = rt_wacc[w]; }
++				rt_ss_ser[rt_tn] = rt_ss_n;
++				rt_sp_ser[rt_tn] = rt_sp_n;
++			}
++			for (w = 0; w < RT_NW; w++) rt_wacc[w] = 0;
++			rt_ss_n = 0; rt_sp_n = 0;
++			if (rt_tn == 100) // choose the watched types: the 12 with the most cycles so far
++			{
++				int k, i;
++				for (i = 0; i < RT_MAXTY; i++) rt_widx[i] = -1;
++				for (k = 0; k < RT_NW; k++)
++				{
++					int best = -1;
++					for (i = 0; i < RT_MAXTY; i++)
++						if (rt_widx[i] < 0 && rt_ty_n[i] && (best < 0 || rt_ty_cyc[i] > rt_ty_cyc[best]))
++							best = i;
++					if (best >= 0) { rt_widx[best] = k; rt_wtype[k] = best; }
++				}
++			}
++		}
++		rt_tn++;
++		if (rt_tn == 1040)
++			RT_EEDump();
++	}
++#endif
+ 
+ //	Z_CheckMemCleanup();
+ }
+diff --git a/src/r_defs.h b/src/r_defs.h
+index 441e778..c89146e 100644
+--- a/src/r_defs.h
++++ b/src/r_defs.h
+@@ -450,6 +450,78 @@ typedef enum
+ // The SECTORS record, at runtime.
+ // Stores things/mobjs.
+ //
++#ifdef RT_REORDER
++typedef struct sector_s
++{
++	// RTICK reorder: the fields P_CheckPosition / P_ZMovement / P_MobjCheckWater read, first
++	fixed_t floorheight;
++	fixed_t ceilingheight;
++	pslope_t *f_slope; // floor slope
++	pslope_t *c_slope; // ceiling slope
++	ffloor_t *ffloors;
++	sectorflags_t flags;
++	UINT8 damagetype;
++	fixed_t gravity; // per-sector gravity factor
++	INT32 heightsec; // other sector, or -1 if no other sector
++	fixed_t friction;
++	INT16 special;
++	mobj_t *thinglist;
++	struct msecnode_s *touching_thinglist;
++	size_t validcount;
++	size_t linecount;
++	struct line_s **lines; // [linecount] size
++	INT32 floorpic;
++	INT32 ceilingpic;
++	INT16 lightlevel;
++	taglist_t tags;
++	degenmobj_t soundorg;
++	void *floordata; // floor move thinker
++	void *ceilingdata; // ceiling move thinker
++	void *lightingdata; // lighting change thinker
++	void *fadecolormapdata; // fade colormap thinker
++	fixed_t floorxoffset;
++	fixed_t flooryoffset;
++	fixed_t ceilingxoffset;
++	fixed_t ceilingyoffset;
++	fixed_t floorxscale;
++	fixed_t flooryscale;
++	fixed_t ceilingxscale;
++	fixed_t ceilingyscale;
++	angle_t floorangle;
++	angle_t ceilingangle;
++	INT32 camsec; // used for camera clipping
++	INT16 floorlightlevel;
++	INT16 ceilinglightlevel;
++	boolean floorlightabsolute; // absolute or relative to sector's light level?
++	boolean ceilinglightabsolute; // absolute or relative to sector's light level?
++	boolean moved; // PS2-507: the small fields of this struct side by side (no padding): 276 -> 256 bytes
++	boolean colormap_protected; // PS2-507: the small fields of this struct side by side (no padding): 276 -> 256 bytes
++	INT32 floorlightsec; // take floor/ceiling light level from another sector
++	INT32 ceilinglightsec; // take floor/ceiling light level from another sector
++	INT32 crumblestate; // used for crumbling and bobbing
++	size_t *attached;
++	boolean *attachedsolid;
++	size_t numattached;
++	size_t maxattached;
++	lightlist_t *lightlist;
++	INT32 numlights;
++	extracolormap_t *extra_colormap;
++	fixed_t *gravityptr; // For binary format: Read gravity from floor height of master sector
++	sectorspecialflags_t specialflags;
++	mtag_t triggertag; // tag to call upon triggering (PS2-507: the small fields together)
++	UINT8 triggerer; // who can trigger?
++	boolean hasslope; // The sector, or one of its visible FOFs, contains a slope
++	INT16 spawn_lightlevel; // for fade thinker
++	struct line_s *cullheight;
++	fixed_t floorspeed;
++	fixed_t ceilspeed;
++	precipmobj_t *preciplist;
++	struct mprecipsecnode_s *touching_preciplist;
++	extracolormap_t *spawn_extra_colormap;
++	UINT32 portal_floor;
++	UINT32 portal_ceiling;
++} sector_t;
++#else
+ typedef struct sector_s
+ {
+ 	fixed_t floorheight;
+@@ -574,6 +646,7 @@ typedef struct sector_s
+ 	UINT32 portal_floor;
+ 	UINT32 portal_ceiling;
+ } sector_t;
++#endif
+ 
+ //
+ // Move clipping aid for linedefs.
+diff --git a/src/r_fps.c b/src/r_fps.c
+index c6d6abc..0c16c41 100644
+--- a/src/r_fps.c
++++ b/src/r_fps.c
+@@ -950,6 +950,9 @@ void R_AddMobjInterpolator(mobj_t *mobj)
+ 	}
+ 
+ 	interpolated_mobjs[interpolated_mobjs_len] = mobj;
++#ifdef RT_O1
++	mobj->interpidx = (UINT32)interpolated_mobjs_len;
++#endif
+ 	interpolated_mobjs_len += 1;
+ 
+ 	R_ResetMobjInterpolationState(mobj);
+@@ -962,13 +965,30 @@ void R_RemoveMobjInterpolator(mobj_t *mobj)
+ 
+ 	if (interpolated_mobjs_len == 0) return;
+ 
++#ifdef RT_O1
++	i = mobj->interpidx;
++	if (i < interpolated_mobjs_len && interpolated_mobjs[i] == mobj)
++	{
++		mobj_t *last = interpolated_mobjs[interpolated_mobjs_len - 1];
++		interpolated_mobjs[i] = last;
++		last->interpidx = (UINT32)i;
++		interpolated_mobjs_len -= 1;
++		return;
++	}
++#endif
+ 	for (i = 0; i < interpolated_mobjs_len; i++)
+ 	{
++#ifdef RT_CENSUS
++		{ extern unsigned long rt_rm_it[1200], rt_rm_n[1200]; extern unsigned long rt_tickn_for_rm(void); unsigned long tk = rt_tickn_for_rm(); if (tk < 1200) { rt_rm_it[tk]++; if (i == 0) rt_rm_n[tk]++; } }
++#endif
+ 		if (interpolated_mobjs[i] == mobj)
+ 		{
+ 			interpolated_mobjs[i] = interpolated_mobjs[
+ 				interpolated_mobjs_len - 1
+ 			];
++#ifdef RT_O1
++			interpolated_mobjs[i]->interpidx = (UINT32)i;
++#endif
+ 			interpolated_mobjs_len -= 1;
+ 			return;
+ 		}
+diff --git a/src/rt_census.h b/src/rt_census.h
+new file mode 100644
+index 0000000..eb71e6b
+--- /dev/null
++++ b/src/rt_census.h
+@@ -0,0 +1,63 @@
++// RTICK research instrumentation (host profile only, -DRT_CENSUS). NOT product code; kept as a patch in docs/research/rtick/patches.
++#ifndef __RT_CENSUS_H__
++#define __RT_CENSUS_H__
++#ifdef RT_CENSUS
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include "p_mobj.h"
++#include "info.h"
++
++#define RT_MAXT 4096
++typedef struct
++{
++	unsigned long n;          // pairs
++	unsigned long same;       // pair changed nothing in the mobj (after masking), nothing in rng
++	unsigned long same_all;   // ... and tmdrpoffceilz unchanged
++	unsigned long noclip, noblockmap, nogravity, onground, zmom0, scenery_ent;
++	unsigned long z_ch, floorz_ch, ceilz_ch, eflags_ch, momz_ch, other_ch, rng_ch;
++	unsigned long lines, lines_bbox, lines_hit, things, things_pass, cells;
++	unsigned long plain, has_ff, has_slope, has_poly, special_sector;
++	unsigned long cls_noclip_inert, cls_zm_noop, cls_cp_only_noop;
++	unsigned long memo_pred, memo_viol, memo_miss_first, memo_miss_key, memo_miss_sec, memo_miss_cell, memo_miss_poly, memo_miss_prevchange;
++} rt_ptype_t;
++
++typedef struct
++{
++	unsigned long tick_calls[8];       // 0 mobj thinker entries, 1 NOTHINK, 2 scenery quick, 3 scenery(full) , 4 regular, 5 dead, 6 pushable, 7 boss
++	unsigned long scen_thinker;        // P_SceneryThinker (called via P_MobjSceneryThink)
++	unsigned long pair_m, pair_s;
++	unsigned long cp_site[8];
++	unsigned long cp_total, cp_lines_called, cp_lines_bbox, cp_lines_hit, cp_things_called, cp_things_pass, cp_cells_t, cp_cells_l;
++	unsigned long setpos, setpos_same_xyr, setpos_same_sector_xy;
++	unsigned long unsetpos;
++	unsigned long secnode_calls, secnode_lines;
++	rt_ptype_t ptype[RT_MAXT];
++	unsigned long setpos_type[RT_MAXT], setpos_same_type[RT_MAXT];
++	unsigned long tickn;
++	unsigned long per_tick_pairs[1200], per_tick_cp[1200], per_tick_lines[1200], per_tick_setpos[1200], per_tick_things[1200];
++	int site;
++} rt_stats_t;
++extern rt_stats_t rt;
++
++void RT_Dump(void);
++
++typedef struct
++{
++	int pred;
++	mobj_t before;
++	UINT32 seed;
++	fixed_t drpoff;
++	unsigned long lines, lines_bbox, lines_hit, things, things_pass, cells;
++	boolean valid;
++} rt_pairsnap_t;
++extern rt_pairsnap_t rt_ps;
++
++void RT_GeomScan(void);
++void RT_CellVer(int cell);
++void RT_PairBegin(mobj_t *mo, int site);
++void RT_PairEnd(mobj_t *mo);
++void RT_SetPos(mobj_t *mo);
++fixed_t RT_GetDrpoff(void);
++#endif
++#endif
+diff --git a/src/rt_eeprof.h b/src/rt_eeprof.h
+new file mode 100644
+index 0000000..5f02747
+--- /dev/null
++++ b/src/rt_eeprof.h
+@@ -0,0 +1,20 @@
++// RTICK research instrumentation (EE profile build, -DRT_EEPROF via SRB2_PS2_OFLAGS). NOT product code.
++#ifndef __RT_EEPROF_H__
++#define __RT_EEPROF_H__
++#ifdef RT_EEPROF
++#include "doomtype.h"
++static inline UINT32 RT_Cyc(void) { UINT32 v; __asm__ volatile("mfc0 %0,$9" : "=r"(v)); return v; }
++#define RT_MAXTY 1024
++extern UINT64 rt_ty_cyc[RT_MAXTY], rt_ty_pair[RT_MAXTY];
++extern UINT32 rt_ty_n[RT_MAXTY], rt_ty_pn[RT_MAXTY];
++extern UINT64 rt_oth_cyc; extern UINT32 rt_oth_n;
++#define RT_MAXTK 1200
++extern UINT32 rt_tk_total[RT_MAXTK], rt_tk_think[RT_MAXTK], rt_tk_pl[RT_MAXTK], rt_tk_post[RT_MAXTK], rt_tk_lua[RT_MAXTK];
++extern UINT32 rt_tn;
++#define RT_NW 12
++extern int rt_widx[RT_MAXTY]; extern UINT32 rt_wtype[RT_NW]; extern UINT32 rt_wacc[RT_NW]; extern UINT32 rt_wser[RT_NW][RT_MAXTK];
++extern UINT32 rt_ss_n, rt_ss_ser[RT_MAXTK];
++extern UINT32 rt_sp_n, rt_sp_ser[RT_MAXTK]; // spawns
++void RT_EEDump(void);
++#endif
++#endif
+diff --git a/src/rt_memo.h b/src/rt_memo.h
+new file mode 100644
+index 0000000..823fadd
+--- /dev/null
++++ b/src/rt_memo.h
+@@ -0,0 +1,29 @@
++// RTICK research prototype (host profile, -DRT_MEMO_SHADOW / -DRT_MEMO_LIVE). NOT product code; kept as a patch in docs/research/rtick/patches.
++//
++// "Pair memo": a ZMovement + CheckPosition pair of an object that last time changed nothing (mobj, RNG, tmdrpoffceilz, no XY-overlapping thing in its cells) is skipped
++// while every input of the pair is provably the same:
++//   (1) the object's own key (hash of the ~35 fields the pair reads),
++//   (2) the "signature" of every sector the object touches (heights, slopes, FOF flags/control heights, sector flags/damagetype/gravity/...): a generation number per
++//       sector, advanced when a scan at the start of the tic (prototype) or a writer hook (product) sees a change,
++//   (3) the version of every blockmap cell the object's box covers (advanced by every link/unlink of a thing there),
++//   (4) the change tic of every polyobject whose block box meets the object's cells (or that sits in the object's subsector).
++// RT_MEMO_SHADOW: the pair always runs; when the memo predicts "no change" the whole mobj, the RNG and tmdrpoffceilz are compared afterwards (I_Error on any difference).
++// RT_MEMO_LIVE: the pair is skipped when the memo predicts "no change".
++#ifndef __RT_MEMO_H__
++#define __RT_MEMO_H__
++#if defined(RT_MEMO_SHADOW) || defined(RT_MEMO_LIVE)
++#define RT_MEMO 1
++#if defined(RT_MEMO_BLOCK) && !defined(RT_REORDER_KEY)
++#error RT_MEMO_BLOCK needs RT_REORDER_KEY (the key fields contiguous)
++#endif
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++
++extern UINT32 rt_memo_things_pass; // PIT_DoCheckThing: things whose boxes overlap in x/y
++extern UINT32 rt_memo_now;
++void RT_MemoTickStart(void);
++void RT_MemoCellVer(int cell);
++fixed_t RT_MemoGetDrpoff(void);
++#endif
++#endif

@@ -187,10 +187,17 @@ def main():
     ap.add_argument('--map', type=int, default=99)
     ap.add_argument('--cols', type=int, default=4)
     ap.add_argument('--rows', type=int, default=3)
+    ap.add_argument('--name', default='UM', help='base name of the pk3 (UM)')
+    ap.add_argument('--comment', action='store_true', help='PS2-LOAD-25: comments in the middle of the TEXTMAP (the one-pass block scan of the engine refuses such a text: this map takes the count pass + parse path and has to give the same level)')
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     tm, nv, lines = textmap(a.cols, a.rows, a.map)
+    if a.comment:
+        parts = tm.split('\n\n')
+        mid = len(parts) // 2
+        parts[mid] = '// a line comment between two blocks\n/* and a block\n comment */\n' + parts[mid]
+        tm = '\n\n'.join(parts) + '\n// the end\n'
     zn, nodes = znodes(a.cols, a.rows, nv, lines)
     for r in range(a.rows):
         for c in range(a.cols):
@@ -199,13 +206,13 @@ def main():
     name = 'MAP%02d' % a.map
     data = wad([(name, b''), ('TEXTMAP', tm.encode()), ('ZNODES', zn), ('ENDMAP', b'')])
     soc = 'Level %d\nLevelName = UDMF Rooms\nTypeOfLevel = Race,Match,Coop\nAct = 1\nNoZone = 1\nSkyNum = 1\nMusic = NONE\nNextLevel = %d\n\n' % (a.map, 1)
-    path = out / 'UM.pk3'
+    path = out / (a.name + '.pk3')
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
         z.writestr('Maps/%s.wad' % name, data)
         z.writestr('SOC/UMSOC.soc', soc.replace('\n', '\r\n'))
     exp = {str(a.map): udmf_ref.expect_wad(data)}
-    (out / 'UM.expected.json').write_text(json.dumps(exp, indent=1))
-    (out / ('UM_%s.wad' % name)).write_bytes(data)
+    (out / (a.name + '.expected.json')).write_text(json.dumps(exp, indent=1))
+    (out / ('%s_%s.wad' % (a.name, name))).write_bytes(data)
     print('wrote', path, path.stat().st_size, 'bytes;', a.cols * a.rows, 'rooms,', len(lines), 'linedefs,', nv, 'vertices,', len(nodes), 'nodes;', json.dumps(exp[str(a.map)]['counts']))
 
 

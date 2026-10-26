@@ -124,6 +124,7 @@ class Node:
         self.stopped = False
         self.log_size = -1
         self.log_changed = None
+        self.ts_stop = threading.Event()  # OPT12-NET: the tailer thread that stamps every engine log line with the host clock (<log>.ts)
 
     def start(self):
         s = self.spec
@@ -186,6 +187,35 @@ class Node:
                                          stdout=self.log, stderr=subprocess.STDOUT, env=env, start_new_session=True)
         self.started = time.time()
         print(f'[{time.strftime("%H:%M:%S")}] started {self.id} ({s["kind"]}) pid {self.proc.pid}', flush=True)
+        threading.Thread(target=self.tail_ts, daemon=True).start()
+
+    def tail_ts(self):
+        """OPT12-NET: <log>.ts = every line of the engine log with the host time (seconds since the epoch, 3 decimals) at which it was first seen.
+        The PS2 engine's own clock is the emulated one (PCSX2 runs faster or slower than real time), so ping figures need this host clock next to it."""
+        src = self.dir / ('boot.txt' if self.spec['kind'] == 'ps2' else 'out.txt')
+        dst = self.dir / (src.name + '.ts')
+        pos, partial = 0, b''
+        with open(dst, 'wb') as out:
+            while True:
+                last = self.ts_stop.is_set()
+                try:
+                    with open(src, 'rb') as f:
+                        f.seek(pos)
+                        data = f.read()
+                except OSError:
+                    data = b''
+                if data:
+                    now = time.time()
+                    pos += len(data)
+                    data = partial + data
+                    lines = data.split(b'\n')
+                    partial = lines.pop()
+                    for ln in lines:
+                        out.write(b'%.3f ' % now + ln.rstrip(b'\r') + b'\n')
+                    out.flush()
+                if last:
+                    break
+                self.ts_stop.wait(0.02)
 
     def feed(self):
         for i, item in enumerate(self.spec.get('stdin', [])):
@@ -206,6 +236,7 @@ class Node:
             return ''
 
     def stop(self, hard=False):
+        self.ts_stop.set()
         if self.proc:
             if self.proc.poll() is None and not hard:  # hard (stop_when "signal": "KILL"): no I_Quit, no "server shutdown" packet: the other side has to find out by itself
                 killgroup(self.proc, signal.SIGINT)  # polite first: PCSX2 flushes its log, the engine runs I_Quit
@@ -376,7 +407,15 @@ def main():
         code = run_session(spec)
         if code not in (3, 7):  # 3: emulator died / DEV9; 7: emulator stuck (PCSX2's GS thread waits for an X reply for ever, see the report)
             break
-        print(f'session {spec["name"]}: emulator failure, attempt {attempt + 1} of {a.retries + 1}', flush=True)
+        print(f'session {spec["name"]}: emulator failure (code {code}), attempt {attempt + 1} of {a.retries + 1}', flush=True)
+        # OPT12-NET: a "stuck emulator" in a hardware-renderer session was a real hang of the game (docs/GATES/g1/opt12-NET.md); the logs of a failed attempt are kept
+        out = (ROOT / spec.get('out', 'build/opt10-x/run')).resolve()
+        keep = out / f'{spec["name"]}.fail{attempt + 1}'
+        shutil.rmtree(keep, ignore_errors=True)
+        try:
+            shutil.copytree(out / spec['name'], keep, ignore=shutil.ignore_patterns('*.PAK', 'FINEACON.DAT', 'SRB2.ELF'))
+        except OSError:
+            pass
         time.sleep(3)
     return code
 

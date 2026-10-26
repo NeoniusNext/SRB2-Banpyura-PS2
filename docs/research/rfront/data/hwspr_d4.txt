@@ -1,0 +1,78 @@
+HWSPR frame 60: 300 vissprites, 0 precipitation, 0 translucent
+HWSPR   height in pixels <1:0 <2:144 <4:38 <8:66 <16:36 more:16
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR   HOOP x143
+HWSPR   RING x65
+HWSPR   SPHR x53
+HWSPR   FWR1 x11
+HWSPR   TRE1 x8
+HWSPR   BUS2 x7
+HWSPR   BUS1 x6
+HWSPR   FWR2 x4
+HWSPR   PLAY x1
+HWSPR   FWR3 x1
+HWSPR   CAPS x1
+HWSPR frame 165: 0 vissprites, 0 precipitation, 0 translucent
+HWSPR   height in pixels <1:0 <2:0 <4:0 <8:0 <16:0 more:0
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR frame 270: 422 vissprites, 0 precipitation, 5 translucent
+HWSPR   height in pixels <1:0 <2:228 <4:91 <8:33 <16:33 more:37
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR   SPHR x134
+HWSPR   RING x120
+HWSPR   NSPK x74
+HWSPR   HOOP x72
+HWSPR   TRE1 x9
+HWSPR   NSCR x6
+HWSPR   BUS1 x2
+HWSPR   SPRK x2
+HWSPR   PLAY x1
+HWSPR   EMBM x1
+HWSPR   BUS3 x1
+HWSPR frame 375: 0 vissprites, 0 precipitation, 0 translucent
+HWSPR   height in pixels <1:0 <2:0 <4:0 <8:0 <16:0 more:0
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR frame 480: 716 vissprites, 0 precipitation, 1 translucent
+HWSPR   height in pixels <1:76 <2:296 <4:193 <8:114 <16:34 more:3
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR   HOOP x387
+HWSPR   SPHR x133
+HWSPR   RING x87
+HWSPR   NSPK x62
+HWSPR   TRE1 x15
+HWSPR   FWR1 x13
+HWSPR   BUS1 x7
+HWSPR   BUS2 x5
+HWSPR   FWR2 x3
+HWSPR   PLAY x1
+HWSPR   EMBM x1
+HWSPR   BUS3 x1
+HWSPR frame 585: 0 vissprites, 0 precipitation, 0 translucent
+HWSPR   height in pixels <1:0 <2:0 <4:0 <8:0 <16:0 more:0
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR frame 690: 0 vissprites, 0 precipitation, 0 translucent
+HWSPR   height in pixels <1:0 <2:0 <4:0 <8:0 <16:0 more:0
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR frame 795: 584 vissprites, 0 precipitation, 3 translucent
+HWSPR   height in pixels <1:46 <2:336 <4:95 <8:21 <16:72 more:14
+HWSPR full path: 0 things; skin 0 overlay 0 linkdraw 0 splat 0 paper(f) 0 floor(f) 0 paper/floor(r) 0 absoff 0 shadoweff 0 roll 0 noplain 0
+HWSPR   full PLAY x0
+HWSPR   NSPK x174
+HWSPR   HOOP x149
+HWSPR   SPHR x123
+HWSPR   RING x104
+HWSPR   TRE1 x13
+HWSPR   NSCR x10
+HWSPR   FWR1 x5
+HWSPR   PLAY x1
+HWSPR   EMBM x1
+HWSPR   BUS1 x1
+HWSPR   BUS2 x1
+HWSPR   BUS3 x1

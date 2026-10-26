@@ -248,13 +248,13 @@ static boolean TrimVisplaneBounds (const visplane_t* plane, INT16* start, INT16*
 	 * valid area.
 	 */
 
-	while (plane->bottom[*start] == 0 && plane->top[*start] == 65535 && *start < *end)
+	while (*start < *end && plane->bottom[*start] == 0 && plane->top[*start] == 65535) // OPT13-RCACHE: bound first (the column behind the cleared range is not initialised)
 	{
 		(*start)++;
 	}
 
 
-	while (plane->bottom[*end - 1] == 0 && plane->top[*start] == 65535 && *end > *start)
+	while (*end > *start && plane->bottom[*end - 1] == 0 && plane->top[*start] == 65535)
 	{
 		(*end)--;
 	}

@@ -69,7 +69,11 @@ patch_t *Patch_GetRotatedSprite(
 	boolean flip,
 	void *info, INT32 rotationangle)
 {
+#ifdef PS2_PROFILE
+	rotsprite_t *rotsprite = sprite->rotated ? sprite->rotated[spriteangle] : NULL;
+#else
 	rotsprite_t *rotsprite = sprite->rotated[spriteangle];
+#endif
 	spriteinfo_t *sprinfo = (spriteinfo_t *)info;
 	INT32 idx = rotationangle;
 
@@ -79,6 +83,10 @@ patch_t *Patch_GetRotatedSprite(
 	if (rotsprite == NULL)
 	{
 		rotsprite = RotatedPatch_Create(ROTANGLES);
+#ifdef PS2_PROFILE
+		if (!sprite->rotated)
+			sprite->rotated = Z_Calloc(16 * sizeof (*sprite->rotated), PU_STATIC, NULL); // PS2-506
+#endif
 		sprite->rotated[spriteangle] = rotsprite;
 	}
 

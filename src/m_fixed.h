@@ -131,9 +131,28 @@ FUNCMATH FUNCINLINE static ATTRINLINE float FixedToFloat(fixed_t x)
 	return x / (float)FRACUNIT;
 }
 
+#ifdef PS2
+// PS2-LUA: a conversion of a float / double outside the 32-bit range (or NaN) is undefined in C. The PC builds (x86: cvttss2si / cvttsd2si) get INT32_MIN, the EE saturates
+// (INT32_MAX): a script or a console variable set to an out of range number would behave differently ("lq_float 99538" is rejected on the PC, clamped to its maximum here).
+// Only scaled values of the console / Lua / SOC paths use these helpers.
+FUNCMATH FUNCINLINE static ATTRINLINE INT32 PS2_FloatToI32(float f)
+{
+	return (f >= -2147483648.0f && f < 2147483648.0f) ? (INT32)f : (INT32)0x80000000;
+}
+
+FUNCMATH FUNCINLINE static ATTRINLINE INT32 PS2_DoubleToI32(double d)
+{
+	return (d >= -2147483648.0 && d < 2147483648.0) ? (INT32)d : (INT32)0x80000000;
+}
+#endif
+
 FUNCMATH FUNCINLINE static ATTRINLINE fixed_t FloatToFixed(float f)
 {
+#ifdef PS2
+	return PS2_FloatToI32(f * FRACUNIT);
+#else
 	return (fixed_t)(f * FRACUNIT);
+#endif
 }
 
 /*!
@@ -147,7 +166,11 @@ FUNCMATH FUNCINLINE static ATTRINLINE double FixedToDouble(fixed_t x)
 
 FUNCMATH FUNCINLINE static ATTRINLINE fixed_t DoubleToFixed(double f)
 {
+#ifdef PS2
+	return PS2_DoubleToI32(f * FRACUNIT);
+#else
 	return (fixed_t)(f * FRACUNIT);
+#endif
 }
 
 // for backwards compat

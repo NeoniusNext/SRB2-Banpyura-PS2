@@ -1,0 +1,40 @@
+separate calibration: tick k=0.847 (Ir 855M), render k=1.638 (Ir 4862M)
+callgrind totals: Ir 15773.9M Dr 4124.5M Dw 1877.0M D1mr 239.34M D1mw 86.48M I1mr 87.17M
+modelled set (no harness, no load): Ir 5716.4M = 36% of all; k = 1.519 EE cycles per host instruction (emulator 8.28 Mcyc/frame x 1049 frames)
+model: hw = k*Ir + 40*(D1mr+D1mw)*0.75(structure stages; 1.0 for drawers/hud) + 40*I1mr
+
+stage                      emu M/frm    D-miss    I-miss  hw M/frm  hw/emu  D1m/kIr  I1m/kIr
+render:walls                   2.423     0.987     1.182     4.592   1.90x    22.25    19.97
+render:drawers(col/span)       1.784     1.539     0.044     3.367   1.89x    35.34     1.00
+render:sprites/masked          1.932     0.811     0.353     3.096   1.60x    22.91     7.48
+render:bsp/setup               0.567     0.444     0.455     1.465   2.59x    42.75    32.87
+render:planes                  0.562     0.305     0.219     1.087   1.93x    29.68    15.98
+tick:collision/sight           0.409     0.292     0.251     0.952   2.33x    20.18    13.01
+tick:thinkers                  0.198     0.335     0.097     0.630   3.18x    47.71    10.34
+render:hud/video               0.261     0.115     0.009     0.385   1.48x    18.13     1.39
+tick:specials/interp           0.077     0.069     0.137     0.283   3.67x    25.17    37.57
+other                          0.062     0.036     0.023     0.121   1.94x    31.20    15.14
+tick:other                     0.006     0.013     0.011     0.030   5.04x    61.11    39.61
+TOTAL                          8.280     4.947     2.781    16.007   1.93x
+
+rank by emulator cost vs rank by modelled console cost (functions):
+hw#  function                           stage                    emuK/frm  hwK/frm   hw/emu   emu# D1m/fr  file
+1    R_RenderSegLoopX                   render:walls               1405.2   2334.2    1.66x      1  18430  r_segs.c
+2    R_DrawColumn_8                     render:drawers(col/span)    775.2   1714.1    2.21x      2  23239  r_draw8.c
+3    R_StoreWallRange                   render:walls                491.4   1500.6    3.05x      5   8558  r_segs.c
+4    R_DrawSpan_8                       render:drawers(col/span)    589.9   1070.5    1.81x      3  11992  r_draw8.c
+5    R_AddSprites                       render:sprites/masked       338.7    802.8    2.37x      9   5636  r_things.c
+6    R_CreateDrawNodes.constprop.0      render:sprites/masked       582.4    713.7    1.23x      4   4291  r_things.c
+7    R_RenderBSPNode'2                  render:bsp/setup            227.9    657.8    2.89x     10   6363  r_bsp.c
+8    R_ClipSprites                      render:sprites/masked       408.8    630.9    1.54x      6   7319  r_things.c
+9    R_FindPlane                        render:planes               197.7    517.7    2.62x     11   4993  r_plane.c
+10   R_RenderMaskedSegRange             render:walls                382.2    496.9    1.30x      8   3690  r_segs.c
+11   R_DrawMaskedColumn                 render:sprites/masked       387.7    479.9    1.24x      7   3050  r_things.c
+12   R_AddLine                          render:bsp/setup            133.9    352.7    2.63x     17   4096  r_bsp.c
+13   P_MobjThinker                      tick:thinkers                93.5    285.7    3.06x     12   5690  p_mobj.c
+14   R_DrawTiltedSpan_8                 render:drawers(col/span)    175.4    241.2    1.37x     13   1601  r_draw8.c
+15   V_DrawStretchyFixedPatch           render:hud/video            152.1    208.4    1.37x     16   1359  v_video.c
+16   R_PointToAngle64                   tick:collision/sight         87.1    201.5    2.31x     14   1775  r_main.c
+17   R_DrawSinglePlane.part.0           render:planes               132.7    173.7    1.31x     18   1190  r_plane.c
+18   R_MapPlane                         render:planes               108.8    155.6    1.43x     19   1487  r_plane.c
+19   R_ScaleFromGlobalAngle             render:walls                 62.6    135.8    2.17x     22   1063  r_segs.c

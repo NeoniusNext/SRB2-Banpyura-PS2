@@ -1,0 +1,26 @@
+sampler total 13017 kcyc/frame; with modelled misses 21207 kcyc/frame (x1.63); functions with host data: 59 of 80
+hw#  function                         stage                     emu K  Dmiss K  Imiss K     hw K  hw/emu  emu#
+1    R_RenderSegLoopX                 render:walls             1678.1    612.2    369.9   2660.1   1.59x     1
+2    R_AddSprites                     render:sprites/masked    1000.8    382.3    322.4   1705.5   1.70x     3
+3    R_StoreWallRange                 render:walls              625.5    263.7    696.2   1585.4   2.53x     6
+4    R_DrawSpan_8                     render:drawers(col/span)    688.9    826.9      2.0   1517.9   2.20x     5
+5    R_DrawColumn_8                   render:drawers(col/span)    699.2    592.1     15.1   1306.4   1.87x     4
+6    R_DrawMasked                     render:sprites/masked    1065.3     68.7      2.0   1136.0   1.07x     2
+7    P_MobjThinker                    tick:thinkers             535.8    507.2     15.1   1058.1   1.97x     8
+8    R_ClipSprites                    render:sprites/masked     565.2    255.4      2.4    823.0   1.46x     7
+9    R_FindPlane                      render:planes             243.7    173.8    133.8    551.3   2.26x    14
+10   R_RenderBSPNode                  render:bsp/setup          178.5    170.7    195.4    544.5   3.05x    15
+11   R_RenderMaskedSegRange           render:walls              373.6    130.6      8.8    513.0   1.37x    10
+12   R_DrawSinglePlane                render:planes             381.9     86.6     16.6    485.1   1.27x     9
+13   R_DrawMaskedColumn               render:sprites/masked     359.4    106.0      1.5    466.9   1.30x    11
+14   PIT_DoCheckThing                 tick:collision/sight      175.7    185.0     40.3    400.9   2.28x    16
+15   R_MapPlane                       render:planes             306.0     80.7      4.4    391.1   1.28x    12
+16   V_DrawStretchyFixedPatch         render:hud/video          265.4     71.6      2.0    339.0   1.28x    13
+17   R_DrawTiltedSpan_8               render:drawers(col/span)    163.6    103.0      7.4    274.0   1.67x    17
+18   R_DrawNodeClaims                 render:sprites/masked     159.9    103.4      0.6    263.9   1.65x    18
+19   R_AddLine                        render:bsp/setup          103.2    106.8     51.2    261.2   2.53x    26
+20   PS2_FixedDivMag                  tick:collision/sight      147.9      8.4     84.8    241.1   1.63x    19
+21   R_PointToAngle64                 tick:collision/sight      131.6     42.1     37.2    210.9   1.60x    20
+22   P_CheckPosition                  tick:collision/sight      106.3     38.5     29.6    174.4   1.64x    24
+23   R_CheckPlane                     render:planes              75.6     42.5     43.5    161.6   2.14x    34
+24   R_RenderThickSideRange           render:walls              103.6     40.1     10.4    154.1   1.49x    25

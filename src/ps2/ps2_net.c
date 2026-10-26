@@ -1,10 +1,14 @@
 // PS2 network bring-up (PS2-120): see ps2_net.h.
 #include <kernel.h>
+#include <timer.h>
+#include <delaythread.h>
+#include <unistd.h>
 #include <sifrpc.h>
 #include <malloc.h>
 #include <netman.h>
 #include <ps2_eeip_driver.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <arpa/inet.h>
 
@@ -18,6 +22,11 @@
 #include "ps2_net.h"
 #include "ps2_menuhints.h"
 #include "ps2_netui.h"
+#include "ps2_netsvc.h"
+#include "ps2_sys.h" // PS2_SleepUs
+#include "../netcode/d_clisrv.h"
+#include "../netcode/client_connection.h"
+#include "../doomstat.h"
 #include "ps2_uiicons.h"
 
 static INT32 netstate; // 0 not up (a new attempt is allowed), 1 up, -1 the network modules did not start (permanent)
@@ -36,6 +45,92 @@ static boolean modules_up, stack_up;
 static eeip_network_config_t netcfg; // the static configuration is read through the whole bring-up
 static UINT64 retry_after; // I_GetPreciseTime() of the earliest new attempt after the player cancelled / left a failure window (0 = now)
 #define NET_RETRY_PAUSE_MS 10000 // a caller that asks again by itself (the master server registration after a failed host start) must not open the window again at once
+
+// PS2-NET-3 (OPT12): the stall watchdog. A thread of its own (priority 1, sleeps one second at a time) that looks at a beat counter the game thread raises in every pass
+// of its loops (I_UpdateTime). When the beat stands still for 3 seconds it prints, with write() straight to the console (no stdio lock: the game thread may hold it), the
+// state of every EE thread: which of them waits for what. A hang of the whole guest (EE idle loop) was seen with the hardware renderer during the network bring-up; this is
+// how the waiting thread and its semaphore are named. Switched on by -netwd (tests); the price is a thread that wakes once a second.
+extern void *_gp;
+volatile UINT32 ps2net_beat; // raised by I_UpdateTime (src/i_time.c)
+static UINT8 *wd_stack; // heap, only with -netwd
+static INT32 wd_tid = -1;
+
+static void WdPrint(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void WdPrint(const char *fmt, ...)
+{
+	char buf[256];
+	va_list ap;
+	int n;
+
+	va_start(ap, fmt);
+	n = vsnprintf(buf, sizeof buf, fmt, ap);
+	va_end(ap);
+	if (n > 0)
+		write(1, buf, (size_t)(n < (int)sizeof buf ? n : (int)sizeof buf - 1));
+}
+
+static void WdDump(const char *why, UINT32 secs)
+{
+	ee_thread_status_t st;
+	ee_sema_t sm;
+	INT32 id;
+
+	WdPrint("NETWD %s: no beat for %u s, system time %llu\n", why, (unsigned)secs, (unsigned long long)GetTimerSystemTime());
+	for (id = 1; id < 128; id++)
+		if (ReferThreadStatus(id, &st) >= 0 && st.status)
+			WdPrint("NETWD   thread %d status=%d prio=%d/%d last syscall %p stack=%p wait=%u/%u wakeups=%u\n", (int)id, (int)st.status, (int)st.current_priority,
+				(int)st.initial_priority, st.func, st.stack, (unsigned)st.waitType, (unsigned)st.waitId, (unsigned)st.wakeupCount);
+	for (id = 1; id < 128; id++)
+		if (ReferSemaStatus(id, &sm) >= 0)
+			WdPrint("NETWD   sema %d count=%d/%d init=%d waiting=%d attr=%u option=%08x\n", (int)id, (int)sm.count, (int)sm.max_count, (int)sm.init_count, (int)sm.wait_threads,
+				(unsigned)sm.attr, (unsigned)sm.option);
+}
+
+static void WdThread(void *arg)
+{
+	UINT32 last = ps2net_beat, still = 0, lines = 0, lines_ref = 0;
+
+	(void)arg;
+	for (;;)
+	{
+		DelayThread(1000000);
+		if (++lines_ref == 6)
+			WdDump("REFERENCE (running)", 0);
+		if (ps2net_beat != last)
+		{
+			if (still >= 3)
+				WdPrint("NETWD: the game thread is running again (beat %u)\n", (unsigned)ps2net_beat);
+			last = ps2net_beat;
+			still = 0;
+			continue;
+		}
+		still++;
+		if (still >= 3 && (still == 3 || still % 10 == 0) && lines++ < 12)
+			WdDump("STALL", still);
+	}
+}
+
+void PS2Net_StartWatchdog(void)
+{
+	ee_thread_t t;
+
+	if (wd_tid >= 0 || !M_CheckParm("-netwd"))
+		return;
+	wd_stack = (UINT8 *)memalign(16, 8192);
+	if (!wd_stack)
+		return;
+	memset(&t, 0, sizeof t);
+	t.func = (void *)WdThread;
+	t.stack = wd_stack;
+	t.stack_size = 8192;
+	t.gp_reg = &_gp;
+	t.initial_priority = 1;
+	wd_tid = CreateThread(&t);
+	if (wd_tid < 0 || StartThread(wd_tid, NULL) < 0)
+		wd_tid = -1;
+	else
+		WdPrint("NETWD started (thread %d)\n", (int)wd_tid);
+}
 
 static void Phase(const char *line)
 {
@@ -94,6 +189,65 @@ static void BuildConfig(void)
 	}
 }
 
+// PS2-NET-4 (OPT12): the threads of the network libraries (NETMAN's Tx / Rx / RPC threads and lwIP's tcpip thread) are created at priorities 86..89, the game thread runs at 8: while
+// the game thread computes a frame they get no time at all. A packet the game has just sent waited in the EE until the frame ended (sendto only queues it for the Tx thread), a
+// packet that had arrived waited in the same way before it was on the socket. They are raised above the game thread (priority 6, the mixer is at 5); they are short and wait on
+// the IOP most of the time. The threads are found by difference: whatever exists after the stack is up and did not exist before the modules were loaded (and is not ours).
+#define NET_THREAD_PRIO 6
+static UINT8 threads_before[256];
+static INT32 boosted_threads;
+
+static void SnapshotThreads(void)
+{
+	ee_thread_status_t st;
+	INT32 tid;
+
+	for (tid = 1; tid < 256; tid++)
+		threads_before[tid] = (ReferThreadStatus(tid, &st) >= 0 && st.status) ? 1 : 0;
+}
+
+static void BoostNetThreads(void)
+{
+	ee_thread_status_t st;
+	INT32 tid;
+
+	if (M_CheckParm("-netnoboost"))
+		return;
+	for (tid = 1; tid < 256; tid++)
+		if (!threads_before[tid] && tid != wd_tid && ReferThreadStatus(tid, &st) >= 0 && st.status && st.current_priority > NET_THREAD_PRIO)
+		{
+			const INT32 was = st.current_priority;
+
+			if (ChangeThreadPriority(tid, NET_THREAD_PRIO) >= 0)
+			{
+				boosted_threads++;
+				if (M_CheckParm("-netdebug"))
+					CONS_Printf("PS2 net: thread %d raised from priority %d to %d\n", (int)tid, (int)was, (int)NET_THREAD_PRIO);
+			}
+		}
+}
+
+// PS2-NET-7 (OPT12): the DHCP wait. The lease is in the router's hands after 20 ms (DISCOVER, OFFER, REQUEST, ACK: the log of PCSX2 shows both answers 1 ms after each request),
+// but lwIP then checks the offered address for a conflict (ACD: three ARP probes, one to two seconds apart, then announcements two seconds apart) and the interface gets its
+// address only when that is over: 5.5..7.5 s in which nothing happens (dhcp_status 8, "checking"). acd_tmr() is the function lwIP's own 100 ms timer calls; while the state is
+// "checking" it is called ten times for every 100 ms of our loop, from lwIP's thread (tcpip_callback), so the check takes a tenth of the time (the same probes and announcements,
+// 100..200 ms apart instead of 1..2 s: a host that owns the address answers an ARP probe within a millisecond).
+// (weak: a strong reference made the linker take lwIP's own copies of ip4_addr.o and others from libps2_drivers.a ahead of the stack's, "multiple definition of ip_addr_any";
+// both functions are in the ELF anyway, the stack uses them)
+extern void acd_tmr(void) __attribute__((weak));
+extern signed char tcpip_callback(void (*function)(void *ctx), void *ctx) __attribute__((weak));
+#define DHCP_STATE_CHECKING 8
+#define ACD_SPEEDUP 10
+
+static void AcdBurst(void *ctx)
+{
+	INT32 i;
+
+	(void)ctx;
+	for (i = 1; i < ACD_SPEEDUP; i++)
+		acd_tmr();
+}
+
 static nb_t Bringup(void)
 {
 	t_ip_info info;
@@ -103,6 +257,8 @@ static nb_t Bringup(void)
 	if (!modules_up)
 	{
 		enum EEIP_INIT_STATUS st;
+
+		SnapshotThreads();
 
 		PS2NetUI_Step(NETUI_STEP_MODULES, 0);
 		Phase("Loading the network modules...");
@@ -127,6 +283,7 @@ static nb_t Bringup(void)
 		memset(&zgw, 0, sizeof zgw);
 		ps2ipInit(&zip, &znm, &zgw);
 		stack_up = true;
+		BoostNetThreads();
 		Phase("Setting the Ethernet link mode..."); // link mode AUTO: there is nothing to set
 	}
 	Phase("Applying the IP configuration...");
@@ -176,6 +333,8 @@ static nb_t Bringup(void)
 			// the library's test: DHCP is on and bound (lwIP DHCP_BOUND = 10; 0 = off), plus an address that is not 0.0.0.0
 			if (libcglue_ps2ip_getconfig("sm0", &info) >= 0 && info.dhcp_enabled && info.ipaddr.s_addr != 0 && (info.dhcp_status == 10 || info.dhcp_status == 0))
 				break;
+			if (info.dhcp_status == DHCP_STATE_CHECKING && acd_tmr && tcpip_callback && !M_CheckParm("-netnoacdfast"))
+				tcpip_callback(AcdBurst, NULL);
 			if (MsSince(t0) >= limit_ms)
 				return NB_DHCP;
 			if (!NetWait(100))
@@ -199,6 +358,8 @@ static netui_fail_t FailReason(nb_t rc)
 	}
 }
 
+static boolean fakedown_done;
+
 boolean PS2Net_Up(void)
 {
 	struct ip4_addr ip, nm, gw;
@@ -206,6 +367,15 @@ boolean PS2Net_Up(void)
 	INT32 attempt = 0;
 	boolean ui;
 
+	if (netstate > 0 && modules_up && !M_CheckParm("-netnolinkcheck")
+		&& (NetManIoctl(NETMAN_NETIF_IOCTL_GET_LINK_STATUS, NULL, 0, NULL, 0) != NETMAN_NETIF_ETH_LINK_STATE_UP
+			|| (M_CheckParm("-netfakedown") && !fakedown_done && (fakedown_done = true)))) // -netfakedown (a test: the emulator always has a link): the first reconnect takes the link as gone
+	{
+		// PS2-NET-8 (OPT12): the network was up at the last connect, and the cable has been pulled since (the game gave up on the server after 10 s and went back to the title):
+		// the next "connect" waits for the link and the lease again, with the network screen, instead of sending into nothing
+		CONS_Printf("PS2 net: the Ethernet link is gone, bringing the network up again\n");
+		netstate = 0;
+	}
 	if (netstate)
 		return netstate > 0;
 	if (retry_after && (INT64)(I_GetPreciseTime() - retry_after) < 0)
@@ -215,6 +385,7 @@ boolean PS2Net_Up(void)
 	}
 	retry_after = 0;
 	heap_before = (UINT32)mallinfo().uordblks;
+	PS2Net_StartWatchdog();
 	BuildConfig();
 	ui = PS2NetUI_Begin(netcfg.use_dhcp);
 
@@ -271,6 +442,16 @@ boolean PS2Net_Up(void)
 	return true;
 }
 
+boolean PS2Net_Waiting(const char *what, UINT32 elapsed_ms)
+{
+	return PS2NetUI_Waiting(what, elapsed_ms);
+}
+
+void PS2Net_WaitingEnd(void)
+{
+	PS2NetUI_WaitingEnd();
+}
+
 boolean PS2Net_Reported(void)
 {
 	return PS2NetUI_Reported();
@@ -314,6 +495,20 @@ static struct { UINT32 frame; char cmd[96]; boolean done; } netcmdlist[NETCMD_MA
 static INT32 numnetcmdlist;
 static UINT32 netcmd_frames;
 
+// OPT13-IO (RS-09), a test command: ps2stall MS holds the game thread for MS, as a level load from a slow medium would (nothing polls the network); a connected client must
+// stay in the game (the receive thread's keep-alive, ps2_netsvc.c) although the server's time-out (nettimeout, 350 tics = 10 s) is shorter. Not for play.
+static void Command_PS2Stall_f(void)
+{
+	if (COM_Argc() < 2)
+	{
+		CONS_Printf("ps2stall <milliseconds>\n");
+		return;
+	}
+	CONS_Printf("PS2STALL %d ms\n", atoi(COM_Argv(1)));
+	PS2_SleepUs((UINT32)atoi(COM_Argv(1)) * 1000);
+	CONS_Printf("PS2STALL over\n");
+}
+
 static void NetCmd_Parse(const char *spec)
 {
 	const char *p = spec;
@@ -343,10 +538,28 @@ static void NetCmd_Parse(const char *spec)
 extern UINT32 ps2net_rx, ps2net_tx, ps2net_txerr; // i_tcp.c
 extern char ps2net_lastfrom[];
 
+// PS2-NET-2 (OPT12): -netthreads lists the EE threads (priority, state, entry point) once the IP stack is up and again two seconds later: which of them can run while the
+// game thread computes a frame? (the netman receive thread and lwIP's thread decide how soon a datagram is on the socket)
+static void ListThreads(const char *when)
+{
+	ee_thread_status_t st;
+	INT32 tid, n = 0;
+
+	for (tid = 1; tid < 256; tid++)
+		if (ReferThreadStatus(tid, &st) >= 0)
+		{
+			CONS_Printf("NETTHREAD %s tid=%d status=%d prio=%d/%d func=%p stack=%d wait=%u/%u wakeups=%u%s\n", when, (int)tid, (int)st.status, (int)st.current_priority,
+				(int)st.initial_priority, st.func, (int)st.stack_size, (unsigned)st.waitType, (unsigned)st.waitId, (unsigned)st.wakeupCount, tid == GetThreadId() ? " (game)" : "");
+			n++;
+		}
+	CONS_Printf("NETTHREAD %s: %d threads\n", when, (int)n);
+}
+
 void PS2Net_Frame(void)
 {
 	static boolean parsed;
 	static UINT32 frames, lastrx, lasttx;
+	static INT32 thread_dumps, thread_wait;
 	INT32 i;
 
 	if (netstate > 0 && (ps2net_rx | ps2net_tx) && M_CheckParm("-netdebug") && ++frames % 70 == 0)
@@ -357,11 +570,27 @@ void PS2Net_Frame(void)
 		lasttx = ps2net_tx;
 	}
 
+	if (netstate > 0 && thread_dumps < 2 && M_CheckParm("-netthreads") && (thread_dumps == 0 || ++thread_wait > 140))
+		ListThreads(thread_dumps++ ? "later" : "up");
+
+	// PS2-NET-5: the receive thread acknowledges the tics of the server for a joined client
+	PS2NetSvc_SetClient(netstate > 0 && netgame && client && gamestate == GS_LEVEL && cl_mode == CL_CONNECTED);
+	PS2NetSvc_SetConnected(netstate > 0 && netgame && client && cl_mode == CL_CONNECTED); // OPT13-IO (RS-09): the keep-alive of a long load
+	if (netstate > 0 && PS2NetSvc_Running() && M_CheckParm("-netdebug") && frames % 70 == 0)
+	{
+		nsv_stats_t ns;
+
+		PS2NetSvc_GetStats(&ns);
+		CONS_Printf("NETSVC frame %u: received %u dropped %u early-acks %u early-mis %u (errors %u) load-keepalives %u max-depth %u, C heap in use %u B\n", (unsigned)frames, (unsigned)ns.received, (unsigned)ns.dropped,
+			(unsigned)ns.early_acks, (unsigned)ns.early_mis, (unsigned)ns.early_ack_errors, (unsigned)ns.load_keepalives, (unsigned)ns.max_depth, (unsigned)mallinfo().uordblks);
+	}
+
 	PS2MenuHints_Frame(); // PS2-339: the crawler's step (the command and the options are set up at the first call)
 	if (!parsed)
 	{
 		parsed = true;
 		PS2UI_RegisterCommands(); // PS2-336: "ps2_icons"
+		COM_AddCommand("ps2stall", Command_PS2Stall_f, COM_LOCAL); // OPT13-IO (RS-09)
 		if (M_CheckParm("-netcmd") && M_IsNextParm())
 		{
 			const char *arg = M_GetNextParm();

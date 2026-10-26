@@ -1,0 +1,255 @@
+--- a/src/ps2/i_main.c
++++ b/src/ps2/i_main.c
+@@ -11,6 +11,7 @@
+ #include "../i_system.h"
+ 
+ #include "ps2_boot.h"
++#include "ps2_iobench.h"
+ #include "ps2_loadprof.h"
+ #include "ps2_sys.h"
+ 
+@@ -60,6 +61,11 @@
+ 	// startup SRB2
+ 	CONS_Printf("Setting up SRB2...\n");
+ 	D_SRB2Main();
++	if (M_CheckParm("-iobench")) // OPT13-RSYS research tool: measure the storage, show the numbers, end
++	{
++		PS2IoBench_Run();
++		I_Quit();
++	}
+ 	LP_SAMPLE(1);
+ 	LP_REPORT("boot");
+ 	CONS_Printf("Entering main game loop...\n");
+diff --git a/tools/ps2/sources.txt b/tools/ps2/sources.txt
+index dee73bd..8cfb296 100644
+--- a/tools/ps2/sources.txt
++++ b/tools/ps2/sources.txt
+@@ -136,6 +136,7 @@ src/ps2/ps2_hwfb.c
+ src/ps2/ps2_memops.c
+ src/ps2/ps2_ftest.c
+ src/ps2/ps2_loadprof.c  # PS2-LOAD-1
++src/ps2/ps2_iobench.c  # OPT13-RSYS: -iobench storage benchmark (research tool)
+ src/ps2/ps2_nearest.c  # PS2-LOAD-14
+ src/ps2/ps2_addons.c  # feature:addons
+ src/ps2/ps2_limits.c  # feature:limits
+diff --git a/src/ps2/ps2_iobench.c b/src/ps2/ps2_iobench.c
+new file mode 100644
+index 0000000..dec85db
+--- /dev/null
++++ b/src/ps2/ps2_iobench.c
+@@ -0,0 +1,204 @@
++// OPT13-RSYS research tool (not part of the game): -iobench measures the storage the game data lives on, on the real console, and shows the numbers on screen.
++// docs/research/rsys/OPT13_RSYS.md section 9. Run it once from every medium you care about (DVD, USB stick, MX4SIO, HDD): add "-iobench" to <data>/ps2args and start the
++// game; after the title is up the tool reads for ~20 s, then ends the session with a fatal-error style screen that holds the numbers (press Start). The lines are also in
++// the console log and, where the home device is writable, in <home>/iobench.txt.
++//
++// What it measures (all reads unbuffered, straight to the device through the C library, so the sizes are the sizes asked for):
++//   open     fopen + fclose of the biggest pack (the path lookup: ISO9660 directories on a DVD, FAT on USB)
++//   seqN     sequential reads of N bytes (2 KiB .. 1 MiB) from the middle of the pack: the transfer rate and the cost of one read call
++//   rnd4k    4 KiB reads at random places of the first 60 MB of the pack: the average, median, 95th percentile and worst time of one random read
++//   near4k   4 KiB reads at random places inside a 1 MiB window: what a seek costs when the data is close
++//   seek     fseek to the current position (the cost of a bare RPC to the IOP)
++//   write1k / write32k  256 KiB written to <home>/iobench.tmp in 1 KiB / 32 KiB pieces (downloads and saves)
++#include <stdio.h>
++#include <stdarg.h>
++#include <stdlib.h>
++#include <string.h>
++#include <malloc.h>
++#include <kernel.h>
++#include <timer.h>
++
++#include "../doomdef.h"
++#include "../i_system.h"
++#include "ps2_boot.h"
++#include "ps2_sys.h"
++#include "ps2_iobench.h"
++
++#define TICKS_PER_US 147.456
++static char report[3072];
++static size_t rlen;
++
++static void Say(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
++static void Say(const char *fmt, ...)
++{
++	char line[200];
++	va_list ap;
++	int n;
++
++	va_start(ap, fmt);
++	n = vsnprintf(line, sizeof line, fmt, ap);
++	va_end(ap);
++	if (n <= 0)
++		return;
++	printf("IOBENCH %s\n", line);
++	if (rlen + (size_t)n + 2 < sizeof report)
++	{
++		memcpy(report + rlen, line, (size_t)n);
++		rlen += (size_t)n;
++		report[rlen++] = '\n';
++		report[rlen] = 0;
++	}
++}
++
++static double Us(unsigned long long t0, unsigned long long t1)
++{
++	return (double)(t1 - t0) / TICKS_PER_US;
++}
++
++static int CmpD(const void *a, const void *b)
++{
++	const double x = *(const double *)a, y = *(const double *)b;
++	return x < y ? -1 : x > y;
++}
++
++static unsigned rng = 12345;
++static unsigned Rand(void)
++{
++	rng = rng * 1664525u + 1013904223u;
++	return rng >> 8;
++}
++
++static void Stats(const char *name, double *t, int n, size_t bytes)
++{
++	double sum = 0;
++	int i;
++
++	for (i = 0; i < n; i++)
++		sum += t[i];
++	qsort(t, (size_t)n, sizeof *t, CmpD);
++	Say("%-8s n=%3d mean %8.0f us  median %8.0f  p95 %8.0f  max %8.0f  (%zu B each)", name, n, sum / n, t[n / 2], t[(int)(n * 0.95)], t[n - 1], bytes);
++}
++
++void PS2IoBench_Run(void)
++{
++	char path[PS2BOOT_PATHMAX + 32];
++	FILE *f;
++	UINT8 *buf = memalign(64, 1 << 20);
++	double t[200];
++	long size;
++	int i, k;
++	unsigned long long t0, t1;
++	static const size_t sizes[] = { 2048, 16384, 65536, 262144, 1048576 };
++
++	if (!buf)
++		return;
++	snprintf(path, sizeof path, "%s/MUSIC.PAK", ps2boot.datadir);
++	Say("data device %s, file %s", ps2boot.datadir, path);
++	for (i = 0; i < 5; i++)
++	{
++		t0 = GetTimerSystemTime();
++		f = fopen(path, "rb");
++		if (f)
++			fclose(f);
++		t1 = GetTimerSystemTime();
++		t[i] = Us(t0, t1);
++	}
++	Stats("open", t, 5, 0);
++	f = fopen(path, "rb");
++	if (!f)
++	{
++		snprintf(path, sizeof path, "%s/SRB2.PAK", ps2boot.datadir);
++		f = fopen(path, "rb");
++	}
++	if (!f)
++	{
++		Say("cannot open a pack");
++		free(buf);
++		return;
++	}
++	setvbuf(f, NULL, _IONBF, 0);
++	fseek(f, 0, SEEK_END);
++	size = ftell(f);
++	Say("size %ld bytes", size);
++	for (k = 0; k < 5; k++)
++	{
++		const size_t n = sizes[k];
++		const int reads = (int)((4u << 20) / n);
++		long pos = size / 3 + (long)k * (6 << 20);
++
++		fseek(f, pos, SEEK_SET);
++		t0 = GetTimerSystemTime();
++		for (i = 0; i < reads; i++)
++			if (fread(buf, 1, n, f) != n)
++				break;
++		t1 = GetTimerSystemTime();
++		Say("seq%-6zu %6.2f MB/s   %8.0f us per read (%d reads)", n, (double)i * (double)n / Us(t0, t1), Us(t0, t1) / (i ? i : 1), i);
++	}
++	for (i = 0; i < 100; i++)
++	{
++		long pos = (long)(Rand() % (unsigned)((size < (60 << 20) ? size : (60 << 20)) / 2048 - 4)) * 2048;
++
++		t0 = GetTimerSystemTime();
++		fseek(f, pos, SEEK_SET);
++		fread(buf, 1, 4096, f);
++		t1 = GetTimerSystemTime();
++		t[i] = Us(t0, t1);
++	}
++	Stats("rnd4k", t, 100, 4096);
++	for (i = 0; i < 100; i++)
++	{
++		long pos = size / 2 + (long)(Rand() % 500) * 2048;
++
++		t0 = GetTimerSystemTime();
++		fseek(f, pos, SEEK_SET);
++		fread(buf, 1, 4096, f);
++		t1 = GetTimerSystemTime();
++		t[i] = Us(t0, t1);
++	}
++	Stats("near4k", t, 100, 4096);
++	for (i = 0; i < 100; i++)
++	{
++		t0 = GetTimerSystemTime();
++		fseek(f, 4096, SEEK_SET);
++		t1 = GetTimerSystemTime();
++		t[i] = Us(t0, t1);
++	}
++	Stats("seek", t, 100, 0);
++	fclose(f);
++	snprintf(path, sizeof path, "%s/iobench.tmp", ps2boot.homedir);
++	for (k = 0; k < 2; k++)
++	{
++		const size_t piece = k ? 32768 : 1024;
++
++		memset(buf, 0x5A, piece);
++		f = fopen(path, "wb");
++		if (!f)
++		{
++			Say("write%-3zuk: cannot create %s (read-only or no driver)", piece / 1024, path);
++			break;
++		}
++		setvbuf(f, NULL, _IONBF, 0);
++		t0 = GetTimerSystemTime();
++		for (i = 0; i < (int)(262144 / piece); i++)
++			if (fwrite(buf, 1, piece, f) != piece)
++				break;
++		fclose(f);
++		t1 = GetTimerSystemTime();
++		Say("write%-3zuk %6.0f KB/s (256 KB in %zu-byte pieces, %.0f ms)", piece / 1024, 262144.0 / 1024.0 / (Us(t0, t1) / 1e6), piece, Us(t0, t1) / 1000.0);
++		remove(path);
++	}
++	free(buf);
++	snprintf(path, sizeof path, "%s/iobench.txt", ps2boot.homedir);
++	f = fopen(path, "wb");
++	if (f)
++	{
++		fwrite(report, 1, rlen, f);
++		fclose(f);
++	}
++	if (PS2Video_FatalError)
++	{
++		PS2Video_FatalError(report);
++		if (!ps2boot.host)
++			PS2Joy_WaitStart();
++	}
++}
+diff --git a/src/ps2/ps2_iobench.h b/src/ps2/ps2_iobench.h
+new file mode 100644
+index 0000000..f15cd8c
+--- /dev/null
++++ b/src/ps2/ps2_iobench.h
+@@ -0,0 +1,5 @@
++// OPT13-RSYS: -iobench, see ps2_iobench.c
++#ifndef PS2_IOBENCH_H
++#define PS2_IOBENCH_H
++void PS2IoBench_Run(void);
++#endif

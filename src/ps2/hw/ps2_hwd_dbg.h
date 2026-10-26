@@ -73,6 +73,7 @@ typedef struct
 	unsigned int pred_ws; // OPT8: working set of the last frame under the cap in force, in blocks
 	unsigned int cap_blocks; // OPT8: footprint cap in force (0 = none)
 	unsigned int tex_restamped; // OPT8: textures re-made after a cap change
+	unsigned int flip_hist[5]; // OPT12 (PS2-HW-440): flips by how many vblanks the picture before it stayed on the screen (0 = replaced within a vblank, 1, 2, 3, 4 or more)
 } ps2hwd_stats_t;
 
 typedef struct

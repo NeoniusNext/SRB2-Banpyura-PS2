@@ -4809,7 +4809,12 @@ void G_SaveGameData(gamedata_t *data)
 		}
 	}
 
+#ifdef PS2_PROFILE
+	if (!FIL_WriteFile(va(pandf, srb2home, gamedatafilename), savebuffer.buf, savebuffer.pos)) // OPT13-IO (RS-08): nobody told the player that the progress was not saved
+		CONS_Alert(CONS_ERROR, "Could not save the game data (%s): is the memory card or the stick full?\n", gamedatafilename);
+#else
 	FIL_WriteFile(va(pandf, srb2home, gamedatafilename), savebuffer.buf, savebuffer.pos);
+#endif
 	free(savebuffer.buf);
 }
 
@@ -5623,10 +5628,20 @@ INT32 G_TicsToSeconds(tic_t tics)
 
 INT32 G_TicsToCentiseconds(tic_t tics)
 {
+#ifdef PS2
+	// PS2-LUA: (INT32)((tics%TICRATE) * (100.00f/TICRATE)) is 40 for 14 tics on the PC (IEEE round to nearest) and 39 on the EE (its FPU truncates the product):
+	// the PC result is floor(n*100/35) for every n in 0..34 (checked with float32 arithmetic), so the integer form gives the PC numbers on both
+	return (INT32)(((tics%TICRATE) * 100) / TICRATE);
+#else
 	return (INT32)((tics%TICRATE) * (100.00f/TICRATE));
+#endif
 }
 
 INT32 G_TicsToMilliseconds(tic_t tics)
 {
+#ifdef PS2
+	return (INT32)(((tics%TICRATE) * 1000) / TICRATE); // PS2-LUA: see G_TicsToCentiseconds (same for all 35 values)
+#else
 	return (INT32)((tics%TICRATE) * (1000.00f/TICRATE));
+#endif
 }

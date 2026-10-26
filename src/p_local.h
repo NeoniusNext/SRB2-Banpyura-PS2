@@ -430,6 +430,27 @@ void P_UnsetThingPosition(mobj_t *thing);
 void P_SetThingPosition(mobj_t *thing);
 void P_SetUnderlayPosition(mobj_t *thing);
 
+// OPT12-CORE: event counters of the tic logic in LTO profile builds (CNT lines of ps2_prof.c, per tools/ps2/core_tick.py); nothing elsewhere
+#ifdef PS2_PROF_DIRECT
+extern UINT32 ps2prof_cnt[8];
+#define PS2_CNT(n) (ps2prof_cnt[n]++)
+extern UINT32 ps2_noquick; // -ps2noquick MASK (profile builds only, A/B on one ELF): bit n switches the quick path n of the tic logic off (OPT12-CORE, p_mobj.c)
+#define PS2_QUICK_OFF(n) (ps2_noquick & (1u << (n)))
+// inclusive cycle accumulators (COP0 count) of sections of the tic logic: PS2_CYC_T0(t); ...; PS2_CYC_ADD(n, t); printed per window as the CYC line, per tic by core_tick.py
+extern UINT64 ps2prof_cyc[16];
+#ifdef PS2_CYCPROF // (the reads of COP0 cost ~25 cycles each and distort the totals: ratios only; off by default)
+#define PS2_CYC_T0(v) UINT32 v; __asm__ volatile("mfc0 %0,$9" : "=r"(v))
+#define PS2_CYC_ADD(n, v) do { UINT32 c_; __asm__ volatile("mfc0 %0,$9" : "=r"(c_)); ps2prof_cyc[n] += (UINT32)(c_ - (v)); } while (0)
+#else
+#define PS2_CYC_T0(v) ((void)0)
+#define PS2_CYC_ADD(n, v) ((void)0)
+#endif
+#else
+#define PS2_CNT(n) ((void)0)
+#define PS2_QUICK_OFF(n) 0
+#define PS2_CYC_T0(v) ((void)0)
+#define PS2_CYC_ADD(n, v) ((void)0)
+#endif
 boolean P_CheckPosition(mobj_t *thing, fixed_t x, fixed_t y);
 boolean P_TryCameraMove(fixed_t x, fixed_t y, camera_t *thiscam); // romoney5: why is this defined twice?
 boolean P_IsCameraNoclip(camera_t *thiscam);

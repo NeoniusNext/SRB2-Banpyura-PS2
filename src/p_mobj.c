@@ -18,6 +18,7 @@
 #include "st_stuff.h"
 #include "hu_stuff.h"
 #include "p_local.h"
+#include "m_argv.h"
 #include "p_setup.h"
 #include "r_fps.h"
 #include "r_main.h"
@@ -46,6 +47,41 @@ actioncache_t actioncachehead;
 static mobj_t *overlaycap = NULL;
 
 mobj_t *mobjcache = NULL;
+
+#ifdef PS2
+// PS2-511 (OPT12-CORE): mobjs are carved from chunks of 32 (13 KB) instead of being one zone block each: a block costs a 16-byte header and a round-up to 16 on top of the 408
+// bytes, 24 bytes of the 432 of every one of the 6 768 mobjs of MAP11 (the stride is 416 so that a mobj stays 16-byte aligned: memset/memcpy of one use the 128-bit path), and
+// 6 768 blocks are 210. Mobjs are never freed one by one (P_RemoveThinkerDelayed puts them on mobjcache); the chunks go with the level (PU_LEVEL).
+static zlevelpool_t ps2_mobjpool;
+
+mobj_t *P_AllocMobjBlock(void)
+{
+	return Z_LevelPoolAlloc(&ps2_mobjpool, sizeof (mobj_t), 32);
+}
+
+// OPT14 (PS2-LUA-7): P_NetUnArchiveThinkers empties the thinker lists with P_RemoveSavegameMobj (upstream frees every object) and then builds the saved ones. Here the removed ones sit in
+// mobjcache, which only P_SpawnMobj reads, and every unarchived object was a new slice of a chunk: a client that joins holds the objects of the map it loaded and the ones the host sent
+// until the level ends (416 bytes each: 2.8 MB for the 6 768 objects of MAP11). The cache is read first; the memory is cleared as P_SpawnMobj does.
+// Not proven by a measurement yet (the join runs are equal to the PC with and without it; the 2.8 MB is computed): off unless -mobjreuse is given.
+mobj_t *P_AllocMobjBlockForLoad(void)
+{
+	static int reuse = -1;
+	mobj_t *mobj = mobjcache;
+
+	if (reuse < 0)
+		reuse = M_CheckParm("-mobjreuse") ? 1 : 0;
+	if (mobj == NULL || !reuse)
+		return P_AllocMobjBlock();
+	mobjcache = mobj->hnext;
+	memset(mobj, 0, sizeof (*mobj));
+	return mobj;
+}
+#else
+mobj_t *P_AllocMobjBlock(void)
+{
+	return Z_Calloc(sizeof (mobj_t), PU_LEVEL, NULL);
+}
+#endif
 
 void P_InitCachedActions(void)
 {
@@ -10325,15 +10361,15 @@ static void PS2_TypeStat(int w, mobjtype_t type)
 #define PS2_TYPESTAT_N(w, mo) ((void)0)
 #endif
 
-#if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK) // (PTICK: lua_mobjhooks_any)
+#if defined(PS2_OPT_CORE) && defined(PS2_OPT_PTICK) // (PTICK: LUA_MobjHookWanted)
 // PS2-203 (OPT11-CORE): a decoration at rest (flowers, trees, spikes, kelp: 40..60 % of the thinker calls of a crowded level) goes through the thinker preamble
 // of P_MobjThinker, P_MobjSceneryThink (its type switch and the fuse test) and P_SceneryThinker and ends in P_CycleMobjState, with nothing changed on the way but
 // four fields and two globals. P_SceneryQuick tests every condition under which that is so and then does exactly that; whatever it cannot vouch for takes
 // the original path, which is untouched. The type list is the case list of P_MobjSceneryThink's switch (tools/ps2/core_scenery_types.py keeps it equal).
 #ifdef HAS_LUA
-#define PS2_MOBJHOOKS_ANY lua_mobjhooks_any // a script registered a mobj hook (lua_hooklib.c)
+#define PS2_MOBJHOOKS_ANY(mo) LUA_MobjHookWanted(mo, MOBJ_HOOK(MobjThinker)) // OPT13 IQ-6: a MobjThinker hook is registered for this type (lua_hooklib.c); the only hook the quick path would skip (no fuse, no movement)
 #else
-#define PS2_MOBJHOOKS_ANY false // no Lua VM: no hook can exist
+#define PS2_MOBJHOOKS_ANY(mo) false // no Lua VM: no hook can exist
 #endif
 static UINT8 ps2_scenery_plain[NUMMOBJTYPES]; // 1: no case in P_MobjSceneryThink for this type
 static boolean ps2_scenery_ready;
@@ -10383,7 +10419,7 @@ static boolean P_SceneryQuick(mobj_t *mobj)
 		|| mobj->scale != mobj->destscale
 		|| mobj->momx || mobj->momy || mobj->momz
 		|| mobj->fuse
-		|| PS2_MOBJHOOKS_ANY
+		|| PS2_MOBJHOOKS_ANY(mobj)
 		|| !(mobj->eflags & MFE_ONGROUND)
 		|| ((mobj->eflags & MFE_VERTICALFLIP) ? mobj->z + mobj->height != mobj->ceilingz : mobj->z != mobj->floorz))
 		return false;
@@ -10928,7 +10964,7 @@ mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type, ...)
 	}
 	else
 	{
-		mobj = Z_Calloc(sizeof (*mobj), PU_LEVEL, NULL);
+		mobj = P_AllocMobjBlock();
 	}
 
 	// this is officially a mobj, declared as soon as possible.
@@ -11618,7 +11654,18 @@ void P_RemoveSavegameMobj(mobj_t *mobj)
 		thinker_t *thinker = (thinker_t *)mobj;
 		thinker_t *next = thinker->next;
 		(next->prev = thinker->prev)->next = next;
+#ifdef PS2
+		if (thinker->function == (actionf_p1)P_NullPrecipThinker)
+			Z_Free(thinker); // OPT14 (PS2-LUA-6): a rain/snow object is its own zone block (P_SpawnPrecipMobj, smaller than a mobj_t): in mobjcache it would be reused as a mobj_t, whose memset overwrites the block after it
+		else
+		{
+			LUA_InvalidateUserdata(thinker); // OPT14 (PS2-LUA-6): Z_Free did this for the original, scripts must not keep a reference to an object the savegame replaced
+			((mobj_t *)thinker)->hnext = mobjcache; // PS2-511: a slice of a chunk (P_AllocMobjBlock), it cannot be freed alone
+			mobjcache = (mobj_t *)thinker;
+		}
+#else
 		Z_Free(thinker);
+#endif
 	}
 }
 
