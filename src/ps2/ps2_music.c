@@ -299,18 +299,12 @@ static size_t Decode(ps2_music *m)
 	m->decoded += n; m->cursor = 0; m->buffered = n; return n;
 }
 
-static int Refill(ps2_music *m)
+static int Ensure(ps2_music *m)
 {
+	if (m->cursor < m->buffered) return 1;
 	if (Decode(m)) return 1;
 	if (m->looping && !m->error && PS2_MusicSeek(m, m->loop_ms) && Decode(m)) return 1;
 	m->playing = m->paused = 0; return 0;
-}
-
-// Keep the decoded-buffer check at each caller. Decoder/loop work is only
-// needed at the same exhausted-buffer boundaries as before.
-static inline __attribute__((always_inline)) int Ensure(ps2_music *m)
-{
-	return m->cursor < m->buffered || Refill(m);
 }
 
 // PS2-317: a muted Ogg/MP3 song may move its position without decoding, but never across the end of the song: length_ms is a rounded-down
