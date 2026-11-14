@@ -1,0 +1,521 @@
+diff --git a/src/m_tokenizer.c b/src/m_tokenizer.c
+--- a/src/m_tokenizer.c
++++ b/src/m_tokenizer.c
+@@ -692 +692 @@
+-static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
++static boolean ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
+@@ -698 +698,18 @@
+-		return;
++		return true;
++#ifndef PS2_NOOPT_TEXTMAPMEM
++	{
++		// All scan arrays are zone allocations. Bound the multiplication before a
++		// growth; a scan that cannot be represented takes the ordinary parser.
++		const size_t maxcap = (size_t)0x7FFFFFF0u / esize;
++
++		if (need > maxcap)
++			return false;
++		ncap = *cap ? *cap : 1024;
++		while (ncap < need)
++			ncap = ncap > maxcap / 2 ? (UINT32)maxcap : ncap * 2;
++	}
++	// These are level-load temporaries. Owner-backed PU_LEVEL storage both grows
++	// from the arena's temporary side and is released by level-load OOM cleanup.
++	// A moving resize keeps its source alive until copied; callers refresh aliases.
++	bigger = Z_Realloc(*array, (size_t)ncap * esize, PU_LEVEL, array);
++#else
+@@ -707,0 +725 @@
++#endif
+@@ -709,0 +728 @@
++	return true;
+@@ -768 +787,2 @@
+-		ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst);
++		if (!ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst))
++			goto fail;
+@@ -772 +792,2 @@
+-			ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype);
++			if (!ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype))
++				goto fail;
+@@ -789 +810,2 @@
+-				ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs);
++				if (!ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs))
++					goto fail;
+@@ -809,0 +832,3 @@
++#ifndef PS2_NOOPT_TEXTMAPMEM
++		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_LEVEL, &sc->list[i]);
++#else
+@@ -810,0 +836 @@
++#endif
+@@ -817,0 +844,6 @@
++#ifndef PS2_NOOPT_TEXTMAPMEM
++	// Only the list-building pass needed block types. Parsing uses list/bfirst.
++	Z_Free(sc->btype);
++	sc->btype = NULL;
++	sc->btcap = 0;
++#endif
+diff --git a/src/m_tokenizer.h b/src/m_tokenizer.h
+--- a/src/m_tokenizer.h
++++ b/src/m_tokenizer.h
+@@ -57,0 +58,2 @@
++// Keep the scan's owner slots alive until ScanFree or PU_LEVEL cleanup. Free a
++// live scan before reusing it; after level cleanup a new scan resets stale caps.
+diff --git a/src/p_setup.c b/src/p_setup.c
+--- a/src/p_setup.c
++++ b/src/p_setup.c
+@@ -1645,0 +1646,19 @@
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
++	const size_t maxcapacity = (size_t)0x7FFFFFF0u / sizeof (*blocks->pos);
++	size_t locCount;
++
++	if (*count >= maxcapacity)
++		I_Error("TextmapStorePos: too many blocks");
++	locCount = *count + 1;
++	if (!blocks->pos || locCount >= blocks->capacity)
++	{
++		size_t capacity = UINT16_MAX / 2;
++
++		// Keep the previous reservation/growth policy: a smaller initial table
++		// can require an extra old+new allocation peak before reaching this size.
++		if (blocks->pos)
++			capacity = blocks->capacity > maxcapacity - 1024 ? maxcapacity : blocks->capacity + 1024;
++		Z_Realloc(blocks->pos, sizeof (*blocks->pos) * capacity, PU_LEVEL, &blocks->pos);
++		blocks->capacity = capacity; // allocation can leave through an OOM guard
++	}
++#else
+@@ -1661,0 +1681 @@
++#endif
+@@ -1665,0 +1686,13 @@
++}
++
++static void TextmapReleasePos(textmap_block_t *blocks)
++{
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
++	// The positions have no consumers after their type's parse loop. Owner-backed
++	// PU_LEVEL storage still handles an interrupted load through Z_FreeTags.
++	Z_Free(blocks->pos);
++	blocks->pos = NULL;
++	blocks->capacity = 0;
++#else
++	(void)blocks;
++#endif
+@@ -3176,0 +3210 @@
++	TextmapReleasePos(&vertexBlocks);
+@@ -3261,0 +3296 @@
++	TextmapReleasePos(&sectorBlocks);
+@@ -3290,0 +3326 @@
++	TextmapReleasePos(&linedefBlocks);
+@@ -3321,0 +3358 @@
++	TextmapReleasePos(&sidedefBlocks);
+@@ -3341,0 +3379 @@
++	TextmapReleasePos(&mapthingBlocks);
+diff --git a/src/ps2/hw/ps2_hw_draw.inc b/src/ps2/hw/ps2_hw_draw.inc
+--- a/src/ps2/hw/ps2_hw_draw.inc
++++ b/src/ps2/hw/ps2_hw_draw.inc
+@@ -1197,0 +1198,48 @@
++// The three-register indexed formats as native ST/RGBAQ/XYZ(F) values. Keep the
++// arithmetic and conversions identical to put_vertex; only the GIF encoding differs.
++static inline u64 *put_vertex_reglist(u64 *o, const cv_t *s, const pack_t *pk)
++{
++	const float q = 1.0f / s->w;
++	float zf = P.zo + s->z * q * P.zk + P.zbias;
++	const int xi = (int)(P.ox + s->x * q * P.kx);
++	const int yi = (int)(P.oy + s->y * q * P.ky);
++	qw_t st;
++	u32 zi, col = pk->col;
++
++	zf = clampf(zf, 0.0f, P.zmax);
++	zi = (u32)(int)zf;
++	if (pk->ramp)
++	{
++		st.f[0] = P.ra + P.rb * q;
++		st.f[1] = 0.0f;
++	}
++	else
++	{
++		st.f[0] = (s->a[0] - pk->sb) * P.tsx * q;
++		st.f[1] = (s->a[1] - pk->tb) * P.tsy * q;
++	}
++	*o++ = st.d[0];
++	if (pk->fmt == 6)
++	{
++		const float lf = s->a[2];
++		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
++		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
++		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
++
++		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
++	}
++	else if (pk->fmt == 4)
++	{
++		col = (u32)col_lut[(int)clampf(s->a[2], 0.0f, 255.0f)]
++			| ((u32)col_lut[(int)clampf(s->a[3], 0.0f, 255.0f)] << 8)
++			| ((u32)col_lut[(int)clampf(s->a[4], 0.0f, 255.0f)] << 16)
++			| ((u32)col_lut[(int)clampf(s->a[5], 0.0f, 255.0f)] << 24);
++	}
++	st.f[0] = q;
++	*o++ = (u64)col | ((u64)st.w[0] << 32);
++	*o++ = (u64)(xi & 0xFFFF) | ((u64)(yi & 0xFFFF) << 16)
++		| ((u64)zi << 32) | ((pk->fmt == 1 || pk->fmt == 6) ? (u64)(pk->fog & 255) << 56 : 0);
++	H.gsr.valid &= ~(u32)RV_RGBAQ;
++	return o;
++}
++
+@@ -2400,2 +2448,14 @@
+-	LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
+-	LS.tag->d[1] = pack_regdesc(LS.fmt);
++	if (LS.nreg == 3)
++	{
++		const u64 regs = pack_regdesc(LS.fmt);
++
++		// Three vertices and one ignored NOP: each triangle ends at a DMA
++		// quadword, so reservations can append without a live half-quadword.
++		LS.tag->d[0] = HWGIF_TAG(LS.n / 3, 1, 0, 0, 1, 10);
++		LS.tag->d[1] = regs | (regs << 12) | (regs << 24) | (0xFull << 36);
++	}
++	else
++	{
++		LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
++		LS.tag->d[1] = pack_regdesc(LS.fmt);
++	}
+@@ -2416 +2476,10 @@
+-		LS.tag = pk_alloc(1 + nqw); // the tag, then the vertices of this reservation
++		LS.tag = pk_alloc((LS.nreg == 3 ? 3 : 1) + nqw);
++		if (LS.nreg == 3)
++		{
++			// REGLIST ignores PRE: commit PRIM explicitly before the vertex list.
++			LS.tag[0].d[0] = HWGIF_TAG(1, 0, 0, 0, 1, 1);
++			LS.tag[0].d[1] = GSR_PRIM;
++			LS.tag[1].d[0] = PRIM_TRI | pass_prim(&P.pass[0]);
++			LS.tag[1].d[1] = 0;
++			LS.tag += 2;
++		}
+@@ -2554,7 +2623,23 @@
+-			o = ls_reserve((u32)((cnt - 2) * 3 * nreg));
+-			for (k = 1; k + 1 < cnt; k++)
+-			{
+-				o = put_vertex(o, &cl[0], &pk);
+-				o = put_vertex(o, &cl[k], &pk);
+-				o = put_vertex(o, &cl[k + 1], &pk);
+-				LS.n += 3;
++			o = ls_reserve((u32)((cnt - 2) * (nreg == 3 ? 5 : 3 * nreg)));
++			if (nreg == 3)
++			{
++				u64 *r = (u64 *)o;
++
++				for (k = 1; k + 1 < cnt; k++)
++				{
++					r = put_vertex_reglist(r, &cl[0], &pk);
++					r = put_vertex_reglist(r, &cl[k], &pk);
++					r = put_vertex_reglist(r, &cl[k + 1], &pk);
++					*r++ = 0; // descriptor 10 is NOP
++					LS.n += 3;
++				}
++			}
++			else
++			{
++				for (k = 1; k + 1 < cnt; k++)
++				{
++					o = put_vertex(o, &cl[0], &pk);
++					o = put_vertex(o, &cl[k], &pk);
++					o = put_vertex(o, &cl[k + 1], &pk);
++					LS.n += 3;
++				}
+diff --git a/src/ps2/hw/ps2_hw_model.inc b/src/ps2/hw/ps2_hw_model.inc
+--- a/src/ps2/hw/ps2_hw_model.inc
++++ b/src/ps2/hw/ps2_hw_model.inc
+@@ -26 +26 @@
+-	qw_t col4; // gr_modellighting: the RGBAQ quadword of the vertex (the colour of the pass scaled by the light factor of the vertex)
++	qw_t col4; // temporary float projection until classification; then native RGBAQ and XYZ (without per-triangle fog)
+@@ -339,7 +339,26 @@
+-// one vertex as GIF data (3 quadwords): ST + Q, the colour (fmt 6: the vertex's own, else the pass's), XYZ (fmt 0) or XYZF (fmt 1, 6; zi was shifted by 4 when the vertex was made, fog4 = F << 4)
+-static inline __attribute__((always_inline)) qw_t *mdl_put_v(qw_t *o, const mdl_v_t *m, const qw_t *colqw, u32 fog4, const int fmt)
+-{
+-	o[0] = m->stq;
+-	o[1] = fmt == 6 ? m->col4 : *colqw;
+-	o[2].d[0] = (u64)(u32)m->xi | ((u64)(u32)m->yi << 32);
+-	o[2].d[1] = (u64)(u32)m->zi | ((u64)fog4 << 32);
++// Once per transformed vertex, after classification no longer needs col4's
++// float projection. Pack the exact old PACKED values into that same storage.
++static inline void mdl_prepare_v(mdl_v_t *m, u32 col, float lf, int fmt)
++{
++	if (fmt == 6)
++	{
++		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
++		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
++		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
++
++		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
++	}
++	m->col4.d[0] = (u64)col | ((u64)m->stq.w[2] << 32);
++	m->col4.d[1] = (u64)(m->xi & 0xFFFF) | ((u64)(m->yi & 0xFFFF) << 16)
++		| ((u64)(fmt == 0 ? (u32)m->zi : ((u32)m->zi >> 4) & 0xFFFFFFu) << 32);
++}
++
++// Native ST/RGBAQ/XYZ(F), copied once per triangle corner. Fog remains per
++// triangle; the model's other register fields were packed once per vertex.
++static inline __attribute__((always_inline)) u64 *mdl_put_v(u64 *o, const mdl_v_t *m, u32 fog4, const int fmt)
++{
++
++	o[0] = m->stq.d[0];
++	o[1] = m->col4.d[0];
++	o[2] = m->col4.d[1]
++		| (fmt == 0 ? 0 : (u64)((fog4 >> 4) & 255) << 56);
+@@ -350 +369 @@
+-static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, const int fmt)
++static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, const int fmt)
+@@ -357,5 +376,6 @@
+-		qw_t *o = ls_reserve(9);
+-
+-		o = mdl_put_v(o, &mv[ix[tt * 3]], colqw, fog4, fmt);
+-		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], colqw, fog4, fmt);
+-		mdl_put_v(o, &mv[ix[tt * 3 + 2]], colqw, fog4, fmt);
++		u64 *o = (u64 *)ls_reserve(5);
++
++		o = mdl_put_v(o, &mv[ix[tt * 3]], fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3 + 2]], fog4, fmt);
++		*o = 0; // the tenth REGLIST descriptor is NOP
+@@ -366 +386 @@
+-static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, int fmt)
++static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, int fmt)
+@@ -369 +389 @@
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 6);
++		mdl_emit_list(mv, ix, list, n, fog4, 6);
+@@ -371 +391 @@
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 1);
++		mdl_emit_list(mv, ix, list, n, fog4, 1);
+@@ -373 +393 @@
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 0);
++		mdl_emit_list(mv, ix, list, n, fog4, 0);
+@@ -422 +441,0 @@
+-	qw_t colqw;
+@@ -426,4 +444,0 @@
+-	colqw.w[0] = col & 255;
+-	colqw.w[1] = (col >> 8) & 255;
+-	colqw.w[2] = (col >> 16) & 255;
+-	colqw.w[3] = col >> 24;
+@@ -592,11 +607,5 @@
+-	// 4. the colour with the light factor of every vertex (col4 held the screen coordinates until now), then the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
+-	if (light)
+-		for (k = 0; k < nv; k++)
+-		{
+-			const float lf = mdl_lf[mdl_lidx(na, nb, k, lerp)];
+-
+-			mv[k].col4.w[0] = (u32)((float)(col & 255) * lf + 0.5f);
+-			mv[k].col4.w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
+-			mv[k].col4.w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
+-			mv[k].col4.w[3] = col >> 24;
+-		}
++	// 4. Reuse the now-dead float projection slot for native register values.
++	// The colour/light rounding and Q are the old PACKED values; every triangle
++	// corner copies them without repeating colour/coordinate bit packing.
++	for (k = 0; k < nv; k++)
++		mdl_prepare_v(&mv[k], col, light ? mdl_lf[mdl_lidx(na, nb, k, lerp)] : 1.0f, fmt);
+@@ -624 +633 @@
+-		mdl_emit_fmt(mv, ix, ord, (u32)nord, &colqw, fog4, fmt);
++		mdl_emit_fmt(mv, ix, ord, (u32)nord, fog4, fmt);
+@@ -646 +655 @@
+-				mdl_emit_fmt(mv, ix, ord + s, count[k], &colqw, fog4, fmt);
++				mdl_emit_fmt(mv, ix, ord + s, count[k], fog4, fmt);
+@@ -657 +666 @@
+-			qw_t *o;
++			u64 *o;
+@@ -680 +689 @@
+-			o = ls_reserve(9);
++			o = (u64 *)ls_reserve(5);
+@@ -683,3 +692,3 @@
+-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 6);
+-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 6);
+-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 6);
+@@ -689,4 +698,5 @@
+-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 1);
+-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 1);
+-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 1);
+-			}
++				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 1);
++			}
++			*o = 0;
+diff --git a/src/ps2/ps2_midi.c b/src/ps2/ps2_midi.c
+--- a/src/ps2/ps2_midi.c
++++ b/src/ps2/ps2_midi.c
+@@ -249,0 +250,4 @@
++	int t;
++	uint64_t due;
++	if (!frames || m->frame >= m->length_frames || m->failed) return 0;
++	t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
+@@ -253,2 +257,4 @@
+-		int t, l = 0, r = 0;
+-		while ((t = Earliest(m)) >= 0 && Due(m, t, 0) <= m->frame && !m->failed)
++		int l = 0, r = 0;
++		// The next track/frame cannot change until an event runs. Keep the
++		// original merged-track tie order and integer timing, once per event.
++		while (t >= 0 && due <= m->frame && !m->failed)
+@@ -257,0 +264 @@
++			t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
+diff --git a/src/ps2/ps2_music.c b/src/ps2/ps2_music.c
+--- a/src/ps2/ps2_music.c
++++ b/src/ps2/ps2_music.c
+@@ -39 +38,0 @@
+-	uint8_t raw[DECODE_FRAMES * 4];
+@@ -231,0 +231,17 @@
++// Input occupies at most four bytes per frame, just like the stereo output.
++// Expand from the end so mono/8-bit output never overwrites unread source bytes.
++static void ExpandPCM(int16_t *buffer, size_t frames, unsigned bits, unsigned channels)
++{
++	size_t stride = channels * (bits / 8);
++#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
++	if (bits == 16 && channels == 2) return;
++#endif
++	while (frames--)
++	{
++		const uint8_t *p = (const uint8_t *)buffer + frames * stride;
++		int16_t l = PS2_PCMValue(p, bits);
++		int16_t r = channels == 2 ? PS2_PCMValue(p + bits / 8, bits) : l;
++		buffer[frames * 2] = l; buffer[frames * 2 + 1] = r;
++	}
++}
++
+@@ -234 +250 @@
+-	size_t n = 0, i, stride = m->channels * 2;
++	size_t n = 0, stride = m->channels * 2;
+@@ -243 +259 @@
+-		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->raw, bytes) != bytes)
++		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->buffer, bytes) != bytes)
+@@ -245,6 +261 @@
+-		for (i = 0; i < n; i++)
+-		{
+-			const uint8_t *p = m->raw + i*stride;
+-			m->buffer[i*2] = PS2_PCMValue(p, m->pcm.bits);
+-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(p+m->pcm.bits/8, m->pcm.bits) : m->buffer[i*2];
+-		}
++		ExpandPCM(m->buffer, n, m->pcm.bits, m->channels);
+@@ -266 +277,2 @@
+-		PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
++		// At EOF libvorbis may return no PCM pointer along with zero frames.
++		if (n) PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
+@@ -273 +285 @@
+-		int result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
++		int result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
+@@ -279 +291 @@
+-			result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
++			result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
+@@ -286,7 +298 @@
+-	{
+-		for (i = 0; i < n; i++)
+-		{
+-			m->buffer[i*2] = PS2_PCMValue(m->raw+i*stride, 16);
+-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(m->raw+i*stride+2, 16) : m->buffer[i*2];
+-		}
+-	}
++		ExpandPCM(m->buffer, n, 16, m->channels);
+diff --git a/src/r_draw8_npo2.c b/src/r_draw8_npo2.c
+--- a/src/r_draw8_npo2.c
++++ b/src/r_draw8_npo2.c
+@@ -23,0 +24,53 @@
++#endif
++
++#ifdef PS2_OPT_DRAW
++// A plane's spans share their flat dimensions. Generating these descriptors
++// needs a 64-bit divide on the EE; keep two descriptors per axis across all
++// tilted drawers, including alternating floor/sprite dimensions. Copy them
++// into span-local storage before any pixel stores.
++// No source/cache pointer is retained, so flat eviction and mode/level changes
++// need no invalidation. Zero dimensions still take libdivide's error path.
++static void R_NPO2SlopeDividers(struct libdivide_u32_t *x, struct libdivide_u32_t *y)
++{
++	// Keep the magic words aligned even though libdivide's descriptor is packed.
++	static struct
++	{
++		UINT32 magic;
++		UINT16 dimension;
++		UINT8 more;
++	} xcached[2], ycached[2];
++	static UINT8 xnext, ynext;
++	const UINT16 flatwidth = ds_flatwidth, flatheight = ds_flatheight;
++	UINT32 xi = 0, yi = 0;
++
++	if (!flatwidth || xcached[0].dimension != flatwidth)
++	{
++		xi = 1;
++		if (!flatwidth || xcached[1].dimension != flatwidth)
++		{
++			const struct libdivide_u32_t divider = libdivide_u32_gen(flatwidth);
++			xi = xnext;
++			xcached[xi].magic = divider.magic;
++			xcached[xi].more = divider.more;
++			xcached[xi].dimension = flatwidth;
++			xnext ^= 1;
++		}
++	}
++	if (!flatheight || ycached[0].dimension != flatheight)
++	{
++		yi = 1;
++		if (!flatheight || ycached[1].dimension != flatheight)
++		{
++			const struct libdivide_u32_t divider = libdivide_u32_gen(flatheight);
++			yi = ynext;
++			ycached[yi].magic = divider.magic;
++			ycached[yi].more = divider.more;
++			ycached[yi].dimension = flatheight;
++			ynext ^= 1;
++		}
++	}
++	x->magic = xcached[xi].magic;
++	x->more = xcached[xi].more;
++	y->magic = ycached[yi].magic;
++	y->more = ycached[yi].more;
++}
+@@ -146,0 +200,4 @@
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+@@ -148,0 +206 @@
++#endif
+@@ -335,0 +394,4 @@
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+@@ -337,0 +400 @@
++#endif
+@@ -522,0 +586,4 @@
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+@@ -524,0 +592 @@
++#endif
+@@ -720,0 +789,4 @@
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+@@ -722,0 +795 @@
++#endif
+@@ -1337,0 +1411,4 @@
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+@@ -1339,0 +1417 @@
++#endif
+@@ -1493,0 +1572,4 @@
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+@@ -1495,0 +1578 @@
++#endif
+@@ -1844,0 +1928,4 @@
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+@@ -1846,0 +1934 @@
++#endif

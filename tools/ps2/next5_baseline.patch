@@ -1,0 +1,3029 @@
+diff --git a/src/m_tokenizer.c b/src/m_tokenizer.c
+index c2427a9c9..c88d82de6 100644
+--- a/src/m_tokenizer.c
++++ b/src/m_tokenizer.c
+@@ -689,13 +689,30 @@ static inline __attribute__((always_inline)) int Tokenizer_SRB2ScanPairNoNul(con
+ 	return 1;
+ }
+ 
+-static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
++static boolean ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
+ {
+ 	void *bigger;
+ 	UINT32 ncap;
+ 
+ 	if (need <= *cap)
+-		return;
++		return true;
++#ifndef PS2_NOOPT_TEXTMAPMEM
++	{
++		// All scan arrays are zone allocations. Bound the multiplication before a
++		// growth; a scan that cannot be represented takes the ordinary parser.
++		const size_t maxcap = (size_t)0x7FFFFFF0u / esize;
++
++		if (need > maxcap)
++			return false;
++		ncap = *cap ? *cap : 1024;
++		while (ncap < need)
++			ncap = ncap > maxcap / 2 ? (UINT32)maxcap : ncap * 2;
++	}
++	// These are level-load temporaries. Owner-backed PU_LEVEL storage both grows
++	// from the arena's temporary side and is released by level-load OOM cleanup.
++	// A moving resize keeps its source alive until copied; callers refresh aliases.
++	bigger = Z_Realloc(*array, (size_t)ncap * esize, PU_LEVEL, array);
++#else
+ 	ncap = *cap ? *cap * 2 : 1024;
+ 	while (ncap < need)
+ 		ncap *= 2;
+@@ -705,8 +722,10 @@ static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
+ 		memcpy(bigger, *array, (size_t)*cap * esize);
+ 		Z_Free(*array);
+ 	}
++#endif
+ 	*array = bigger;
+ 	*cap = ncap;
++	return true;
+ }
+ 
+ void Tokenizer_SRB2ScanFree(tokscan_t *sc)
+@@ -765,11 +784,13 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 		if (p >= size)
+ 			goto fail;
+ 
+-		ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst);
++		if (!ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst))
++			goto fail;
+ 		{ // (btype grows with bfirst: the same capacity)
+ 			UINT32 tcap = sc->btcap;
+ 
+-			ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype);
++			if (!ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype))
++				goto fail;
+ 			sc->btcap = tcap;
+ 		}
+ 		sc->bfirst[sc->nblocks] = npairs;
+@@ -786,7 +807,8 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 			if (pairs + npairs == pend)
+ 			{
+ 				sc->npairs = npairs;
+-				ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs);
++				if (!ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs))
++					goto fail;
+ 				pairs = sc->pairs;
+ 				pend = pairs + sc->pcap;
+ 			}
+@@ -807,7 +829,11 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 	sc->bfirst[sc->nblocks] = npairs; // (there is room: nblocks + 2 was asked for before the last block was counted)
+ 	for (i = 0; i < 5; i++)
+ 	{
++#ifndef PS2_NOOPT_TEXTMAPMEM
++		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_LEVEL, &sc->list[i]);
++#else
+ 		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_STATIC, NULL);
++#endif
+ 		sc->counts_filled[i] = 0;
+ 	}
+ 	for (k = 0; k < sc->nblocks; k++)
+@@ -815,6 +841,12 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 		i = sc->btype[k];
+ 		sc->list[i][sc->counts_filled[i]++] = k;
+ 	}
++#ifndef PS2_NOOPT_TEXTMAPMEM
++	// Only the list-building pass needed block types. Parsing uses list/bfirst.
++	Z_Free(sc->btype);
++	sc->btype = NULL;
++	sc->btcap = 0;
++#endif
+ 	t->startPos = t->endPos = p;
+ 	return true;
+ 
+diff --git a/src/m_tokenizer.h b/src/m_tokenizer.h
+index 01d7ac446..19b6cfe3c 100644
+--- a/src/m_tokenizer.h
++++ b/src/m_tokenizer.h
+@@ -55,6 +55,8 @@ typedef struct
+ 	UINT32 counts[5], counts_filled[5];
+ 	UINT32 *list[5]; // per type: the block numbers of its blocks in order
+ } tokscan_t;
++// Keep the scan's owner slots alive until ScanFree or PU_LEVEL cleanup. Free a
++// live scan before reusing it; after level cleanup a new scan resets stale caps.
+ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *tokenizer, UINT32 size, tokscan_t *scan);
+ void Tokenizer_SRB2ScanParse(tokenizer_t *tokenizer, const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *));
+ void Tokenizer_SRB2ScanFree(tokscan_t *scan);
+diff --git a/src/p_saveg.c b/src/p_saveg.c
+index 68ba17f56..22b33b238 100644
+--- a/src/p_saveg.c
++++ b/src/p_saveg.c
+@@ -1319,11 +1319,19 @@ static void ArchiveSectors(save_t *save_p)
+ {
+ 	size_t i, j;
+ 	const sector_t *ss = sectors;
+-	const spawnsector_t *spawnss = spawnsectors;
++	const spawnsector_t *spawnss;
++#ifdef PS2_PROFILE
++	spawnsector_t spawnbuffer;
++#endif
+ 	UINT8 diff, diff2, diff3, diff4, diff5;
+ 
+-	for (i = 0; i < numsectors; i++, ss++, spawnss++)
++	for (i = 0; i < numsectors; i++, ss++)
+ 	{
++#ifdef PS2_PROFILE
++		spawnss = P_GetSpawnSector(i, &spawnbuffer);
++#else
++		spawnss = &spawnsectors[i];
++#endif
+ 		diff = diff2 = diff3 = diff4 = diff5 = 0;
+ 		if (ss->floorheight != spawnss->floorheight)
+ 			diff |= SD_FLOORHT;
+@@ -1771,13 +1779,21 @@ static void ArchiveLines(save_t *save_p)
+ {
+ 	size_t i;
+ 	const line_t *li = lines;
+-	const spawnline_t *spawnli = spawnlines;
++	const spawnline_t *spawnli;
++#ifdef PS2_PROFILE
++	spawnline_t spawnbuffer;
++#endif
+ 	UINT8 diff, diff2;
+ 	UINT32 side1diff;
+ 	UINT32 side2diff;
+ 
+-	for (i = 0; i < numlines; i++, spawnli++, li++)
++	for (i = 0; i < numlines; i++, li++)
+ 	{
++#ifdef PS2_PROFILE
++		spawnli = P_GetSpawnLine(i, &spawnbuffer);
++#else
++		spawnli = &spawnlines[i];
++#endif
+ 		diff = diff2 = 0;
+ 		side1diff = side2diff = 0;
+ 
+diff --git a/src/p_setup.c b/src/p_setup.c
+index 2a5949fac..4be47fd27 100644
+--- a/src/p_setup.c
++++ b/src/p_setup.c
+@@ -1643,6 +1643,25 @@ enum { TMS_THING, TMS_LINEDEF, TMS_SIDEDEF, TMS_VERTEX, TMS_SECTOR };
+ 
+ static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
+ {
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
++	const size_t maxcapacity = (size_t)0x7FFFFFF0u / sizeof (*blocks->pos);
++	size_t locCount;
++
++	if (*count >= maxcapacity)
++		I_Error("TextmapStorePos: too many blocks");
++	locCount = *count + 1;
++	if (!blocks->pos || locCount >= blocks->capacity)
++	{
++		size_t capacity = UINT16_MAX / 2;
++
++		// Keep the previous reservation/growth policy: a smaller initial table
++		// can require an extra old+new allocation peak before reaching this size.
++		if (blocks->pos)
++			capacity = blocks->capacity > maxcapacity - 1024 ? maxcapacity : blocks->capacity + 1024;
++		Z_Realloc(blocks->pos, sizeof (*blocks->pos) * capacity, PU_LEVEL, &blocks->pos);
++		blocks->capacity = capacity; // allocation can leave through an OOM guard
++	}
++#else
+ 	size_t locCount = (*count) + 1;
+ 
+ 	if (blocks->pos == NULL)
+@@ -1659,12 +1678,26 @@ static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
+ 
+ 		Z_Realloc(blocks->pos, sizeof(blocks->pos) * blocks->capacity, PU_LEVEL, &blocks->pos);
+ 	}
++#endif
+ 
+ 	blocks->pos[locCount - 1] = M_TokenizerGetEndPos();
+ 
+ 	(*count) = locCount;
+ }
+ 
++static void TextmapReleasePos(textmap_block_t *blocks)
++{
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
++	// The positions have no consumers after their type's parse loop. Owner-backed
++	// PU_LEVEL storage still handles an interrupted load through Z_FreeTags.
++	Z_Free(blocks->pos);
++	blocks->pos = NULL;
++	blocks->capacity = 0;
++#else
++	(void)blocks;
++#endif
++}
++
+ // Determine total amount of map data in TEXTMAP.
+ static boolean TextmapCount(size_t size)
+ {
+@@ -3174,6 +3207,7 @@ static void P_LoadTextmap(void)
+ 			I_Error("P_LoadTextmap: vertex %s has no y value set!\n", sizeu1(i));
+ 	}
+ 
++	TextmapReleasePos(&vertexBlocks);
+ 	LP_END(U_VERT, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, sc = sectors; i < numsectors; i++, sc++)
+@@ -3259,6 +3293,7 @@ static void P_LoadTextmap(void)
+ 		TextmapFixFlatOffsets(sc);
+ 	}
+ 
++	TextmapReleasePos(&sectorBlocks);
+ 	LP_END(U_SECT, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, ld = lines; i < numlines; i++, ld++)
+@@ -3288,6 +3323,7 @@ static void P_LoadTextmap(void)
+ 		P_InitializeLinedef(ld);
+ 	}
+ 
++	TextmapReleasePos(&linedefBlocks);
+ 	LP_END(U_LINE, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, sd = sides; i < numsides; i++, sd++)
+@@ -3319,6 +3355,7 @@ static void P_LoadTextmap(void)
+ 		P_InitializeSidedef(sd);
+ 	}
+ 
++	TextmapReleasePos(&sidedefBlocks);
+ 	LP_END(U_SIDE, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, mt = mapthings; i < nummapthings; i++, mt++)
+@@ -3339,6 +3376,7 @@ static void P_LoadTextmap(void)
+ 
+ 		TEXTMAP_PARSE(TMS_THING, mapthingBlocks, i, ParseTextmapThingParameter);
+ 	}
++	TextmapReleasePos(&mapthingBlocks);
+ 	LP_END(U_THING, lpu);
+ }
+ 
+@@ -7648,15 +7686,200 @@ static void P_MakeMapMD5(virtres_t *virt, void *dest)
+ }
+ 
+ #ifdef PS2_PROFILE
++// These fields have useful defaults on most maps. The immutable network
++// snapshot stores only the changed values, each in a full-width word. Dense
++// maps keep the preceding fixed array, in the same single allocation/order.
++#define SPAWNSECTOR_FIELDS(X) \
++	X(floorxoffset, 0) \
++	X(flooryoffset, 0) \
++	X(ceilingxoffset, 0) \
++	X(ceilingyoffset, 0) \
++	X(floorxscale, FRACUNIT) \
++	X(flooryscale, FRACUNIT) \
++	X(ceilingxscale, FRACUNIT) \
++	X(ceilingyscale, FRACUNIT) \
++	X(floorangle, 0) \
++	X(ceilingangle, 0) \
++	X(floorlightlevel, 0) \
++	X(ceilinglightlevel, 0) \
++	X(floorlightabsolute, false) \
++	X(ceilinglightabsolute, false) \
++	X(gravity, FRACUNIT) \
++	X(flags, MSF_FLIPSPECIAL_FLOOR) \
++	X(specialflags, 0) \
++	X(portal_floor, UINT32_MAX) \
++	X(portal_ceiling, UINT32_MAX) \
++	X(triggertag, 0) \
++	X(damagetype, SD_NONE) \
++	X(triggerer, TO_PLAYER)
++
++typedef struct
++{
++	fixed_t floorheight, ceilingheight;
++	INT32 floorpic, ceilingpic;
++	INT16 lightlevel, special;
++	taglist_t tags;
++	extracolormap_t *extra_colormap;
++	UINT32 fields;
++	const UINT32 *values;
++} compactspawnsector_t;
++
++static boolean compactspawnsectors;
++
++static UINT32 P_SpawnSectorMask(const sector_t *s)
++{
++	UINT32 fields = 0, bit = 1;
++#define FIELD_MASK(field, initial) if (s->field != (initial)) fields |= bit; bit <<= 1;
++	SPAWNSECTOR_FIELDS(FIELD_MASK)
++#undef FIELD_MASK
++	return fields;
++}
++
++static UINT32 *P_AllocSpawnSectors(void)
++{
++	size_t bytes;
++	boolean compact = false;
++	if (numsectors > SIZE_MAX / sizeof (*spawnsectors))
++		I_Error("P_AllocSpawnSectors: sector snapshot size overflow");
++	bytes = numsectors * sizeof (*spawnsectors);
++#ifndef PS2_NOOPT_SPAWNSECTORS
++	{
++		size_t i, count = 0, compactbytes;
++		for (i = 0; i < numsectors; i++)
++		{
++			UINT32 fields = P_SpawnSectorMask(&sectors[i]);
++			for (; fields; fields &= fields - 1)
++				count++;
++		}
++		if (numsectors <= SIZE_MAX / sizeof (compactspawnsector_t)
++			&& count <= (SIZE_MAX - numsectors * sizeof (compactspawnsector_t)) / sizeof (UINT32))
++		{
++			compactbytes = numsectors * sizeof (compactspawnsector_t) + count * sizeof (UINT32);
++			if (compactbytes < bytes)
++			{
++				bytes = compactbytes;
++				compact = true;
++			}
++		}
++	}
++#endif
++	spawnsectors = Z_Calloc(bytes, PU_LEVEL, NULL);
++	compactspawnsectors = compact;
++	return compactspawnsectors
++		? (UINT32 *)((compactspawnsector_t *)spawnsectors + numsectors) : NULL;
++}
++
++const spawnsector_t *P_GetSpawnSector(size_t sectornum, spawnsector_t *buffer)
++{
++	const compactspawnsector_t *s;
++	const UINT32 *values;
++	UINT32 bit = 1;
++	if (!compactspawnsectors)
++		return &spawnsectors[sectornum];
++	s = &((const compactspawnsector_t *)spawnsectors)[sectornum];
++	values = s->values;
++	memset(buffer, 0, sizeof (*buffer));
++	buffer->floorheight = s->floorheight;
++	buffer->ceilingheight = s->ceilingheight;
++	buffer->floorpic = s->floorpic;
++	buffer->ceilingpic = s->ceilingpic;
++	buffer->lightlevel = s->lightlevel;
++	buffer->special = s->special;
++	buffer->tags = s->tags;
++	buffer->extra_colormap = s->extra_colormap;
++#define FIELD_READ(field, initial) buffer->field = s->fields & bit ? *values++ : (UINT32)(initial); bit <<= 1;
++	SPAWNSECTOR_FIELDS(FIELD_READ)
++#undef FIELD_READ
++	return buffer;
++}
++
++// Most lines have ten zero arguments. Keep those vectors implicit in the
++// network/save diff snapshot, without sharing writable live line arguments.
++// Dense maps retain spawnline_t verbatim: the chosen single allocation never
++// exceeds the preceding fixed array and remains in its original load order.
++typedef struct
++{
++	const INT32 *args; // NULL means an immutable all-zero vector
++	char *stringargs[NUMLINESTRINGARGS];
++	INT32 executordelay;
++	UINT32 secportal;
++	INT16 special;
++} compactspawnline_t;
++
++static boolean compactspawnlines;
++
++static boolean P_LineArgsNonzero(const INT32 *args)
++{
++	size_t j;
++	for (j = 0; j < NUMLINEARGS; j++)
++		if (args[j])
++			return true;
++	return false;
++}
++
++static INT32 *P_AllocSpawnLines(void)
++{
++	size_t bytes;
++	boolean compact = false;
++	if (numlines > SIZE_MAX / sizeof (*spawnlines))
++		I_Error("P_AllocSpawnLines: line snapshot size overflow");
++	bytes = numlines * sizeof (*spawnlines);
++#ifndef PS2_NOOPT_SPAWNLINES
++	{
++		size_t i, count = 0, compactbytes;
++		for (i = 0; i < numlines; i++)
++			count += P_LineArgsNonzero(lines[i].args);
++		if (numlines <= SIZE_MAX / sizeof (compactspawnline_t)
++			&& count <= (SIZE_MAX - numlines * sizeof (compactspawnline_t))
++				/ (NUMLINEARGS * sizeof (INT32)))
++		{
++			compactbytes = numlines * sizeof (compactspawnline_t)
++				+ count * NUMLINEARGS * sizeof (INT32);
++			if (compactbytes < bytes)
++			{
++				bytes = compactbytes;
++				compact = true;
++			}
++		}
++	}
++#endif
++	spawnlines = Z_Calloc(bytes, PU_LEVEL, NULL);
++	compactspawnlines = compact;
++	return compactspawnlines
++		? (INT32 *)((compactspawnline_t *)spawnlines + numlines) : NULL;
++}
++
++const spawnline_t *P_GetSpawnLine(size_t linenum, spawnline_t *buffer)
++{
++	const compactspawnline_t *line;
++	size_t j;
++	if (!compactspawnlines)
++		return &spawnlines[linenum];
++	line = &((const compactspawnline_t *)spawnlines)[linenum];
++	if (line->args)
++		memcpy(buffer->args, line->args, sizeof (buffer->args));
++	else
++		memset(buffer->args, 0, sizeof (buffer->args));
++	for (j = 0; j < NUMLINESTRINGARGS; j++)
++		buffer->stringargs[j] = line->stringargs[j];
++	buffer->executordelay = line->executordelay;
++	buffer->secportal = line->secportal;
++	buffer->special = line->special;
++	return buffer;
++}
++
+ // PS2-OPT-02: the spawn state for the save game diffs, reduced to the compared fields (see r_defs.h). The sector tag
+ // arrays are copied into one block instead of one small block per sector.
+ static void P_CopySpawnState(void)
+ {
+ 	size_t i, ntags = 0;
+ 	mtag_t *pool;
++	INT32 *spawnargs;
++	UINT32 *sectorvalues;
++	spawnsector_t sectorbuffer;
+ 
+-	spawnsectors = Z_Calloc(numsectors * sizeof (*spawnsectors), PU_LEVEL, NULL);
+-	spawnlines = Z_Calloc(numlines * sizeof (*spawnlines), PU_LEVEL, NULL);
++	sectorvalues = P_AllocSpawnSectors();
++	spawnargs = P_AllocSpawnLines();
+ 	spawnsides = Z_Calloc(numsides * sizeof (*spawnsides), PU_LEVEL, NULL);
+ 
+ 	for (i = 0; i < numsectors; i++)
+@@ -7666,7 +7889,14 @@ static void P_CopySpawnState(void)
+ 	for (i = 0; i < numsectors; i++)
+ 	{
+ 		const sector_t *s = &sectors[i];
+-		spawnsector_t *d = &spawnsectors[i];
++		spawnsector_t *d;
++		if (compactspawnsectors)
++		{
++			memset(&sectorbuffer, 0, sizeof (sectorbuffer));
++			d = &sectorbuffer;
++		}
++		else
++			d = &spawnsectors[i];
+ 
+ 		d->floorheight = s->floorheight;
+ 		d->ceilingheight = s->ceilingheight;
+@@ -7703,21 +7933,57 @@ static void P_CopySpawnState(void)
+ 		d->triggertag = s->triggertag;
+ 		d->damagetype = s->damagetype;
+ 		d->triggerer = s->triggerer;
++		if (compactspawnsectors)
++		{
++			compactspawnsector_t *c = &((compactspawnsector_t *)spawnsectors)[i];
++			UINT32 bit = 1;
++			c->floorheight = d->floorheight;
++			c->ceilingheight = d->ceilingheight;
++			c->floorpic = d->floorpic;
++			c->ceilingpic = d->ceilingpic;
++			c->lightlevel = d->lightlevel;
++			c->special = d->special;
++			c->tags = d->tags;
++			c->extra_colormap = d->extra_colormap;
++			c->fields = P_SpawnSectorMask(s);
++			c->values = sectorvalues;
++#define FIELD_WRITE(field, initial) if (c->fields & bit) *sectorvalues++ = (UINT32)d->field; bit <<= 1;
++			SPAWNSECTOR_FIELDS(FIELD_WRITE)
++#undef FIELD_WRITE
++		}
+ 	}
+ 
+ 	for (i = 0; i < numlines; i++)
+ 	{
+ 		const line_t *s = &lines[i];
+-		spawnline_t *d = &spawnlines[i];
+ 		size_t j;
+ 
+-		for (j = 0; j < NUMLINEARGS; j++)
+-			d->args[j] = s->args[j];
+-		for (j = 0; j < NUMLINESTRINGARGS; j++)
+-			d->stringargs[j] = s->stringargs[j]; // shared, like the vanilla copy of the whole structure
+-		d->executordelay = s->executordelay;
+-		d->secportal = s->secportal;
+-		d->special = s->special;
++		if (compactspawnlines)
++		{
++			compactspawnline_t *d = &((compactspawnline_t *)spawnlines)[i];
++			if (P_LineArgsNonzero(s->args))
++			{
++				d->args = spawnargs;
++				memcpy(spawnargs, s->args, NUMLINEARGS * sizeof (INT32));
++				spawnargs += NUMLINEARGS;
++			}
++			for (j = 0; j < NUMLINESTRINGARGS; j++)
++				d->stringargs[j] = s->stringargs[j];
++			d->executordelay = s->executordelay;
++			d->secportal = s->secportal;
++			d->special = s->special;
++		}
++		else
++		{
++			spawnline_t *d = &spawnlines[i];
++			for (j = 0; j < NUMLINEARGS; j++)
++				d->args[j] = s->args[j];
++			for (j = 0; j < NUMLINESTRINGARGS; j++)
++				d->stringargs[j] = s->stringargs[j]; // shared, like the vanilla copy of the whole structure
++			d->executordelay = s->executordelay;
++			d->secportal = s->secportal;
++			d->special = s->special;
++		}
+ 	}
+ 
+ 	for (i = 0; i < numsides; i++)
+@@ -7742,6 +8008,7 @@ static void P_CopySpawnState(void)
+ #endif
+ 	}
+ }
++#undef SPAWNSECTOR_FIELDS
+ #endif
+ 
+ #ifdef PS2_PROFILE
+diff --git a/src/p_setup.h b/src/p_setup.h
+index 777fffa72..64008fc90 100644
+--- a/src/p_setup.h
++++ b/src/p_setup.h
+@@ -35,6 +35,9 @@ extern UINT16 *ps2_blockmaplists;
+ // PS2-143: line_t.args is a pointer; lines without arguments share lineargs_zero (never write through it: P_LineArgsW gives the line its own block)
+ extern INT32 lineargs_zero[NUMLINEARGS];
+ INT32 *P_LineArgsW(line_t *line);
++// Network archive reads an immutable spawn snapshot; compact snapshots use buffer.
++const spawnline_t *P_GetSpawnLine(size_t linenum, spawnline_t *buffer);
++const spawnsector_t *P_GetSpawnSector(size_t sectornum, spawnsector_t *buffer);
+ #endif
+ 
+ /* for levelflat type */
+diff --git a/src/ps2/hw/ps2_hw_draw.inc b/src/ps2/hw/ps2_hw_draw.inc
+index d1ab9d788..9ce872d29 100644
+--- a/src/ps2/hw/ps2_hw_draw.inc
++++ b/src/ps2/hw/ps2_hw_draw.inc
+@@ -392,8 +392,7 @@ static u32 ramp_clut(const rampspec_t *s)
+ {
+ 	u64 key = (u64)CK_RAMP | ((u64)spec_hash(s) << 16) | ((u64)s->variant << 8);
+ 	int i, freeslot = -1, lru = -1, victim;
+-	static u32 e[256] __attribute__((aligned(64)));
+-	static u32 sw[256] __attribute__((aligned(64)));
++	u32 *e;
+ 
+ 	H.clut_tick++;
+ 	for (i = CLUT_FIXED; i < CLUT_SLOTS; i++)
+@@ -418,10 +417,9 @@ static u32 ramp_clut(const rampspec_t *s)
+ 		ov_flush_pending(); // the queue may reference the image that is about to be replaced
+ 	H.clut_ent[victim].key = key;
+ 	H.clut_ent[victim].stamp = H.clut_tick;
++	e = clut_alloc(H.clut_base + (u32)victim * CLUT_BLOCKS);
+ 	ramp_entries(s, e);
+-	for (i = 0; i < 256; i++)
+-		sw[clut_slot((u32)i)] = e[i];
+-	clut_write(H.clut_base + (u32)victim * CLUT_BLOCKS, sw);
++	clut_swizzle(e);
+ 	return H.clut_base + (u32)victim * CLUT_BLOCKS;
+ }
+ 
+@@ -1195,6 +1193,54 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
+ 	return o + 1;
+ }
+ 
++// The three-register indexed formats as native ST/RGBAQ/XYZ(F) values. Keep the
++// arithmetic and conversions identical to put_vertex; only the GIF encoding differs.
++static inline u64 *put_vertex_reglist(u64 *o, const cv_t *s, const pack_t *pk)
++{
++	const float q = 1.0f / s->w;
++	float zf = P.zo + s->z * q * P.zk + P.zbias;
++	const int xi = (int)(P.ox + s->x * q * P.kx);
++	const int yi = (int)(P.oy + s->y * q * P.ky);
++	qw_t st;
++	u32 zi, col = pk->col;
++
++	zf = clampf(zf, 0.0f, P.zmax);
++	zi = (u32)(int)zf;
++	if (pk->ramp)
++	{
++		st.f[0] = P.ra + P.rb * q;
++		st.f[1] = 0.0f;
++	}
++	else
++	{
++		st.f[0] = (s->a[0] - pk->sb) * P.tsx * q;
++		st.f[1] = (s->a[1] - pk->tb) * P.tsy * q;
++	}
++	*o++ = st.d[0];
++	if (pk->fmt == 6)
++	{
++		const float lf = s->a[2];
++		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
++		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
++		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
++
++		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
++	}
++	else if (pk->fmt == 4)
++	{
++		col = (u32)col_lut[(int)clampf(s->a[2], 0.0f, 255.0f)]
++			| ((u32)col_lut[(int)clampf(s->a[3], 0.0f, 255.0f)] << 8)
++			| ((u32)col_lut[(int)clampf(s->a[4], 0.0f, 255.0f)] << 16)
++			| ((u32)col_lut[(int)clampf(s->a[5], 0.0f, 255.0f)] << 24);
++	}
++	st.f[0] = q;
++	*o++ = (u64)col | ((u64)st.w[0] << 32);
++	*o++ = (u64)(xi & 0xFFFF) | ((u64)(yi & 0xFFFF) << 16)
++		| ((u64)zi << 32) | ((pk->fmt == 1 || pk->fmt == 6) ? (u64)(pk->fog & 255) << 56 : 0);
++	H.gsr.valid &= ~(u32)RV_RGBAQ;
++	return o;
++}
++
+ static inline int pack_regs(int fmt)
+ {
+ 	return (fmt == 0 || fmt == 1 || fmt == 4 || fmt == 6) ? 3 : fmt == 5 ? 2 : 1;
+@@ -2397,8 +2443,20 @@ static void ls_close(void)
+ {
+ 	if (!LS.open)
+ 		return;
+-	LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
+-	LS.tag->d[1] = pack_regdesc(LS.fmt);
++	if (LS.nreg == 3)
++	{
++		const u64 regs = pack_regdesc(LS.fmt);
++
++		// Three vertices and one ignored NOP: each triangle ends at a DMA
++		// quadword, so reservations can append without a live half-quadword.
++		LS.tag->d[0] = HWGIF_TAG(LS.n / 3, 1, 0, 0, 1, 10);
++		LS.tag->d[1] = regs | (regs << 12) | (regs << 24) | (0xFull << 36);
++	}
++	else
++	{
++		LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
++		LS.tag->d[1] = pack_regdesc(LS.fmt);
++	}
+ 	LS.open = 0;
+ 	H.st.verts_out += LS.n;
+ }
+@@ -2413,7 +2471,16 @@ static qw_t *ls_reserve(u32 nqw)
+ 			ls_close();
+ 			pk_flush();
+ 		}
+-		LS.tag = pk_alloc(1 + nqw); // the tag, then the vertices of this reservation
++		LS.tag = pk_alloc((LS.nreg == 3 ? 3 : 1) + nqw);
++		if (LS.nreg == 3)
++		{
++			// REGLIST ignores PRE: commit PRIM explicitly before the vertex list.
++			LS.tag[0].d[0] = HWGIF_TAG(1, 0, 0, 0, 1, 1);
++			LS.tag[0].d[1] = GSR_PRIM;
++			LS.tag[1].d[0] = PRIM_TRI | pass_prim(&P.pass[0]);
++			LS.tag[1].d[1] = 0;
++			LS.tag += 2;
++		}
+ 		LS.n = 0;
+ 		LS.open = 1;
+ 		return LS.tag + 1;
+@@ -2551,13 +2618,29 @@ static void emit_tris(const FOutVector *base, const u32 *idx, u32 nidx, const fl
+ 				pk.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
+ 				pk.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
+ 			}
+-			o = ls_reserve((u32)((cnt - 2) * 3 * nreg));
+-			for (k = 1; k + 1 < cnt; k++)
++			o = ls_reserve((u32)((cnt - 2) * (nreg == 3 ? 5 : 3 * nreg)));
++			if (nreg == 3)
+ 			{
+-				o = put_vertex(o, &cl[0], &pk);
+-				o = put_vertex(o, &cl[k], &pk);
+-				o = put_vertex(o, &cl[k + 1], &pk);
+-				LS.n += 3;
++				u64 *r = (u64 *)o;
++
++				for (k = 1; k + 1 < cnt; k++)
++				{
++					r = put_vertex_reglist(r, &cl[0], &pk);
++					r = put_vertex_reglist(r, &cl[k], &pk);
++					r = put_vertex_reglist(r, &cl[k + 1], &pk);
++					*r++ = 0; // descriptor 10 is NOP
++					LS.n += 3;
++				}
++			}
++			else
++			{
++				for (k = 1; k + 1 < cnt; k++)
++				{
++					o = put_vertex(o, &cl[0], &pk);
++					o = put_vertex(o, &cl[k], &pk);
++					o = put_vertex(o, &cl[k + 1], &pk);
++					LS.n += 3;
++				}
+ 			}
+ 			if (P.lmode == LM_RAMP)
+ 			{
+diff --git a/src/ps2/hw/ps2_hw_model.inc b/src/ps2/hw/ps2_hw_model.inc
+index 65444fa4e..c74dad9e2 100644
+--- a/src/ps2/hw/ps2_hw_model.inc
++++ b/src/ps2/hw/ps2_hw_model.inc
+@@ -23,7 +23,7 @@ typedef struct
+ 	float w; // eye depth
+ 	u32 ocl; // outcode (bits 0..5)
+ 	u32 pad[2];
+-	qw_t col4; // gr_modellighting: the RGBAQ quadword of the vertex (the colour of the pass scaled by the light factor of the vertex)
++	qw_t col4; // temporary float projection until classification; then native RGBAQ and XYZ (without per-triangle fog)
+ } __attribute__((aligned(64))) mdl_v_t; // 64 bytes: a cache line
+ 
+ // the work areas are zone blocks made when a model needs them (a game without models does not pay for them) and given back under memory pressure (PS2Models reclaim hook)
+@@ -336,41 +336,61 @@ static void mdl_tri_general(const mesh_t *mesh, int fi, int ni, float lerp, int
+ 	G.md_slow++;
+ }
+ 
+-// one vertex as GIF data (3 quadwords): ST + Q, the colour (fmt 6: the vertex's own, else the pass's), XYZ (fmt 0) or XYZF (fmt 1, 6; zi was shifted by 4 when the vertex was made, fog4 = F << 4)
+-static inline __attribute__((always_inline)) qw_t *mdl_put_v(qw_t *o, const mdl_v_t *m, const qw_t *colqw, u32 fog4, const int fmt)
++// Once per transformed vertex, after classification no longer needs col4's
++// float projection. Pack the exact old PACKED values into that same storage.
++static inline void mdl_prepare_v(mdl_v_t *m, u32 col, float lf, int fmt)
+ {
+-	o[0] = m->stq;
+-	o[1] = fmt == 6 ? m->col4 : *colqw;
+-	o[2].d[0] = (u64)(u32)m->xi | ((u64)(u32)m->yi << 32);
+-	o[2].d[1] = (u64)(u32)m->zi | ((u64)fog4 << 32);
++	if (fmt == 6)
++	{
++		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
++		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
++		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
++
++		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
++	}
++	m->col4.d[0] = (u64)col | ((u64)m->stq.w[2] << 32);
++	m->col4.d[1] = (u64)(m->xi & 0xFFFF) | ((u64)(m->yi & 0xFFFF) << 16)
++		| ((u64)(fmt == 0 ? (u32)m->zi : ((u32)m->zi >> 4) & 0xFFFFFFu) << 32);
++}
++
++// Native ST/RGBAQ/XYZ(F), copied once per triangle corner. Fog remains per
++// triangle; the model's other register fields were packed once per vertex.
++static inline __attribute__((always_inline)) u64 *mdl_put_v(u64 *o, const mdl_v_t *m, u32 fog4, const int fmt)
++{
++
++	o[0] = m->stq.d[0];
++	o[1] = m->col4.d[0];
++	o[2] = m->col4.d[1]
++		| (fmt == 0 ? 0 : (u64)((fog4 >> 4) & 255) << 56);
+ 	return o + 3;
+ }
+ 
+ // the triangles of `list` (n of them), one GIF run: the vertices of every triangle from mv, the colour and F as given
+-static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, const int fmt)
++static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, const int fmt)
+ {
+ 	u32 i;
+ 
+ 	for (i = 0; i < n; i++)
+ 	{
+ 		const unsigned tt = list[i];
+-		qw_t *o = ls_reserve(9);
++		u64 *o = (u64 *)ls_reserve(5);
+ 
+-		o = mdl_put_v(o, &mv[ix[tt * 3]], colqw, fog4, fmt);
+-		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], colqw, fog4, fmt);
+-		mdl_put_v(o, &mv[ix[tt * 3 + 2]], colqw, fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3]], fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3 + 2]], fog4, fmt);
++		*o = 0; // the tenth REGLIST descriptor is NOP
+ 		LS.n += 3;
+ 	}
+ }
+ 
+-static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, int fmt)
++static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, int fmt)
+ {
+ 	if (fmt == 6)
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 6);
++		mdl_emit_list(mv, ix, list, n, fog4, 6);
+ 	else if (fmt == 1)
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 1);
++		mdl_emit_list(mv, ix, list, n, fog4, 1);
+ 	else
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 0);
++		mdl_emit_list(mv, ix, list, n, fog4, 0);
+ }
+ 
+ // the GS state of a row of the colormap (palette lighting), or of the plain plan
+@@ -419,14 +439,9 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 	u32 orall = 0; // the outcodes of all vertices or'ed: 0 = the whole mesh is inside the guard band and the near plane
+ 	u32 nrej = 0, nclip = 0;
+ 	float wmin = 1e30f, wmax = -1e30f;
+-	qw_t colqw;
+ 	const u32 tp0 = cyc();
+ 	u32 tp1, tp2;
+ 
+-	colqw.w[0] = col & 255;
+-	colqw.w[1] = (col >> 8) & 255;
+-	colqw.w[2] = (col >> 16) & 255;
+-	colqw.w[3] = col >> 24;
+ 	vu0_need();
+ 	// 1. every vertex: interpolation, the VU0 transform, the GIF quadwords (ST + Q, zi for the format); the colour with the light factor below
+ 	{
+@@ -589,17 +604,11 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 	if (!nord)
+ 		return 1;
+ 
+-	// 4. the colour with the light factor of every vertex (col4 held the screen coordinates until now), then the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
+-	if (light)
+-		for (k = 0; k < nv; k++)
+-		{
+-			const float lf = mdl_lf[mdl_lidx(na, nb, k, lerp)];
+-
+-			mv[k].col4.w[0] = (u32)((float)(col & 255) * lf + 0.5f);
+-			mv[k].col4.w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
+-			mv[k].col4.w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
+-			mv[k].col4.w[3] = col >> 24;
+-		}
++	// 4. Reuse the now-dead float projection slot for native register values.
++	// The colour/light rounding and Q are the old PACKED values; every triangle
++	// corner copies them without repeating colour/coordinate bit packing.
++	for (k = 0; k < nv; k++)
++		mdl_prepare_v(&mv[k], col, light ? mdl_lf[mdl_lidx(na, nb, k, lerp)] : 1.0f, fmt);
+ 	ls_close();
+ 	if (uni)
+ 	{
+@@ -621,7 +630,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 		mdl_set_row(pal ? urow : 0, pal);
+ 		LS.nreg = 3;
+ 		LS.fmt = fmt;
+-		mdl_emit_fmt(mv, ix, ord, (u32)nord, &colqw, fog4, fmt);
++		mdl_emit_fmt(mv, ix, ord, (u32)nord, fog4, fmt);
+ 	}
+ 	else if (pal)
+ 	{
+@@ -643,7 +652,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 				mdl_set_row(k, 1);
+ 				LS.nreg = 3;
+ 				LS.fmt = fmt;
+-				mdl_emit_fmt(mv, ix, ord + s, count[k], &colqw, fog4, fmt);
++				mdl_emit_fmt(mv, ix, ord + s, count[k], fog4, fmt);
+ 			}
+ 	}
+ 	else
+@@ -654,7 +663,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 		LS.fmt = fmt;
+ 		for (t = 0; t < nt; t++)
+ 		{
+-			qw_t *o;
++			u64 *o;
+ 			u32 fog = 255;
+ 
+ 			if (rowof[t] == 255)
+@@ -677,19 +686,20 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 				}
+ 				fog = fogtab[cls];
+ 			}
+-			o = ls_reserve(9);
++			o = (u64 *)ls_reserve(5);
+ 			if (fmt == 6)
+ 			{
+-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 6);
+-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 6);
+-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 6);
+ 			}
+ 			else
+ 			{
+-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 1);
+-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 1);
+-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 1);
+ 			}
++			*o = 0;
+ 			LS.n += 3;
+ 		}
+ 	}
+diff --git a/src/ps2/hw/ps2_hw_priv.inc b/src/ps2/hw/ps2_hw_priv.inc
+index b79276bcd..d2d2c8164 100644
+--- a/src/ps2/hw/ps2_hw_priv.inc
++++ b/src/ps2/hw/ps2_hw_priv.inc
+@@ -52,6 +52,9 @@
+ #define VRAM_BLOCKS 16384 // 4 MiB in 256-byte blocks
+ #define PAGE_BLOCKS 32 // 8 KiB page
+ #define VRAM_RANGES (VRAM_BLOCKS / 2 + 1) // worst case: alternating one-block free/used ranges
++#if VRAM_BLOCKS > 0xFFFFu
++#error The VRAM free-list block addresses and lengths must fit in u16
++#endif
+ 
+ // DMA channel 2 (GIF)
+ #define D2_CHCR ((volatile u32 *)0x1000A000)
+@@ -320,7 +323,8 @@ static struct
+ 	clutent_t clut_ent[CLUT_SLOTS];
+ 	u32 clut_tick;
+ 	u32 clut_epoch; // OPT11 (PS2-HW-101): bumped whenever a CLUT image of the cache is (re)built: what the VU1 path knows about the slots of the colormap rows is valid for one epoch
+-	u32 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
++	// Every free range lies inside the 16384-block GS memory, including a whole-memory length. Keep arithmetic in the allocator wide.
++	u16 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
+ 	int free_n;
+ 	u32 used_blocks;
+ 	u32 ws_prev, ws_last; // OPT11-MEM (PS2-HW-300): H.st.ws_blocks at the last frame end / the working set of the last frame (what showmem shows); no counter of their own in the draw path
+diff --git a/src/ps2/hw/ps2_hw_tex.inc b/src/ps2/hw/ps2_hw_tex.inc
+index 35014f288..7ee31a64f 100644
+--- a/src/ps2/hw/ps2_hw_tex.inc
++++ b/src/ps2/hw/ps2_hw_tex.inc
+@@ -189,36 +189,33 @@ static const u8 blk_16s[8][4] = {{0, 2, 16, 18}, {1, 3, 17, 19}, {8, 10, 24, 26}
+ 
+ static u32 tex_footprint(int psm, u32 w, u32 h, u32 tbw)
+ {
+-	u32 pw, ph, bw, bh, ppr, pcols, prows, lastpage, lw, lh, nbx, nby, bx, by, maxblk = 0;
+-
++	u32 lastpage, bx, by, maxblk;
++
++	// Positive dimensions: zero-based texels give the last page and block directly.
++	// The CT32/T8 and CT16 block tables increase in each axis, so their rectangular
++	// prefix maximum is its last entry. CT16S swaps row groups 2/3 and 4/5: its
++	// prefix maximum stays in row 3 until row 6 is reached.
++	w--;
++	h--;
+ 	switch (psm)
+ 	{
+ 		case PSM_T8:
+-			pw = 128; ph = 64; bw = 16; bh = 16;
++			lastpage = (h >> 6) * ((tbw + 1) >> 1) + (w >> 7);
++			maxblk = blk_32_8[(h >> 4) & 3][(w >> 4) & 7];
+ 			break;
+ 		case PSM_CT32:
+-			pw = 64; ph = 32; bw = 8; bh = 8;
++			lastpage = (h >> 5) * tbw + (w >> 6);
++			maxblk = blk_32_8[(h >> 3) & 3][(w >> 3) & 7];
+ 			break;
+ 		default: // CT16, CT16S
+-			pw = 64; ph = 64; bw = 16; bh = 8;
++			lastpage = (h >> 6) * tbw + (w >> 6);
++			bx = (w >> 4) & 3;
++			by = (h >> 3) & 7;
++			if (psm == PSM_CT16S && (by == 4 || by == 5))
++				by = 3;
++			maxblk = psm == PSM_CT16 ? blk_16[by][bx] : psm == PSM_CT16S ? blk_16s[by][bx] : blk_32_8[by][bx];
+ 			break;
+ 	}
+-	ppr = (tbw * 64 + pw - 1) / pw;
+-	pcols = (w + pw - 1) / pw;
+-	prows = (h + ph - 1) / ph;
+-	lastpage = (prows - 1) * ppr + (pcols - 1);
+-	lw = w - (pcols - 1) * pw;
+-	lh = h - (prows - 1) * ph;
+-	nbx = (lw + bw - 1) / bw;
+-	nby = (lh + bh - 1) / bh;
+-	for (by = 0; by < nby; by++)
+-		for (bx = 0; bx < nbx; bx++)
+-		{
+-			u32 b = (psm == PSM_CT16) ? blk_16[by][bx] : (psm == PSM_CT16S) ? blk_16s[by][bx] : blk_32_8[by][bx];
+-
+-			if (b > maxblk)
+-				maxblk = b;
+-		}
+ 	return lastpage * PAGE_BLOCKS + maxblk + 1;
+ }
+ 
+@@ -627,7 +624,8 @@ static u8 pal_val[1024];
+ // engine alpha 0..255 -> GS alpha 0..0x80 (0x80 = 1.0), rounded
+ static inline u32 a8_to_gs(u32 a)
+ {
+-	return (a * 128u + 127u) / 255u;
++	// For a byte a = 2*k or 2*k+1, the rounded 128/255 scale is k or k+1, respectively.
++	return (a + 1u) >> 1;
+ }
+ 
+ static inline u32 pal_hash(u32 k)
+@@ -679,12 +677,12 @@ static inline u32 clut_slot(u32 i) // CT32 CLUT in CSM1: bits 3 and 4 of the ind
+ 	return (i & ~0x18u) | ((i & 0x08u) << 1) | ((i & 0x10u) >> 1);
+ }
+ 
+-// 16x16 CT32 image into VRAM (the CLUT format of a PSMT8 CSM1 CLUT)
+-static void clut_write(u32 blk, const u32 *entries)
++// Reserve a complete 16x16 CT32 CLUT transfer. Its image payload stays in the open ring buffer until the caller has filled it.
++// pk_alloc closes any VU chunk and obtains ring ownership before the caller reads palette state or writes the image.
++static u32 *clut_alloc(u32 blk)
+ {
+ 	qw_t *h = pk_alloc(1 + 4 + 1 + 64 + 2);
+ 	qw_t *d;
+-	int i;
+ 
+ 	H.serial++;
+ 
+@@ -697,13 +695,6 @@ static void clut_write(u32 blk, const u32 *entries)
+ 	h[5].d[0] = HWGIF_TAG(64, 1, 0, 0, 2, 0);
+ 	h[5].d[1] = 0;
+ 	d = &h[6];
+-	for (i = 0; i < 64; i++)
+-	{
+-		d[i].w[0] = entries[i * 4];
+-		d[i].w[1] = entries[i * 4 + 1];
+-		d[i].w[2] = entries[i * 4 + 2];
+-		d[i].w[3] = entries[i * 4 + 3];
+-	}
+ 	// PS2-HW-102 (real GS, not PCSX2): a CLUT image written over a slot that was loaded before (the row of a light table, a palette change) must not come out of
+ 	// the texture cache of the GS: TEXFLUSH behind the transfer (the program of the VU1 path reloads CLUTs of the cache with TEX2 / CLD all the time)
+ 	d[64].d[0] = HWGIF_TAG(1, 1, 0, 0, 0, 1);
+@@ -712,6 +703,29 @@ static void clut_write(u32 blk, const u32 *entries)
+ 	if (blk == H.clut_loaded)
+ 		H.clut_loaded = 0; // the GS holds a copy of the old contents
+ 	H.st.clut_uploads++;
++	return d[0].w;
++}
++
++// CSM1 swaps index bits 3 and 4: an involution with 64 pairs and 128 fixed points. Build entries in the packet, then swap each pair once.
++// This avoids two temporary 1 KiB images and the final copy into the DMA ring. The debug identity ordering remains available.
++static void clut_swizzle(u32 *entries)
++{
++	u32 i;
++
++	if (ps2hwd_dbg_flags & 16)
++		return;
++	for (i = 0; i < 256; i += 32)
++	{
++		u32 j;
++
++		for (j = 8; j < 16; j++)
++		{
++			u32 t = entries[i + j];
++
++			entries[i + j] = entries[i + j + 8];
++			entries[i + j + 8] = t;
++		}
++	}
+ }
+ 
+ enum
+@@ -816,15 +830,12 @@ static int clut_palette_dependent(u32 kind)
+ 
+ static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
+ {
+-	static u32 e[256] __attribute__((aligned(64)));
+-	static u32 sw[256] __attribute__((aligned(64)));
+-	int i;
++	u32 *e;
+ 
+ 	H.clut_epoch++; // PS2-HW-101
++	e = clut_alloc(blk);
+ 	clut_entries(kind, param, keyed, e);
+-	for (i = 0; i < 256; i++)
+-		sw[clut_slot((u32)i)] = e[i];
+-	clut_write(blk, sw);
++	clut_swizzle(e);
+ }
+ 
+ static inline u32 clut_fixed_blk(u32 kind) // kind 1..4
+diff --git a/src/ps2/i_sound.c b/src/ps2/i_sound.c
+index dfd8abc77..9f9e0ea05 100644
+--- a/src/ps2/i_sound.c
++++ b/src/ps2/i_sound.c
+@@ -752,7 +752,18 @@ void *I_GetSfx(sfxinfo_t *sfx)
+ 		{ CONS_Printf("PS2 audio: SFX %s invalid, unsupported or exceeds cache budget\n", sfx->name); return NULL; }
+ 		s->start_seq = 0;
+ 	}
+-	else { s->sample.bytes = s->data; s->bytes = len; }
++	else
++	{
++		// Retain only the PCM and up to 15 leading bytes. Preserve its original
++		// alignment so every native/MMI mixer path stays available after compaction.
++		const size_t offset = s->sample.pcm.offset & 15;
++		const size_t pcmbytes = (size_t)s->sample.pcm.frames * s->sample.pcm.channels * (s->sample.pcm.bits / 8);
++		const size_t bytes = offset + pcmbytes;
++		memmove(s->data + offset, s->data + s->sample.pcm.offset, pcmbytes);
++		s->sample.pcm.offset = offset;
++		if (bytes < len) s = Z_ReallocAlign(s, sizeof *s + bytes, PU_SOUND, NULL, 6);
++		s->sample.bytes = s->data; s->bytes = bytes;
++	}
+ 	s->owner = sfx; s->used = ++sample_serial;
+ 	s->next = samples; samples = s; sample_bytes += s->bytes;
+ 	sfx->length = len; sfx->data = s; return s;
+diff --git a/src/ps2/ps2_audio.c b/src/ps2/ps2_audio.c
+index 8163ef1bf..64882bdf4 100644
+--- a/src/ps2/ps2_audio.c
++++ b/src/ps2/ps2_audio.c
+@@ -4,9 +4,11 @@
+ 
+ #ifdef _MSC_VER // the host tests
+ #define ALWAYS_INLINE __forceinline
++#define NEVER_INLINE __declspec(noinline)
+ #define ASSUME_ALIGNED(p, n) (p)
+ #else
+ #define ALWAYS_INLINE inline __attribute__((always_inline))
++#define NEVER_INLINE __attribute__((noinline))
+ #define ASSUME_ALIGNED(p, n) __builtin_assume_aligned(p, n)
+ #endif
+ 
+@@ -240,6 +242,31 @@ static __attribute__((noinline)) size_t MixNativeMMI(int32_t *accum, const uint8
+ 	}
+ 	return block & ~(size_t)3;
+ }
++
++// Half-rate playback repeats each source frame exactly twice. Build four
++// output frames from two source frames, without changing gain rounding.
++// The loads accept every PCM alignment and stay within those two frames.
++static __attribute__((noinline)) size_t MixHalfMMI(int32_t *accum, const uint8_t *data,
++	size_t block, int bits, int stereo, int left, int right)
++{
++	uint16_t gains[8] __attribute__((aligned(16)));
++	size_t groups = block / 4;
++	unsigned i;
++	if (!groups || left < 0 || left > 256 || right < 0 || right > 256
++		|| ((uintptr_t)accum & 15)) return 0;
++	for (i = 0; i < 8; i += 2) { gains[i] = (uint16_t)left; gains[i+1] = (uint16_t)right; }
++	if (bits == 16)
++	{
++		if (stereo) MMI_MIX("ldl $8,7(%0)\n\tldr $8,0(%0)\n\tpextlw $8,$8,$8\n\t", "", MMI_DIV256, "8");
++		else MMI_MIX("lwl $8,3(%0)\n\tlwr $8,0(%0)\n\tpextlh $8,$8,$8\n\tpextlh $8,$8,$8\n\t", "", MMI_DIV256, "4");
++	}
++	else
++	{
++		if (stereo) MMI_MIX("lwl $8,3(%0)\n\tlwr $8,0(%0)\n\tpextlb $8,$zero,$8\n\tpsubh $8,$8,$15\n\tpextlw $8,$8,$8\n\t", MMI_BIAS128, "", "4");
++		else MMI_MIX("lbu $8,0(%0)\n\tlbu $14,1(%0)\n\tsll $14,$14,8\n\tor $8,$8,$14\n\tpextlb $8,$zero,$8\n\tpsubh $8,$8,$15\n\tpextlh $8,$8,$8\n\tpextlh $8,$8,$8\n\t", MMI_BIAS128, "", "2");
++	}
++	return block & ~(size_t)3;
++}
+ #undef MMI_MIX
+ #undef MMI_DIV256
+ #undef MMI_BIAS128
+@@ -443,6 +470,50 @@ static __attribute__((noinline)) void MixDec2Voice(ps2_voice *v, int32_t *accum,
+ }
+ #endif
+ 
++// With a canonical fraction in the first half of a source frame, step 0.5
++// produces pairs of identical samples. Bound the source range before packing;
++// the final one to three outputs use the original cursor update.
++static NEVER_INLINE void MixHalfVoice(ps2_voice *v, int32_t *accum, size_t block,
++	const ps2_sample *sample, int left, int right)
++{
++	const uint8_t *data = sample->bytes + sample->pcm.offset;
++	const uint32_t frames = sample->pcm.frames;
++	const int bits = sample->pcm.bits == 8 ? 8 : 16, stereo = sample->pcm.channels == 2;
++	const int aligned = !((uintptr_t)data & 1);
++	uint32_t frame = v->frame, fraction = v->fraction;
++	const unsigned stride = (unsigned)(bits / 8) * (stereo ? 2u : 1u);
++	size_t f = 0, available;
++	if (frame >= frames) { v->sample = NULL; return; }
++	available = frames - frame;
++	// The multiplication is bounded by block (at most PS2_AUDIO_BLOCK).
++	if (available <= block / 2) block = available * 2;
++#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
++	f = MixHalfMMI(accum, data + (size_t)frame * stride, block, bits, stereo, left, right);
++	frame += (uint32_t)(f / 2);
++#else
++	for (; f + 1 < block; f += 2, frame++)
++	{
++		const uint8_t *p = data + (size_t)frame * stride;
++		int l = bits == 8 ? (int)p[0] - 128 : Sample16(p, aligned);
++		int r = !stereo ? l : bits == 8 ? (int)p[1] - 128 : Sample16(p + 2, aligned);
++		if (bits != 8) { l = Div256(l * left); r = Div256(r * right); }
++		else { l *= left; r *= right; }
++		accum[f*2] += l; accum[f*2+1] += r;
++		accum[f*2+2] += l; accum[f*2+3] += r;
++	}
++#endif
++	for (; f < block; f++)
++	{
++		const uint8_t *p = data + (size_t)frame * stride;
++		int l = bits == 8 ? (int)p[0] - 128 : Sample16(p, aligned);
++		int r = !stereo ? l : bits == 8 ? (int)p[1] - 128 : Sample16(p + 2, aligned);
++		if (bits == 8) { accum[f*2] += l * left; accum[f*2+1] += r * right; }
++		else { accum[f*2] += Div256(l * left); accum[f*2+1] += Div256(r * right); }
++		fraction += 32768; frame += fraction >> 16; fraction &= 65535;
++	}
++	v->frame = frame; v->fraction = fraction;
++}
++
+ // One voice into the accumulator for up to `block` output frames. Same arithmetic as PS2_PCMValue + the per-sample
+ // cursor update, with the cursor in registers: nothing is re-read through the voice after each store.
+ // bits: 8 or 16 (constant at each call site), stereo: source has two channels, aligned: 16-bit data is 2-byte aligned.
+@@ -524,6 +595,32 @@ MIX_WRAPPER(Mix16StereoOdd, 16, 1, 0)
+ #define Mix16StereoOdd(v,a,b,d,f,l,r) MixVoice(v,a,b,d,f,16,1,0,l,r)
+ #endif
+ 
++// A zero-gain voice still advances and expires at the original source frame.
++// Away from EOF, combine its bounded cursor updates without reading its PCM.
++// Keep the scalar cursor rules for overflow-sized steps and the final block.
++static void AdvanceSilentVoice(ps2_voice *v, size_t block, uint32_t frames)
++{
++	uint32_t frame = v->frame, fraction = v->fraction, step = v->step;
++	if (fraction < 65536 && step <= UINT32_MAX - 65535 && frame < frames)
++	{
++		const uint64_t position = fraction + (uint64_t)step * block;
++		const uint64_t advance = position >> 16;
++		if (advance < frames - frame)
++		{
++			v->frame = frame + (uint32_t)advance;
++			v->fraction = (uint32_t)position & 65535;
++			return;
++		}
++	}
++	while (block--)
++	{
++		if (frame >= frames) { v->sample = NULL; break; }
++		fraction += step;
++		frame += fraction >> 16; fraction &= 65535;
++	}
++	v->frame = frame; v->fraction = fraction;
++}
++
+ void PS2_MixerRender(ps2_mixer *m, int16_t *out, const int16_t *music, size_t n, unsigned gain)
+ {
+ 	size_t f;
+@@ -558,10 +655,21 @@ void PS2_MixerRender(ps2_mixer *m, int16_t *out, const int16_t *music, size_t n,
+ 			// Center is full amplitude on both channels; linear pan to either edge.
+ 			left = v->pan <= 128 ? 128 : 255 - v->pan;
+ 			right = v->pan >= 128 ? 128 : v->pan;
+-			left = left * v->volume * m->volume * 256 / (128 * 255 * 31);
+-			right = right * v->volume * m->volume * 256 / (128 * 255 * 31);
++			left = left * v->volume * m->volume * 256;
++			right = right * v->volume * m->volume * 256;
++			// Test the exact zero quotient before the divisions. Keeping their
++			// EE expansion off the silent path also avoids register-pressure costs.
++			if (left < 128 * 255 * 31 && right < 128 * 255 * 31 && v->fraction < 65536)
++			{
++				AdvanceSilentVoice(v, block, s->pcm.frames);
++				if (v->sample && v->frame >= s->pcm.frames) v->sample = NULL;
++				continue;
++			}
++			left /= 128 * 255 * 31; right /= 128 * 255 * 31;
+ 			data = s->bytes + s->pcm.offset;
+-			if (s->pcm.bits == 8)
++			if (v->step == 32768 && v->fraction < 32768)
++				MixHalfVoice(v, accum, block, s, (int)left, (int)right);
++			else if (s->pcm.bits == 8)
+ 			{
+ 				if (s->pcm.channels == 2) Mix8Stereo(v, accum, block, data, s->pcm.frames, (int)left, (int)right);
+ 				else Mix8Mono(v, accum, block, data, s->pcm.frames, (int)left, (int)right);
+diff --git a/src/ps2/ps2_midi.c b/src/ps2/ps2_midi.c
+index abee1543b..c69563543 100644
+--- a/src/ps2/ps2_midi.c
++++ b/src/ps2/ps2_midi.c
+@@ -9,6 +9,7 @@
+ #define NOTES 24
+ #define MAX_EVENTS 1000000u
+ #define MAX_US (86400ull * 1000000)
++#define NOTES_CHANGED (1u << 16)
+ 
+ typedef struct
+ {
+@@ -26,13 +27,15 @@ typedef struct
+ struct ps2_midi
+ {
+ 	ps2_audio_input in;
+-	midi_track tracks[TRACKS];
+ 	midi_channel channels[16];
+ 	midi_note notes[NOTES];
+ 	uint32_t steps[128];
+ 	int16_t sine[256];
+ 	unsigned count, division, tempo, failed, events;
+ 	uint64_t tick, us, remainder, frame, length_frames;
++	// The validated SMF track count is immutable. Keep its complete streaming
++	// tracks/caches in the same allocation, without reserving unused tracks.
++	midi_track tracks[];
+ };
+ 
+ static uint32_t BE(const uint8_t *p, unsigned n)
+@@ -91,7 +94,7 @@ static uint32_t Step(ps2_midi *m, unsigned ch, unsigned key)
+ 	return (uint32_t)(m->steps[key] * powf(2.0f, bend));
+ }
+ 
+-static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
++static unsigned Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
+ {
+ 	unsigned i, ch = status & 15, kind = status >> 4;
+ 	midi_channel *c = &m->channels[ch];
+@@ -102,6 +105,7 @@ static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
+ 		if (!n) { n = &m->notes[0]; for (i = 1; i < NOTES; i++) if (m->notes[i].age > n->age) n = &m->notes[i]; }
+ 		memset(n, 0, sizeof *n); n->active = 1; n->channel = ch; n->key = a; n->velocity = b;
+ 		n->step = Step(m, ch, a); n->noise = 0x1234567u + a;
++		return NOTES_CHANGED;
+ 	}
+ 	else if (kind == 8 || (kind == 9 && !b))
+ 	{
+@@ -129,16 +133,22 @@ static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
+ 			if (a == 123 || (!c->sustain && n->held)) { n->held = 0; n->released = 1; }
+ 			if (a == 121 && n->active) n->step = Step(m, ch, n->key);
+ 		}
++		if (a == 120) return NOTES_CHANGED;
++		if (a == 7 || a == 11 || a == 121) return 1u << ch;
+ 	}
++	return 0;
+ }
+ 
+-static void Event(ps2_midi *m, midi_track *t, int synth)
++// Changes to active-note membership or per-channel amplitude, for this read's
++// transient synthesis cache. Parsing, timing, and persistent state are shared
++// with the duration scan and seek, which do not need the returned mask.
++static unsigned Event(ps2_midi *m, midi_track *t, int synth)
+ {
+-	unsigned s = Byte(m, t), a, b = 0, n;
+-	if (++m->events > MAX_EVENTS) { m->failed = 1; return; }
++	unsigned s = Byte(m, t), a, b = 0, n, changed = 0;
++	if (++m->events > MAX_EVENTS) { m->failed = 1; return 0; }
+ 	if (s < 128)
+ 	{
+-		if (!t->running) { m->failed = 1; return; }
++		if (!t->running) { m->failed = 1; return 0; }
+ 		t->pos--; s = t->running;
+ 	}
+ 	if (s < 240)
+@@ -146,8 +156,8 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
+ 		t->running = s;
+ 		a = Byte(m, t);
+ 		if ((s >> 4) != 12 && (s >> 4) != 13) b = Byte(m, t);
+-		if (a > 127 || b > 127) { m->failed = 1; return; }
+-		if (synth) Message(m, s, a, b);
++		if (a > 127 || b > 127) { m->failed = 1; return 0; }
++		if (synth) changed = Message(m, s, a, b);
+ 	}
+ 	else
+ 	{
+@@ -155,15 +165,15 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
+ 		if (s == 255)
+ 		{
+ 			a = Byte(m, t); n = VLQ(m, t);
+-			if (n > t->end - t->pos) { m->failed = 1; return; }
++			if (n > t->end - t->pos) { m->failed = 1; return 0; }
+ 			if (a == 47)
+ 			{
+ 				if (n) m->failed = 1;
+-				t->ended = 1; return;
++				t->ended = 1; return 0;
+ 			}
+ 			if (a == 81)
+ 			{
+-				if (n != 3) { m->failed = 1; return; }
++				if (n != 3) { m->failed = 1; return 0; }
+ 				m->tempo = (unsigned)Byte(m, t) << 16;
+ 				m->tempo |= (unsigned)Byte(m, t) << 8; m->tempo |= Byte(m, t);
+ 				if (!m->tempo) m->failed = 1;
+@@ -173,12 +183,13 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
+ 		else if (s == 240 || s == 247)
+ 		{
+ 			n = VLQ(m, t);
+-			if (n > t->end - t->pos) { m->failed = 1; return; }
++			if (n > t->end - t->pos) { m->failed = 1; return 0; }
+ 			t->pos += n;
+ 		}
+-		else { m->failed = 1; return; }
++		else { m->failed = 1; return 0; }
+ 	}
+ 	Next(m, t);
++	return changed;
+ }
+ 
+ static int Earliest(ps2_midi *m)
+@@ -212,7 +223,7 @@ ps2_midi *PS2_MIDIOpen(const ps2_audio_input *in)
+ 	pos = BE(h+4,4);
+ 	if (pos > in->size - 8) return NULL;
+ 	pos += 8;
+-	m = calloc(1, sizeof *m); if (!m) return NULL;
++	m = calloc(1, sizeof *m + count * sizeof m->tracks[0]); if (!m) return NULL;
+ 	m->in = *in; m->count = count; m->division = division;
+ 	for (i = 0; i < count; i++)
+ 	{
+@@ -247,19 +258,52 @@ uint32_t PS2_MIDILength(const ps2_midi *m) { return (uint32_t)((m->length_frames
+ size_t PS2_MIDIRead(ps2_midi *m, int16_t *out, size_t frames)
+ {
+ 	size_t f;
++	struct { midi_note *note; unsigned amplitude; } active[NOTES];
++	unsigned count = 0, refresh = NOTES_CHANGED;
++	int t;
++	uint64_t due;
++	if (!frames || m->frame >= m->length_frames || m->failed) return 0;
++	t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
+ 	for (f = 0; f < frames && m->frame < m->length_frames && !m->failed; f++, m->frame++)
+ 	{
+ 		unsigned i, budget = 4096;
+-		int t, l = 0, r = 0;
+-		while ((t = Earliest(m)) >= 0 && Due(m, t, 0) <= m->frame && !m->failed)
++		int l = 0, r = 0;
++		// The next track/frame cannot change until an event runs. Keep the
++		// original merged-track tie order and integer timing, once per event.
++		while (t >= 0 && due <= m->frame && !m->failed)
+ 		{
+ 			if (!budget--) { m->failed = 1; break; }
+-			Due(m, t, 1); Event(m, &m->tracks[t], 1);
++			Due(m, t, 1); refresh |= Event(m, &m->tracks[t], 1);
++			t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
+ 		}
+ 		if (m->failed) break;
+-		for (i = 0; i < NOTES; i++)
++		// Only events can create notes or change velocity/channel gain. Keep
++		// their original mixing order and exact normalization until the next
++		// event. Released notes still advance below until they become inactive.
++		if (refresh & NOTES_CHANGED)
+ 		{
+-			midi_note *n = &m->notes[i];
++			count = 0;
++			for (i = 0; i < NOTES; i++) if (m->notes[i].active)
++			{
++				midi_note *n = &m->notes[i];
++				midi_channel *c = &m->channels[n->channel];
++				active[count].note = n;
++				active[count++].amplitude = n->velocity * c->volume * c->expression / (127 * 127);
++			}
++		}
++		else if (refresh) for (i = 0; i < count; i++)
++		{
++			midi_note *n = active[i].note;
++			if (refresh & (1u << n->channel))
++			{
++				midi_channel *c = &m->channels[n->channel];
++				active[i].amplitude = n->velocity * c->volume * c->expression / (127 * 127);
++			}
++		}
++		refresh = 0;
++		for (i = 0; i < count; i++)
++		{
++			midi_note *n = active[i].note;
+ 			midi_channel *c;
+ 			int v, amp;
+ 			unsigned p;
+@@ -281,7 +325,7 @@ size_t PS2_MIDIRead(ps2_midi *m, int16_t *out, size_t frames)
+ 				case 2: v = p < 32768 ? 24000 : -24000; break;
+ 				default: v = (int)p - 32768; break;
+ 			}
+-			amp = (int)(n->velocity * c->volume * c->expression / (127 * 127));
++			amp = (int)active[i].amplitude;
+ 			v = v * amp / (127 * 16); v = v * (int)n->env / 32768;
+ 			l += v * (int)(127 - c->pan) / 127; r += v * (int)c->pan / 127;
+ 			n->phase += n->step; n->age++;
+diff --git a/src/ps2/ps2_music.c b/src/ps2/ps2_music.c
+index 5026162a7..0e1beae11 100644
+--- a/src/ps2/ps2_music.c
++++ b/src/ps2/ps2_music.c
+@@ -36,7 +36,6 @@ struct ps2_music
+ 	size_t buffered, cursor;
+ 	unsigned skipped;                  // PS2-317: the position moved without decoding; the decoder is behind (resynchronised by PS2_MusicRender)
+ 	int16_t buffer[DECODE_FRAMES * 2] __attribute__((aligned(16))); // PS2-316: the VU0 PCM conversion stores 16 bytes at a time
+-	uint8_t raw[DECODE_FRAMES * 4];
+ };
+ 
+ #if defined(PS2_AUDIO_VORBIS) || defined(PS2_AUDIO_MP3)
+@@ -229,9 +228,26 @@ int PS2_MusicPlay(ps2_music *m, int loop)
+ 
+ void PS2_MusicRevive(ps2_music *m) { if (m) { m->playing = 1; m->paused = 0; } }
+ 
++// Input occupies at most four bytes per frame, just like the stereo output.
++// Expand from the end so mono/8-bit output never overwrites unread source bytes.
++static void ExpandPCM(int16_t *buffer, size_t frames, unsigned bits, unsigned channels)
++{
++	size_t stride = channels * (bits / 8);
++#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
++	if (bits == 16 && channels == 2) return;
++#endif
++	while (frames--)
++	{
++		const uint8_t *p = (const uint8_t *)buffer + frames * stride;
++		int16_t l = PS2_PCMValue(p, bits);
++		int16_t r = channels == 2 ? PS2_PCMValue(p + bits / 8, bits) : l;
++		buffer[frames * 2] = l; buffer[frames * 2 + 1] = r;
++	}
++}
++
+ static size_t Decode(ps2_music *m)
+ {
+-	size_t n = 0, i, stride = m->channels * 2;
++	size_t n = 0, stride = m->channels * 2;
+ 	if (m->type == PS2_MUSIC_WAV)
+ 	{
+ 		size_t bytes;
+@@ -240,14 +256,9 @@ static size_t Decode(ps2_music *m)
+ 		if (n > DECODE_FRAMES) n = DECODE_FRAMES;
+ 		bytes = n * stride;
+ 		if (!n) return 0;
+-		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->raw, bytes) != bytes)
++		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->buffer, bytes) != bytes)
+ 		{ m->error = 1; return 0; }
+-		for (i = 0; i < n; i++)
+-		{
+-			const uint8_t *p = m->raw + i*stride;
+-			m->buffer[i*2] = PS2_PCMValue(p, m->pcm.bits);
+-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(p+m->pcm.bits/8, m->pcm.bits) : m->buffer[i*2];
+-		}
++		ExpandPCM(m->buffer, n, m->pcm.bits, m->channels);
+ 	}
+ 	else if (m->type == PS2_MUSIC_MIDI)
+ 	{
+@@ -263,33 +274,28 @@ static size_t Decode(ps2_music *m)
+ 		long got = ov_read_float(&m->ogg, &pcm, DECODE_FRAMES, &section);
+ 		if (got < 0 || section != 0) { m->error = 1; return 0; }
+ 		n = (size_t)got;
+-		PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
++		// At EOF libvorbis may return no PCM pointer along with zero frames.
++		if (n) PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
+ 	}
+ #endif
+ #ifdef PS2_AUDIO_MP3
+ 	else if (m->type == PS2_MUSIC_MP3)
+ 	{
+ 		size_t bytes = 0;
+-		int result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
++		int result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
+ 		if (result == MPG123_NEW_FORMAT)
+ 		{
+ 			long rate; int ch, enc;
+ 			if (mpg123_getformat(m->mp3, &rate, &ch, &enc) != MPG123_OK || rate != (long)m->rate
+ 				|| ch != (int)m->channels || enc != MPG123_ENC_SIGNED_16) { m->error = 1; return 0; }
+-			result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
++			result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
+ 		}
+ 		if (result != MPG123_OK && result != MPG123_DONE) { m->error = 1; return 0; }
+ 		n = bytes / stride;
+ 	}
+ #endif
+ 	if (m->type == PS2_MUSIC_MP3)
+-	{
+-		for (i = 0; i < n; i++)
+-		{
+-			m->buffer[i*2] = PS2_PCMValue(m->raw+i*stride, 16);
+-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(m->raw+i*stride+2, 16) : m->buffer[i*2];
+-		}
+-	}
++		ExpandPCM(m->buffer, n, 16, m->channels);
+ 	m->decoded += n; m->cursor = 0; m->buffered = n; return n;
+ }
+ 
+diff --git a/src/r_draw8.c b/src/r_draw8.c
+index c9734a14d..0f7a97712 100644
+--- a/src/r_draw8.c
++++ b/src/r_draw8.c
+@@ -613,6 +613,13 @@ void R_Draw2sMultiPatchTranslucentColumn_8(void)
+ void R_DrawShadeColumn_8(void)
+ {
+ 	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
++#ifdef PS2_OPT_DRAW
++	const UINT8 *const source = dc_source;
++	const UINT8 *const shademap = colormaps;
++#define R_SHADE_PIXEL(INDEX) shademap[(source[INDEX] <<8) + (*dest)]
++#else
++#define R_SHADE_PIXEL(INDEX) colormaps[(dc_source[INDEX] <<8) + (*dest)]
++#endif
+ 	register INT32 count;
+ 	register UINT8 *dest;
+ 	register fixed_t frac, fracstep;
+@@ -639,10 +646,11 @@ void R_DrawShadeColumn_8(void)
+ 	// Here we do an additional index re-mapping.
+ 	do
+ 	{
+-		*dest = colormaps[(dc_source[frac>>FRACBITS] <<8) + (*dest)];
++		*dest = R_SHADE_PIXEL(frac>>FRACBITS);
+ 		dest += vwidth;
+ 		frac += fracstep;
+ 	} while (count--);
++#undef R_SHADE_PIXEL
+ }
+ 
+ /**	\brief The R_DrawTranslucentColumn_8 function
+@@ -898,6 +906,16 @@ void R_DrawDropShadowColumn_8(void)
+ void R_DrawTranslatedTranslucentColumn_8(void)
+ {
+ 	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
++#ifdef PS2_OPT_DRAW
++	// Texture and lookup addresses remain fixed for the complete sprite column.
++	const UINT8 *const source = dc_source;
++	const UINT8 *const translation = dc_translation;
++	const lighttable_t *const colormap = dc_colormap;
++	const UINT8 *const transmap = dc_transmap;
++#define R_TRANSLATED_TRANS_PIXEL(INDEX) *(transmap + (colormap[translation[source[INDEX]]]<<8) + (*dest))
++#else
++#define R_TRANSLATED_TRANS_PIXEL(INDEX) *(dc_transmap + (dc_colormap[dc_translation[dc_source[INDEX]]]<<8) + (*dest))
++#endif
+ 	register INT32 count;
+ 	register UINT8 *dest;
+ 	register fixed_t frac, fracstep;
+@@ -935,7 +953,7 @@ void R_DrawTranslatedTranslucentColumn_8(void)
+ 				//  using a lighting/special effects LUT.
+ 				// heightmask is the Tutti-Frutti fix
+ 
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL(frac>>FRACBITS);
+ 
+ 				dest += vwidth;
+ 				if ((frac += fracstep) >= heightmask)
+@@ -945,19 +963,31 @@ void R_DrawTranslatedTranslucentColumn_8(void)
+ 		}
+ 		else
+ 		{
++#ifdef PS2_OPT_DRAW
++			// One destination/coordinate pair keeps all four lookup addresses in
++			// caller-saved EE registers, including for one-pixel sprite columns.
++			do
++			{
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
++				dest += vwidth;
++				frac += fracstep;
++			} while (--count);
++#else
+ 			while ((count -= 2) >= 0) // texture height is a power of 2
+ 			{
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
+ 				dest += vwidth;
+ 				frac += fracstep;
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
+ 				dest += vwidth;
+ 				frac += fracstep;
+ 			}
+ 			if (count & 1)
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
++#endif
+ 		}
+ 	}
++#undef R_TRANSLATED_TRANS_PIXEL
+ }
+ 
+ /**	\brief The R_DrawTranslatedColumn_8 function
+@@ -968,6 +998,14 @@ void R_DrawTranslatedTranslucentColumn_8(void)
+ void R_DrawTranslatedColumn_8(void)
+ {
+ 	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
++#ifdef PS2_OPT_DRAW
++	const UINT8 *const source = dc_source;
++	const UINT8 *const translation = dc_translation;
++	const lighttable_t *const colormap = dc_colormap;
++#define R_TRANSLATED_PIXEL(INDEX) colormap[translation[source[INDEX]]]
++#else
++#define R_TRANSLATED_PIXEL(INDEX) dc_colormap[dc_translation[dc_source[INDEX]]]
++#endif
+ 	register INT32 count;
+ 	register UINT8 *dest;
+ 	register fixed_t frac, fracstep;
+@@ -995,12 +1033,13 @@ void R_DrawTranslatedColumn_8(void)
+ 		//  used with PLAY sprites.
+ 		// Thus the "green" ramp of the player 0 sprite
+ 		//  is mapped to gray, red, black/indigo.
+-		*dest = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
++		*dest = R_TRANSLATED_PIXEL(frac>>FRACBITS);
+ 
+ 		dest += vwidth;
+ 
+ 		frac += fracstep;
+ 	} while (count--);
++#undef R_TRANSLATED_PIXEL
+ }
+ 
+ // ==========================================================================
+@@ -1340,6 +1379,18 @@ void R_DrawTiltedSpan_8(void)
+ /**	\brief The R_DrawTiltedTranslucentSpan_8 function
+ 	Like DrawTiltedSpan, but translucent
+ */
++// Keep the same pixel expressions in both policies. Only the PS2 policy
++// captures per-span parameters; source and lookup contents still alias normally.
++#ifdef PS2_OPT_DRAW
++#define TILT_FLAT_INDEX ((v >> tilt_yshift) & tilt_mask) | (u >> tilt_xshift)
++#define TILT_LIGHT tilt_pzl[tiltlighting[tilt_x++]] + tilt_cmofs
++#define TILT_TRANSMAP tilt_transmap
++#else
++#define TILT_FLAT_INDEX ((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)
++#define TILT_LIGHT planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps)
++#define TILT_TRANSMAP ds_transmap
++#endif
++
+ void R_DrawTiltedTranslucentSpan_8(void)
+ {
+ 	// x1, x2 = ds_x1, ds_x2
+@@ -1394,6 +1445,14 @@ void R_DrawTiltedTranslucentSpan_8(void)
+ 	//x1 = 0;
+ 	width++;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 tilt_yshift = nflatyshift, tilt_xshift = nflatxshift, tilt_mask = nflatmask;
++	lighttable_t **const tilt_pzl = planezlight;
++	const ptrdiff_t tilt_cmofs = ds_colormap - colormaps;
++	INT32 tilt_x = ds_x1;
++	const UINT8 *const tilt_transmap = ds_transmap;
++#endif
++
+ 	while (width >= SPANSIZE)
+ 	{
+ 		iz += izstep;
+@@ -1410,8 +1469,8 @@ void R_DrawTiltedTranslucentSpan_8(void)
+ 
+ 		for (i = SPANSIZE-1; i >= 0; i--)
+ 		{
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dest);
++			colormap = TILT_LIGHT;
++			*dest = *(TILT_TRANSMAP + (colormap[source[TILT_FLAT_INDEX]] << 8) + *dest);
+ 			dest++;
+ 			u += stepu;
+ 			v += stepv;
+@@ -1426,8 +1485,8 @@ void R_DrawTiltedTranslucentSpan_8(void)
+ 		{
+ 			u = SLOPE_U32(startu);
+ 			v = SLOPE_U32(startv);
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dest);
++			colormap = TILT_LIGHT;
++			*dest = *(TILT_TRANSMAP + (colormap[source[TILT_FLAT_INDEX]] << 8) + *dest);
+ 		}
+ 		else
+ 		{
+@@ -1447,14 +1506,17 @@ void R_DrawTiltedTranslucentSpan_8(void)
+ 
+ 			for (; width != 0; width--)
+ 			{
+-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-				*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dest);
++				colormap = TILT_LIGHT;
++				*dest = *(TILT_TRANSMAP + (colormap[source[TILT_FLAT_INDEX]] << 8) + *dest);
+ 				dest++;
+ 				u += stepu;
+ 				v += stepv;
+ 			}
+ 		}
+ 	}
++#ifdef PS2_OPT_DRAW
++	ds_x1 = tilt_x;
++#endif
+ #endif
+ }
+ 
+@@ -1517,6 +1579,14 @@ void R_DrawTiltedWaterSpan_8(void)
+ 	//x1 = 0;
+ 	width++;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 tilt_yshift = nflatyshift, tilt_xshift = nflatxshift, tilt_mask = nflatmask;
++	lighttable_t **const tilt_pzl = planezlight;
++	const ptrdiff_t tilt_cmofs = ds_colormap - colormaps;
++	INT32 tilt_x = ds_x1;
++	const UINT8 *const tilt_transmap = ds_transmap;
++#endif
++
+ 	while (width >= SPANSIZE)
+ 	{
+ 		iz += izstep;
+@@ -1533,8 +1603,8 @@ void R_DrawTiltedWaterSpan_8(void)
+ 
+ 		for (i = SPANSIZE-1; i >= 0; i--)
+ 		{
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dsrc++);
++			colormap = TILT_LIGHT;
++			*dest = *(TILT_TRANSMAP + (colormap[source[TILT_FLAT_INDEX]] << 8) + *dsrc++);
+ 			dest++;
+ 			u += stepu;
+ 			v += stepv;
+@@ -1549,8 +1619,8 @@ void R_DrawTiltedWaterSpan_8(void)
+ 		{
+ 			u = SLOPE_U32(startu);
+ 			v = SLOPE_U32(startv);
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dsrc++);
++			colormap = TILT_LIGHT;
++			*dest = *(TILT_TRANSMAP + (colormap[source[TILT_FLAT_INDEX]] << 8) + *dsrc++);
+ 		}
+ 		else
+ 		{
+@@ -1570,14 +1640,17 @@ void R_DrawTiltedWaterSpan_8(void)
+ 
+ 			for (; width != 0; width--)
+ 			{
+-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-				*dest = *(ds_transmap + (colormap[source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)]] << 8) + *dsrc++);
++				colormap = TILT_LIGHT;
++				*dest = *(TILT_TRANSMAP + (colormap[source[TILT_FLAT_INDEX]] << 8) + *dsrc++);
+ 				dest++;
+ 				u += stepu;
+ 				v += stepv;
+ 			}
+ 		}
+ 	}
++#ifdef PS2_OPT_DRAW
++	ds_x1 = tilt_x;
++#endif
+ #endif
+ }
+ 
+@@ -1641,6 +1714,13 @@ void R_DrawTiltedSplat_8(void)
+ 	//x1 = 0;
+ 	width++;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 tilt_yshift = nflatyshift, tilt_xshift = nflatxshift, tilt_mask = nflatmask;
++	lighttable_t **const tilt_pzl = planezlight;
++	const ptrdiff_t tilt_cmofs = ds_colormap - colormaps;
++	INT32 tilt_x = ds_x1;
++#endif
++
+ 	while (width >= SPANSIZE)
+ 	{
+ 		iz += izstep;
+@@ -1657,8 +1737,8 @@ void R_DrawTiltedSplat_8(void)
+ 
+ 		for (i = SPANSIZE-1; i >= 0; i--)
+ 		{
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			colormap = TILT_LIGHT;
++			val = source[TILT_FLAT_INDEX];
+ 			if (val != TRANSPARENTPIXEL)
+ 				*dest = colormap[val];
+ 			dest++;
+@@ -1675,8 +1755,8 @@ void R_DrawTiltedSplat_8(void)
+ 		{
+ 			u = SLOPE_U32(startu);
+ 			v = SLOPE_U32(startv);
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			colormap = TILT_LIGHT;
++			val = source[TILT_FLAT_INDEX];
+ 			if (val != TRANSPARENTPIXEL)
+ 				*dest = colormap[val];
+ 		}
+@@ -1698,8 +1778,8 @@ void R_DrawTiltedSplat_8(void)
+ 
+ 			for (; width != 0; width--)
+ 			{
+-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-				val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++				colormap = TILT_LIGHT;
++				val = source[TILT_FLAT_INDEX];
+ 				if (val != TRANSPARENTPIXEL)
+ 					*dest = colormap[val];
+ 				dest++;
+@@ -1708,6 +1788,9 @@ void R_DrawTiltedSplat_8(void)
+ 			}
+ 		}
+ 	}
++#ifdef PS2_OPT_DRAW
++	ds_x1 = tilt_x;
++#endif
+ #endif
+ }
+ 
+@@ -1771,6 +1854,14 @@ void R_DrawTiltedTranslucentSplat_8(void)
+ 	//x1 = 0;
+ 	width++;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 tilt_yshift = nflatyshift, tilt_xshift = nflatxshift, tilt_mask = nflatmask;
++	lighttable_t **const tilt_pzl = planezlight;
++	const ptrdiff_t tilt_cmofs = ds_colormap - colormaps;
++	INT32 tilt_x = ds_x1;
++	const UINT8 *const tilt_transmap = ds_transmap;
++#endif
++
+ 	while (width >= SPANSIZE)
+ 	{
+ 		iz += izstep;
+@@ -1787,10 +1878,10 @@ void R_DrawTiltedTranslucentSplat_8(void)
+ 
+ 		for (i = SPANSIZE-1; i >= 0; i--)
+ 		{
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			colormap = TILT_LIGHT;
++			val = source[TILT_FLAT_INDEX];
+ 			if (val != TRANSPARENTPIXEL)
+-				*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
++				*dest = *(TILT_TRANSMAP + (colormap[val] << 8) + *dest);
+ 			dest++;
+ 			u += stepu;
+ 			v += stepv;
+@@ -1805,10 +1896,10 @@ void R_DrawTiltedTranslucentSplat_8(void)
+ 		{
+ 			u = SLOPE_U32(startu);
+ 			v = SLOPE_U32(startv);
+-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			colormap = TILT_LIGHT;
++			val = source[TILT_FLAT_INDEX];
+ 			if (val != TRANSPARENTPIXEL)
+-				*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
++				*dest = *(TILT_TRANSMAP + (colormap[val] << 8) + *dest);
+ 		}
+ 		else
+ 		{
+@@ -1828,22 +1919,38 @@ void R_DrawTiltedTranslucentSplat_8(void)
+ 
+ 			for (; width != 0; width--)
+ 			{
+-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+-				val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++				colormap = TILT_LIGHT;
++				val = source[TILT_FLAT_INDEX];
+ 				if (val != TRANSPARENTPIXEL)
+-					*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
++					*dest = *(TILT_TRANSMAP + (colormap[val] << 8) + *dest);
+ 				dest++;
+ 				u += stepu;
+ 				v += stepv;
+ 			}
+ 		}
+ 	}
++#ifdef PS2_OPT_DRAW
++	ds_x1 = tilt_x;
++#endif
+ #endif
+ }
+ 
+ /**	\brief The R_DrawSplat_8 function
+ 	Just like R_DrawSpan_8, but skips transparent pixels.
+ */
++// Flat sprite spans use the same texture parameters throughout each call.
++// Keep those parameters in locals, but leave source/table contents as live reads.
++#ifdef PS2_OPT_DRAW
++#define FLAT_SPRITE_INDEX (((UINT32)yposition >> sprite_yshift) & sprite_mask) | ((UINT32)xposition >> sprite_xshift)
++#define FLAT_SPRITE_TRANSMAP sprite_transmap
++// Avoid simultaneous x + k*step partial sums and their EE register spills.
++#define FLAT_SPRITE_ADVANCE xposition += xstep; yposition += ystep; __asm__("" : "+r"(xposition), "+r"(yposition))
++#else
++#define FLAT_SPRITE_INDEX (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)
++#define FLAT_SPRITE_TRANSMAP ds_transmap
++#define FLAT_SPRITE_ADVANCE xposition += xstep; yposition += ystep
++#endif
++
+ void R_DrawSplat_8 (void)
+ {
+ 	fixed_t xposition;
+@@ -1855,6 +1962,10 @@ void R_DrawSplat_8 (void)
+ 	UINT8 *dest;
+ 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 sprite_yshift = nflatyshift, sprite_xshift = nflatxshift, sprite_mask = nflatmask;
++#endif
++
+ 	size_t count = (ds_x2 - ds_x1 + 1);
+ 	UINT32 val;
+ 
+@@ -1883,81 +1994,72 @@ void R_DrawSplat_8 (void)
+ 		//
+ 		// <Callum> 4194303 = (2048x2048)-1 (2048x2048 is maximum flat size)
+ 		// Why decimal? 0x3FFFFF == 4194303... ~Golden
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[0] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[1] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[2] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[3] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[4] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[5] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[6] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val &= 0x3FFFFF;
+ 		val = source[val];
+ 		if (val != TRANSPARENTPIXEL)
+ 			dest[7] = colormap[val];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+ 		dest += 8;
+ 		count -= 8;
+ 	}
+ 	while (count-- && dest <= deststop)
+ 	{
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+ 			*dest = colormap[val];
+ 		dest++;
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 	}
+ }
+ 
+@@ -1975,6 +2077,11 @@ void R_DrawTranslucentSplat_8 (void)
+ 	UINT8 *dest;
+ 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 sprite_yshift = nflatyshift, sprite_xshift = nflatxshift, sprite_mask = nflatmask;
++	const UINT8 *const sprite_transmap = ds_transmap;
++#endif
++
+ 	size_t count = (ds_x2 - ds_x1 + 1);
+ 	UINT32 val;
+ 
+@@ -2000,65 +2107,56 @@ void R_DrawTranslucentSplat_8 (void)
+ 		// SoM: Why didn't I see this earlier? the spot variable is a waste now because we don't
+ 		// have the uber complicated math to calculate it now, so that was a memory write we didn't
+ 		// need!
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[0] = *(ds_transmap + (colormap[val] << 8) + dest[0]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[0] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[0]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[1] = *(ds_transmap + (colormap[val] << 8) + dest[1]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[1] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[1]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[2] = *(ds_transmap + (colormap[val] << 8) + dest[2]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[2] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[2]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[3] = *(ds_transmap + (colormap[val] << 8) + dest[3]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[3] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[3]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[4] = *(ds_transmap + (colormap[val] << 8) + dest[4]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[4] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[4]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[5] = *(ds_transmap + (colormap[val] << 8) + dest[5]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[5] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[5]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[6] = *(ds_transmap + (colormap[val] << 8) + dest[6]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[6] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[6]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			dest[7] = *(ds_transmap + (colormap[val] << 8) + dest[7]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[7] = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + dest[7]);
++		FLAT_SPRITE_ADVANCE;
+ 
+ 		dest += 8;
+ 		count -= 8;
+ 	}
+ 	while (count-- && dest <= deststop)
+ 	{
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val != TRANSPARENTPIXEL)
+-			*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
++			*dest = *(FLAT_SPRITE_TRANSMAP + (colormap[val] << 8) + *dest);
+ 		dest++;
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 	}
+ }
+ 
+@@ -2077,6 +2175,10 @@ void R_DrawFloorSprite_8 (void)
+ 	UINT8 *dest;
+ 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 sprite_yshift = nflatyshift, sprite_xshift = nflatxshift, sprite_mask = nflatmask;
++#endif
++
+ 	size_t count = (ds_x2 - ds_x1 + 1);
+ 	UINT32 val;
+ 
+@@ -2103,73 +2205,64 @@ void R_DrawFloorSprite_8 (void)
+ 		// SoM: Why didn't I see this earlier? the spot variable is a waste now because we don't
+ 		// have the uber complicated math to calculate it now, so that was a memory write we didn't
+ 		// need!
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[0] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[1] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[2] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[3] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[4] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[5] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[6] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = (((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift);
++		val = FLAT_SPRITE_INDEX;
+ 		val = source[val];
+ 		if (val & 0xFF00)
+ 			dest[7] = colormap[translation[val & 0xFF]];
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 
+ 		dest += 8;
+ 		count -= 8;
+ 	}
+ 	while (count-- && dest <= deststop)
+ 	{
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+ 			*dest = colormap[translation[val & 0xFF]];
+ 		dest++;
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 	}
+ }
+ 
+@@ -2188,6 +2281,11 @@ void R_DrawTranslucentFloorSprite_8 (void)
+ 	UINT8 *dest;
+ 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 sprite_yshift = nflatyshift, sprite_xshift = nflatxshift, sprite_mask = nflatmask;
++	const UINT8 *const sprite_transmap = ds_transmap;
++#endif
++
+ 	size_t count = (ds_x2 - ds_x1 + 1);
+ 	UINT32 val;
+ 
+@@ -2214,68 +2312,63 @@ void R_DrawTranslucentFloorSprite_8 (void)
+ 		// SoM: Why didn't I see this earlier? the spot variable is a waste now because we don't
+ 		// have the uber complicated math to calculate it now, so that was a memory write we didn't
+ 		// need!
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[0] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[0]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[0] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[0]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[1] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[1]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[1] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[1]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[2] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[2]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[2] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[2]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[3] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[3]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[3] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[3]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[4] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[4]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[4] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[4]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[5] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[5]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[5] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[5]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[6] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[6]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[6] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[6]);
++		FLAT_SPRITE_ADVANCE;
+ 
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			dest[7] = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + dest[7]);
+-		xposition += xstep;
+-		yposition += ystep;
++			dest[7] = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + dest[7]);
++		FLAT_SPRITE_ADVANCE;
+ 
+ 		dest += 8;
+ 		count -= 8;
+ 	}
+ 	while (count-- && dest <= deststop)
+ 	{
+-		val = source[(((UINT32)yposition >> nflatyshift) & nflatmask) | ((UINT32)xposition >> nflatxshift)];
++		val = source[FLAT_SPRITE_INDEX];
+ 		if (val & 0xFF00)
+-			*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
++			*dest = *(FLAT_SPRITE_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + *dest);
+ 		dest++;
+-		xposition += xstep;
+-		yposition += ystep;
++		FLAT_SPRITE_ADVANCE;
+ 	}
+ }
+ 
++#undef FLAT_SPRITE_INDEX
++#undef FLAT_SPRITE_TRANSMAP
++#undef FLAT_SPRITE_ADVANCE
++
+ /**	\brief The R_DrawTiltedFloorSprite_8 function
+ 	Draws a tilted floor sprite.
+ */
+@@ -2317,6 +2410,10 @@ void R_DrawTiltedFloorSprite_8(void)
+ 	//x1 = 0;
+ 	width++;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 tilt_yshift = nflatyshift, tilt_xshift = nflatxshift, tilt_mask = nflatmask;
++#endif
++
+ 	while (width >= SPANSIZE)
+ 	{
+ 		iz += izstep;
+@@ -2333,7 +2430,7 @@ void R_DrawTiltedFloorSprite_8(void)
+ 
+ 		for (i = SPANSIZE-1; i >= 0; i--)
+ 		{
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			val = source[TILT_FLAT_INDEX];
+ 			if (val & 0xFF00)
+ 				*dest = colormap[translation[val & 0xFF]];
+ 			dest++;
+@@ -2351,7 +2448,7 @@ void R_DrawTiltedFloorSprite_8(void)
+ 		{
+ 			u = SLOPE_U32(startu);
+ 			v = SLOPE_U32(startv);
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			val = source[TILT_FLAT_INDEX];
+ 			if (val & 0xFF00)
+ 				*dest = colormap[translation[val & 0xFF]];
+ 		}
+@@ -2373,7 +2470,7 @@ void R_DrawTiltedFloorSprite_8(void)
+ 
+ 			for (; width != 0; width--)
+ 			{
+-				val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++				val = source[TILT_FLAT_INDEX];
+ 				if (val & 0xFF00)
+ 					*dest = colormap[translation[val & 0xFF]];
+ 				dest++;
+@@ -2426,6 +2523,11 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
+ 	//x1 = 0;
+ 	width++;
+ 
++#ifdef PS2_OPT_DRAW
++	const UINT32 tilt_yshift = nflatyshift, tilt_xshift = nflatxshift, tilt_mask = nflatmask;
++	const UINT8 *const tilt_transmap = ds_transmap;
++#endif
++
+ 	while (width >= SPANSIZE)
+ 	{
+ 		iz += izstep;
+@@ -2442,9 +2544,9 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
+ 
+ 		for (i = SPANSIZE-1; i >= 0; i--)
+ 		{
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			val = source[TILT_FLAT_INDEX];
+ 			if (val & 0xFF00)
+-				*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
++				*dest = *(TILT_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + *dest);
+ 			dest++;
+ 
+ 			u += stepu;
+@@ -2460,9 +2562,9 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
+ 		{
+ 			u = SLOPE_U32(startu);
+ 			v = SLOPE_U32(startv);
+-			val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++			val = source[TILT_FLAT_INDEX];
+ 			if (val & 0xFF00)
+-				*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
++				*dest = *(TILT_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + *dest);
+ 		}
+ 		else
+ 		{
+@@ -2482,9 +2584,9 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
+ 
+ 			for (; width != 0; width--)
+ 			{
+-				val = source[((v >> nflatyshift) & nflatmask) | (u >> nflatxshift)];
++				val = source[TILT_FLAT_INDEX];
+ 				if (val & 0xFF00)
+-					*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
++					*dest = *(TILT_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + *dest);
+ 				dest++;
+ 
+ 				u += stepu;
+@@ -2494,6 +2596,10 @@ void R_DrawTiltedTranslucentFloorSprite_8(void)
+ 	}
+ }
+ 
++#undef TILT_FLAT_INDEX
++#undef TILT_LIGHT
++#undef TILT_TRANSMAP
++
+ /**	\brief The R_DrawTranslucentSpan_8 function
+ 	Draws the actual span with translucency.
+ */
+diff --git a/src/r_draw8_npo2.c b/src/r_draw8_npo2.c
+index b2b188195..3dd2a40ed 100644
+--- a/src/r_draw8_npo2.c
++++ b/src/r_draw8_npo2.c
+@@ -23,6 +23,59 @@
+     #pragma GCC diagnostic ignored "-Waggregate-return"
+ #endif
+ 
++#ifdef PS2_OPT_DRAW
++// A plane's spans share their flat dimensions. Generating these descriptors
++// needs a 64-bit divide on the EE; keep two descriptors per axis across all
++// tilted drawers, including alternating floor/sprite dimensions. Copy them
++// into span-local storage before any pixel stores.
++// No source/cache pointer is retained, so flat eviction and mode/level changes
++// need no invalidation. Zero dimensions still take libdivide's error path.
++static void R_NPO2SlopeDividers(struct libdivide_u32_t *x, struct libdivide_u32_t *y)
++{
++	// Keep the magic words aligned even though libdivide's descriptor is packed.
++	static struct
++	{
++		UINT32 magic;
++		UINT16 dimension;
++		UINT8 more;
++	} xcached[2], ycached[2];
++	static UINT8 xnext, ynext;
++	const UINT16 flatwidth = ds_flatwidth, flatheight = ds_flatheight;
++	UINT32 xi = 0, yi = 0;
++
++	if (!flatwidth || xcached[0].dimension != flatwidth)
++	{
++		xi = 1;
++		if (!flatwidth || xcached[1].dimension != flatwidth)
++		{
++			const struct libdivide_u32_t divider = libdivide_u32_gen(flatwidth);
++			xi = xnext;
++			xcached[xi].magic = divider.magic;
++			xcached[xi].more = divider.more;
++			xcached[xi].dimension = flatwidth;
++			xnext ^= 1;
++		}
++	}
++	if (!flatheight || ycached[0].dimension != flatheight)
++	{
++		yi = 1;
++		if (!flatheight || ycached[1].dimension != flatheight)
++		{
++			const struct libdivide_u32_t divider = libdivide_u32_gen(flatheight);
++			yi = ynext;
++			ycached[yi].magic = divider.magic;
++			ycached[yi].more = divider.more;
++			ycached[yi].dimension = flatheight;
++			ynext ^= 1;
++		}
++	}
++	x->magic = xcached[xi].magic;
++	x->more = xcached[xi].more;
++	y->magic = ycached[yi].magic;
++	y->more = ycached[yi].more;
++}
++#endif
++
+ /**	\brief The R_DrawSpan_NPO2_8 function
+ 	Draws the actual span.
+ */
+@@ -144,8 +197,13 @@ void R_DrawTiltedSpan_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -333,8 +391,13 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -520,8 +583,13 @@ void R_DrawTiltedSplat_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -718,8 +786,13 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -1335,8 +1408,13 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -1491,8 +1569,13 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -1842,8 +1925,13 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+diff --git a/src/r_patch.c b/src/r_patch.c
+index dcd56fb5e..89d6b11e3 100644
+--- a/src/r_patch.c
++++ b/src/r_patch.c
+@@ -35,7 +35,14 @@ patch_t *Patch_Create(INT16 width, INT16 height)
+ // PS2-OPT-03: a patch made from a Doom patch is ONE zone block (structure, columns, posts, pixels). The zone can then
+ // evict a sprite patch with a single owner pointer (the data arrays used to be separate blocks without an owner), and
+ // the three extra block headers and their 16-byte rounding per patch are saved (1339 patches on MAP11: ~100 KB).
+-#define PATCH_ALIGN(x) (((x) + 15u) & ~(size_t)15u)
++// Directory entries need only their natural alignment. Keep the block and
++// pixel base alignment for the existing bulk-copy paths.
++#define PATCH_ALIGN(x, type) (((x) + _Alignof(type) - 1u) & ~(size_t)(_Alignof(type) - 1u))
++#define PATCH_PIXEL_ALIGN(x) (((x) + 15u) & ~(size_t)15u)
++#ifdef PS2_NOOPT_PATCHLAYOUT
++#undef PATCH_ALIGN
++#define PATCH_ALIGN(x, type) PATCH_PIXEL_ALIGN(x)
++#endif
+ 
+ patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
+ {
+@@ -50,9 +57,9 @@ patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
+ 	width = SHORT(source->width);
+ 	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
+ 
+-	coloff = PATCH_ALIGN(sizeof (patch_t));
+-	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
+-	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
++	coloff = PATCH_ALIGN(sizeof (patch_t), column_t);
++	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width, post_t);
++	pixoff = PATCH_PIXEL_ALIGN(postoff + sizeof (post_t) * total_posts);
+ 
+ 	patch = Z_Calloc(pixoff + total_pixels, PU_PATCH, NULL);
+ 	base = (UINT8 *)patch;
+@@ -86,9 +93,9 @@ patch_t *Patch_TryCreateFromDoomPatch(softwarepatch_t *source)
+ 	width = SHORT(source->width);
+ 	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
+ 
+-	coloff = PATCH_ALIGN(sizeof (patch_t));
+-	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
+-	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
++	coloff = PATCH_ALIGN(sizeof (patch_t), column_t);
++	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width, post_t);
++	pixoff = PATCH_PIXEL_ALIGN(postoff + sizeof (post_t) * total_posts);
+ 
+ 	patch = Z_TryMallocAlign(pixoff + total_pixels, PU_PATCH, NULL, sizeof (void *));
+ 	if (!patch)
+diff --git a/src/r_textures.c b/src/r_textures.c
+index e82b5a160..306522618 100644
+--- a/src/r_textures.c
++++ b/src/r_textures.c
+@@ -65,9 +65,10 @@ INT32 *texturetranslation;
+ 
+ // Painfully simple texture id cacheing to make maps load faster. :3
+ static struct {
+-	char name[9];
++	// Keep word fields together: 20 bytes rather than 24, including the name's terminator.
+ 	UINT32 hash;
+ 	INT32 id;
++	char name[9];
+ 	UINT8 type;
+ } *tidcache = NULL;
+ static INT32 tidcachelen = 0;
+diff --git a/src/v_video.c b/src/v_video.c
+index 83f6b5222..3f08c2c76 100644
+--- a/src/v_video.c
++++ b/src/v_video.c
+@@ -1149,6 +1149,68 @@ void V_DrawCroppedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vscale, IN
+ 		}
+ 	}
+ 
++#ifdef PS2_OPT_DRAW
++	// As in the uncropped drawer, select the exact pixel lookup once per post
++	// and keep its addresses out of the framebuffer's char-alias store loop.
++	{
++		const UINT8 *const scrbase = screens[scrn&V_PARAMMASK];
++		const INT32 vwidth = vid.width;
++		const UINT8 *const cmap = v_colormap;
++		const UINT8 *const tlev = v_translevel;
++		const INT32 kind = (patchdrawfunc == standardpdraw) ? 0 : (patchdrawfunc == mappedpdraw) ? 1 : (patchdrawfunc == translucentpdraw) ? 2 : 3;
++
++		for (col = sx; (col>>FRACBITS) < patch->width && (col - sx) < w; col += colfrac, ++x, desttop++)
++		{
++			if (x < 0)
++				continue;
++			if (x >= vwidth)
++				break;
++
++			column = &patch->columns[col>>FRACBITS];
++			for (unsigned i = 0; i < column->num_posts; i++)
++			{
++				const post_t *post = &column->posts[i];
++				const size_t plen = post->length;
++				const fixed_t topdelta = post->topdelta << FRACBITS;
++				source = column->pixels + post->data_offset;
++				dest = desttop;
++				if (topdelta - sy > 0)
++				{
++					dest += FixedInt(FixedMul(topdelta-sy,vdup))*vwidth;
++					ofs = 0;
++				}
++				else
++					ofs = sy - topdelta;
++
++#define PS2_V_CROPPED_POSTLOOP(PIXEL) \
++				for (; dest < deststop && (size_t)(ofs>>FRACBITS) < plen && ((ofs - sy) + topdelta) < h; ofs += rowfrac) \
++				{ \
++					if (dest >= scrbase) \
++						*dest = (PIXEL); \
++					dest += vwidth; \
++				}
++				switch (kind)
++				{
++				case 0:
++					PS2_V_CROPPED_POSTLOOP(source[ofs>>FRACBITS])
++					break;
++				case 1:
++					PS2_V_CROPPED_POSTLOOP(*(cmap + source[ofs>>FRACBITS]))
++					break;
++				case 2:
++					PS2_V_CROPPED_POSTLOOP(*(tlev + ((source[ofs>>FRACBITS]<<8)&0xff00) + (*dest&0xff)))
++					break;
++				default:
++					PS2_V_CROPPED_POSTLOOP(*(tlev + (((*(cmap + source[ofs>>FRACBITS]))<<8)&0xff00) + (*dest&0xff)))
++					break;
++				}
++#undef PS2_V_CROPPED_POSTLOOP
++			}
++		}
++		return;
++	}
++#endif
++
+ 	for (col = sx; (col>>FRACBITS) < patch->width && (col - sx) < w; col += colfrac, ++x, desttop++)
+ 	{
+ 		if (x < 0) // don't draw off the left of the screen (WRAP PREVENTION)
+diff --git a/src/w_pack.c b/src/w_pack.c
+index fc87d479f..98f59b3af 100644
+--- a/src/w_pack.c
++++ b/src/w_pack.c
+@@ -146,7 +146,9 @@ static pkstream_t pkst[PK_STREAMS];
+ static unsigned pkst_next;
+ 
+ // All reads below bounce through 64-byte aligned buffers and whole-sector requests. Caller buffers may be unaligned.
+-static UINT8 *iobuf, *cbuf, *sbuf; // iobuf: bounce of the bulk reads (indexes, big spans)
++// iobuf also holds a decoded middle-block read: its device read has finished before
++// LZ4 starts, and the requested bytes are copied out before any further I/O.
++static UINT8 *iobuf, *cbuf;
+ 
+ static struct { UINT32 cmds, hits, misses, bulk, retries, failures, injected; UINT64 bytes; } pks;
+ static char pk_err[320];
+@@ -994,9 +996,9 @@ static boolean AllocBuffers(void)
+ {
+ 	if (!cbuf)
+ 		cbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+-	if (!sbuf)
+-		sbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+-	return cbuf && sbuf;
++	if (!iobuf)
++		iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
++	return cbuf && iobuf;
+ }
+ 
+ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, void **poolp, boolean *nonmusic, wpack_t **packp)
+@@ -1193,9 +1195,7 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
+ 
+ 		if (!s->buf)
+ 			s->buf = WPACK_ALIGNED_ALLOC(s->pol->cap);
+-		AllocBuffers(); // the decode buffers and the bounce buffer too (a failure shows at the first read that needs them)
+-		if (!iobuf)
+-			iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
++		AllocBuffers(); // the decode and bounce buffers too (a failure shows at the first read that needs them)
+ 	}
+ 	*nlmp = (UINT16)n;
+ 	*poolp = pool;
+@@ -1217,8 +1217,7 @@ void WPack_Shutdown(void)
+ 	}
+ 	free(iobuf);
+ 	free(cbuf);
+-	free(sbuf);
+-	iobuf = cbuf = sbuf = NULL;
++	iobuf = cbuf = NULL;
+ }
+ 
+ // Delivers decoded bytes [lo, hi) of one block (decoded size bsize, stored in csize bytes at file offset *pos; *pos moves past the block)
+@@ -1256,11 +1255,13 @@ static boolean ReadBlock(pkstream_t *s, long *pos, boolean raw, UINT32 csize, UI
+ 			ok = LZ4_decompress_safe((const char *)src, (char *)dst, (int)csize, (int)bsize) == (int)bsize;
+ 		else if (lo == 0) // head of the block (patch headers etc): stop as soon as enough is decoded
+ 			ok = LZ4_decompress_safe_partial((const char *)src, (char *)dst, (int)csize, (int)want, (int)want) == (int)want;
+-		else if (LZ4_decompress_safe((const char *)src, (char *)sbuf, (int)csize, (int)bsize) != (int)bsize)
++		// src belongs to the stream window, the prefetch cache or cbuf, never
++		// iobuf. LZ4 and this copy perform no I/O, allocation or engine callbacks.
++		else if (LZ4_decompress_safe((const char *)src, (char *)iobuf, (int)csize, (int)bsize) != (int)bsize)
+ 			ok = false;
+ 		else
+ 		{
+-			memcpy(dst, sbuf + lo, want);
++			memcpy(dst, iobuf + lo, want);
+ 			ok = true;
+ 		}
+ 		LP_END(PK_LZ4, lpz);
+diff --git a/src/w_wad.c b/src/w_wad.c
+index 0688f6cff..3a35d0e50 100644
+--- a/src/w_wad.c
++++ b/src/w_wad.c
+@@ -108,6 +108,20 @@ typedef struct
+ // Must be a power of two
+ #define LUMPNUMCACHESIZE 64
+ 
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_LUMPCACHE)
++// A miss scans all hashes. Keep that hot set contiguous (256 bytes rather
++// than one word in each 40-byte record); names are touched only on a hash hit.
++// Capacity, total storage and the circular replacement order are unchanged.
++static struct
++{
++	UINT32 hash[LUMPNUMCACHESIZE];
++	lumpnum_t lumpnum[LUMPNUMCACHESIZE];
++	char lumpname[LUMPNUMCACHESIZE][32];
++} lumpnumcache;
++#define W_CACHE_HASH(i) (lumpnumcache.hash[(i)])
++#define W_CACHE_NUM(i) (lumpnumcache.lumpnum[(i)])
++#define W_CACHE_NAME(i) (lumpnumcache.lumpname[(i)])
++#else
+ typedef struct lumpnum_cache_s
+ {
+ 	char lumpname[32];
+@@ -116,6 +130,10 @@ typedef struct lumpnum_cache_s
+ } lumpnum_cache_t;
+ 
+ static lumpnum_cache_t lumpnumcache[LUMPNUMCACHESIZE];
++#define W_CACHE_HASH(i) (lumpnumcache[(i)].hash)
++#define W_CACHE_NUM(i) (lumpnumcache[(i)].lumpnum)
++#define W_CACHE_NAME(i) (lumpnumcache[(i)].lumpname)
++#endif
+ static UINT16 lumpnumcacheindex = 0;
+ 
+ //===========================================================================
+@@ -380,7 +398,7 @@ static INT32 W_MakeFileMD5(const char *filename, void *resblock)
+ // Invalidates the cache of lump numbers. Call this whenever a wad is added.
+ static void W_InvalidateLumpnumCache(void)
+ {
+-	memset(lumpnumcache, 0, sizeof (lumpnumcache));
++	memset(&lumpnumcache, 0, sizeof (lumpnumcache));
+ }
+ 
+ #if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: without PS2_FULLLOADER no wad/ZIP/folder/soc/lua resources, only cooked packs
+@@ -1926,6 +1944,28 @@ UINT16 W_CheckNumForLongNamePwad(const char *name, UINT16 wad, UINT16 startlump)
+ 	//
+ 	if (startlump < wadfiles[wad]->numlumps)
+ 	{
++#ifdef PS2_PROFILE
++		wadfile_t *wf = wadfiles[wad];
++
++		// The short name is the first eight bytes of the long basename.
++		// Reuse an existing index, preserving ascending order and the original
++		// case-sensitive long-name comparison. A long-only caller need not
++		// allocate a new index when memory is short.
++		if (wf->namebucket)
++		{
++			const UINT32 hash = quickncasehash(uname, 8);
++			UINT16 e;
++
++			for (e = wf->namebucket[(hash ^ (hash >> 15)) & wf->namemask]; e; e = wf->namenext[e - 1])
++			{
++				const lumpinfo_t *lump_p = wf->lumpinfo + (e - 1);
++
++				if ((UINT16)(e - 1) >= startlump && lump_p->hash == hash && !strcmp(lump_p->longname, uname))
++					return (UINT16)(e - 1);
++			}
++			return INT16_MAX;
++		}
++#endif
+ 		lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
+ 		for (i = startlump; i < wadfiles[wad]->numlumps; i++, lump_p++)
+ 			if (!strcmp(lump_p->longname, uname))
+@@ -2150,11 +2190,11 @@ static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
+ 		// Loop backwards so that we check most recent entries first
+ 		for (INT32 i = lumpnumcacheindex + LUMPNUMCACHESIZE; i > lumpnumcacheindex; i--)
+ 		{
+-			if (lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].hash == hash
+-				&& stricmp(lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname, name) == 0)
++			if (W_CACHE_HASH(i & (LUMPNUMCACHESIZE - 1)) == hash
++				&& stricmp(W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1)), name) == 0)
+ 			{
+ 				lumpnumcacheindex = i & (LUMPNUMCACHESIZE - 1);
+-				return lumpnumcache[lumpnumcacheindex].lumpnum;
++				return W_CACHE_NUM(lumpnumcacheindex);
+ 			}
+ 		}
+ 	}
+@@ -2165,12 +2205,12 @@ static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
+ 		// Loop backwards so that we check most recent entries first
+ 		for (INT32 i = lumpnumcacheindex + LUMPNUMCACHESIZE; i > lumpnumcacheindex; i--)
+ 		{
+-			if (lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].hash == hash
+-				&& lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname[8] == '\0'
+-				&& strnicmp(lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname, name, 8) == 0)
++			if (W_CACHE_HASH(i & (LUMPNUMCACHESIZE - 1)) == hash
++				&& W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1))[8] == '\0'
++				&& strnicmp(W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1)), name, 8) == 0)
+ 			{
+ 				lumpnumcacheindex = i & (LUMPNUMCACHESIZE - 1);
+-				return lumpnumcache[lumpnumcacheindex].lumpnum;
++				return W_CACHE_NUM(lumpnumcacheindex);
+ 			}
+ 		}
+ 	}
+@@ -2184,18 +2224,18 @@ static void AddLumpToCache(lumpnum_t lumpnum, const char *name, boolean longname
+ 		return;
+ 
+ 	lumpnumcacheindex = (lumpnumcacheindex + 1) & (LUMPNUMCACHESIZE - 1);
+-	memset(lumpnumcache[lumpnumcacheindex].lumpname, '\0', 32);
++	memset(W_CACHE_NAME(lumpnumcacheindex), '\0', 32);
+ 	if (longname)
+ 	{
+-		strlcpy(lumpnumcache[lumpnumcacheindex].lumpname, name, 32);
+-		lumpnumcache[lumpnumcacheindex].hash = quickncasehash(name, 32);
++		strlcpy(W_CACHE_NAME(lumpnumcacheindex), name, 32);
++		W_CACHE_HASH(lumpnumcacheindex) = quickncasehash(name, 32);
+ 	}
+ 	else
+ 	{
+-		strncpy(lumpnumcache[lumpnumcacheindex].lumpname, name, 8);
+-		lumpnumcache[lumpnumcacheindex].hash = quickncasehash(name, 8);
++		strncpy(W_CACHE_NAME(lumpnumcacheindex), name, 8);
++		W_CACHE_HASH(lumpnumcacheindex) = quickncasehash(name, 8);
+ 	}
+-	lumpnumcache[lumpnumcacheindex].lumpnum = lumpnum;
++	W_CACHE_NUM(lumpnumcacheindex) = lumpnum;
+ }
+ 
+ //
+@@ -2436,11 +2476,13 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
+ 		start = wadfiles[wad]->numlumps;
+ 
+ #ifdef PS2_PROFILE
+-	if (!longname)
++	if (!longname || wadfiles[wad]->namebucket)
+ 	{
+ 		wadfile_t *wf = wadfiles[wad];
+ 		UINT16 e;
+ 
++		if (longname)
++			hash = quickncasehash(name, 8);
+ 		if (!wf->numlumps)
+ 			return INT16_MAX;
+ 		if (!wf->namebucket)
+@@ -2450,7 +2492,8 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
+ 			i = (UINT16)(e - 1);
+ 			lump_p = wf->lumpinfo + i;
+ 			// the linear scan below: [0, start) and, when the range is not empty, [end, numlumps)
+-			if (lump_p->hash == hash && !strncmp(lump_p->name, uname, sizeof(uname) - 1)
++			if (lump_p->hash == hash
++				&& (longname ? stricmp(lump_p->longname, name) == 0 : !strncmp(lump_p->name, uname, sizeof(uname) - 1))
+ 				&& (i < start || (end != INT16_MAX && start < end && i >= end)))
+ 				return i;
+ 		}
+diff --git a/src/w_wad.h b/src/w_wad.h
+index 1ebb3be6c..321bf48e2 100644
+--- a/src/w_wad.h
++++ b/src/w_wad.h
+@@ -76,14 +76,29 @@ typedef struct
+ 	unsigned long position; // filelump_t filepos
+ 	unsigned long disksize; // filelump_t size
+ 	char name[9];           // filelump_t name[] e.g. "LongEntr"
++#ifdef PS2_PROFILE
++	// Internal metadata only: all compmethod values fit in the name's padding.
++	// Keep disk offsets, sizes and pointers at their natural alignment.
++	UINT8 compression;
++#endif
+ 	UINT32 hash;
+ 	char *longname;         //                   e.g. "LongEntryName"
+ 	char *fullname;         //                   e.g. "Folder/Subfolder/LongEntryName.extension"
+ 	char *diskpath;         // path to the file  e.g. "/usr/games/srb2/Addon/Folder/Subfolder/LongEntryName.extension"
+ 	size_t size;            // real (uncompressed) size
++#ifndef PS2_PROFILE
+ 	compmethod compression; // lump compression method
++#endif
+ } lumpinfo_t;
+ 
++#ifdef PS2_PROFILE
++#ifdef __cplusplus
++static_assert(CM_UNSUPPORTED <= UINT8_MAX, "lump compression method must fit in one byte");
++#else
++_Static_assert(CM_UNSUPPORTED <= UINT8_MAX, "lump compression method must fit in one byte");
++#endif
++#endif
++
+ // =========================================================================
+ //                         'VIRTUAL' RESOURCES
+ // =========================================================================

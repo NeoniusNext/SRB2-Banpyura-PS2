@@ -76,13 +76,28 @@ typedef struct
 	unsigned long position; // filelump_t filepos
 	unsigned long disksize; // filelump_t size
 	char name[9];           // filelump_t name[] e.g. "LongEntr"
+#ifdef PS2_PROFILE
+	// Internal metadata only: all compmethod values fit in the name's padding.
+	// Keep disk offsets, sizes and pointers at their natural alignment.
+	UINT8 compression;
+#endif
 	UINT32 hash;
 	char *longname;         //                   e.g. "LongEntryName"
 	char *fullname;         //                   e.g. "Folder/Subfolder/LongEntryName.extension"
 	char *diskpath;         // path to the file  e.g. "/usr/games/srb2/Addon/Folder/Subfolder/LongEntryName.extension"
 	size_t size;            // real (uncompressed) size
+#ifndef PS2_PROFILE
 	compmethod compression; // lump compression method
+#endif
 } lumpinfo_t;
+
+#ifdef PS2_PROFILE
+#ifdef __cplusplus
+static_assert(CM_UNSUPPORTED <= UINT8_MAX, "lump compression method must fit in one byte");
+#else
+_Static_assert(CM_UNSUPPORTED <= UINT8_MAX, "lump compression method must fit in one byte");
+#endif
+#endif
 
 // =========================================================================
 //                         'VIRTUAL' RESOURCES

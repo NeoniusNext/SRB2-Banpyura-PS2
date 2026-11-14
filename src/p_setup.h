@@ -35,6 +35,10 @@ extern UINT16 *ps2_blockmaplists;
 // PS2-143: line_t.args is a pointer; lines without arguments share lineargs_zero (never write through it: P_LineArgsW gives the line its own block)
 extern INT32 lineargs_zero[NUMLINEARGS];
 INT32 *P_LineArgsW(line_t *line);
+// Network archive reads an immutable spawn snapshot; compact snapshots use buffer.
+const spawnline_t *P_GetSpawnLine(size_t linenum, spawnline_t *buffer);
+const spawnsector_t *P_GetSpawnSector(size_t sectornum, spawnsector_t *buffer);
+const spawnside_t *P_GetSpawnSide(size_t sidenum, spawnside_t *buffer);
 #endif
 
 /* for levelflat type */

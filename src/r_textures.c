@@ -65,9 +65,10 @@ INT32 *texturetranslation;
 
 // Painfully simple texture id cacheing to make maps load faster. :3
 static struct {
-	char name[9];
+	// Keep word fields together: 20 bytes rather than 24, including the name's terminator.
 	UINT32 hash;
 	INT32 id;
+	char name[9];
 	UINT8 type;
 } *tidcache = NULL;
 static INT32 tidcachelen = 0;

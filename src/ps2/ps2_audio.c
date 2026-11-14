@@ -4,9 +4,11 @@
 
 #ifdef _MSC_VER // the host tests
 #define ALWAYS_INLINE __forceinline
+#define NEVER_INLINE __declspec(noinline)
 #define ASSUME_ALIGNED(p, n) (p)
 #else
 #define ALWAYS_INLINE inline __attribute__((always_inline))
+#define NEVER_INLINE __attribute__((noinline))
 #define ASSUME_ALIGNED(p, n) __builtin_assume_aligned(p, n)
 #endif
 
@@ -240,6 +242,61 @@ static __attribute__((noinline)) size_t MixNativeMMI(int32_t *accum, const uint8
 	}
 	return block & ~(size_t)3;
 }
+
+// Half-rate playback repeats each source frame exactly twice. Build four
+// output frames from two source frames, without changing gain rounding.
+// The loads accept every PCM alignment and stay within those two frames.
+static __attribute__((noinline)) size_t MixHalfMMI(int32_t *accum, const uint8_t *data,
+	size_t block, int bits, int stereo, int left, int right)
+{
+	uint16_t gains[8] __attribute__((aligned(16)));
+	size_t groups = block / 4;
+	unsigned i;
+	if (!groups || left < 0 || left > 256 || right < 0 || right > 256
+		|| ((uintptr_t)accum & 15)) return 0;
+	for (i = 0; i < 8; i += 2) { gains[i] = (uint16_t)left; gains[i+1] = (uint16_t)right; }
+	if (bits == 16)
+	{
+		if (stereo) MMI_MIX("ldl $8,7(%0)\n\tldr $8,0(%0)\n\tpextlw $8,$8,$8\n\t", "", MMI_DIV256, "8");
+		else MMI_MIX("lwl $8,3(%0)\n\tlwr $8,0(%0)\n\tpextlh $8,$8,$8\n\tpextlh $8,$8,$8\n\t", "", MMI_DIV256, "4");
+	}
+	else
+	{
+		if (stereo) MMI_MIX("lwl $8,3(%0)\n\tlwr $8,0(%0)\n\tpextlb $8,$zero,$8\n\tpsubh $8,$8,$15\n\tpextlw $8,$8,$8\n\t", MMI_BIAS128, "", "4");
+		else MMI_MIX("lbu $8,0(%0)\n\tlbu $14,1(%0)\n\tsll $14,$14,8\n\tor $8,$8,$14\n\tpextlb $8,$zero,$8\n\tpsubh $8,$8,$15\n\tpextlh $8,$8,$8\n\tpextlh $8,$8,$8\n\t", MMI_BIAS128, "", "2");
+	}
+	return block & ~(size_t)3;
+}
+
+// At step 2.0, stereo playback uses the even source frames. Gather four
+// complete stereo frames from eight, retaining the original channel order.
+// All PCM alignments are accepted; the caller bounds all eight source frames.
+static __attribute__((noinline)) size_t MixDec2StereoMMI(int32_t *accum, const uint8_t *data,
+	size_t block, int bits, int left, int right)
+{
+	uint16_t gains[8] __attribute__((aligned(16)));
+	size_t groups = block / 4;
+	unsigned i;
+	if (!groups || left < 0 || left > 256 || right < 0 || right > 256
+		|| ((uintptr_t)accum & 15)) return 0;
+	for (i = 0; i < 8; i += 2) { gains[i] = (uint16_t)left; gains[i+1] = (uint16_t)right; }
+	if (bits == 16)
+	{
+		MMI_MIX("ldl $8,7(%0)\n\tldr $8,0(%0)\n\t"
+			"ldl $10,15(%0)\n\tldr $10,8(%0)\n\t"
+			"ldl $11,23(%0)\n\tldr $11,16(%0)\n\t"
+			"ldl $12,31(%0)\n\tldr $12,24(%0)\n\t"
+			"pcpyld $8,$10,$8\n\tpcpyld $11,$12,$11\n\tppacw $8,$11,$8\n\t", "", MMI_DIV256, "32");
+	}
+	else
+	{
+		MMI_MIX("ldl $8,7(%0)\n\tldr $8,0(%0)\n\t"
+			"ldl $10,15(%0)\n\tldr $10,8(%0)\n\t"
+			"pcpyld $8,$10,$8\n\tppach $8,$zero,$8\n\t"
+			"pextlb $8,$zero,$8\n\tpsubh $8,$8,$15\n\t", MMI_BIAS128, "", "16");
+	}
+	return block & ~(size_t)3;
+}
 #undef MMI_MIX
 #undef MMI_DIV256
 #undef MMI_BIAS128
@@ -443,6 +500,87 @@ static __attribute__((noinline)) void MixDec2Voice(ps2_voice *v, int32_t *accum,
 }
 #endif
 
+// With a canonical fraction in the first half of a source frame, step 0.5
+// produces pairs of identical samples. Bound the source range before packing;
+// the final one to three outputs use the original cursor update.
+static NEVER_INLINE void MixHalfVoice(ps2_voice *v, int32_t *accum, size_t block,
+	const ps2_sample *sample, int left, int right)
+{
+	const uint8_t *data = sample->bytes + sample->pcm.offset;
+	const uint32_t frames = sample->pcm.frames;
+	const int bits = sample->pcm.bits == 8 ? 8 : 16, stereo = sample->pcm.channels == 2;
+	const int aligned = !((uintptr_t)data & 1);
+	uint32_t frame = v->frame, fraction = v->fraction;
+	const unsigned stride = (unsigned)(bits / 8) * (stereo ? 2u : 1u);
+	size_t f = 0, available;
+	if (frame >= frames) { v->sample = NULL; return; }
+	available = frames - frame;
+	// The multiplication is bounded by block (at most PS2_AUDIO_BLOCK).
+	if (available <= block / 2) block = available * 2;
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+	f = MixHalfMMI(accum, data + (size_t)frame * stride, block, bits, stereo, left, right);
+	frame += (uint32_t)(f / 2);
+#else
+	for (; f + 1 < block; f += 2, frame++)
+	{
+		const uint8_t *p = data + (size_t)frame * stride;
+		int l = bits == 8 ? (int)p[0] - 128 : Sample16(p, aligned);
+		int r = !stereo ? l : bits == 8 ? (int)p[1] - 128 : Sample16(p + 2, aligned);
+		if (bits != 8) { l = Div256(l * left); r = Div256(r * right); }
+		else { l *= left; r *= right; }
+		accum[f*2] += l; accum[f*2+1] += r;
+		accum[f*2+2] += l; accum[f*2+3] += r;
+	}
+#endif
+	for (; f < block; f++)
+	{
+		const uint8_t *p = data + (size_t)frame * stride;
+		int l = bits == 8 ? (int)p[0] - 128 : Sample16(p, aligned);
+		int r = !stereo ? l : bits == 8 ? (int)p[1] - 128 : Sample16(p + 2, aligned);
+		if (bits == 8) { accum[f*2] += l * left; accum[f*2+1] += r * right; }
+		else { accum[f*2] += Div256(l * left); accum[f*2+1] += Div256(r * right); }
+		fraction += 32768; frame += fraction >> 16; fraction &= 65535;
+	}
+	v->frame = frame; v->fraction = fraction;
+}
+
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+// Canonical fractions remain unchanged at step 2.0. Keep the stereo gather
+// separate so the preceding native, half-rate and general loops are unchanged.
+static NEVER_INLINE void MixDec2StereoVoice(ps2_voice *v, int32_t *accum, size_t block,
+	const ps2_sample *sample, int left, int right)
+{
+	const uint8_t *data = sample->bytes + sample->pcm.offset;
+	const uint32_t frames = sample->pcm.frames;
+	const int bits = sample->pcm.bits == 8 ? 8 : 16;
+	const int aligned = !((uintptr_t)data & 1);
+	const unsigned stride = (unsigned)(bits / 8) * 2;
+	uint32_t frame = v->frame;
+	size_t f = 0;
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+	const size_t cap = frame < frames ? (size_t)((frames - frame) / 8) * 4 : 0;
+	const size_t n = block < cap ? block : cap;
+	if (n >= 4)
+	{
+		f = MixDec2StereoMMI(accum, data + (size_t)frame * stride, n, bits, left, right);
+		frame += (uint32_t)(2 * f);
+	}
+#endif
+	for (; f < block; f++, frame += 2)
+	{
+		const uint8_t *p;
+		int l, r;
+		if (frame >= frames) { v->sample = NULL; break; }
+		p = data + (size_t)frame * stride;
+		l = bits == 8 ? (int)p[0] - 128 : Sample16(p, aligned);
+		r = bits == 8 ? (int)p[1] - 128 : Sample16(p + 2, aligned);
+		if (bits == 8) { accum[f*2] += l * left; accum[f*2+1] += r * right; }
+		else { accum[f*2] += Div256(l * left); accum[f*2+1] += Div256(r * right); }
+	}
+	v->frame = frame;
+}
+#endif
+
 // One voice into the accumulator for up to `block` output frames. Same arithmetic as PS2_PCMValue + the per-sample
 // cursor update, with the cursor in registers: nothing is re-read through the voice after each store.
 // bits: 8 or 16 (constant at each call site), stereo: source has two channels, aligned: 16-bit data is 2-byte aligned.
@@ -524,6 +662,32 @@ MIX_WRAPPER(Mix16StereoOdd, 16, 1, 0)
 #define Mix16StereoOdd(v,a,b,d,f,l,r) MixVoice(v,a,b,d,f,16,1,0,l,r)
 #endif
 
+// A zero-gain voice still advances and expires at the original source frame.
+// Away from EOF, combine its bounded cursor updates without reading its PCM.
+// Keep the scalar cursor rules for overflow-sized steps and the final block.
+static void AdvanceSilentVoice(ps2_voice *v, size_t block, uint32_t frames)
+{
+	uint32_t frame = v->frame, fraction = v->fraction, step = v->step;
+	if (fraction < 65536 && step <= UINT32_MAX - 65535 && frame < frames)
+	{
+		const uint64_t position = fraction + (uint64_t)step * block;
+		const uint64_t advance = position >> 16;
+		if (advance < frames - frame)
+		{
+			v->frame = frame + (uint32_t)advance;
+			v->fraction = (uint32_t)position & 65535;
+			return;
+		}
+	}
+	while (block--)
+	{
+		if (frame >= frames) { v->sample = NULL; break; }
+		fraction += step;
+		frame += fraction >> 16; fraction &= 65535;
+	}
+	v->frame = frame; v->fraction = fraction;
+}
+
 void PS2_MixerRender(ps2_mixer *m, int16_t *out, const int16_t *music, size_t n, unsigned gain)
 {
 	size_t f;
@@ -558,10 +722,25 @@ void PS2_MixerRender(ps2_mixer *m, int16_t *out, const int16_t *music, size_t n,
 			// Center is full amplitude on both channels; linear pan to either edge.
 			left = v->pan <= 128 ? 128 : 255 - v->pan;
 			right = v->pan >= 128 ? 128 : v->pan;
-			left = left * v->volume * m->volume * 256 / (128 * 255 * 31);
-			right = right * v->volume * m->volume * 256 / (128 * 255 * 31);
+			left = left * v->volume * m->volume * 256;
+			right = right * v->volume * m->volume * 256;
+			// Test the exact zero quotient before the divisions. Keeping their
+			// EE expansion off the silent path also avoids register-pressure costs.
+			if (left < 128 * 255 * 31 && right < 128 * 255 * 31 && v->fraction < 65536)
+			{
+				AdvanceSilentVoice(v, block, s->pcm.frames);
+				if (v->sample && v->frame >= s->pcm.frames) v->sample = NULL;
+				continue;
+			}
+			left /= 128 * 255 * 31; right /= 128 * 255 * 31;
 			data = s->bytes + s->pcm.offset;
-			if (s->pcm.bits == 8)
+			if (v->step == 32768 && v->fraction < 32768)
+				MixHalfVoice(v, accum, block, s, (int)left, (int)right);
+#if defined(_EE) && !defined(PS2_NOOPT_AUDIO_MMI)
+			else if (v->step == 131072 && v->fraction < 65536 && s->pcm.channels == 2)
+				MixDec2StereoVoice(v, accum, block, s, (int)left, (int)right);
+#endif
+			else if (s->pcm.bits == 8)
 			{
 				if (s->pcm.channels == 2) Mix8Stereo(v, accum, block, data, s->pcm.frames, (int)left, (int)right);
 				else Mix8Mono(v, accum, block, data, s->pcm.frames, (int)left, (int)right);

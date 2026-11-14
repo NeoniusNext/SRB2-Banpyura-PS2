@@ -108,6 +108,20 @@ typedef struct
 // Must be a power of two
 #define LUMPNUMCACHESIZE 64
 
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_LUMPCACHE)
+// A miss scans all hashes. Keep that hot set contiguous (256 bytes rather
+// than one word in each 40-byte record); names are touched only on a hash hit.
+// Capacity, total storage and the circular replacement order are unchanged.
+static struct
+{
+	UINT32 hash[LUMPNUMCACHESIZE];
+	lumpnum_t lumpnum[LUMPNUMCACHESIZE];
+	char lumpname[LUMPNUMCACHESIZE][32];
+} lumpnumcache;
+#define W_CACHE_HASH(i) (lumpnumcache.hash[(i)])
+#define W_CACHE_NUM(i) (lumpnumcache.lumpnum[(i)])
+#define W_CACHE_NAME(i) (lumpnumcache.lumpname[(i)])
+#else
 typedef struct lumpnum_cache_s
 {
 	char lumpname[32];
@@ -116,6 +130,10 @@ typedef struct lumpnum_cache_s
 } lumpnum_cache_t;
 
 static lumpnum_cache_t lumpnumcache[LUMPNUMCACHESIZE];
+#define W_CACHE_HASH(i) (lumpnumcache[(i)].hash)
+#define W_CACHE_NUM(i) (lumpnumcache[(i)].lumpnum)
+#define W_CACHE_NAME(i) (lumpnumcache[(i)].lumpname)
+#endif
 static UINT16 lumpnumcacheindex = 0;
 
 //===========================================================================
@@ -380,7 +398,7 @@ static INT32 W_MakeFileMD5(const char *filename, void *resblock)
 // Invalidates the cache of lump numbers. Call this whenever a wad is added.
 static void W_InvalidateLumpnumCache(void)
 {
-	memset(lumpnumcache, 0, sizeof (lumpnumcache));
+	memset(&lumpnumcache, 0, sizeof (lumpnumcache));
 }
 
 #if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: without PS2_FULLLOADER no wad/ZIP/folder/soc/lua resources, only cooked packs
@@ -1926,6 +1944,28 @@ UINT16 W_CheckNumForLongNamePwad(const char *name, UINT16 wad, UINT16 startlump)
 	//
 	if (startlump < wadfiles[wad]->numlumps)
 	{
+#ifdef PS2_PROFILE
+		wadfile_t *wf = wadfiles[wad];
+
+		// The short name is the first eight bytes of the long basename.
+		// Reuse an existing index, preserving ascending order and the original
+		// case-sensitive long-name comparison. A long-only caller need not
+		// allocate a new index when memory is short.
+		if (wf->namebucket)
+		{
+			const UINT32 hash = quickncasehash(uname, 8);
+			UINT16 e;
+
+			for (e = wf->namebucket[(hash ^ (hash >> 15)) & wf->namemask]; e; e = wf->namenext[e - 1])
+			{
+				const lumpinfo_t *lump_p = wf->lumpinfo + (e - 1);
+
+				if ((UINT16)(e - 1) >= startlump && lump_p->hash == hash && !strcmp(lump_p->longname, uname))
+					return (UINT16)(e - 1);
+			}
+			return INT16_MAX;
+		}
+#endif
 		lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
 		for (i = startlump; i < wadfiles[wad]->numlumps; i++, lump_p++)
 			if (!strcmp(lump_p->longname, uname))
@@ -2150,11 +2190,11 @@ static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
 		// Loop backwards so that we check most recent entries first
 		for (INT32 i = lumpnumcacheindex + LUMPNUMCACHESIZE; i > lumpnumcacheindex; i--)
 		{
-			if (lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].hash == hash
-				&& stricmp(lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname, name) == 0)
+			if (W_CACHE_HASH(i & (LUMPNUMCACHESIZE - 1)) == hash
+				&& stricmp(W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1)), name) == 0)
 			{
 				lumpnumcacheindex = i & (LUMPNUMCACHESIZE - 1);
-				return lumpnumcache[lumpnumcacheindex].lumpnum;
+				return W_CACHE_NUM(lumpnumcacheindex);
 			}
 		}
 	}
@@ -2165,12 +2205,12 @@ static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
 		// Loop backwards so that we check most recent entries first
 		for (INT32 i = lumpnumcacheindex + LUMPNUMCACHESIZE; i > lumpnumcacheindex; i--)
 		{
-			if (lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].hash == hash
-				&& lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname[8] == '\0'
-				&& strnicmp(lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname, name, 8) == 0)
+			if (W_CACHE_HASH(i & (LUMPNUMCACHESIZE - 1)) == hash
+				&& W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1))[8] == '\0'
+				&& strnicmp(W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1)), name, 8) == 0)
 			{
 				lumpnumcacheindex = i & (LUMPNUMCACHESIZE - 1);
-				return lumpnumcache[lumpnumcacheindex].lumpnum;
+				return W_CACHE_NUM(lumpnumcacheindex);
 			}
 		}
 	}
@@ -2184,18 +2224,18 @@ static void AddLumpToCache(lumpnum_t lumpnum, const char *name, boolean longname
 		return;
 
 	lumpnumcacheindex = (lumpnumcacheindex + 1) & (LUMPNUMCACHESIZE - 1);
-	memset(lumpnumcache[lumpnumcacheindex].lumpname, '\0', 32);
+	memset(W_CACHE_NAME(lumpnumcacheindex), '\0', 32);
 	if (longname)
 	{
-		strlcpy(lumpnumcache[lumpnumcacheindex].lumpname, name, 32);
-		lumpnumcache[lumpnumcacheindex].hash = quickncasehash(name, 32);
+		strlcpy(W_CACHE_NAME(lumpnumcacheindex), name, 32);
+		W_CACHE_HASH(lumpnumcacheindex) = quickncasehash(name, 32);
 	}
 	else
 	{
-		strncpy(lumpnumcache[lumpnumcacheindex].lumpname, name, 8);
-		lumpnumcache[lumpnumcacheindex].hash = quickncasehash(name, 8);
+		strncpy(W_CACHE_NAME(lumpnumcacheindex), name, 8);
+		W_CACHE_HASH(lumpnumcacheindex) = quickncasehash(name, 8);
 	}
-	lumpnumcache[lumpnumcacheindex].lumpnum = lumpnum;
+	W_CACHE_NUM(lumpnumcacheindex) = lumpnum;
 }
 
 //
@@ -2436,11 +2476,13 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
 		start = wadfiles[wad]->numlumps;
 
 #ifdef PS2_PROFILE
-	if (!longname)
+	if (!longname || wadfiles[wad]->namebucket)
 	{
 		wadfile_t *wf = wadfiles[wad];
 		UINT16 e;
 
+		if (longname)
+			hash = quickncasehash(name, 8);
 		if (!wf->numlumps)
 			return INT16_MAX;
 		if (!wf->namebucket)
@@ -2450,7 +2492,8 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
 			i = (UINT16)(e - 1);
 			lump_p = wf->lumpinfo + i;
 			// the linear scan below: [0, start) and, when the range is not empty, [end, numlumps)
-			if (lump_p->hash == hash && !strncmp(lump_p->name, uname, sizeof(uname) - 1)
+			if (lump_p->hash == hash
+				&& (longname ? stricmp(lump_p->longname, name) == 0 : !strncmp(lump_p->name, uname, sizeof(uname) - 1))
 				&& (i < start || (end != INT16_MAX && start < end && i >= end)))
 				return i;
 		}

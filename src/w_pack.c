@@ -146,7 +146,9 @@ static pkstream_t pkst[PK_STREAMS];
 static unsigned pkst_next;
 
 // All reads below bounce through 64-byte aligned buffers and whole-sector requests. Caller buffers may be unaligned.
-static UINT8 *iobuf, *cbuf, *sbuf; // iobuf: bounce of the bulk reads (indexes, big spans)
+// iobuf also holds a decoded middle-block read: its device read has finished before
+// LZ4 starts, and the requested bytes are copied out before any further I/O.
+static UINT8 *iobuf, *cbuf;
 
 static struct { UINT32 cmds, hits, misses, bulk, retries, failures, injected; UINT64 bytes; } pks;
 static char pk_err[320];
@@ -994,9 +996,9 @@ static boolean AllocBuffers(void)
 {
 	if (!cbuf)
 		cbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
-	if (!sbuf)
-		sbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
-	return cbuf && sbuf;
+	if (!iobuf)
+		iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+	return cbuf && iobuf;
 }
 
 lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, void **poolp, boolean *nonmusic, wpack_t **packp)
@@ -1193,9 +1195,7 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
 
 		if (!s->buf)
 			s->buf = WPACK_ALIGNED_ALLOC(s->pol->cap);
-		AllocBuffers(); // the decode buffers and the bounce buffer too (a failure shows at the first read that needs them)
-		if (!iobuf)
-			iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+		AllocBuffers(); // the decode and bounce buffers too (a failure shows at the first read that needs them)
 	}
 	*nlmp = (UINT16)n;
 	*poolp = pool;
@@ -1217,8 +1217,7 @@ void WPack_Shutdown(void)
 	}
 	free(iobuf);
 	free(cbuf);
-	free(sbuf);
-	iobuf = cbuf = sbuf = NULL;
+	iobuf = cbuf = NULL;
 }
 
 // Delivers decoded bytes [lo, hi) of one block (decoded size bsize, stored in csize bytes at file offset *pos; *pos moves past the block)
@@ -1256,11 +1255,13 @@ static boolean ReadBlock(pkstream_t *s, long *pos, boolean raw, UINT32 csize, UI
 			ok = LZ4_decompress_safe((const char *)src, (char *)dst, (int)csize, (int)bsize) == (int)bsize;
 		else if (lo == 0) // head of the block (patch headers etc): stop as soon as enough is decoded
 			ok = LZ4_decompress_safe_partial((const char *)src, (char *)dst, (int)csize, (int)want, (int)want) == (int)want;
-		else if (LZ4_decompress_safe((const char *)src, (char *)sbuf, (int)csize, (int)bsize) != (int)bsize)
+		// src belongs to the stream window, the prefetch cache or cbuf, never
+		// iobuf. LZ4 and this copy perform no I/O, allocation or engine callbacks.
+		else if (LZ4_decompress_safe((const char *)src, (char *)iobuf, (int)csize, (int)bsize) != (int)bsize)
 			ok = false;
 		else
 		{
-			memcpy(dst, sbuf + lo, want);
+			memcpy(dst, iobuf + lo, want);
 			ok = true;
 		}
 		LP_END(PK_LZ4, lpz);

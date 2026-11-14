@@ -23,6 +23,59 @@
     #pragma GCC diagnostic ignored "-Waggregate-return"
 #endif
 
+#ifdef PS2_OPT_DRAW
+// A plane's spans share their flat dimensions. Generating these descriptors
+// needs a 64-bit divide on the EE; keep two descriptors per axis across all
+// tilted drawers, including alternating floor/sprite dimensions. Copy them
+// into span-local storage before any pixel stores.
+// No source/cache pointer is retained, so flat eviction and mode/level changes
+// need no invalidation. Zero dimensions still take libdivide's error path.
+static void R_NPO2SlopeDividers(struct libdivide_u32_t *x, struct libdivide_u32_t *y)
+{
+	// Keep the magic words aligned even though libdivide's descriptor is packed.
+	static struct
+	{
+		UINT32 magic;
+		UINT16 dimension;
+		UINT8 more;
+	} xcached[2], ycached[2];
+	static UINT8 xnext, ynext;
+	const UINT16 flatwidth = ds_flatwidth, flatheight = ds_flatheight;
+	UINT32 xi = 0, yi = 0;
+
+	if (!flatwidth || xcached[0].dimension != flatwidth)
+	{
+		xi = 1;
+		if (!flatwidth || xcached[1].dimension != flatwidth)
+		{
+			const struct libdivide_u32_t divider = libdivide_u32_gen(flatwidth);
+			xi = xnext;
+			xcached[xi].magic = divider.magic;
+			xcached[xi].more = divider.more;
+			xcached[xi].dimension = flatwidth;
+			xnext ^= 1;
+		}
+	}
+	if (!flatheight || ycached[0].dimension != flatheight)
+	{
+		yi = 1;
+		if (!flatheight || ycached[1].dimension != flatheight)
+		{
+			const struct libdivide_u32_t divider = libdivide_u32_gen(flatheight);
+			yi = ynext;
+			ycached[yi].magic = divider.magic;
+			ycached[yi].more = divider.more;
+			ycached[yi].dimension = flatheight;
+			ynext ^= 1;
+		}
+	}
+	x->magic = xcached[xi].magic;
+	x->more = xcached[xi].more;
+	y->magic = ycached[yi].magic;
+	y->more = ycached[yi].more;
+}
+#endif
+
 /**	\brief The R_DrawSpan_NPO2_8 function
 	Draws the actual span.
 */
@@ -127,6 +180,20 @@ void R_DrawSpan_NPO2_8 (void)
 /**	\brief The R_DrawTiltedSpan_NPO2_8 function
 	Draw slopes! Holy sheit!
 */
+// Retain per-span parameters without changing the live source/lookup reads.
+// Framebuffer storage is separate from the renderer globals themselves.
+#ifdef PS2_OPT_DRAW
+#define NPO2_TILT_WIDTH npo2_width
+#define NPO2_TILT_HEIGHT npo2_height
+#define NPO2_TILT_LIGHT npo2_pzl[tiltlighting[npo2_x++]] + npo2_cmofs
+#define NPO2_TILT_TRANSMAP npo2_transmap
+#else
+#define NPO2_TILT_WIDTH ds_flatwidth
+#define NPO2_TILT_HEIGHT ds_flatheight
+#define NPO2_TILT_LIGHT planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps)
+#define NPO2_TILT_TRANSMAP ds_transmap
+#endif
+
 void R_DrawTiltedSpan_NPO2_8(void)
 {
 	// x1, x2 = ds_x1, ds_x2
@@ -144,8 +211,13 @@ void R_DrawTiltedSpan_NPO2_8(void)
 	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
+#ifdef PS2_OPT_DRAW
+	struct libdivide_u32_t x_divider, y_divider;
+	R_NPO2SlopeDividers(&x_divider, &y_divider);
+#else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
+#endif
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
@@ -157,6 +229,13 @@ void R_DrawTiltedSpan_NPO2_8(void)
 	source = ds_source;
 	//colormap = ds_colormap;
 
+#ifdef PS2_OPT_DRAW
+	const UINT16 npo2_width = ds_flatwidth, npo2_height = ds_flatheight;
+	lighttable_t **const npo2_pzl = planezlight;
+	const ptrdiff_t npo2_cmofs = ds_colormap - colormaps;
+	INT32 npo2_x = ds_x1;
+#endif
+
 #if 0	// The "perfect" reference version of this routine. Pretty slow.
 		// Use it only to see how things are supposed to look.
 	i = 0;
@@ -166,7 +245,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
-		colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+		colormap = NPO2_TILT_LIGHT;
 
 		// Lactozilla: Non-powers-of-two
 		{
@@ -175,15 +254,15 @@ void R_DrawTiltedSpan_NPO2_8(void)
 
 			// Carefully align all of my Friends.
 			if (x < 0)
-				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 			else
-				x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+				x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 			if (y < 0)
-				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
-				y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-			*dest = colormap[source[((y * ds_flatwidth) + x)]];
+			*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 		}
 		dest++;
 		iz += ds_sz.x;
@@ -217,7 +296,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -225,15 +304,15 @@ void R_DrawTiltedSpan_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				*dest = colormap[source[((y * ds_flatwidth) + x)]];
+				*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 			}
 			dest++;
 			u += stepu;
@@ -249,7 +328,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 		{
 			u = SLOPE_U32(startu);
 			v = SLOPE_U32(startv);
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -257,15 +336,15 @@ void R_DrawTiltedSpan_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				*dest = colormap[source[((y * ds_flatwidth) + x)]];
+				*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 			}
 		}
 		else
@@ -286,7 +365,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 
 			for (; width != 0; width--)
 			{
-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+				colormap = NPO2_TILT_LIGHT;
 				// Lactozilla: Non-powers-of-two
 				{
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -294,15 +373,15 @@ void R_DrawTiltedSpan_NPO2_8(void)
 
 					// Carefully align all of my Friends.
 					if (x < 0)
-						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 					else
-						x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+						x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 					if (y < 0)
-						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
-						y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-					*dest = colormap[source[((y * ds_flatwidth) + x)]];
+					*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 				}
 				dest++;
 				u += stepu;
@@ -310,6 +389,9 @@ void R_DrawTiltedSpan_NPO2_8(void)
 			}
 		}
 	}
+#endif
+#ifdef PS2_OPT_DRAW
+	ds_x1 = npo2_x;
 #endif
 }
 
@@ -333,8 +415,13 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
+#ifdef PS2_OPT_DRAW
+	struct libdivide_u32_t x_divider, y_divider;
+	R_NPO2SlopeDividers(&x_divider, &y_divider);
+#else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
+#endif
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
@@ -346,6 +433,14 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 	source = ds_source;
 	//colormap = ds_colormap;
 
+#ifdef PS2_OPT_DRAW
+	const UINT16 npo2_width = ds_flatwidth, npo2_height = ds_flatheight;
+	lighttable_t **const npo2_pzl = planezlight;
+	const ptrdiff_t npo2_cmofs = ds_colormap - colormaps;
+	INT32 npo2_x = ds_x1;
+	const UINT8 *const npo2_transmap = ds_transmap;
+#endif
+
 #if 0	// The "perfect" reference version of this routine. Pretty slow.
 		// Use it only to see how things are supposed to look.
 	i = 0;
@@ -355,7 +450,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
-		colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+		colormap = NPO2_TILT_LIGHT;
 		// Lactozilla: Non-powers-of-two
 		{
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -363,15 +458,15 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 
 			// Carefully align all of my Friends.
 			if (x < 0)
-				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 			else
-				x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+				x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 			if (y < 0)
-				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
-				y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-			*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dest);
+			*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 		}
 		dest++;
 		iz += ds_sz.x;
@@ -405,7 +500,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -413,15 +508,15 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dest);
+				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 			}
 			dest++;
 			u += stepu;
@@ -437,7 +532,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 		{
 			u = SLOPE_U32(startu);
 			v = SLOPE_U32(startv);
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -445,15 +540,15 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dest);
+				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 			}
 		}
 		else
@@ -474,7 +569,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 
 			for (; width != 0; width--)
 			{
-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+				colormap = NPO2_TILT_LIGHT;
 				// Lactozilla: Non-powers-of-two
 				{
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -482,15 +577,15 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 
 					// Carefully align all of my Friends.
 					if (x < 0)
-						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 					else
-						x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+						x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 					if (y < 0)
-						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
-						y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-					*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dest);
+					*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 				}
 				dest++;
 				u += stepu;
@@ -498,6 +593,9 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 			}
 		}
 	}
+#endif
+#ifdef PS2_OPT_DRAW
+	ds_x1 = npo2_x;
 #endif
 }
 
@@ -520,8 +618,13 @@ void R_DrawTiltedSplat_NPO2_8(void)
 	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
+#ifdef PS2_OPT_DRAW
+	struct libdivide_u32_t x_divider, y_divider;
+	R_NPO2SlopeDividers(&x_divider, &y_divider);
+#else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
+#endif
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
@@ -533,6 +636,13 @@ void R_DrawTiltedSplat_NPO2_8(void)
 	source = ds_source;
 	//colormap = ds_colormap;
 
+#ifdef PS2_OPT_DRAW
+	const UINT16 npo2_width = ds_flatwidth, npo2_height = ds_flatheight;
+	lighttable_t **const npo2_pzl = planezlight;
+	const ptrdiff_t npo2_cmofs = ds_colormap - colormaps;
+	INT32 npo2_x = ds_x1;
+#endif
+
 #if 0	// The "perfect" reference version of this routine. Pretty slow.
 		// Use it only to see how things are supposed to look.
 	i = 0;
@@ -542,7 +652,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
-		colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+		colormap = NPO2_TILT_LIGHT;
 
 		// Lactozilla: Non-powers-of-two
 		{
@@ -551,15 +661,15 @@ void R_DrawTiltedSplat_NPO2_8(void)
 
 			// Carefully align all of my Friends.
 			if (x < 0)
-				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 			else
-				x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+				x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 			if (y < 0)
-				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
-				y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-			val = source[((y * ds_flatwidth) + x)];
+			val = source[((y * NPO2_TILT_WIDTH) + x)];
 		}
 
 		if (val != TRANSPARENTPIXEL)
@@ -597,7 +707,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -605,15 +715,15 @@ void R_DrawTiltedSplat_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
 			if (val != TRANSPARENTPIXEL)
 				*dest = colormap[val];
@@ -631,7 +741,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 		{
 			u = SLOPE_U32(startu);
 			v = SLOPE_U32(startv);
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -639,15 +749,15 @@ void R_DrawTiltedSplat_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
 			if (val != TRANSPARENTPIXEL)
 				*dest = colormap[val];
@@ -670,7 +780,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 
 			for (; width != 0; width--)
 			{
-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+				colormap = NPO2_TILT_LIGHT;
 				// Lactozilla: Non-powers-of-two
 				{
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -678,15 +788,15 @@ void R_DrawTiltedSplat_NPO2_8(void)
 
 					// Carefully align all of my Friends.
 					if (x < 0)
-						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 					else
-						x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+						x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 					if (y < 0)
-						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
-						y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-					val = source[((y * ds_flatwidth) + x)];
+					val = source[((y * NPO2_TILT_WIDTH) + x)];
 				}
 				if (val != TRANSPARENTPIXEL)
 					*dest = colormap[val];
@@ -696,6 +806,9 @@ void R_DrawTiltedSplat_NPO2_8(void)
 			}
 		}
 	}
+#endif
+#ifdef PS2_OPT_DRAW
+	ds_x1 = npo2_x;
 #endif
 }
 
@@ -718,8 +831,13 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
+#ifdef PS2_OPT_DRAW
+	struct libdivide_u32_t x_divider, y_divider;
+	R_NPO2SlopeDividers(&x_divider, &y_divider);
+#else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
+#endif
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
@@ -731,6 +849,14 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 	source = ds_source;
 	//colormap = ds_colormap;
 
+#ifdef PS2_OPT_DRAW
+	const UINT16 npo2_width = ds_flatwidth, npo2_height = ds_flatheight;
+	lighttable_t **const npo2_pzl = planezlight;
+	const ptrdiff_t npo2_cmofs = ds_colormap - colormaps;
+	INT32 npo2_x = ds_x1;
+	const UINT8 *const npo2_transmap = ds_transmap;
+#endif
+
 #if 0	// The "perfect" reference version of this routine. Pretty slow.
 		// Use it only to see how things are supposed to look.
 	i = 0;
@@ -740,7 +866,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
-		colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+		colormap = NPO2_TILT_LIGHT;
 
 		// Lactozilla: Non-powers-of-two
 		{
@@ -749,19 +875,19 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 
 			// Carefully align all of my Friends.
 			if (x < 0)
-				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 			else
-				x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+				x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 			if (y < 0)
-				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
-				y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-			val = source[((y * ds_flatwidth) + x)];
+			val = source[((y * NPO2_TILT_WIDTH) + x)];
 		}
 
 		if (val != TRANSPARENTPIXEL)
-			*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
+			*dest = *(NPO2_TILT_TRANSMAP + (colormap[val] << 8) + *dest);
 
 		dest++;
 		iz += ds_sz.x;
@@ -795,7 +921,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -803,18 +929,18 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
 			if (val != TRANSPARENTPIXEL)
-				*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
+				*dest = *(NPO2_TILT_TRANSMAP + (colormap[val] << 8) + *dest);
 			dest++;
 			u += stepu;
 			v += stepv;
@@ -829,7 +955,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 		{
 			u = SLOPE_U32(startu);
 			v = SLOPE_U32(startv);
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -837,18 +963,18 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
 			if (val != TRANSPARENTPIXEL)
-				*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
+				*dest = *(NPO2_TILT_TRANSMAP + (colormap[val] << 8) + *dest);
 		}
 		else
 		{
@@ -868,7 +994,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 
 			for (; width != 0; width--)
 			{
-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+				colormap = NPO2_TILT_LIGHT;
 				// Lactozilla: Non-powers-of-two
 				{
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -876,24 +1002,27 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 
 					// Carefully align all of my Friends.
 					if (x < 0)
-						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 					else
-						x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+						x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 					if (y < 0)
-						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
-						y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-					val = source[((y * ds_flatwidth) + x)];
+					val = source[((y * NPO2_TILT_WIDTH) + x)];
 				}
 				if (val != TRANSPARENTPIXEL)
-					*dest = *(ds_transmap + (colormap[val] << 8) + *dest);
+					*dest = *(NPO2_TILT_TRANSMAP + (colormap[val] << 8) + *dest);
 				dest++;
 				u += stepu;
 				v += stepv;
 			}
 		}
 	}
+#endif
+#ifdef PS2_OPT_DRAW
+	ds_x1 = npo2_x;
 #endif
 }
 
@@ -1335,8 +1464,13 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
+#ifdef PS2_OPT_DRAW
+	struct libdivide_u32_t x_divider, y_divider;
+	R_NPO2SlopeDividers(&x_divider, &y_divider);
+#else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
+#endif
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
@@ -1346,6 +1480,10 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 	source = (UINT16 *)ds_source;
 	colormap = ds_colormap;
 	translation = ds_translation;
+
+#ifdef PS2_OPT_DRAW
+	const UINT16 npo2_width = ds_flatwidth, npo2_height = ds_flatheight;
+#endif
 
 	startz = 1.f/iz;
 	startu = uz*startz;
@@ -1379,15 +1517,15 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 
 			// Carefully align all of my Friends.
 			if (x < 0)
-				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 			else
-				x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+				x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 			if (y < 0)
-				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
-				y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-			val = source[((y * ds_flatwidth) + x)];
+			val = source[((y * NPO2_TILT_WIDTH) + x)];
 			if (val & 0xFF00)
 				*dest = colormap[translation[val & 0xFF]];
 			dest++;
@@ -1412,15 +1550,15 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
 					*dest = colormap[translation[val & 0xFF]];
 			}
@@ -1449,15 +1587,15 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
 					*dest = colormap[translation[val & 0xFF]];
 				dest++;
@@ -1491,8 +1629,13 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
+#ifdef PS2_OPT_DRAW
+	struct libdivide_u32_t x_divider, y_divider;
+	R_NPO2SlopeDividers(&x_divider, &y_divider);
+#else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
+#endif
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
@@ -1502,6 +1645,11 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 	source = (UINT16 *)ds_source;
 	colormap = ds_colormap;
 	translation = ds_translation;
+
+#ifdef PS2_OPT_DRAW
+	const UINT16 npo2_width = ds_flatwidth, npo2_height = ds_flatheight;
+	const UINT8 *const npo2_transmap = ds_transmap;
+#endif
 
 	startz = 1.f/iz;
 	startu = uz*startz;
@@ -1535,17 +1683,17 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 
 			// Carefully align all of my Friends.
 			if (x < 0)
-				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 			else
-				x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+				x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 			if (y < 0)
-				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
-				y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-			val = source[((y * ds_flatwidth) + x)];
+			val = source[((y * NPO2_TILT_WIDTH) + x)];
 			if (val & 0xFF00)
-				*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
+				*dest = *(NPO2_TILT_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + *dest);
 			dest++;
 
 			u += stepu;
@@ -1568,17 +1716,17 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
-					*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
+					*dest = *(NPO2_TILT_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + *dest);
 			}
 		}
 		else
@@ -1605,17 +1753,17 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				val = source[((y * ds_flatwidth) + x)];
+				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
-					*dest = *(ds_transmap + (colormap[translation[val & 0xFF]] << 8) + *dest);
+					*dest = *(NPO2_TILT_TRANSMAP + (colormap[translation[val & 0xFF]] << 8) + *dest);
 				dest++;
 
 				u += stepu;
@@ -1842,8 +1990,13 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 	slopereal_t endz, endu, endv;
 	UINT32 stepu, stepv;
 
+#ifdef PS2_OPT_DRAW
+	struct libdivide_u32_t x_divider, y_divider;
+	R_NPO2SlopeDividers(&x_divider, &y_divider);
+#else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
+#endif
 
 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
@@ -1856,6 +2009,14 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 	source = ds_source;
 	//colormap = ds_colormap;
 
+#ifdef PS2_OPT_DRAW
+	const UINT16 npo2_width = ds_flatwidth, npo2_height = ds_flatheight;
+	lighttable_t **const npo2_pzl = planezlight;
+	const ptrdiff_t npo2_cmofs = ds_colormap - colormaps;
+	INT32 npo2_x = ds_x1;
+	const UINT8 *const npo2_transmap = ds_transmap;
+#endif
+
 #if 0	// The "perfect" reference version of this routine. Pretty slow.
 		// Use it only to see how things are supposed to look.
 	i = 0;
@@ -1865,7 +2026,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 		u = (INT64)(uz*z);
 		v = (INT64)(vz*z);
 
-		colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+		colormap = NPO2_TILT_LIGHT;
 		// Lactozilla: Non-powers-of-two
 		{
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -1873,15 +2034,15 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 
 			// Carefully align all of my Friends.
 			if (x < 0)
-				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 			else
-				x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+				x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 			if (y < 0)
-				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
-				y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-			*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dsrc++);
+			*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 		}
 		dest++;
 		iz += ds_sz.x;
@@ -1915,7 +2076,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 
 		for (i = SPANSIZE-1; i >= 0; i--)
 		{
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -1923,15 +2084,15 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dsrc++);
+				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 			}
 			dest++;
 			u += stepu;
@@ -1947,7 +2108,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 		{
 			u = SLOPE_U32(startu);
 			v = SLOPE_U32(startv);
-			colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+			colormap = NPO2_TILT_LIGHT;
 			// Lactozilla: Non-powers-of-two
 			{
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -1955,15 +2116,15 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 
 				// Carefully align all of my Friends.
 				if (x < 0)
-					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 				else
-					x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+					x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 				if (y < 0)
-					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
-					y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-				*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dsrc++);
+				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 			}
 		}
 		else
@@ -1984,7 +2145,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 
 			for (; width != 0; width--)
 			{
-				colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
+				colormap = NPO2_TILT_LIGHT;
 				// Lactozilla: Non-powers-of-two
 				{
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
@@ -1992,15 +2153,15 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 
 					// Carefully align all of my Friends.
 					if (x < 0)
-						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * ds_flatwidth;
+						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
 					else
-						x -= libdivide_u32_do((UINT32)x, &x_divider) * ds_flatwidth;
+						x -= libdivide_u32_do((UINT32)x, &x_divider) * NPO2_TILT_WIDTH;
 					if (y < 0)
-						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * ds_flatheight;
+						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
-						y -= libdivide_u32_do((UINT32)y, &y_divider) * ds_flatheight;
+						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
 
-					*dest = *(ds_transmap + (colormap[source[((y * ds_flatwidth) + x)]] << 8) + *dsrc++);
+					*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 				}
 				dest++;
 				u += stepu;
@@ -2009,7 +2170,15 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 		}
 	}
 #endif
+#ifdef PS2_OPT_DRAW
+	ds_x1 = npo2_x;
+#endif
 }
+
+#undef NPO2_TILT_WIDTH
+#undef NPO2_TILT_HEIGHT
+#undef NPO2_TILT_LIGHT
+#undef NPO2_TILT_TRANSMAP
 
 #if defined(__GNUC__) || defined(__clang__) // Stop suppressing intentional libdivide compiler warnings
     #pragma GCC diagnostic pop

@@ -23,7 +23,7 @@ typedef struct
 	float w; // eye depth
 	u32 ocl; // outcode (bits 0..5)
 	u32 pad[2];
-	qw_t col4; // gr_modellighting: the RGBAQ quadword of the vertex (the colour of the pass scaled by the light factor of the vertex)
+	qw_t col4; // temporary float projection until classification; then native RGBAQ and XYZ (without per-triangle fog)
 } __attribute__((aligned(64))) mdl_v_t; // 64 bytes: a cache line
 
 // the work areas are zone blocks made when a model needs them (a game without models does not pay for them) and given back under memory pressure (PS2Models reclaim hook)
@@ -336,41 +336,61 @@ static void mdl_tri_general(const mesh_t *mesh, int fi, int ni, float lerp, int 
 	G.md_slow++;
 }
 
-// one vertex as GIF data (3 quadwords): ST + Q, the colour (fmt 6: the vertex's own, else the pass's), XYZ (fmt 0) or XYZF (fmt 1, 6; zi was shifted by 4 when the vertex was made, fog4 = F << 4)
-static inline __attribute__((always_inline)) qw_t *mdl_put_v(qw_t *o, const mdl_v_t *m, const qw_t *colqw, u32 fog4, const int fmt)
+// Once per transformed vertex, after classification no longer needs col4's
+// float projection. Pack the exact old PACKED values into that same storage.
+static inline void mdl_prepare_v(mdl_v_t *m, u32 col, float lf, int fmt)
 {
-	o[0] = m->stq;
-	o[1] = fmt == 6 ? m->col4 : *colqw;
-	o[2].d[0] = (u64)(u32)m->xi | ((u64)(u32)m->yi << 32);
-	o[2].d[1] = (u64)(u32)m->zi | ((u64)fog4 << 32);
+	if (fmt == 6)
+	{
+		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
+		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
+		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
+
+		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
+	}
+	m->col4.d[0] = (u64)col | ((u64)m->stq.w[2] << 32);
+	m->col4.d[1] = (u64)(m->xi & 0xFFFF) | ((u64)(m->yi & 0xFFFF) << 16)
+		| ((u64)(fmt == 0 ? (u32)m->zi : ((u32)m->zi >> 4) & 0xFFFFFFu) << 32);
+}
+
+// Native ST/RGBAQ/XYZ(F), copied once per triangle corner. Fog remains per
+// triangle; the model's other register fields were packed once per vertex.
+static inline __attribute__((always_inline)) u64 *mdl_put_v(u64 *o, const mdl_v_t *m, u32 fog4, const int fmt)
+{
+
+	o[0] = m->stq.d[0];
+	o[1] = m->col4.d[0];
+	o[2] = m->col4.d[1]
+		| (fmt == 0 ? 0 : (u64)((fog4 >> 4) & 255) << 56);
 	return o + 3;
 }
 
 // the triangles of `list` (n of them), one GIF run: the vertices of every triangle from mv, the colour and F as given
-static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, const int fmt)
+static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, const int fmt)
 {
 	u32 i;
 
 	for (i = 0; i < n; i++)
 	{
 		const unsigned tt = list[i];
-		qw_t *o = ls_reserve(9);
+		u64 *o = (u64 *)ls_reserve(5);
 
-		o = mdl_put_v(o, &mv[ix[tt * 3]], colqw, fog4, fmt);
-		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], colqw, fog4, fmt);
-		mdl_put_v(o, &mv[ix[tt * 3 + 2]], colqw, fog4, fmt);
+		o = mdl_put_v(o, &mv[ix[tt * 3]], fog4, fmt);
+		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], fog4, fmt);
+		o = mdl_put_v(o, &mv[ix[tt * 3 + 2]], fog4, fmt);
+		*o = 0; // the tenth REGLIST descriptor is NOP
 		LS.n += 3;
 	}
 }
 
-static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, int fmt)
+static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, int fmt)
 {
 	if (fmt == 6)
-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 6);
+		mdl_emit_list(mv, ix, list, n, fog4, 6);
 	else if (fmt == 1)
-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 1);
+		mdl_emit_list(mv, ix, list, n, fog4, 1);
 	else
-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 0);
+		mdl_emit_list(mv, ix, list, n, fog4, 0);
 }
 
 // the GS state of a row of the colormap (palette lighting), or of the plain plan
@@ -419,14 +439,9 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	u32 orall = 0; // the outcodes of all vertices or'ed: 0 = the whole mesh is inside the guard band and the near plane
 	u32 nrej = 0, nclip = 0;
 	float wmin = 1e30f, wmax = -1e30f;
-	qw_t colqw;
 	const u32 tp0 = cyc();
 	u32 tp1, tp2;
 
-	colqw.w[0] = col & 255;
-	colqw.w[1] = (col >> 8) & 255;
-	colqw.w[2] = (col >> 16) & 255;
-	colqw.w[3] = col >> 24;
 	vu0_need();
 	// 1. every vertex: interpolation, the VU0 transform, the GIF quadwords (ST + Q, zi for the format); the colour with the light factor below
 	{
@@ -589,17 +604,11 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 	if (!nord)
 		return 1;
 
-	// 4. the colour with the light factor of every vertex (col4 held the screen coordinates until now), then the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
-	if (light)
-		for (k = 0; k < nv; k++)
-		{
-			const float lf = mdl_lf[mdl_lidx(na, nb, k, lerp)];
-
-			mv[k].col4.w[0] = (u32)((float)(col & 255) * lf + 0.5f);
-			mv[k].col4.w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
-			mv[k].col4.w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
-			mv[k].col4.w[3] = col >> 24;
-		}
+	// 4. Reuse the now-dead float projection slot for native register values.
+	// The colour/light rounding and Q are the old PACKED values; every triangle
+	// corner copies them without repeating colour/coordinate bit packing.
+	for (k = 0; k < nv; k++)
+		mdl_prepare_v(&mv[k], col, light ? mdl_lf[mdl_lidx(na, nb, k, lerp)] : 1.0f, fmt);
 	ls_close();
 	if (uni)
 	{
@@ -621,7 +630,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 		mdl_set_row(pal ? urow : 0, pal);
 		LS.nreg = 3;
 		LS.fmt = fmt;
-		mdl_emit_fmt(mv, ix, ord, (u32)nord, &colqw, fog4, fmt);
+		mdl_emit_fmt(mv, ix, ord, (u32)nord, fog4, fmt);
 	}
 	else if (pal)
 	{
@@ -643,7 +652,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 				mdl_set_row(k, 1);
 				LS.nreg = 3;
 				LS.fmt = fmt;
-				mdl_emit_fmt(mv, ix, ord + s, count[k], &colqw, fog4, fmt);
+				mdl_emit_fmt(mv, ix, ord + s, count[k], fog4, fmt);
 			}
 	}
 	else
@@ -654,7 +663,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 		LS.fmt = fmt;
 		for (t = 0; t < nt; t++)
 		{
-			qw_t *o;
+			u64 *o;
 			u32 fog = 255;
 
 			if (rowof[t] == 255)
@@ -677,19 +686,20 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
 				}
 				fog = fogtab[cls];
 			}
-			o = ls_reserve(9);
+			o = (u64 *)ls_reserve(5);
 			if (fmt == 6)
 			{
-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 6);
-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 6);
-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 6);
+				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 6);
+				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 6);
+				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 6);
 			}
 			else
 			{
-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 1);
-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 1);
-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 1);
+				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 1);
+				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 1);
+				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 1);
 			}
+			*o = 0;
 			LS.n += 3;
 		}
 	}

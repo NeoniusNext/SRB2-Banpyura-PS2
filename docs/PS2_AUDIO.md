@@ -95,6 +95,9 @@ when the file lacks useful length metadata; there is no full-track scan at load.
 - Mixer: 64 bounded engine channels with original-rate DMX/WAV data,
   fixed-point sample cursors, linear pan, pitch and saturating accumulation.
   Generation-tagged handles cannot stop a replacement voice through an old handle.
+  Exact half-rate voices now repeat their original source frames with MMI;
+  [the fourth-pass report](PS2_AUDIO_NEXT4_OPT_20261114.md) records full PCM/state
+  equivalence, target timings and unchanged limits.
 - Effects cache: **2 MiB payload/allocation-capacity budget**, plus small sample
   descriptors. Inactive samples are evicted least-recently-used and their engine
   `sfx->data` is cleared. Active samples remain pinned. If the active set prevents
@@ -105,9 +108,11 @@ when the file lacks useful length metadata; there is no full-track scan at load.
   An effect whose encoded or decoded cache allocation exceeds 2 MiB is rejected.
   The temporary encoded effects buffer can add up to another 2 MiB during a
   cache miss. Both buffers are arena allocations; decoder working memory is extra.
-- Music decoder scratch: 1,024 native-rate stereo frames plus a 4 KiB raw buffer.
-  The MIDI sequencer has fixed track caches and voice arrays, with no event list
-  or SoundFont. Validation is capped at one million events and 24 hours. MIDI
+- Music decoder scratch: 1,024 native-rate stereo frames (4 KiB); WAV/MP3 input expands in place. The separate raw buffer was removed; see [the 2026-11-14 measurements](PS2_AUDIO_OPT_20261114.md).
+  The MIDI sequencer allocates a 256-byte input cache for each validated track
+  (up to 32) and keeps the existing fixed voice array, with no event list or
+  SoundFont; see [the MIDI continuation](PS2_AUDIO_NEXT_OPT_20261114.md).
+  Validation is capped at one million events and 24 hours. MIDI
   seeking replays events and advances note state without rendering an entire
   discarded track; percussion/release-state advancement is bounded per voice.
 - Vorbis uses the installed float library, with native half-rate synthesis for

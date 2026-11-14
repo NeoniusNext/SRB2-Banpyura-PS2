@@ -35,7 +35,14 @@ patch_t *Patch_Create(INT16 width, INT16 height)
 // PS2-OPT-03: a patch made from a Doom patch is ONE zone block (structure, columns, posts, pixels). The zone can then
 // evict a sprite patch with a single owner pointer (the data arrays used to be separate blocks without an owner), and
 // the three extra block headers and their 16-byte rounding per patch are saved (1339 patches on MAP11: ~100 KB).
-#define PATCH_ALIGN(x) (((x) + 15u) & ~(size_t)15u)
+// Directory entries need only their natural alignment. Keep the block and
+// pixel base alignment for the existing bulk-copy paths.
+#define PATCH_ALIGN(x, type) (((x) + _Alignof(type) - 1u) & ~(size_t)(_Alignof(type) - 1u))
+#define PATCH_PIXEL_ALIGN(x) (((x) + 15u) & ~(size_t)15u)
+#ifdef PS2_NOOPT_PATCHLAYOUT
+#undef PATCH_ALIGN
+#define PATCH_ALIGN(x, type) PATCH_PIXEL_ALIGN(x)
+#endif
 
 patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
 {
@@ -50,9 +57,9 @@ patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
 	width = SHORT(source->width);
 	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
 
-	coloff = PATCH_ALIGN(sizeof (patch_t));
-	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
-	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
+	coloff = PATCH_ALIGN(sizeof (patch_t), column_t);
+	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width, post_t);
+	pixoff = PATCH_PIXEL_ALIGN(postoff + sizeof (post_t) * total_posts);
 
 	patch = Z_Calloc(pixoff + total_pixels, PU_PATCH, NULL);
 	base = (UINT8 *)patch;
@@ -86,9 +93,9 @@ patch_t *Patch_TryCreateFromDoomPatch(softwarepatch_t *source)
 	width = SHORT(source->width);
 	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
 
-	coloff = PATCH_ALIGN(sizeof (patch_t));
-	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
-	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
+	coloff = PATCH_ALIGN(sizeof (patch_t), column_t);
+	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width, post_t);
+	pixoff = PATCH_PIXEL_ALIGN(postoff + sizeof (post_t) * total_posts);
 
 	patch = Z_TryMallocAlign(pixoff + total_pixels, PU_PATCH, NULL, sizeof (void *));
 	if (!patch)

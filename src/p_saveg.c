@@ -1319,11 +1319,19 @@ static void ArchiveSectors(save_t *save_p)
 {
 	size_t i, j;
 	const sector_t *ss = sectors;
-	const spawnsector_t *spawnss = spawnsectors;
+	const spawnsector_t *spawnss;
+#ifdef PS2_PROFILE
+	spawnsector_t spawnbuffer;
+#endif
 	UINT8 diff, diff2, diff3, diff4, diff5;
 
-	for (i = 0; i < numsectors; i++, ss++, spawnss++)
+	for (i = 0; i < numsectors; i++, ss++)
 	{
+#ifdef PS2_PROFILE
+		spawnss = P_GetSpawnSector(i, &spawnbuffer);
+#else
+		spawnss = &spawnsectors[i];
+#endif
 		diff = diff2 = diff3 = diff4 = diff5 = 0;
 		if (ss->floorheight != spawnss->floorheight)
 			diff |= SD_FLOORHT;
@@ -1771,13 +1779,22 @@ static void ArchiveLines(save_t *save_p)
 {
 	size_t i;
 	const line_t *li = lines;
-	const spawnline_t *spawnli = spawnlines;
+	const spawnline_t *spawnli;
+#ifdef PS2_PROFILE
+	spawnline_t spawnbuffer;
+	spawnside_t sidebuffer;
+#endif
 	UINT8 diff, diff2;
 	UINT32 side1diff;
 	UINT32 side2diff;
 
-	for (i = 0; i < numlines; i++, spawnli++, li++)
+	for (i = 0; i < numlines; i++, li++)
 	{
+#ifdef PS2_PROFILE
+		spawnli = P_GetSpawnLine(i, &spawnbuffer);
+#else
+		spawnli = &spawnlines[i];
+#endif
 		diff = diff2 = 0;
 		side1diff = side2diff = 0;
 
@@ -1801,13 +1818,21 @@ static void ArchiveLines(save_t *save_p)
 
 		if (li->sidenum[0] != NO_SIDEDEF)
 		{
+#ifdef PS2_PROFILE
+			side1diff = GetSideDiff(&sides[li->sidenum[0]], P_GetSpawnSide(li->sidenum[0], &sidebuffer));
+#else
 			side1diff = GetSideDiff(&sides[li->sidenum[0]], &spawnsides[li->sidenum[0]]);
+#endif
 			if (side1diff)
 				diff |= LD_SIDE1;
 		}
 		if (li->sidenum[1] != NO_SIDEDEF)
 		{
+#ifdef PS2_PROFILE
+			side2diff = GetSideDiff(&sides[li->sidenum[1]], P_GetSpawnSide(li->sidenum[1], &sidebuffer));
+#else
 			side2diff = GetSideDiff(&sides[li->sidenum[1]], &spawnsides[li->sidenum[1]]);
+#endif
 			if (side2diff)
 				diff |= LD_SIDE2;
 		}

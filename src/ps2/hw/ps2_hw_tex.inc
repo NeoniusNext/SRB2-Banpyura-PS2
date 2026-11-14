@@ -189,36 +189,33 @@ static const u8 blk_16s[8][4] = {{0, 2, 16, 18}, {1, 3, 17, 19}, {8, 10, 24, 26}
 
 static u32 tex_footprint(int psm, u32 w, u32 h, u32 tbw)
 {
-	u32 pw, ph, bw, bh, ppr, pcols, prows, lastpage, lw, lh, nbx, nby, bx, by, maxblk = 0;
+	u32 lastpage, bx, by, maxblk;
 
+	// Positive dimensions: zero-based texels give the last page and block directly.
+	// The CT32/T8 and CT16 block tables increase in each axis, so their rectangular
+	// prefix maximum is its last entry. CT16S swaps row groups 2/3 and 4/5: its
+	// prefix maximum stays in row 3 until row 6 is reached.
+	w--;
+	h--;
 	switch (psm)
 	{
 		case PSM_T8:
-			pw = 128; ph = 64; bw = 16; bh = 16;
+			lastpage = (h >> 6) * ((tbw + 1) >> 1) + (w >> 7);
+			maxblk = blk_32_8[(h >> 4) & 3][(w >> 4) & 7];
 			break;
 		case PSM_CT32:
-			pw = 64; ph = 32; bw = 8; bh = 8;
+			lastpage = (h >> 5) * tbw + (w >> 6);
+			maxblk = blk_32_8[(h >> 3) & 3][(w >> 3) & 7];
 			break;
 		default: // CT16, CT16S
-			pw = 64; ph = 64; bw = 16; bh = 8;
+			lastpage = (h >> 6) * tbw + (w >> 6);
+			bx = (w >> 4) & 3;
+			by = (h >> 3) & 7;
+			if (psm == PSM_CT16S && (by == 4 || by == 5))
+				by = 3;
+			maxblk = psm == PSM_CT16 ? blk_16[by][bx] : psm == PSM_CT16S ? blk_16s[by][bx] : blk_32_8[by][bx];
 			break;
 	}
-	ppr = (tbw * 64 + pw - 1) / pw;
-	pcols = (w + pw - 1) / pw;
-	prows = (h + ph - 1) / ph;
-	lastpage = (prows - 1) * ppr + (pcols - 1);
-	lw = w - (pcols - 1) * pw;
-	lh = h - (prows - 1) * ph;
-	nbx = (lw + bw - 1) / bw;
-	nby = (lh + bh - 1) / bh;
-	for (by = 0; by < nby; by++)
-		for (bx = 0; bx < nbx; bx++)
-		{
-			u32 b = (psm == PSM_CT16) ? blk_16[by][bx] : (psm == PSM_CT16S) ? blk_16s[by][bx] : blk_32_8[by][bx];
-
-			if (b > maxblk)
-				maxblk = b;
-		}
 	return lastpage * PAGE_BLOCKS + maxblk + 1;
 }
 
@@ -627,7 +624,8 @@ static u8 pal_val[1024];
 // engine alpha 0..255 -> GS alpha 0..0x80 (0x80 = 1.0), rounded
 static inline u32 a8_to_gs(u32 a)
 {
-	return (a * 128u + 127u) / 255u;
+	// For a byte a = 2*k or 2*k+1, the rounded 128/255 scale is k or k+1, respectively.
+	return (a + 1u) >> 1;
 }
 
 static inline u32 pal_hash(u32 k)
@@ -679,12 +677,12 @@ static inline u32 clut_slot(u32 i) // CT32 CLUT in CSM1: bits 3 and 4 of the ind
 	return (i & ~0x18u) | ((i & 0x08u) << 1) | ((i & 0x10u) >> 1);
 }
 
-// 16x16 CT32 image into VRAM (the CLUT format of a PSMT8 CSM1 CLUT)
-static void clut_write(u32 blk, const u32 *entries)
+// Reserve a complete 16x16 CT32 CLUT transfer. Its image payload stays in the open ring buffer until the caller has filled it.
+// pk_alloc closes any VU chunk and obtains ring ownership before the caller reads palette state or writes the image.
+static u32 *clut_alloc(u32 blk)
 {
 	qw_t *h = pk_alloc(1 + 4 + 1 + 64 + 2);
 	qw_t *d;
-	int i;
 
 	H.serial++;
 
@@ -697,13 +695,6 @@ static void clut_write(u32 blk, const u32 *entries)
 	h[5].d[0] = HWGIF_TAG(64, 1, 0, 0, 2, 0);
 	h[5].d[1] = 0;
 	d = &h[6];
-	for (i = 0; i < 64; i++)
-	{
-		d[i].w[0] = entries[i * 4];
-		d[i].w[1] = entries[i * 4 + 1];
-		d[i].w[2] = entries[i * 4 + 2];
-		d[i].w[3] = entries[i * 4 + 3];
-	}
 	// PS2-HW-102 (real GS, not PCSX2): a CLUT image written over a slot that was loaded before (the row of a light table, a palette change) must not come out of
 	// the texture cache of the GS: TEXFLUSH behind the transfer (the program of the VU1 path reloads CLUTs of the cache with TEX2 / CLD all the time)
 	d[64].d[0] = HWGIF_TAG(1, 1, 0, 0, 0, 1);
@@ -712,6 +703,29 @@ static void clut_write(u32 blk, const u32 *entries)
 	if (blk == H.clut_loaded)
 		H.clut_loaded = 0; // the GS holds a copy of the old contents
 	H.st.clut_uploads++;
+	return d[0].w;
+}
+
+// CSM1 swaps index bits 3 and 4: an involution with 64 pairs and 128 fixed points. Build entries in the packet, then swap each pair once.
+// This avoids two temporary 1 KiB images and the final copy into the DMA ring. The debug identity ordering remains available.
+static void clut_swizzle(u32 *entries)
+{
+	u32 i;
+
+	if (ps2hwd_dbg_flags & 16)
+		return;
+	for (i = 0; i < 256; i += 32)
+	{
+		u32 j;
+
+		for (j = 8; j < 16; j++)
+		{
+			u32 t = entries[i + j];
+
+			entries[i + j] = entries[i + j + 8];
+			entries[i + j + 8] = t;
+		}
+	}
 }
 
 enum
@@ -816,15 +830,12 @@ static int clut_palette_dependent(u32 kind)
 
 static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
 {
-	static u32 e[256] __attribute__((aligned(64)));
-	static u32 sw[256] __attribute__((aligned(64)));
-	int i;
+	u32 *e;
 
 	H.clut_epoch++; // PS2-HW-101
+	e = clut_alloc(blk);
 	clut_entries(kind, param, keyed, e);
-	for (i = 0; i < 256; i++)
-		sw[clut_slot((u32)i)] = e[i];
-	clut_write(blk, sw);
+	clut_swizzle(e);
 }
 
 static inline u32 clut_fixed_blk(u32 kind) // kind 1..4
@@ -1369,6 +1380,21 @@ static void fill_idx(void *ctx, u32 row, u8 *dst)
 		dst[x] = s[src_col(c, x)];
 }
 
+// Gather the low byte of each of four 16-bit texels into a 32-bit word, preserving their order.
+static inline u32 ap88_gather(u64 v)
+{
+#ifdef __mips__
+	u64 packed;
+
+	// The low four output bytes come only from the four halfwords in v's low 64 bits.
+	// PPACB's other output bytes may depend on the unused high 64 bits of its input register.
+	__asm__("ppacb %0,$zero,%1" : "=r"(packed) : "r"(v));
+	return (u32)packed;
+#else
+	return (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
+#endif
+}
+
 // AP_88 -> index with alpha 0 = index 255 (mode 0), or the chroma keyed variant: the index is kept, the alpha ignored (mode 1)
 static void fill_ap88(void *ctx, u32 row, u8 *dst)
 {
@@ -1389,12 +1415,12 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 		for (x = 0; x < x4; x += 4)
 		{
 			const u64 v = *s8++;
-			u32 idx = (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
+			u32 idx = ap88_gather(v);
 
 			if (!keyed)
 			{
 				const u64 av = v >> 8;
-				const u32 a = (u32)(av & 0xFFu) | (u32)((av >> 8) & 0xFF00u) | (u32)((av >> 16) & 0xFF0000u) | (u32)((av >> 24) & 0xFF000000u);
+				const u32 a = ap88_gather(av);
 				const u32 nz = (((a & 0x7F7F7F7Fu) + 0x7F7F7F7Fu) | a) & 0x80808080u; // bit 7 of every byte that is not zero
 				const u32 zero = ~nz & 0x80808080u;
 

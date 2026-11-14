@@ -55,6 +55,8 @@ typedef struct
 	UINT32 counts[5], counts_filled[5];
 	UINT32 *list[5]; // per type: the block numbers of its blocks in order
 } tokscan_t;
+// Keep the scan's owner slots alive until ScanFree or PU_LEVEL cleanup. Free a
+// live scan before reusing it; after level cleanup a new scan resets stale caps.
 boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *tokenizer, UINT32 size, tokscan_t *scan);
 void Tokenizer_SRB2ScanParse(tokenizer_t *tokenizer, const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *));
 void Tokenizer_SRB2ScanFree(tokscan_t *scan);

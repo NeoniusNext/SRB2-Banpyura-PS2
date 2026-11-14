@@ -36,7 +36,6 @@ struct ps2_music
 	size_t buffered, cursor;
 	unsigned skipped;                  // PS2-317: the position moved without decoding; the decoder is behind (resynchronised by PS2_MusicRender)
 	int16_t buffer[DECODE_FRAMES * 2] __attribute__((aligned(16))); // PS2-316: the VU0 PCM conversion stores 16 bytes at a time
-	uint8_t raw[DECODE_FRAMES * 4];
 };
 
 #if defined(PS2_AUDIO_VORBIS) || defined(PS2_AUDIO_MP3)
@@ -229,9 +228,26 @@ int PS2_MusicPlay(ps2_music *m, int loop)
 
 void PS2_MusicRevive(ps2_music *m) { if (m) { m->playing = 1; m->paused = 0; } }
 
+// Input occupies at most four bytes per frame, just like the stereo output.
+// Expand from the end so mono/8-bit output never overwrites unread source bytes.
+static void ExpandPCM(int16_t *buffer, size_t frames, unsigned bits, unsigned channels)
+{
+	size_t stride = channels * (bits / 8);
+#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
+	if (bits == 16 && channels == 2) return;
+#endif
+	while (frames--)
+	{
+		const uint8_t *p = (const uint8_t *)buffer + frames * stride;
+		int16_t l = PS2_PCMValue(p, bits);
+		int16_t r = channels == 2 ? PS2_PCMValue(p + bits / 8, bits) : l;
+		buffer[frames * 2] = l; buffer[frames * 2 + 1] = r;
+	}
+}
+
 static size_t Decode(ps2_music *m)
 {
-	size_t n = 0, i, stride = m->channels * 2;
+	size_t n = 0, stride = m->channels * 2;
 	if (m->type == PS2_MUSIC_WAV)
 	{
 		size_t bytes;
@@ -240,14 +256,9 @@ static size_t Decode(ps2_music *m)
 		if (n > DECODE_FRAMES) n = DECODE_FRAMES;
 		bytes = n * stride;
 		if (!n) return 0;
-		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->raw, bytes) != bytes)
+		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->buffer, bytes) != bytes)
 		{ m->error = 1; return 0; }
-		for (i = 0; i < n; i++)
-		{
-			const uint8_t *p = m->raw + i*stride;
-			m->buffer[i*2] = PS2_PCMValue(p, m->pcm.bits);
-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(p+m->pcm.bits/8, m->pcm.bits) : m->buffer[i*2];
-		}
+		ExpandPCM(m->buffer, n, m->pcm.bits, m->channels);
 	}
 	else if (m->type == PS2_MUSIC_MIDI)
 	{
@@ -263,33 +274,28 @@ static size_t Decode(ps2_music *m)
 		long got = ov_read_float(&m->ogg, &pcm, DECODE_FRAMES, &section);
 		if (got < 0 || section != 0) { m->error = 1; return 0; }
 		n = (size_t)got;
-		PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
+		// At EOF libvorbis may return no PCM pointer along with zero frames.
+		if (n) PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
 	}
 #endif
 #ifdef PS2_AUDIO_MP3
 	else if (m->type == PS2_MUSIC_MP3)
 	{
 		size_t bytes = 0;
-		int result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
+		int result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
 		if (result == MPG123_NEW_FORMAT)
 		{
 			long rate; int ch, enc;
 			if (mpg123_getformat(m->mp3, &rate, &ch, &enc) != MPG123_OK || rate != (long)m->rate
 				|| ch != (int)m->channels || enc != MPG123_ENC_SIGNED_16) { m->error = 1; return 0; }
-			result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
+			result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
 		}
 		if (result != MPG123_OK && result != MPG123_DONE) { m->error = 1; return 0; }
 		n = bytes / stride;
 	}
 #endif
 	if (m->type == PS2_MUSIC_MP3)
-	{
-		for (i = 0; i < n; i++)
-		{
-			m->buffer[i*2] = PS2_PCMValue(m->raw+i*stride, 16);
-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(m->raw+i*stride+2, 16) : m->buffer[i*2];
-		}
-	}
+		ExpandPCM(m->buffer, n, 16, m->channels);
 	m->decoded += n; m->cursor = 0; m->buffered = n; return n;
 }
 

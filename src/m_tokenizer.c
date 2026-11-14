@@ -689,13 +689,30 @@ static inline __attribute__((always_inline)) int Tokenizer_SRB2ScanPairNoNul(con
 	return 1;
 }
 
-static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
+static boolean ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
 {
 	void *bigger;
 	UINT32 ncap;
 
 	if (need <= *cap)
-		return;
+		return true;
+#ifndef PS2_NOOPT_TEXTMAPMEM
+	{
+		// All scan arrays are zone allocations. Bound the multiplication before a
+		// growth; a scan that cannot be represented takes the ordinary parser.
+		const size_t maxcap = (size_t)0x7FFFFFF0u / esize;
+
+		if (need > maxcap)
+			return false;
+		ncap = *cap ? *cap : 1024;
+		while (ncap < need)
+			ncap = ncap > maxcap / 2 ? (UINT32)maxcap : ncap * 2;
+	}
+	// These are level-load temporaries. Owner-backed PU_LEVEL storage both grows
+	// from the arena's temporary side and is released by level-load OOM cleanup.
+	// A moving resize keeps its source alive until copied; callers refresh aliases.
+	bigger = Z_Realloc(*array, (size_t)ncap * esize, PU_LEVEL, array);
+#else
 	ncap = *cap ? *cap * 2 : 1024;
 	while (ncap < need)
 		ncap *= 2;
@@ -705,8 +722,10 @@ static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
 		memcpy(bigger, *array, (size_t)*cap * esize);
 		Z_Free(*array);
 	}
+#endif
 	*array = bigger;
 	*cap = ncap;
+	return true;
 }
 
 void Tokenizer_SRB2ScanFree(tokscan_t *sc)
@@ -765,11 +784,13 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
 		if (p >= size)
 			goto fail;
 
-		ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst);
+		if (!ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst))
+			goto fail;
 		{ // (btype grows with bfirst: the same capacity)
 			UINT32 tcap = sc->btcap;
 
-			ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype);
+			if (!ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype))
+				goto fail;
 			sc->btcap = tcap;
 		}
 		sc->bfirst[sc->nblocks] = npairs;
@@ -786,7 +807,8 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
 			if (pairs + npairs == pend)
 			{
 				sc->npairs = npairs;
-				ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs);
+				if (!ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs))
+					goto fail;
 				pairs = sc->pairs;
 				pend = pairs + sc->pcap;
 			}
@@ -807,7 +829,11 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
 	sc->bfirst[sc->nblocks] = npairs; // (there is room: nblocks + 2 was asked for before the last block was counted)
 	for (i = 0; i < 5; i++)
 	{
+#ifndef PS2_NOOPT_TEXTMAPMEM
+		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_LEVEL, &sc->list[i]);
+#else
 		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_STATIC, NULL);
+#endif
 		sc->counts_filled[i] = 0;
 	}
 	for (k = 0; k < sc->nblocks; k++)
@@ -815,6 +841,12 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
 		i = sc->btype[k];
 		sc->list[i][sc->counts_filled[i]++] = k;
 	}
+#ifndef PS2_NOOPT_TEXTMAPMEM
+	// Only the list-building pass needed block types. Parsing uses list/bfirst.
+	Z_Free(sc->btype);
+	sc->btype = NULL;
+	sc->btcap = 0;
+#endif
 	t->startPos = t->endPos = p;
 	return true;
 

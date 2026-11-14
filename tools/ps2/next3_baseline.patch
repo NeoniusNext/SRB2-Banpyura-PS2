@@ -1,0 +1,1524 @@
+diff --git a/src/m_tokenizer.c b/src/m_tokenizer.c
+index c2427a9c9..c88d82de6 100644
+--- a/src/m_tokenizer.c
++++ b/src/m_tokenizer.c
+@@ -689,13 +689,30 @@ static inline __attribute__((always_inline)) int Tokenizer_SRB2ScanPairNoNul(con
+ 	return 1;
+ }
+ 
+-static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
++static boolean ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
+ {
+ 	void *bigger;
+ 	UINT32 ncap;
+ 
+ 	if (need <= *cap)
+-		return;
++		return true;
++#ifndef PS2_NOOPT_TEXTMAPMEM
++	{
++		// All scan arrays are zone allocations. Bound the multiplication before a
++		// growth; a scan that cannot be represented takes the ordinary parser.
++		const size_t maxcap = (size_t)0x7FFFFFF0u / esize;
++
++		if (need > maxcap)
++			return false;
++		ncap = *cap ? *cap : 1024;
++		while (ncap < need)
++			ncap = ncap > maxcap / 2 ? (UINT32)maxcap : ncap * 2;
++	}
++	// These are level-load temporaries. Owner-backed PU_LEVEL storage both grows
++	// from the arena's temporary side and is released by level-load OOM cleanup.
++	// A moving resize keeps its source alive until copied; callers refresh aliases.
++	bigger = Z_Realloc(*array, (size_t)ncap * esize, PU_LEVEL, array);
++#else
+ 	ncap = *cap ? *cap * 2 : 1024;
+ 	while (ncap < need)
+ 		ncap *= 2;
+@@ -705,8 +722,10 @@ static void ScanGrow(void **array, UINT32 *cap, UINT32 need, size_t esize)
+ 		memcpy(bigger, *array, (size_t)*cap * esize);
+ 		Z_Free(*array);
+ 	}
++#endif
+ 	*array = bigger;
+ 	*cap = ncap;
++	return true;
+ }
+ 
+ void Tokenizer_SRB2ScanFree(tokscan_t *sc)
+@@ -765,11 +784,13 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 		if (p >= size)
+ 			goto fail;
+ 
+-		ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst);
++		if (!ScanGrow((void **)&sc->bfirst, &sc->bcap, sc->nblocks + 2, sizeof *sc->bfirst))
++			goto fail;
+ 		{ // (btype grows with bfirst: the same capacity)
+ 			UINT32 tcap = sc->btcap;
+ 
+-			ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype);
++			if (!ScanGrow((void **)&sc->btype, &tcap, sc->nblocks + 2, sizeof *sc->btype))
++				goto fail;
+ 			sc->btcap = tcap;
+ 		}
+ 		sc->bfirst[sc->nblocks] = npairs;
+@@ -786,7 +807,8 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 			if (pairs + npairs == pend)
+ 			{
+ 				sc->npairs = npairs;
+-				ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs);
++				if (!ScanGrow((void **)&sc->pairs, &sc->pcap, npairs + 1, sizeof *sc->pairs))
++					goto fail;
+ 				pairs = sc->pairs;
+ 				pend = pairs + sc->pcap;
+ 			}
+@@ -807,7 +829,11 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 	sc->bfirst[sc->nblocks] = npairs; // (there is room: nblocks + 2 was asked for before the last block was counted)
+ 	for (i = 0; i < 5; i++)
+ 	{
++#ifndef PS2_NOOPT_TEXTMAPMEM
++		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_LEVEL, &sc->list[i]);
++#else
+ 		sc->list[i] = Z_Malloc(sizeof (UINT32) * (sc->counts[i] + 1), PU_STATIC, NULL);
++#endif
+ 		sc->counts_filled[i] = 0;
+ 	}
+ 	for (k = 0; k < sc->nblocks; k++)
+@@ -815,6 +841,12 @@ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *t, UINT32 size, tokscan_t *sc)
+ 		i = sc->btype[k];
+ 		sc->list[i][sc->counts_filled[i]++] = k;
+ 	}
++#ifndef PS2_NOOPT_TEXTMAPMEM
++	// Only the list-building pass needed block types. Parsing uses list/bfirst.
++	Z_Free(sc->btype);
++	sc->btype = NULL;
++	sc->btcap = 0;
++#endif
+ 	t->startPos = t->endPos = p;
+ 	return true;
+ 
+diff --git a/src/m_tokenizer.h b/src/m_tokenizer.h
+index 01d7ac446..19b6cfe3c 100644
+--- a/src/m_tokenizer.h
++++ b/src/m_tokenizer.h
+@@ -55,6 +55,8 @@ typedef struct
+ 	UINT32 counts[5], counts_filled[5];
+ 	UINT32 *list[5]; // per type: the block numbers of its blocks in order
+ } tokscan_t;
++// Keep the scan's owner slots alive until ScanFree or PU_LEVEL cleanup. Free a
++// live scan before reusing it; after level cleanup a new scan resets stale caps.
+ boolean Tokenizer_SRB2ScanBlocks(tokenizer_t *tokenizer, UINT32 size, tokscan_t *scan);
+ void Tokenizer_SRB2ScanParse(tokenizer_t *tokenizer, const tokscan_t *scan, int type, UINT32 num, void (*parser)(UINT32, const char *, const char *));
+ void Tokenizer_SRB2ScanFree(tokscan_t *scan);
+diff --git a/src/p_setup.c b/src/p_setup.c
+index 2a5949fac..6f6fd9926 100644
+--- a/src/p_setup.c
++++ b/src/p_setup.c
+@@ -1643,6 +1643,25 @@ enum { TMS_THING, TMS_LINEDEF, TMS_SIDEDEF, TMS_VERTEX, TMS_SECTOR };
+ 
+ static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
+ {
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
++	const size_t maxcapacity = (size_t)0x7FFFFFF0u / sizeof (*blocks->pos);
++	size_t locCount;
++
++	if (*count >= maxcapacity)
++		I_Error("TextmapStorePos: too many blocks");
++	locCount = *count + 1;
++	if (!blocks->pos || locCount >= blocks->capacity)
++	{
++		size_t capacity = UINT16_MAX / 2;
++
++		// Keep the previous reservation/growth policy: a smaller initial table
++		// can require an extra old+new allocation peak before reaching this size.
++		if (blocks->pos)
++			capacity = blocks->capacity > maxcapacity - 1024 ? maxcapacity : blocks->capacity + 1024;
++		Z_Realloc(blocks->pos, sizeof (*blocks->pos) * capacity, PU_LEVEL, &blocks->pos);
++		blocks->capacity = capacity; // allocation can leave through an OOM guard
++	}
++#else
+ 	size_t locCount = (*count) + 1;
+ 
+ 	if (blocks->pos == NULL)
+@@ -1659,12 +1678,26 @@ static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
+ 
+ 		Z_Realloc(blocks->pos, sizeof(blocks->pos) * blocks->capacity, PU_LEVEL, &blocks->pos);
+ 	}
++#endif
+ 
+ 	blocks->pos[locCount - 1] = M_TokenizerGetEndPos();
+ 
+ 	(*count) = locCount;
+ }
+ 
++static void TextmapReleasePos(textmap_block_t *blocks)
++{
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
++	// The positions have no consumers after their type's parse loop. Owner-backed
++	// PU_LEVEL storage still handles an interrupted load through Z_FreeTags.
++	Z_Free(blocks->pos);
++	blocks->pos = NULL;
++	blocks->capacity = 0;
++#else
++	(void)blocks;
++#endif
++}
++
+ // Determine total amount of map data in TEXTMAP.
+ static boolean TextmapCount(size_t size)
+ {
+@@ -3174,6 +3207,7 @@ static void P_LoadTextmap(void)
+ 			I_Error("P_LoadTextmap: vertex %s has no y value set!\n", sizeu1(i));
+ 	}
+ 
++	TextmapReleasePos(&vertexBlocks);
+ 	LP_END(U_VERT, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, sc = sectors; i < numsectors; i++, sc++)
+@@ -3259,6 +3293,7 @@ static void P_LoadTextmap(void)
+ 		TextmapFixFlatOffsets(sc);
+ 	}
+ 
++	TextmapReleasePos(&sectorBlocks);
+ 	LP_END(U_SECT, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, ld = lines; i < numlines; i++, ld++)
+@@ -3288,6 +3323,7 @@ static void P_LoadTextmap(void)
+ 		P_InitializeLinedef(ld);
+ 	}
+ 
++	TextmapReleasePos(&linedefBlocks);
+ 	LP_END(U_LINE, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, sd = sides; i < numsides; i++, sd++)
+@@ -3319,6 +3355,7 @@ static void P_LoadTextmap(void)
+ 		P_InitializeSidedef(sd);
+ 	}
+ 
++	TextmapReleasePos(&sidedefBlocks);
+ 	LP_END(U_SIDE, lpu);
+ 	LP_RESTART(lpu);
+ 	for (i = 0, mt = mapthings; i < nummapthings; i++, mt++)
+@@ -3339,6 +3376,7 @@ static void P_LoadTextmap(void)
+ 
+ 		TEXTMAP_PARSE(TMS_THING, mapthingBlocks, i, ParseTextmapThingParameter);
+ 	}
++	TextmapReleasePos(&mapthingBlocks);
+ 	LP_END(U_THING, lpu);
+ }
+ 
+diff --git a/src/ps2/hw/ps2_hw_draw.inc b/src/ps2/hw/ps2_hw_draw.inc
+index d1ab9d788..9ce872d29 100644
+--- a/src/ps2/hw/ps2_hw_draw.inc
++++ b/src/ps2/hw/ps2_hw_draw.inc
+@@ -392,8 +392,7 @@ static u32 ramp_clut(const rampspec_t *s)
+ {
+ 	u64 key = (u64)CK_RAMP | ((u64)spec_hash(s) << 16) | ((u64)s->variant << 8);
+ 	int i, freeslot = -1, lru = -1, victim;
+-	static u32 e[256] __attribute__((aligned(64)));
+-	static u32 sw[256] __attribute__((aligned(64)));
++	u32 *e;
+ 
+ 	H.clut_tick++;
+ 	for (i = CLUT_FIXED; i < CLUT_SLOTS; i++)
+@@ -418,10 +417,9 @@ static u32 ramp_clut(const rampspec_t *s)
+ 		ov_flush_pending(); // the queue may reference the image that is about to be replaced
+ 	H.clut_ent[victim].key = key;
+ 	H.clut_ent[victim].stamp = H.clut_tick;
++	e = clut_alloc(H.clut_base + (u32)victim * CLUT_BLOCKS);
+ 	ramp_entries(s, e);
+-	for (i = 0; i < 256; i++)
+-		sw[clut_slot((u32)i)] = e[i];
+-	clut_write(H.clut_base + (u32)victim * CLUT_BLOCKS, sw);
++	clut_swizzle(e);
+ 	return H.clut_base + (u32)victim * CLUT_BLOCKS;
+ }
+ 
+@@ -1195,6 +1193,54 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
+ 	return o + 1;
+ }
+ 
++// The three-register indexed formats as native ST/RGBAQ/XYZ(F) values. Keep the
++// arithmetic and conversions identical to put_vertex; only the GIF encoding differs.
++static inline u64 *put_vertex_reglist(u64 *o, const cv_t *s, const pack_t *pk)
++{
++	const float q = 1.0f / s->w;
++	float zf = P.zo + s->z * q * P.zk + P.zbias;
++	const int xi = (int)(P.ox + s->x * q * P.kx);
++	const int yi = (int)(P.oy + s->y * q * P.ky);
++	qw_t st;
++	u32 zi, col = pk->col;
++
++	zf = clampf(zf, 0.0f, P.zmax);
++	zi = (u32)(int)zf;
++	if (pk->ramp)
++	{
++		st.f[0] = P.ra + P.rb * q;
++		st.f[1] = 0.0f;
++	}
++	else
++	{
++		st.f[0] = (s->a[0] - pk->sb) * P.tsx * q;
++		st.f[1] = (s->a[1] - pk->tb) * P.tsy * q;
++	}
++	*o++ = st.d[0];
++	if (pk->fmt == 6)
++	{
++		const float lf = s->a[2];
++		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
++		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
++		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
++
++		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
++	}
++	else if (pk->fmt == 4)
++	{
++		col = (u32)col_lut[(int)clampf(s->a[2], 0.0f, 255.0f)]
++			| ((u32)col_lut[(int)clampf(s->a[3], 0.0f, 255.0f)] << 8)
++			| ((u32)col_lut[(int)clampf(s->a[4], 0.0f, 255.0f)] << 16)
++			| ((u32)col_lut[(int)clampf(s->a[5], 0.0f, 255.0f)] << 24);
++	}
++	st.f[0] = q;
++	*o++ = (u64)col | ((u64)st.w[0] << 32);
++	*o++ = (u64)(xi & 0xFFFF) | ((u64)(yi & 0xFFFF) << 16)
++		| ((u64)zi << 32) | ((pk->fmt == 1 || pk->fmt == 6) ? (u64)(pk->fog & 255) << 56 : 0);
++	H.gsr.valid &= ~(u32)RV_RGBAQ;
++	return o;
++}
++
+ static inline int pack_regs(int fmt)
+ {
+ 	return (fmt == 0 || fmt == 1 || fmt == 4 || fmt == 6) ? 3 : fmt == 5 ? 2 : 1;
+@@ -2397,8 +2443,20 @@ static void ls_close(void)
+ {
+ 	if (!LS.open)
+ 		return;
+-	LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
+-	LS.tag->d[1] = pack_regdesc(LS.fmt);
++	if (LS.nreg == 3)
++	{
++		const u64 regs = pack_regdesc(LS.fmt);
++
++		// Three vertices and one ignored NOP: each triangle ends at a DMA
++		// quadword, so reservations can append without a live half-quadword.
++		LS.tag->d[0] = HWGIF_TAG(LS.n / 3, 1, 0, 0, 1, 10);
++		LS.tag->d[1] = regs | (regs << 12) | (regs << 24) | (0xFull << 36);
++	}
++	else
++	{
++		LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
++		LS.tag->d[1] = pack_regdesc(LS.fmt);
++	}
+ 	LS.open = 0;
+ 	H.st.verts_out += LS.n;
+ }
+@@ -2413,7 +2471,16 @@ static qw_t *ls_reserve(u32 nqw)
+ 			ls_close();
+ 			pk_flush();
+ 		}
+-		LS.tag = pk_alloc(1 + nqw); // the tag, then the vertices of this reservation
++		LS.tag = pk_alloc((LS.nreg == 3 ? 3 : 1) + nqw);
++		if (LS.nreg == 3)
++		{
++			// REGLIST ignores PRE: commit PRIM explicitly before the vertex list.
++			LS.tag[0].d[0] = HWGIF_TAG(1, 0, 0, 0, 1, 1);
++			LS.tag[0].d[1] = GSR_PRIM;
++			LS.tag[1].d[0] = PRIM_TRI | pass_prim(&P.pass[0]);
++			LS.tag[1].d[1] = 0;
++			LS.tag += 2;
++		}
+ 		LS.n = 0;
+ 		LS.open = 1;
+ 		return LS.tag + 1;
+@@ -2551,13 +2618,29 @@ static void emit_tris(const FOutVector *base, const u32 *idx, u32 nidx, const fl
+ 				pk.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
+ 				pk.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
+ 			}
+-			o = ls_reserve((u32)((cnt - 2) * 3 * nreg));
+-			for (k = 1; k + 1 < cnt; k++)
++			o = ls_reserve((u32)((cnt - 2) * (nreg == 3 ? 5 : 3 * nreg)));
++			if (nreg == 3)
+ 			{
+-				o = put_vertex(o, &cl[0], &pk);
+-				o = put_vertex(o, &cl[k], &pk);
+-				o = put_vertex(o, &cl[k + 1], &pk);
+-				LS.n += 3;
++				u64 *r = (u64 *)o;
++
++				for (k = 1; k + 1 < cnt; k++)
++				{
++					r = put_vertex_reglist(r, &cl[0], &pk);
++					r = put_vertex_reglist(r, &cl[k], &pk);
++					r = put_vertex_reglist(r, &cl[k + 1], &pk);
++					*r++ = 0; // descriptor 10 is NOP
++					LS.n += 3;
++				}
++			}
++			else
++			{
++				for (k = 1; k + 1 < cnt; k++)
++				{
++					o = put_vertex(o, &cl[0], &pk);
++					o = put_vertex(o, &cl[k], &pk);
++					o = put_vertex(o, &cl[k + 1], &pk);
++					LS.n += 3;
++				}
+ 			}
+ 			if (P.lmode == LM_RAMP)
+ 			{
+diff --git a/src/ps2/hw/ps2_hw_model.inc b/src/ps2/hw/ps2_hw_model.inc
+index 65444fa4e..c74dad9e2 100644
+--- a/src/ps2/hw/ps2_hw_model.inc
++++ b/src/ps2/hw/ps2_hw_model.inc
+@@ -23,7 +23,7 @@ typedef struct
+ 	float w; // eye depth
+ 	u32 ocl; // outcode (bits 0..5)
+ 	u32 pad[2];
+-	qw_t col4; // gr_modellighting: the RGBAQ quadword of the vertex (the colour of the pass scaled by the light factor of the vertex)
++	qw_t col4; // temporary float projection until classification; then native RGBAQ and XYZ (without per-triangle fog)
+ } __attribute__((aligned(64))) mdl_v_t; // 64 bytes: a cache line
+ 
+ // the work areas are zone blocks made when a model needs them (a game without models does not pay for them) and given back under memory pressure (PS2Models reclaim hook)
+@@ -336,41 +336,61 @@ static void mdl_tri_general(const mesh_t *mesh, int fi, int ni, float lerp, int
+ 	G.md_slow++;
+ }
+ 
+-// one vertex as GIF data (3 quadwords): ST + Q, the colour (fmt 6: the vertex's own, else the pass's), XYZ (fmt 0) or XYZF (fmt 1, 6; zi was shifted by 4 when the vertex was made, fog4 = F << 4)
+-static inline __attribute__((always_inline)) qw_t *mdl_put_v(qw_t *o, const mdl_v_t *m, const qw_t *colqw, u32 fog4, const int fmt)
++// Once per transformed vertex, after classification no longer needs col4's
++// float projection. Pack the exact old PACKED values into that same storage.
++static inline void mdl_prepare_v(mdl_v_t *m, u32 col, float lf, int fmt)
+ {
+-	o[0] = m->stq;
+-	o[1] = fmt == 6 ? m->col4 : *colqw;
+-	o[2].d[0] = (u64)(u32)m->xi | ((u64)(u32)m->yi << 32);
+-	o[2].d[1] = (u64)(u32)m->zi | ((u64)fog4 << 32);
++	if (fmt == 6)
++	{
++		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
++		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
++		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
++
++		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
++	}
++	m->col4.d[0] = (u64)col | ((u64)m->stq.w[2] << 32);
++	m->col4.d[1] = (u64)(m->xi & 0xFFFF) | ((u64)(m->yi & 0xFFFF) << 16)
++		| ((u64)(fmt == 0 ? (u32)m->zi : ((u32)m->zi >> 4) & 0xFFFFFFu) << 32);
++}
++
++// Native ST/RGBAQ/XYZ(F), copied once per triangle corner. Fog remains per
++// triangle; the model's other register fields were packed once per vertex.
++static inline __attribute__((always_inline)) u64 *mdl_put_v(u64 *o, const mdl_v_t *m, u32 fog4, const int fmt)
++{
++
++	o[0] = m->stq.d[0];
++	o[1] = m->col4.d[0];
++	o[2] = m->col4.d[1]
++		| (fmt == 0 ? 0 : (u64)((fog4 >> 4) & 255) << 56);
+ 	return o + 3;
+ }
+ 
+ // the triangles of `list` (n of them), one GIF run: the vertices of every triangle from mv, the colour and F as given
+-static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, const int fmt)
++static inline __attribute__((always_inline)) void mdl_emit_list(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, const int fmt)
+ {
+ 	u32 i;
+ 
+ 	for (i = 0; i < n; i++)
+ 	{
+ 		const unsigned tt = list[i];
+-		qw_t *o = ls_reserve(9);
++		u64 *o = (u64 *)ls_reserve(5);
+ 
+-		o = mdl_put_v(o, &mv[ix[tt * 3]], colqw, fog4, fmt);
+-		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], colqw, fog4, fmt);
+-		mdl_put_v(o, &mv[ix[tt * 3 + 2]], colqw, fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3]], fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3 + 1]], fog4, fmt);
++		o = mdl_put_v(o, &mv[ix[tt * 3 + 2]], fog4, fmt);
++		*o = 0; // the tenth REGLIST descriptor is NOP
+ 		LS.n += 3;
+ 	}
+ }
+ 
+-static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, const qw_t *colqw, u32 fog4, int fmt)
++static void mdl_emit_fmt(const mdl_v_t *mv, const unsigned short *ix, const u16 *list, u32 n, u32 fog4, int fmt)
+ {
+ 	if (fmt == 6)
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 6);
++		mdl_emit_list(mv, ix, list, n, fog4, 6);
+ 	else if (fmt == 1)
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 1);
++		mdl_emit_list(mv, ix, list, n, fog4, 1);
+ 	else
+-		mdl_emit_list(mv, ix, list, n, colqw, fog4, 0);
++		mdl_emit_list(mv, ix, list, n, fog4, 0);
+ }
+ 
+ // the GS state of a row of the colormap (palette lighting), or of the plain plan
+@@ -419,14 +439,9 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 	u32 orall = 0; // the outcodes of all vertices or'ed: 0 = the whole mesh is inside the guard band and the near plane
+ 	u32 nrej = 0, nclip = 0;
+ 	float wmin = 1e30f, wmax = -1e30f;
+-	qw_t colqw;
+ 	const u32 tp0 = cyc();
+ 	u32 tp1, tp2;
+ 
+-	colqw.w[0] = col & 255;
+-	colqw.w[1] = (col >> 8) & 255;
+-	colqw.w[2] = (col >> 16) & 255;
+-	colqw.w[3] = col >> 24;
+ 	vu0_need();
+ 	// 1. every vertex: interpolation, the VU0 transform, the GIF quadwords (ST + Q, zi for the format); the colour with the light factor below
+ 	{
+@@ -589,17 +604,11 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 	if (!nord)
+ 		return 1;
+ 
+-	// 4. the colour with the light factor of every vertex (col4 held the screen coordinates until now), then the surviving triangles, by row when the rows are CLUTs (a GS state each), in order otherwise
+-	if (light)
+-		for (k = 0; k < nv; k++)
+-		{
+-			const float lf = mdl_lf[mdl_lidx(na, nb, k, lerp)];
+-
+-			mv[k].col4.w[0] = (u32)((float)(col & 255) * lf + 0.5f);
+-			mv[k].col4.w[1] = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
+-			mv[k].col4.w[2] = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
+-			mv[k].col4.w[3] = col >> 24;
+-		}
++	// 4. Reuse the now-dead float projection slot for native register values.
++	// The colour/light rounding and Q are the old PACKED values; every triangle
++	// corner copies them without repeating colour/coordinate bit packing.
++	for (k = 0; k < nv; k++)
++		mdl_prepare_v(&mv[k], col, light ? mdl_lf[mdl_lidx(na, nb, k, lerp)] : 1.0f, fmt);
+ 	ls_close();
+ 	if (uni)
+ 	{
+@@ -621,7 +630,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 		mdl_set_row(pal ? urow : 0, pal);
+ 		LS.nreg = 3;
+ 		LS.fmt = fmt;
+-		mdl_emit_fmt(mv, ix, ord, (u32)nord, &colqw, fog4, fmt);
++		mdl_emit_fmt(mv, ix, ord, (u32)nord, fog4, fmt);
+ 	}
+ 	else if (pal)
+ 	{
+@@ -643,7 +652,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 				mdl_set_row(k, 1);
+ 				LS.nreg = 3;
+ 				LS.fmt = fmt;
+-				mdl_emit_fmt(mv, ix, ord + s, count[k], &colqw, fog4, fmt);
++				mdl_emit_fmt(mv, ix, ord + s, count[k], fog4, fmt);
+ 			}
+ 	}
+ 	else
+@@ -654,7 +663,7 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 		LS.fmt = fmt;
+ 		for (t = 0; t < nt; t++)
+ 		{
+-			qw_t *o;
++			u64 *o;
+ 			u32 fog = 255;
+ 
+ 			if (rowof[t] == 255)
+@@ -677,19 +686,20 @@ static int mdl_mesh_fast(const mesh_t *mesh, int fi, int ni, float lerp, int lig
+ 				}
+ 				fog = fogtab[cls];
+ 			}
+-			o = ls_reserve(9);
++			o = (u64 *)ls_reserve(5);
+ 			if (fmt == 6)
+ 			{
+-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 6);
+-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 6);
+-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 6);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 6);
+ 			}
+ 			else
+ 			{
+-				o = mdl_put_v(o, &mv[ix[t * 3]], &colqw, fog << 4, 1);
+-				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], &colqw, fog << 4, 1);
+-				mdl_put_v(o, &mv[ix[t * 3 + 2]], &colqw, fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3]], fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 1]], fog << 4, 1);
++				o = mdl_put_v(o, &mv[ix[t * 3 + 2]], fog << 4, 1);
+ 			}
++			*o = 0;
+ 			LS.n += 3;
+ 		}
+ 	}
+diff --git a/src/ps2/hw/ps2_hw_priv.inc b/src/ps2/hw/ps2_hw_priv.inc
+index b79276bcd..d2d2c8164 100644
+--- a/src/ps2/hw/ps2_hw_priv.inc
++++ b/src/ps2/hw/ps2_hw_priv.inc
+@@ -52,6 +52,9 @@
+ #define VRAM_BLOCKS 16384 // 4 MiB in 256-byte blocks
+ #define PAGE_BLOCKS 32 // 8 KiB page
+ #define VRAM_RANGES (VRAM_BLOCKS / 2 + 1) // worst case: alternating one-block free/used ranges
++#if VRAM_BLOCKS > 0xFFFFu
++#error The VRAM free-list block addresses and lengths must fit in u16
++#endif
+ 
+ // DMA channel 2 (GIF)
+ #define D2_CHCR ((volatile u32 *)0x1000A000)
+@@ -320,7 +323,8 @@ static struct
+ 	clutent_t clut_ent[CLUT_SLOTS];
+ 	u32 clut_tick;
+ 	u32 clut_epoch; // OPT11 (PS2-HW-101): bumped whenever a CLUT image of the cache is (re)built: what the VU1 path knows about the slots of the colormap rows is valid for one epoch
+-	u32 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
++	// Every free range lies inside the 16384-block GS memory, including a whole-memory length. Keep arithmetic in the allocator wide.
++	u16 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
+ 	int free_n;
+ 	u32 used_blocks;
+ 	u32 ws_prev, ws_last; // OPT11-MEM (PS2-HW-300): H.st.ws_blocks at the last frame end / the working set of the last frame (what showmem shows); no counter of their own in the draw path
+diff --git a/src/ps2/hw/ps2_hw_tex.inc b/src/ps2/hw/ps2_hw_tex.inc
+index 35014f288..0110d27b1 100644
+--- a/src/ps2/hw/ps2_hw_tex.inc
++++ b/src/ps2/hw/ps2_hw_tex.inc
+@@ -679,12 +679,12 @@ static inline u32 clut_slot(u32 i) // CT32 CLUT in CSM1: bits 3 and 4 of the ind
+ 	return (i & ~0x18u) | ((i & 0x08u) << 1) | ((i & 0x10u) >> 1);
+ }
+ 
+-// 16x16 CT32 image into VRAM (the CLUT format of a PSMT8 CSM1 CLUT)
+-static void clut_write(u32 blk, const u32 *entries)
++// Reserve a complete 16x16 CT32 CLUT transfer. Its image payload stays in the open ring buffer until the caller has filled it.
++// pk_alloc closes any VU chunk and obtains ring ownership before the caller reads palette state or writes the image.
++static u32 *clut_alloc(u32 blk)
+ {
+ 	qw_t *h = pk_alloc(1 + 4 + 1 + 64 + 2);
+ 	qw_t *d;
+-	int i;
+ 
+ 	H.serial++;
+ 
+@@ -697,13 +697,6 @@ static void clut_write(u32 blk, const u32 *entries)
+ 	h[5].d[0] = HWGIF_TAG(64, 1, 0, 0, 2, 0);
+ 	h[5].d[1] = 0;
+ 	d = &h[6];
+-	for (i = 0; i < 64; i++)
+-	{
+-		d[i].w[0] = entries[i * 4];
+-		d[i].w[1] = entries[i * 4 + 1];
+-		d[i].w[2] = entries[i * 4 + 2];
+-		d[i].w[3] = entries[i * 4 + 3];
+-	}
+ 	// PS2-HW-102 (real GS, not PCSX2): a CLUT image written over a slot that was loaded before (the row of a light table, a palette change) must not come out of
+ 	// the texture cache of the GS: TEXFLUSH behind the transfer (the program of the VU1 path reloads CLUTs of the cache with TEX2 / CLD all the time)
+ 	d[64].d[0] = HWGIF_TAG(1, 1, 0, 0, 0, 1);
+@@ -712,6 +705,29 @@ static void clut_write(u32 blk, const u32 *entries)
+ 	if (blk == H.clut_loaded)
+ 		H.clut_loaded = 0; // the GS holds a copy of the old contents
+ 	H.st.clut_uploads++;
++	return d[0].w;
++}
++
++// CSM1 swaps index bits 3 and 4: an involution with 64 pairs and 128 fixed points. Build entries in the packet, then swap each pair once.
++// This avoids two temporary 1 KiB images and the final copy into the DMA ring. The debug identity ordering remains available.
++static void clut_swizzle(u32 *entries)
++{
++	u32 i;
++
++	if (ps2hwd_dbg_flags & 16)
++		return;
++	for (i = 0; i < 256; i += 32)
++	{
++		u32 j;
++
++		for (j = 8; j < 16; j++)
++		{
++			u32 t = entries[i + j];
++
++			entries[i + j] = entries[i + j + 8];
++			entries[i + j + 8] = t;
++		}
++	}
+ }
+ 
+ enum
+@@ -816,15 +832,12 @@ static int clut_palette_dependent(u32 kind)
+ 
+ static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
+ {
+-	static u32 e[256] __attribute__((aligned(64)));
+-	static u32 sw[256] __attribute__((aligned(64)));
+-	int i;
++	u32 *e;
+ 
+ 	H.clut_epoch++; // PS2-HW-101
++	e = clut_alloc(blk);
+ 	clut_entries(kind, param, keyed, e);
+-	for (i = 0; i < 256; i++)
+-		sw[clut_slot((u32)i)] = e[i];
+-	clut_write(blk, sw);
++	clut_swizzle(e);
+ }
+ 
+ static inline u32 clut_fixed_blk(u32 kind) // kind 1..4
+diff --git a/src/ps2/ps2_midi.c b/src/ps2/ps2_midi.c
+index abee1543b..c69563543 100644
+--- a/src/ps2/ps2_midi.c
++++ b/src/ps2/ps2_midi.c
+@@ -9,6 +9,7 @@
+ #define NOTES 24
+ #define MAX_EVENTS 1000000u
+ #define MAX_US (86400ull * 1000000)
++#define NOTES_CHANGED (1u << 16)
+ 
+ typedef struct
+ {
+@@ -26,13 +27,15 @@ typedef struct
+ struct ps2_midi
+ {
+ 	ps2_audio_input in;
+-	midi_track tracks[TRACKS];
+ 	midi_channel channels[16];
+ 	midi_note notes[NOTES];
+ 	uint32_t steps[128];
+ 	int16_t sine[256];
+ 	unsigned count, division, tempo, failed, events;
+ 	uint64_t tick, us, remainder, frame, length_frames;
++	// The validated SMF track count is immutable. Keep its complete streaming
++	// tracks/caches in the same allocation, without reserving unused tracks.
++	midi_track tracks[];
+ };
+ 
+ static uint32_t BE(const uint8_t *p, unsigned n)
+@@ -91,7 +94,7 @@ static uint32_t Step(ps2_midi *m, unsigned ch, unsigned key)
+ 	return (uint32_t)(m->steps[key] * powf(2.0f, bend));
+ }
+ 
+-static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
++static unsigned Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
+ {
+ 	unsigned i, ch = status & 15, kind = status >> 4;
+ 	midi_channel *c = &m->channels[ch];
+@@ -102,6 +105,7 @@ static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
+ 		if (!n) { n = &m->notes[0]; for (i = 1; i < NOTES; i++) if (m->notes[i].age > n->age) n = &m->notes[i]; }
+ 		memset(n, 0, sizeof *n); n->active = 1; n->channel = ch; n->key = a; n->velocity = b;
+ 		n->step = Step(m, ch, a); n->noise = 0x1234567u + a;
++		return NOTES_CHANGED;
+ 	}
+ 	else if (kind == 8 || (kind == 9 && !b))
+ 	{
+@@ -129,16 +133,22 @@ static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
+ 			if (a == 123 || (!c->sustain && n->held)) { n->held = 0; n->released = 1; }
+ 			if (a == 121 && n->active) n->step = Step(m, ch, n->key);
+ 		}
++		if (a == 120) return NOTES_CHANGED;
++		if (a == 7 || a == 11 || a == 121) return 1u << ch;
+ 	}
++	return 0;
+ }
+ 
+-static void Event(ps2_midi *m, midi_track *t, int synth)
++// Changes to active-note membership or per-channel amplitude, for this read's
++// transient synthesis cache. Parsing, timing, and persistent state are shared
++// with the duration scan and seek, which do not need the returned mask.
++static unsigned Event(ps2_midi *m, midi_track *t, int synth)
+ {
+-	unsigned s = Byte(m, t), a, b = 0, n;
+-	if (++m->events > MAX_EVENTS) { m->failed = 1; return; }
++	unsigned s = Byte(m, t), a, b = 0, n, changed = 0;
++	if (++m->events > MAX_EVENTS) { m->failed = 1; return 0; }
+ 	if (s < 128)
+ 	{
+-		if (!t->running) { m->failed = 1; return; }
++		if (!t->running) { m->failed = 1; return 0; }
+ 		t->pos--; s = t->running;
+ 	}
+ 	if (s < 240)
+@@ -146,8 +156,8 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
+ 		t->running = s;
+ 		a = Byte(m, t);
+ 		if ((s >> 4) != 12 && (s >> 4) != 13) b = Byte(m, t);
+-		if (a > 127 || b > 127) { m->failed = 1; return; }
+-		if (synth) Message(m, s, a, b);
++		if (a > 127 || b > 127) { m->failed = 1; return 0; }
++		if (synth) changed = Message(m, s, a, b);
+ 	}
+ 	else
+ 	{
+@@ -155,15 +165,15 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
+ 		if (s == 255)
+ 		{
+ 			a = Byte(m, t); n = VLQ(m, t);
+-			if (n > t->end - t->pos) { m->failed = 1; return; }
++			if (n > t->end - t->pos) { m->failed = 1; return 0; }
+ 			if (a == 47)
+ 			{
+ 				if (n) m->failed = 1;
+-				t->ended = 1; return;
++				t->ended = 1; return 0;
+ 			}
+ 			if (a == 81)
+ 			{
+-				if (n != 3) { m->failed = 1; return; }
++				if (n != 3) { m->failed = 1; return 0; }
+ 				m->tempo = (unsigned)Byte(m, t) << 16;
+ 				m->tempo |= (unsigned)Byte(m, t) << 8; m->tempo |= Byte(m, t);
+ 				if (!m->tempo) m->failed = 1;
+@@ -173,12 +183,13 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
+ 		else if (s == 240 || s == 247)
+ 		{
+ 			n = VLQ(m, t);
+-			if (n > t->end - t->pos) { m->failed = 1; return; }
++			if (n > t->end - t->pos) { m->failed = 1; return 0; }
+ 			t->pos += n;
+ 		}
+-		else { m->failed = 1; return; }
++		else { m->failed = 1; return 0; }
+ 	}
+ 	Next(m, t);
++	return changed;
+ }
+ 
+ static int Earliest(ps2_midi *m)
+@@ -212,7 +223,7 @@ ps2_midi *PS2_MIDIOpen(const ps2_audio_input *in)
+ 	pos = BE(h+4,4);
+ 	if (pos > in->size - 8) return NULL;
+ 	pos += 8;
+-	m = calloc(1, sizeof *m); if (!m) return NULL;
++	m = calloc(1, sizeof *m + count * sizeof m->tracks[0]); if (!m) return NULL;
+ 	m->in = *in; m->count = count; m->division = division;
+ 	for (i = 0; i < count; i++)
+ 	{
+@@ -247,19 +258,52 @@ uint32_t PS2_MIDILength(const ps2_midi *m) { return (uint32_t)((m->length_frames
+ size_t PS2_MIDIRead(ps2_midi *m, int16_t *out, size_t frames)
+ {
+ 	size_t f;
++	struct { midi_note *note; unsigned amplitude; } active[NOTES];
++	unsigned count = 0, refresh = NOTES_CHANGED;
++	int t;
++	uint64_t due;
++	if (!frames || m->frame >= m->length_frames || m->failed) return 0;
++	t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
+ 	for (f = 0; f < frames && m->frame < m->length_frames && !m->failed; f++, m->frame++)
+ 	{
+ 		unsigned i, budget = 4096;
+-		int t, l = 0, r = 0;
+-		while ((t = Earliest(m)) >= 0 && Due(m, t, 0) <= m->frame && !m->failed)
++		int l = 0, r = 0;
++		// The next track/frame cannot change until an event runs. Keep the
++		// original merged-track tie order and integer timing, once per event.
++		while (t >= 0 && due <= m->frame && !m->failed)
+ 		{
+ 			if (!budget--) { m->failed = 1; break; }
+-			Due(m, t, 1); Event(m, &m->tracks[t], 1);
++			Due(m, t, 1); refresh |= Event(m, &m->tracks[t], 1);
++			t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
+ 		}
+ 		if (m->failed) break;
+-		for (i = 0; i < NOTES; i++)
++		// Only events can create notes or change velocity/channel gain. Keep
++		// their original mixing order and exact normalization until the next
++		// event. Released notes still advance below until they become inactive.
++		if (refresh & NOTES_CHANGED)
+ 		{
+-			midi_note *n = &m->notes[i];
++			count = 0;
++			for (i = 0; i < NOTES; i++) if (m->notes[i].active)
++			{
++				midi_note *n = &m->notes[i];
++				midi_channel *c = &m->channels[n->channel];
++				active[count].note = n;
++				active[count++].amplitude = n->velocity * c->volume * c->expression / (127 * 127);
++			}
++		}
++		else if (refresh) for (i = 0; i < count; i++)
++		{
++			midi_note *n = active[i].note;
++			if (refresh & (1u << n->channel))
++			{
++				midi_channel *c = &m->channels[n->channel];
++				active[i].amplitude = n->velocity * c->volume * c->expression / (127 * 127);
++			}
++		}
++		refresh = 0;
++		for (i = 0; i < count; i++)
++		{
++			midi_note *n = active[i].note;
+ 			midi_channel *c;
+ 			int v, amp;
+ 			unsigned p;
+@@ -281,7 +325,7 @@ size_t PS2_MIDIRead(ps2_midi *m, int16_t *out, size_t frames)
+ 				case 2: v = p < 32768 ? 24000 : -24000; break;
+ 				default: v = (int)p - 32768; break;
+ 			}
+-			amp = (int)(n->velocity * c->volume * c->expression / (127 * 127));
++			amp = (int)active[i].amplitude;
+ 			v = v * amp / (127 * 16); v = v * (int)n->env / 32768;
+ 			l += v * (int)(127 - c->pan) / 127; r += v * (int)c->pan / 127;
+ 			n->phase += n->step; n->age++;
+diff --git a/src/ps2/ps2_music.c b/src/ps2/ps2_music.c
+index 5026162a7..0e1beae11 100644
+--- a/src/ps2/ps2_music.c
++++ b/src/ps2/ps2_music.c
+@@ -36,7 +36,6 @@ struct ps2_music
+ 	size_t buffered, cursor;
+ 	unsigned skipped;                  // PS2-317: the position moved without decoding; the decoder is behind (resynchronised by PS2_MusicRender)
+ 	int16_t buffer[DECODE_FRAMES * 2] __attribute__((aligned(16))); // PS2-316: the VU0 PCM conversion stores 16 bytes at a time
+-	uint8_t raw[DECODE_FRAMES * 4];
+ };
+ 
+ #if defined(PS2_AUDIO_VORBIS) || defined(PS2_AUDIO_MP3)
+@@ -229,9 +228,26 @@ int PS2_MusicPlay(ps2_music *m, int loop)
+ 
+ void PS2_MusicRevive(ps2_music *m) { if (m) { m->playing = 1; m->paused = 0; } }
+ 
++// Input occupies at most four bytes per frame, just like the stereo output.
++// Expand from the end so mono/8-bit output never overwrites unread source bytes.
++static void ExpandPCM(int16_t *buffer, size_t frames, unsigned bits, unsigned channels)
++{
++	size_t stride = channels * (bits / 8);
++#if (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__) || defined(_WIN32)
++	if (bits == 16 && channels == 2) return;
++#endif
++	while (frames--)
++	{
++		const uint8_t *p = (const uint8_t *)buffer + frames * stride;
++		int16_t l = PS2_PCMValue(p, bits);
++		int16_t r = channels == 2 ? PS2_PCMValue(p + bits / 8, bits) : l;
++		buffer[frames * 2] = l; buffer[frames * 2 + 1] = r;
++	}
++}
++
+ static size_t Decode(ps2_music *m)
+ {
+-	size_t n = 0, i, stride = m->channels * 2;
++	size_t n = 0, stride = m->channels * 2;
+ 	if (m->type == PS2_MUSIC_WAV)
+ 	{
+ 		size_t bytes;
+@@ -240,14 +256,9 @@ static size_t Decode(ps2_music *m)
+ 		if (n > DECODE_FRAMES) n = DECODE_FRAMES;
+ 		bytes = n * stride;
+ 		if (!n) return 0;
+-		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->raw, bytes) != bytes)
++		if (PS2_AudioRead(&m->in, m->pcm.offset + (size_t)m->decoded * stride, m->buffer, bytes) != bytes)
+ 		{ m->error = 1; return 0; }
+-		for (i = 0; i < n; i++)
+-		{
+-			const uint8_t *p = m->raw + i*stride;
+-			m->buffer[i*2] = PS2_PCMValue(p, m->pcm.bits);
+-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(p+m->pcm.bits/8, m->pcm.bits) : m->buffer[i*2];
+-		}
++		ExpandPCM(m->buffer, n, m->pcm.bits, m->channels);
+ 	}
+ 	else if (m->type == PS2_MUSIC_MIDI)
+ 	{
+@@ -263,33 +274,28 @@ static size_t Decode(ps2_music *m)
+ 		long got = ov_read_float(&m->ogg, &pcm, DECODE_FRAMES, &section);
+ 		if (got < 0 || section != 0) { m->error = 1; return 0; }
+ 		n = (size_t)got;
+-		PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
++		// At EOF libvorbis may return no PCM pointer along with zero frames.
++		if (n) PS2_FloatsToS16Stereo(m->buffer, pcm[0], m->channels == 2 ? pcm[1] : pcm[0], n);
+ 	}
+ #endif
+ #ifdef PS2_AUDIO_MP3
+ 	else if (m->type == PS2_MUSIC_MP3)
+ 	{
+ 		size_t bytes = 0;
+-		int result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
++		int result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
+ 		if (result == MPG123_NEW_FORMAT)
+ 		{
+ 			long rate; int ch, enc;
+ 			if (mpg123_getformat(m->mp3, &rate, &ch, &enc) != MPG123_OK || rate != (long)m->rate
+ 				|| ch != (int)m->channels || enc != MPG123_ENC_SIGNED_16) { m->error = 1; return 0; }
+-			result = mpg123_read(m->mp3, m->raw, DECODE_FRAMES * stride, &bytes);
++			result = mpg123_read(m->mp3, (uint8_t *)m->buffer, DECODE_FRAMES * stride, &bytes);
+ 		}
+ 		if (result != MPG123_OK && result != MPG123_DONE) { m->error = 1; return 0; }
+ 		n = bytes / stride;
+ 	}
+ #endif
+ 	if (m->type == PS2_MUSIC_MP3)
+-	{
+-		for (i = 0; i < n; i++)
+-		{
+-			m->buffer[i*2] = PS2_PCMValue(m->raw+i*stride, 16);
+-			m->buffer[i*2+1] = m->channels == 2 ? PS2_PCMValue(m->raw+i*stride+2, 16) : m->buffer[i*2];
+-		}
+-	}
++		ExpandPCM(m->buffer, n, 16, m->channels);
+ 	m->decoded += n; m->cursor = 0; m->buffered = n; return n;
+ }
+ 
+diff --git a/src/r_draw8.c b/src/r_draw8.c
+index c9734a14d..a4234936f 100644
+--- a/src/r_draw8.c
++++ b/src/r_draw8.c
+@@ -613,6 +613,13 @@ void R_Draw2sMultiPatchTranslucentColumn_8(void)
+ void R_DrawShadeColumn_8(void)
+ {
+ 	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
++#ifdef PS2_OPT_DRAW
++	const UINT8 *const source = dc_source;
++	const UINT8 *const shademap = colormaps;
++#define R_SHADE_PIXEL(INDEX) shademap[(source[INDEX] <<8) + (*dest)]
++#else
++#define R_SHADE_PIXEL(INDEX) colormaps[(dc_source[INDEX] <<8) + (*dest)]
++#endif
+ 	register INT32 count;
+ 	register UINT8 *dest;
+ 	register fixed_t frac, fracstep;
+@@ -639,10 +646,11 @@ void R_DrawShadeColumn_8(void)
+ 	// Here we do an additional index re-mapping.
+ 	do
+ 	{
+-		*dest = colormaps[(dc_source[frac>>FRACBITS] <<8) + (*dest)];
++		*dest = R_SHADE_PIXEL(frac>>FRACBITS);
+ 		dest += vwidth;
+ 		frac += fracstep;
+ 	} while (count--);
++#undef R_SHADE_PIXEL
+ }
+ 
+ /**	\brief The R_DrawTranslucentColumn_8 function
+@@ -898,6 +906,16 @@ void R_DrawDropShadowColumn_8(void)
+ void R_DrawTranslatedTranslucentColumn_8(void)
+ {
+ 	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
++#ifdef PS2_OPT_DRAW
++	// Texture and lookup addresses remain fixed for the complete sprite column.
++	const UINT8 *const source = dc_source;
++	const UINT8 *const translation = dc_translation;
++	const lighttable_t *const colormap = dc_colormap;
++	const UINT8 *const transmap = dc_transmap;
++#define R_TRANSLATED_TRANS_PIXEL(INDEX) *(transmap + (colormap[translation[source[INDEX]]]<<8) + (*dest))
++#else
++#define R_TRANSLATED_TRANS_PIXEL(INDEX) *(dc_transmap + (dc_colormap[dc_translation[dc_source[INDEX]]]<<8) + (*dest))
++#endif
+ 	register INT32 count;
+ 	register UINT8 *dest;
+ 	register fixed_t frac, fracstep;
+@@ -935,7 +953,7 @@ void R_DrawTranslatedTranslucentColumn_8(void)
+ 				//  using a lighting/special effects LUT.
+ 				// heightmask is the Tutti-Frutti fix
+ 
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL(frac>>FRACBITS);
+ 
+ 				dest += vwidth;
+ 				if ((frac += fracstep) >= heightmask)
+@@ -945,19 +963,31 @@ void R_DrawTranslatedTranslucentColumn_8(void)
+ 		}
+ 		else
+ 		{
++#ifdef PS2_OPT_DRAW
++			// One destination/coordinate pair keeps all four lookup addresses in
++			// caller-saved EE registers, including for one-pixel sprite columns.
++			do
++			{
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
++				dest += vwidth;
++				frac += fracstep;
++			} while (--count);
++#else
+ 			while ((count -= 2) >= 0) // texture height is a power of 2
+ 			{
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
+ 				dest += vwidth;
+ 				frac += fracstep;
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
+ 				dest += vwidth;
+ 				frac += fracstep;
+ 			}
+ 			if (count & 1)
+-				*dest = *(dc_transmap + (dc_colormap[dc_translation[dc_source[(frac>>FRACBITS)&heightmask]]]<<8) + (*dest));
++				*dest = R_TRANSLATED_TRANS_PIXEL((frac>>FRACBITS)&heightmask);
++#endif
+ 		}
+ 	}
++#undef R_TRANSLATED_TRANS_PIXEL
+ }
+ 
+ /**	\brief The R_DrawTranslatedColumn_8 function
+@@ -968,6 +998,14 @@ void R_DrawTranslatedTranslucentColumn_8(void)
+ void R_DrawTranslatedColumn_8(void)
+ {
+ 	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
++#ifdef PS2_OPT_DRAW
++	const UINT8 *const source = dc_source;
++	const UINT8 *const translation = dc_translation;
++	const lighttable_t *const colormap = dc_colormap;
++#define R_TRANSLATED_PIXEL(INDEX) colormap[translation[source[INDEX]]]
++#else
++#define R_TRANSLATED_PIXEL(INDEX) dc_colormap[dc_translation[dc_source[INDEX]]]
++#endif
+ 	register INT32 count;
+ 	register UINT8 *dest;
+ 	register fixed_t frac, fracstep;
+@@ -995,12 +1033,13 @@ void R_DrawTranslatedColumn_8(void)
+ 		//  used with PLAY sprites.
+ 		// Thus the "green" ramp of the player 0 sprite
+ 		//  is mapped to gray, red, black/indigo.
+-		*dest = dc_colormap[dc_translation[dc_source[frac>>FRACBITS]]];
++		*dest = R_TRANSLATED_PIXEL(frac>>FRACBITS);
+ 
+ 		dest += vwidth;
+ 
+ 		frac += fracstep;
+ 	} while (count--);
++#undef R_TRANSLATED_PIXEL
+ }
+ 
+ // ==========================================================================
+diff --git a/src/r_draw8_npo2.c b/src/r_draw8_npo2.c
+index b2b188195..3dd2a40ed 100644
+--- a/src/r_draw8_npo2.c
++++ b/src/r_draw8_npo2.c
+@@ -23,6 +23,59 @@
+     #pragma GCC diagnostic ignored "-Waggregate-return"
+ #endif
+ 
++#ifdef PS2_OPT_DRAW
++// A plane's spans share their flat dimensions. Generating these descriptors
++// needs a 64-bit divide on the EE; keep two descriptors per axis across all
++// tilted drawers, including alternating floor/sprite dimensions. Copy them
++// into span-local storage before any pixel stores.
++// No source/cache pointer is retained, so flat eviction and mode/level changes
++// need no invalidation. Zero dimensions still take libdivide's error path.
++static void R_NPO2SlopeDividers(struct libdivide_u32_t *x, struct libdivide_u32_t *y)
++{
++	// Keep the magic words aligned even though libdivide's descriptor is packed.
++	static struct
++	{
++		UINT32 magic;
++		UINT16 dimension;
++		UINT8 more;
++	} xcached[2], ycached[2];
++	static UINT8 xnext, ynext;
++	const UINT16 flatwidth = ds_flatwidth, flatheight = ds_flatheight;
++	UINT32 xi = 0, yi = 0;
++
++	if (!flatwidth || xcached[0].dimension != flatwidth)
++	{
++		xi = 1;
++		if (!flatwidth || xcached[1].dimension != flatwidth)
++		{
++			const struct libdivide_u32_t divider = libdivide_u32_gen(flatwidth);
++			xi = xnext;
++			xcached[xi].magic = divider.magic;
++			xcached[xi].more = divider.more;
++			xcached[xi].dimension = flatwidth;
++			xnext ^= 1;
++		}
++	}
++	if (!flatheight || ycached[0].dimension != flatheight)
++	{
++		yi = 1;
++		if (!flatheight || ycached[1].dimension != flatheight)
++		{
++			const struct libdivide_u32_t divider = libdivide_u32_gen(flatheight);
++			yi = ynext;
++			ycached[yi].magic = divider.magic;
++			ycached[yi].more = divider.more;
++			ycached[yi].dimension = flatheight;
++			ynext ^= 1;
++		}
++	}
++	x->magic = xcached[xi].magic;
++	x->more = xcached[xi].more;
++	y->magic = ycached[yi].magic;
++	y->more = ycached[yi].more;
++}
++#endif
++
+ /**	\brief The R_DrawSpan_NPO2_8 function
+ 	Draws the actual span.
+ */
+@@ -144,8 +197,13 @@ void R_DrawTiltedSpan_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -333,8 +391,13 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -520,8 +583,13 @@ void R_DrawTiltedSplat_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -718,8 +786,13 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -1335,8 +1408,13 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -1491,8 +1569,13 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+@@ -1842,8 +1925,13 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
+ 	slopereal_t endz, endu, endv;
+ 	UINT32 stepu, stepv;
+ 
++#ifdef PS2_OPT_DRAW
++	struct libdivide_u32_t x_divider, y_divider;
++	R_NPO2SlopeDividers(&x_divider, &y_divider);
++#else
+ 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
+ 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
++#endif
+ 
+ 	iz = ds_sz.z + ds_sz.y*(centery-ds_y) + ds_sz.x*(ds_x1-centerx);
+ 	uz = ds_su.z + ds_su.y*(centery-ds_y) + ds_su.x*(ds_x1-centerx);
+diff --git a/src/r_patch.c b/src/r_patch.c
+index dcd56fb5e..89d6b11e3 100644
+--- a/src/r_patch.c
++++ b/src/r_patch.c
+@@ -35,7 +35,14 @@ patch_t *Patch_Create(INT16 width, INT16 height)
+ // PS2-OPT-03: a patch made from a Doom patch is ONE zone block (structure, columns, posts, pixels). The zone can then
+ // evict a sprite patch with a single owner pointer (the data arrays used to be separate blocks without an owner), and
+ // the three extra block headers and their 16-byte rounding per patch are saved (1339 patches on MAP11: ~100 KB).
+-#define PATCH_ALIGN(x) (((x) + 15u) & ~(size_t)15u)
++// Directory entries need only their natural alignment. Keep the block and
++// pixel base alignment for the existing bulk-copy paths.
++#define PATCH_ALIGN(x, type) (((x) + _Alignof(type) - 1u) & ~(size_t)(_Alignof(type) - 1u))
++#define PATCH_PIXEL_ALIGN(x) (((x) + 15u) & ~(size_t)15u)
++#ifdef PS2_NOOPT_PATCHLAYOUT
++#undef PATCH_ALIGN
++#define PATCH_ALIGN(x, type) PATCH_PIXEL_ALIGN(x)
++#endif
+ 
+ patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
+ {
+@@ -50,9 +57,9 @@ patch_t *Patch_CreateFromDoomPatch(softwarepatch_t *source)
+ 	width = SHORT(source->width);
+ 	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
+ 
+-	coloff = PATCH_ALIGN(sizeof (patch_t));
+-	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
+-	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
++	coloff = PATCH_ALIGN(sizeof (patch_t), column_t);
++	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width, post_t);
++	pixoff = PATCH_PIXEL_ALIGN(postoff + sizeof (post_t) * total_posts);
+ 
+ 	patch = Z_Calloc(pixoff + total_pixels, PU_PATCH, NULL);
+ 	base = (UINT8 *)patch;
+@@ -86,9 +93,9 @@ patch_t *Patch_TryCreateFromDoomPatch(softwarepatch_t *source)
+ 	width = SHORT(source->width);
+ 	Patch_CalcDataSizes(source, &total_pixels, &total_posts);
+ 
+-	coloff = PATCH_ALIGN(sizeof (patch_t));
+-	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width);
+-	pixoff = PATCH_ALIGN(postoff + sizeof (post_t) * total_posts);
++	coloff = PATCH_ALIGN(sizeof (patch_t), column_t);
++	postoff = PATCH_ALIGN(coloff + sizeof (column_t) * (size_t)width, post_t);
++	pixoff = PATCH_PIXEL_ALIGN(postoff + sizeof (post_t) * total_posts);
+ 
+ 	patch = Z_TryMallocAlign(pixoff + total_pixels, PU_PATCH, NULL, sizeof (void *));
+ 	if (!patch)
+diff --git a/src/r_textures.c b/src/r_textures.c
+index e82b5a160..306522618 100644
+--- a/src/r_textures.c
++++ b/src/r_textures.c
+@@ -65,9 +65,10 @@ INT32 *texturetranslation;
+ 
+ // Painfully simple texture id cacheing to make maps load faster. :3
+ static struct {
+-	char name[9];
++	// Keep word fields together: 20 bytes rather than 24, including the name's terminator.
+ 	UINT32 hash;
+ 	INT32 id;
++	char name[9];
+ 	UINT8 type;
+ } *tidcache = NULL;
+ static INT32 tidcachelen = 0;
+diff --git a/src/v_video.c b/src/v_video.c
+index 83f6b5222..3f08c2c76 100644
+--- a/src/v_video.c
++++ b/src/v_video.c
+@@ -1149,6 +1149,68 @@ void V_DrawCroppedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vscale, IN
+ 		}
+ 	}
+ 
++#ifdef PS2_OPT_DRAW
++	// As in the uncropped drawer, select the exact pixel lookup once per post
++	// and keep its addresses out of the framebuffer's char-alias store loop.
++	{
++		const UINT8 *const scrbase = screens[scrn&V_PARAMMASK];
++		const INT32 vwidth = vid.width;
++		const UINT8 *const cmap = v_colormap;
++		const UINT8 *const tlev = v_translevel;
++		const INT32 kind = (patchdrawfunc == standardpdraw) ? 0 : (patchdrawfunc == mappedpdraw) ? 1 : (patchdrawfunc == translucentpdraw) ? 2 : 3;
++
++		for (col = sx; (col>>FRACBITS) < patch->width && (col - sx) < w; col += colfrac, ++x, desttop++)
++		{
++			if (x < 0)
++				continue;
++			if (x >= vwidth)
++				break;
++
++			column = &patch->columns[col>>FRACBITS];
++			for (unsigned i = 0; i < column->num_posts; i++)
++			{
++				const post_t *post = &column->posts[i];
++				const size_t plen = post->length;
++				const fixed_t topdelta = post->topdelta << FRACBITS;
++				source = column->pixels + post->data_offset;
++				dest = desttop;
++				if (topdelta - sy > 0)
++				{
++					dest += FixedInt(FixedMul(topdelta-sy,vdup))*vwidth;
++					ofs = 0;
++				}
++				else
++					ofs = sy - topdelta;
++
++#define PS2_V_CROPPED_POSTLOOP(PIXEL) \
++				for (; dest < deststop && (size_t)(ofs>>FRACBITS) < plen && ((ofs - sy) + topdelta) < h; ofs += rowfrac) \
++				{ \
++					if (dest >= scrbase) \
++						*dest = (PIXEL); \
++					dest += vwidth; \
++				}
++				switch (kind)
++				{
++				case 0:
++					PS2_V_CROPPED_POSTLOOP(source[ofs>>FRACBITS])
++					break;
++				case 1:
++					PS2_V_CROPPED_POSTLOOP(*(cmap + source[ofs>>FRACBITS]))
++					break;
++				case 2:
++					PS2_V_CROPPED_POSTLOOP(*(tlev + ((source[ofs>>FRACBITS]<<8)&0xff00) + (*dest&0xff)))
++					break;
++				default:
++					PS2_V_CROPPED_POSTLOOP(*(tlev + (((*(cmap + source[ofs>>FRACBITS]))<<8)&0xff00) + (*dest&0xff)))
++					break;
++				}
++#undef PS2_V_CROPPED_POSTLOOP
++			}
++		}
++		return;
++	}
++#endif
++
+ 	for (col = sx; (col>>FRACBITS) < patch->width && (col - sx) < w; col += colfrac, ++x, desttop++)
+ 	{
+ 		if (x < 0) // don't draw off the left of the screen (WRAP PREVENTION)
+diff --git a/src/w_wad.c b/src/w_wad.c
+index 0688f6cff..3a35d0e50 100644
+--- a/src/w_wad.c
++++ b/src/w_wad.c
+@@ -108,6 +108,20 @@ typedef struct
+ // Must be a power of two
+ #define LUMPNUMCACHESIZE 64
+ 
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_LUMPCACHE)
++// A miss scans all hashes. Keep that hot set contiguous (256 bytes rather
++// than one word in each 40-byte record); names are touched only on a hash hit.
++// Capacity, total storage and the circular replacement order are unchanged.
++static struct
++{
++	UINT32 hash[LUMPNUMCACHESIZE];
++	lumpnum_t lumpnum[LUMPNUMCACHESIZE];
++	char lumpname[LUMPNUMCACHESIZE][32];
++} lumpnumcache;
++#define W_CACHE_HASH(i) (lumpnumcache.hash[(i)])
++#define W_CACHE_NUM(i) (lumpnumcache.lumpnum[(i)])
++#define W_CACHE_NAME(i) (lumpnumcache.lumpname[(i)])
++#else
+ typedef struct lumpnum_cache_s
+ {
+ 	char lumpname[32];
+@@ -116,6 +130,10 @@ typedef struct lumpnum_cache_s
+ } lumpnum_cache_t;
+ 
+ static lumpnum_cache_t lumpnumcache[LUMPNUMCACHESIZE];
++#define W_CACHE_HASH(i) (lumpnumcache[(i)].hash)
++#define W_CACHE_NUM(i) (lumpnumcache[(i)].lumpnum)
++#define W_CACHE_NAME(i) (lumpnumcache[(i)].lumpname)
++#endif
+ static UINT16 lumpnumcacheindex = 0;
+ 
+ //===========================================================================
+@@ -380,7 +398,7 @@ static INT32 W_MakeFileMD5(const char *filename, void *resblock)
+ // Invalidates the cache of lump numbers. Call this whenever a wad is added.
+ static void W_InvalidateLumpnumCache(void)
+ {
+-	memset(lumpnumcache, 0, sizeof (lumpnumcache));
++	memset(&lumpnumcache, 0, sizeof (lumpnumcache));
+ }
+ 
+ #if !defined(PS2_PROFILE) || defined(PS2_FULLLOADER) // PS2-20: without PS2_FULLLOADER no wad/ZIP/folder/soc/lua resources, only cooked packs
+@@ -1926,6 +1944,28 @@ UINT16 W_CheckNumForLongNamePwad(const char *name, UINT16 wad, UINT16 startlump)
+ 	//
+ 	if (startlump < wadfiles[wad]->numlumps)
+ 	{
++#ifdef PS2_PROFILE
++		wadfile_t *wf = wadfiles[wad];
++
++		// The short name is the first eight bytes of the long basename.
++		// Reuse an existing index, preserving ascending order and the original
++		// case-sensitive long-name comparison. A long-only caller need not
++		// allocate a new index when memory is short.
++		if (wf->namebucket)
++		{
++			const UINT32 hash = quickncasehash(uname, 8);
++			UINT16 e;
++
++			for (e = wf->namebucket[(hash ^ (hash >> 15)) & wf->namemask]; e; e = wf->namenext[e - 1])
++			{
++				const lumpinfo_t *lump_p = wf->lumpinfo + (e - 1);
++
++				if ((UINT16)(e - 1) >= startlump && lump_p->hash == hash && !strcmp(lump_p->longname, uname))
++					return (UINT16)(e - 1);
++			}
++			return INT16_MAX;
++		}
++#endif
+ 		lumpinfo_t *lump_p = wadfiles[wad]->lumpinfo + startlump;
+ 		for (i = startlump; i < wadfiles[wad]->numlumps; i++, lump_p++)
+ 			if (!strcmp(lump_p->longname, uname))
+@@ -2150,11 +2190,11 @@ static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
+ 		// Loop backwards so that we check most recent entries first
+ 		for (INT32 i = lumpnumcacheindex + LUMPNUMCACHESIZE; i > lumpnumcacheindex; i--)
+ 		{
+-			if (lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].hash == hash
+-				&& stricmp(lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname, name) == 0)
++			if (W_CACHE_HASH(i & (LUMPNUMCACHESIZE - 1)) == hash
++				&& stricmp(W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1)), name) == 0)
+ 			{
+ 				lumpnumcacheindex = i & (LUMPNUMCACHESIZE - 1);
+-				return lumpnumcache[lumpnumcacheindex].lumpnum;
++				return W_CACHE_NUM(lumpnumcacheindex);
+ 			}
+ 		}
+ 	}
+@@ -2165,12 +2205,12 @@ static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
+ 		// Loop backwards so that we check most recent entries first
+ 		for (INT32 i = lumpnumcacheindex + LUMPNUMCACHESIZE; i > lumpnumcacheindex; i--)
+ 		{
+-			if (lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].hash == hash
+-				&& lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname[8] == '\0'
+-				&& strnicmp(lumpnumcache[i & (LUMPNUMCACHESIZE - 1)].lumpname, name, 8) == 0)
++			if (W_CACHE_HASH(i & (LUMPNUMCACHESIZE - 1)) == hash
++				&& W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1))[8] == '\0'
++				&& strnicmp(W_CACHE_NAME(i & (LUMPNUMCACHESIZE - 1)), name, 8) == 0)
+ 			{
+ 				lumpnumcacheindex = i & (LUMPNUMCACHESIZE - 1);
+-				return lumpnumcache[lumpnumcacheindex].lumpnum;
++				return W_CACHE_NUM(lumpnumcacheindex);
+ 			}
+ 		}
+ 	}
+@@ -2184,18 +2224,18 @@ static void AddLumpToCache(lumpnum_t lumpnum, const char *name, boolean longname
+ 		return;
+ 
+ 	lumpnumcacheindex = (lumpnumcacheindex + 1) & (LUMPNUMCACHESIZE - 1);
+-	memset(lumpnumcache[lumpnumcacheindex].lumpname, '\0', 32);
++	memset(W_CACHE_NAME(lumpnumcacheindex), '\0', 32);
+ 	if (longname)
+ 	{
+-		strlcpy(lumpnumcache[lumpnumcacheindex].lumpname, name, 32);
+-		lumpnumcache[lumpnumcacheindex].hash = quickncasehash(name, 32);
++		strlcpy(W_CACHE_NAME(lumpnumcacheindex), name, 32);
++		W_CACHE_HASH(lumpnumcacheindex) = quickncasehash(name, 32);
+ 	}
+ 	else
+ 	{
+-		strncpy(lumpnumcache[lumpnumcacheindex].lumpname, name, 8);
+-		lumpnumcache[lumpnumcacheindex].hash = quickncasehash(name, 8);
++		strncpy(W_CACHE_NAME(lumpnumcacheindex), name, 8);
++		W_CACHE_HASH(lumpnumcacheindex) = quickncasehash(name, 8);
+ 	}
+-	lumpnumcache[lumpnumcacheindex].lumpnum = lumpnum;
++	W_CACHE_NUM(lumpnumcacheindex) = lumpnum;
+ }
+ 
+ //
+@@ -2436,11 +2476,13 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
+ 		start = wadfiles[wad]->numlumps;
+ 
+ #ifdef PS2_PROFILE
+-	if (!longname)
++	if (!longname || wadfiles[wad]->namebucket)
+ 	{
+ 		wadfile_t *wf = wadfiles[wad];
+ 		UINT16 e;
+ 
++		if (longname)
++			hash = quickncasehash(name, 8);
+ 		if (!wf->numlumps)
+ 			return INT16_MAX;
+ 		if (!wf->namebucket)
+@@ -2450,7 +2492,8 @@ static UINT16 W_CheckNumForPatchNamePwad(const char *name, UINT16 wad, boolean l
+ 			i = (UINT16)(e - 1);
+ 			lump_p = wf->lumpinfo + i;
+ 			// the linear scan below: [0, start) and, when the range is not empty, [end, numlumps)
+-			if (lump_p->hash == hash && !strncmp(lump_p->name, uname, sizeof(uname) - 1)
++			if (lump_p->hash == hash
++				&& (longname ? stricmp(lump_p->longname, name) == 0 : !strncmp(lump_p->name, uname, sizeof(uname) - 1))
+ 				&& (i < start || (end != INT16_MAX && start < end && i >= end)))
+ 				return i;
+ 		}

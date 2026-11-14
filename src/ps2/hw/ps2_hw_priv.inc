@@ -52,6 +52,9 @@
 #define VRAM_BLOCKS 16384 // 4 MiB in 256-byte blocks
 #define PAGE_BLOCKS 32 // 8 KiB page
 #define VRAM_RANGES (VRAM_BLOCKS / 2 + 1) // worst case: alternating one-block free/used ranges
+#if VRAM_BLOCKS > 0xFFFFu
+#error The VRAM free-list block addresses and lengths must fit in u16
+#endif
 
 // DMA channel 2 (GIF)
 #define D2_CHCR ((volatile u32 *)0x1000A000)
@@ -320,7 +323,8 @@ static struct
 	clutent_t clut_ent[CLUT_SLOTS];
 	u32 clut_tick;
 	u32 clut_epoch; // OPT11 (PS2-HW-101): bumped whenever a CLUT image of the cache is (re)built: what the VU1 path knows about the slots of the colormap rows is valid for one epoch
-	u32 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
+	// Every free range lies inside the 16384-block GS memory, including a whole-memory length. Keep arithmetic in the allocator wide.
+	u16 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
 	int free_n;
 	u32 used_blocks;
 	u32 ws_prev, ws_last; // OPT11-MEM (PS2-HW-300): H.st.ws_blocks at the last frame end / the working set of the last frame (what showmem shows); no counter of their own in the draw path
