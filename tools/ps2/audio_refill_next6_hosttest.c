@@ -266,6 +266,7 @@ static void NativeMusic(void)
 	printf("NATIVE6 DONE checks=%u frames=%llu PASS\n", checks, pcm_frames);
 }
 
+#ifndef PS2_AUDIO_REFILL_NEXT6_NO_MAIN
 int main(int argc, char **argv)
 {
 	int i;
@@ -301,3 +302,4 @@ int main(int argc, char **argv)
 	printf("Audio refill next6: checks=%u frames=%llu files=%d PASS\n", checks, pcm_frames, negative_control ? 0 : argc - 1);
 	return 0;
 }
+#endif

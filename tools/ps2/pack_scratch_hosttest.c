@@ -150,7 +150,12 @@ int main(int argc, char **argv)
 			if (n == 0)
 			{
 				memset(&lump, 0, sizeof lump);
-				lump.position = SCRATCH_POS; lump.disksize = scratch_csize; lump.compression = CM_LZ4;
+				#ifdef W_LUMPLOCATION_ACCESSORS
+				W_InitLumpPosition(&lump, SCRATCH_POS);
+				#else
+				lump.position = SCRATCH_POS;
+				#endif
+				lump.disksize = scratch_csize; lump.compression = CM_LZ4;
 				WPack_PrefetchBegin(); WPack_PrefetchAdd(scratch_fp, &lump);
 				scratch_require(WPack_PrefetchRun(131072, scratch_bsize >= 32 ? scratch_pump : NULL) > 0);
 			}
