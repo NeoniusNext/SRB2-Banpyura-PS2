@@ -2183,6 +2183,92 @@ UINT16 W_CheckNumForFullNamePK3(const char *name, UINT16 wad, UINT16 startlump)
 
 static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
 {
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_LUMPCACHE) && !defined(PS2_NOOPT_LUMPCACHEWALK)
+	if (longname)
+	{
+		const UINT32 hash = quickncasehash(name, 32);
+		const UINT32 *base = lumpnumcache.hash;
+		const UINT32 *split, *p;
+		UINT32 i = lumpnumcacheindex;
+
+		// Preserve the current-slot fast path before preparing the remaining spans.
+		if (W_CACHE_HASH(i) == hash && stricmp(W_CACHE_NAME(i), name) == 0)
+		{
+			lumpnumcacheindex = i;
+			return W_CACHE_NUM(i);
+		}
+
+		split = base + i;
+		p = split;
+		while (p != base)
+		{
+			if (*--p == hash)
+			{
+				i = (UINT32)(p - base);
+				if (stricmp(W_CACHE_NAME(i), name) == 0)
+				{
+					lumpnumcacheindex = i;
+					return W_CACHE_NUM(i);
+				}
+			}
+		}
+		p = base + LUMPNUMCACHESIZE;
+		while (p != split + 1)
+		{
+			if (*--p == hash)
+			{
+				i = (UINT32)(p - base);
+				if (stricmp(W_CACHE_NAME(i), name) == 0)
+				{
+					lumpnumcacheindex = i;
+					return W_CACHE_NUM(i);
+				}
+			}
+		}
+	}
+	else
+	{
+		const UINT32 hash = quickncasehash(name, 8);
+		const UINT32 *base = lumpnumcache.hash;
+		const UINT32 *split, *p;
+		UINT32 i = lumpnumcacheindex;
+
+		// Preserve the current-slot fast path before preparing the remaining spans.
+		if (W_CACHE_HASH(i) == hash && W_CACHE_NAME(i)[8] == '\0' && strnicmp(W_CACHE_NAME(i), name, 8) == 0)
+		{
+			lumpnumcacheindex = i;
+			return W_CACHE_NUM(i);
+		}
+
+		split = base + i;
+		p = split;
+		while (p != base)
+		{
+			if (*--p == hash)
+			{
+				i = (UINT32)(p - base);
+				if (W_CACHE_NAME(i)[8] == '\0' && strnicmp(W_CACHE_NAME(i), name, 8) == 0)
+				{
+					lumpnumcacheindex = i;
+					return W_CACHE_NUM(i);
+				}
+			}
+		}
+		p = base + LUMPNUMCACHESIZE;
+		while (p != split + 1)
+		{
+			if (*--p == hash)
+			{
+				i = (UINT32)(p - base);
+				if (W_CACHE_NAME(i)[8] == '\0' && strnicmp(W_CACHE_NAME(i), name, 8) == 0)
+				{
+					lumpnumcacheindex = i;
+					return W_CACHE_NUM(i);
+				}
+			}
+		}
+	}
+#else
 	if (longname)
 	{
 		UINT32 hash = quickncasehash(name, 32);
@@ -2214,6 +2300,7 @@ static lumpnum_t CheckLumpInCache(const char *name, boolean longname)
 			}
 		}
 	}
+#endif
 
 	return LUMPERROR;
 }

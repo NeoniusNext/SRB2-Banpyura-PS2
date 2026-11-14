@@ -1064,7 +1064,12 @@ typedef struct drawseg_s
 
 	UINT8 portalpass; // if > 0 and <= portalrender, do not affect sprite clipping
 
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_DRAWSEG_XY)
+	// Slope-wall intersections use only full-width XY, never vertex heights.
+	vector2_t leftpos, rightpos;
+#else
 	vertex_t leftpos, rightpos; // Used for rendering FOF walls with slopes
+#endif
 
 	struct visplane_s *ffloorplanes[MAXFFLOORS];
 	struct ffloor_s *thicksides[MAXFFLOORS];

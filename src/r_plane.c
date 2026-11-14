@@ -1426,10 +1426,18 @@ void R_PlaneBounds(visplane_t *plane)
 
 	for (i = plane->minx + 1; i <= plane->maxx; i++)
 	{
+#if defined(PS2_OPT_REND) && defined(__mips__) && !defined(PS2_NOOPT_PLANEBOUNDS_MMI)
+		// Both bounds are zero-extended UINT16 values, so signed word min/max
+		// is exact. Preserve the original helper's compiler clobber set.
+		const INT32 top = plane->top[i], bottom = plane->bottom[i];
+		__asm__("pminw %0,%0,%2\n\tpmaxw %1,%1,%3"
+			: "+&r"(hi), "+&r"(low) : "r"(top), "r"(bottom) : "$12", "$13");
+#else
 		if (plane->top[i] < hi)
 		hi = plane->top[i];
 		if (plane->bottom[i] > low)
 		low = plane->bottom[i];
+#endif
 	}
 	plane->high = hi;
 	plane->low = low;

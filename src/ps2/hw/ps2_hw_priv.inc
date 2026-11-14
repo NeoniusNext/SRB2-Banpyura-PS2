@@ -324,7 +324,8 @@ static struct
 	u32 clut_tick;
 	u32 clut_epoch; // OPT11 (PS2-HW-101): bumped whenever a CLUT image of the cache is (re)built: what the VU1 path knows about the slots of the colormap rows is valid for one epoch
 	// Every free range lies inside the 16384-block GS memory, including a whole-memory length. Keep arithmetic in the allocator wide.
-	u16 free_start[VRAM_RANGES], free_len[VRAM_RANGES];
+	// Keep each range word-aligned so list shifts copy its unchanged start/length together.
+	struct { u16 start, len; } __attribute__((aligned(4))) free_range[VRAM_RANGES];
 	int free_n;
 	u32 used_blocks;
 	u32 ws_prev, ws_last; // OPT11-MEM (PS2-HW-300): H.st.ws_blocks at the last frame end / the working set of the last frame (what showmem shows); no counter of their own in the draw path

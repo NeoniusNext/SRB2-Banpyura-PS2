@@ -860,8 +860,8 @@ static int gs_setup(void)
 	H.pool_base = (pool_start + clut_bytes) / 256;
 	H.pool_blocks = VRAM_BLOCKS - H.pool_base;
 	H.free_n = 1;
-	H.free_start[0] = H.pool_base;
-	H.free_len[0] = H.pool_blocks;
+	H.free_range[0].start = H.pool_base;
+	H.free_range[0].len = H.pool_blocks;
 	H.used_blocks = 0;
 
 	for (i = 0; i < NBUF; i++)

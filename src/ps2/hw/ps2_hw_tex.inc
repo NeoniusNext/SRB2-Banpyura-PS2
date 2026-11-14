@@ -24,7 +24,7 @@ static u32 vram_alloc(u32 n, u32 align)
 
 	for (i = 0; i < H.free_n; i++)
 	{
-		u32 fs = H.free_start[i], fe = fs + H.free_len[i];
+		u32 fs = H.free_range[i].start, fe = fs + H.free_range[i].len;
 		u32 s = (fs + align - 1) & ~(align - 1);
 
 		if (s + n <= fe)
@@ -41,22 +41,21 @@ static u32 vram_alloc(u32 n, u32 align)
 
 				for (j = H.free_n; j > i + 1; j--)
 				{
-					H.free_start[j] = H.free_start[j - 1];
-					H.free_len[j] = H.free_len[j - 1];
+					H.free_range[j] = H.free_range[j - 1];
 				}
 				H.free_n++;
-				H.free_len[i] = s - fs;
-				H.free_start[i + 1] = s + n;
-				H.free_len[i + 1] = tail;
+				H.free_range[i].len = s - fs;
+				H.free_range[i + 1].start = s + n;
+				H.free_range[i + 1].len = tail;
 			}
 			else if (s > fs)
 			{
-				H.free_len[i] = s - fs;
+				H.free_range[i].len = s - fs;
 			}
 			else if (tail)
 			{
-				H.free_start[i] = s + n;
-				H.free_len[i] = tail;
+				H.free_range[i].start = s + n;
+				H.free_range[i].len = tail;
 			}
 			else
 			{
@@ -64,8 +63,7 @@ static u32 vram_alloc(u32 n, u32 align)
 
 				for (j = i; j < H.free_n - 1; j++)
 				{
-					H.free_start[j] = H.free_start[j + 1];
-					H.free_len[j] = H.free_len[j + 1];
+					H.free_range[j] = H.free_range[j + 1];
 				}
 				H.free_n--;
 			}
@@ -83,7 +81,7 @@ static u32 vram_alloc_hi(u32 n, u32 align)
 
 	for (i = H.free_n - 1; i >= 0; i--)
 	{
-		u32 fs = H.free_start[i], fe = fs + H.free_len[i];
+		u32 fs = H.free_range[i].start, fe = fs + H.free_range[i].len;
 
 		if (fe >= n && fe - n >= fs)
 		{
@@ -101,22 +99,21 @@ static u32 vram_alloc_hi(u32 n, u32 align)
 
 					for (j = H.free_n; j > i + 1; j--)
 					{
-						H.free_start[j] = H.free_start[j - 1];
-						H.free_len[j] = H.free_len[j - 1];
+						H.free_range[j] = H.free_range[j - 1];
 					}
 					H.free_n++;
-					H.free_len[i] = s - fs;
-					H.free_start[i + 1] = s + n;
-					H.free_len[i + 1] = tail;
+					H.free_range[i].len = s - fs;
+					H.free_range[i + 1].start = s + n;
+					H.free_range[i + 1].len = tail;
 				}
 				else if (s > fs)
 				{
-					H.free_len[i] = s - fs;
+					H.free_range[i].len = s - fs;
 				}
 				else if (tail)
 				{
-					H.free_start[i] = s + n;
-					H.free_len[i] = tail;
+					H.free_range[i].start = s + n;
+					H.free_range[i].len = tail;
 				}
 				else
 				{
@@ -124,8 +121,7 @@ static u32 vram_alloc_hi(u32 n, u32 align)
 
 					for (j = i; j < H.free_n - 1; j++)
 					{
-						H.free_start[j] = H.free_start[j + 1];
-						H.free_len[j] = H.free_len[j + 1];
+						H.free_range[j] = H.free_range[j + 1];
 					}
 					H.free_n--;
 				}
@@ -142,28 +138,27 @@ static void vram_free(u32 s, u32 n)
 	int i, j;
 
 	H.used_blocks -= n;
-	for (i = 0; i < H.free_n && H.free_start[i] < s; i++)
+	for (i = 0; i < H.free_n && H.free_range[i].start < s; i++)
 		;
 	// merge with the previous range
-	if (i > 0 && H.free_start[i - 1] + H.free_len[i - 1] == s)
+	if (i > 0 && H.free_range[i - 1].start + H.free_range[i - 1].len == s)
 	{
-		H.free_len[i - 1] += n;
-		if (i < H.free_n && H.free_start[i - 1] + H.free_len[i - 1] == H.free_start[i])
+		H.free_range[i - 1].len += n;
+		if (i < H.free_n && H.free_range[i - 1].start + H.free_range[i - 1].len == H.free_range[i].start)
 		{
-			H.free_len[i - 1] += H.free_len[i];
+			H.free_range[i - 1].len += H.free_range[i].len;
 			for (j = i; j < H.free_n - 1; j++)
 			{
-				H.free_start[j] = H.free_start[j + 1];
-				H.free_len[j] = H.free_len[j + 1];
+				H.free_range[j] = H.free_range[j + 1];
 			}
 			H.free_n--;
 		}
 		return;
 	}
-	if (i < H.free_n && s + n == H.free_start[i])
+	if (i < H.free_n && s + n == H.free_range[i].start)
 	{
-		H.free_start[i] = s;
-		H.free_len[i] += n;
+		H.free_range[i].start = s;
+		H.free_range[i].len += n;
 		return;
 	}
 	if (H.free_n >= VRAM_RANGES)
@@ -173,11 +168,10 @@ static void vram_free(u32 s, u32 n)
 	}
 	for (j = H.free_n; j > i; j--)
 	{
-		H.free_start[j] = H.free_start[j - 1];
-		H.free_len[j] = H.free_len[j - 1];
+		H.free_range[j] = H.free_range[j - 1];
 	}
-	H.free_start[i] = s;
-	H.free_len[i] = n;
+	H.free_range[i].start = s;
+	H.free_range[i].len = n;
 	H.free_n++;
 }
 
