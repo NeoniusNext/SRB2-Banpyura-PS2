@@ -1278,6 +1278,21 @@ static boolean ReadBlock(pkstream_t *s, long *pos, boolean raw, UINT32 csize, UI
 	return false;
 }
 
+#ifndef PS2_NOOPT_TEXRETRY
+boolean WPack_CanReadWithoutAlloc(FILE *handle, const lumpinfo_t *l)
+{
+	const pkstream_t *s;
+
+	if (!handle || !l || !iobuf || !cbuf)
+		return false;
+	s = StreamFind(handle); // never create, replace or allocate a stream slot
+	if (!s || !s->buf)
+		return false;
+	return l->compression == CM_NOCOMPRESSION
+		|| (l->compression == CM_LZ4 && l->size <= 64u * WPACK_BLOCK);
+}
+#endif
+
 size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size, size_t offset)
 {
 	UINT8 *out = dest;

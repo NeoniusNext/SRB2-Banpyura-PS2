@@ -23,6 +23,9 @@
 #include "r_patch.h"
 #include "r_picformats.h"
 #include "w_wad.h"
+#if defined(PS2) && defined(PS2_PROFILE)
+#include "w_pack.h"
+#endif
 #include "z_zone.h"
 #include "p_setup.h" // levelflats
 #include "byteptr.h"
@@ -402,6 +405,72 @@ static void R_WriteTexturePosts(post_t *posts, const UINT8 *mask, INT32 width, I
 // the levels before it, 4194304 bytes on MAPMG: 2048x2048 CLUDSSSS). The texture becomes a column of one colour: every column of the texture points at
 // the same single post and the same run of `height` pixels (width columns of 12 bytes and one post instead of width*height bytes). It is an ordinary
 // cache block with an owner: the zone may evict it, and the next use tries the real composite again.
+#if defined(PS2) && (defined(R_COUNTED_POSTS) || defined(TEXTURE_255_IS_TRANSPARENT)) && defined(R_OPAQUE_PACKED) && !defined(PS2_NOOPT_texreuse) && !defined(PS2_NOOPT_texstream) && !defined(PS2_NOOPT_TEXRETRY)
+#define R_COMPOSITE_RETRY
+// Optional recovery uses only pack records whose decoder index fits on the
+// stack. Other formats retain their existing construction/failure behavior.
+static boolean R_CompositeRetrySource(UINT16 wad, lumpnum_t lump)
+{
+	const lumpinfo_t *record = &wadfiles[wad]->lumpinfo[lump];
+	return wadfiles[wad]->pool && record->size <= 64u * 65536u
+		&& (record->compression == CM_NOCOMPRESSION || record->compression == CM_LZ4);
+}
+
+static size_t R_CompositeRetryRead(UINT16 wad, lumpnum_t lump, void *dest, size_t bytes)
+{
+	wadfile_t *file = wadfiles[wad];
+	const lumpinfo_t *record = &file->lumpinfo[lump];
+	if (!R_CompositeRetrySource(wad, lump) || !WPack_CanReadWithoutAlloc(file->handle, record))
+		return 0;
+	return WPack_ReadLumpN((wpack_t *)file->pack, file->handle, lump, record, dest, bytes, 0);
+}
+
+static void *R_TryCompositeScratch(size_t bytes, INT32 tag)
+{
+	void *p = Z_TryMallocAlign(bytes, tag, NULL, 0);
+	if (p)
+		memset(p, 0, bytes);
+	return p;
+}
+
+static UINT8 *R_TryCompositeLump(UINT16 wad, lumpnum_t lump)
+{
+	const size_t bytes = W_LumpLengthPwad(wad, lump);
+	UINT8 *p = Z_TryMallocAlign(bytes ? bytes : 1, R_TEXTURE_WORK_TAG, NULL, 2);
+	if (p && R_CompositeRetryRead(wad, lump, p, bytes) != bytes)
+	{
+		Z_Free(p);
+		p = NULL;
+	}
+	return p;
+}
+
+// A changed/truncated source on the optional retry must not enter the original
+// fatal raw-column diagnostics. This checks the same byte bounds before use.
+static boolean R_CompositeRetryRawValid(const softwarepatch_t *raw, size_t bytes)
+{
+	if (bytes < 8 || SHORT(raw->width) <= 0 || (size_t)SHORT(raw->width) > (bytes - 8) / sizeof(UINT32))
+		return false;
+	for (INT32 x = 0; x < SHORT(raw->width); x++)
+	{
+		size_t off = (UINT32)LONG(raw->columnofs[x]);
+		for (;;)
+		{
+			const UINT8 *post;
+			if (off >= bytes)
+				return false;
+			post = (const UINT8 *)raw + off;
+			if (post[0] == 0xff)
+				break;
+			if (bytes - off < 4 || post[1] > bytes - off - 4)
+				return false;
+			off += post[1] + 4;
+		}
+	}
+	return true;
+}
+#endif
+
 #define R_COMPOSITE_TRY_MIN (64u << 10)
 #define R_FALLBACK_PIXEL 15 // a grey of the palette ramp (0 white .. 31 black)
 static unsigned r_fallbacktextures;
@@ -496,6 +565,11 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	size_t total_pixels = 0;
 #ifdef R_COUNTED_POSTS
 	boolean final_posts = false;
+#endif
+#ifdef R_COMPOSITE_RETRY
+	boolean retry_eligible = true;
+	boolean composite_retried = false;
+	size_t retry_capacity = 0;
 #endif
 
 	I_Assert(texnum <= (size_t)numtextures);
@@ -627,6 +701,14 @@ UINT8 *R_GenerateTexture(size_t texnum)
 
 	// multi-patch textures (or 'composite')
 	multipatch:
+#ifdef R_COMPOSITE_RETRY
+	if (texture->type == TEXTURETYPE_FLAT)
+	{
+		retry_eligible = false;
+		if (composite_retried)
+			goto retry_failed;
+	}
+#endif
 	texture->flip = 0;
 
 	// To make things easier, I just allocate WxH always
@@ -636,12 +718,23 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	// PS2-76: the biggest block first. The mask and the column array below are small, but they took the middle of the one hole
 	// that would have held WxH (MAP11, 1024x512: 498 KB hole split by a 64 KB mask, "Out of memory allocating 524288 bytes")
 #if defined(PS2)
-	if (total_pixels >= R_COMPOSITE_TRY_MIN)
+#ifdef R_COMPOSITE_RETRY
+	// A retry reserves the already-known final size before any scratch can
+	// split its free run. Normal calls retain their original allocation size.
+	const size_t pixels_capacity = retry_capacity > total_pixels ? retry_capacity : total_pixels;
+#else
+	const size_t pixels_capacity = total_pixels;
+#endif
+	if (total_pixels >= R_COMPOSITE_TRY_MIN
+#ifdef R_COMPOSITE_RETRY
+		|| composite_retried
+#endif
+		)
 	{
-		temp_block = Z_TryMallocAlign(total_pixels, R_TEXTURE_WORK_TAG, NULL, 2);
+		temp_block = Z_TryMallocAlign(pixels_capacity, R_TEXTURE_WORK_TAG, NULL, 2);
 		if (!temp_block)
 			return R_FallbackTexture(texnum);
-		memset(temp_block, 0, total_pixels);
+		memset(temp_block, 0, pixels_capacity);
 	}
 	else
 #endif
@@ -649,7 +742,11 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #endif
 #ifdef R_OPAQUE_PACKED
 #if defined(PS2)
-	if ((size_t)texture->width * R_MASK_BYTES(texture->height) >= R_COMPOSITE_TRY_MIN)
+	if ((size_t)texture->width * R_MASK_BYTES(texture->height) >= R_COMPOSITE_TRY_MIN
+#ifdef R_COMPOSITE_RETRY
+		|| composite_retried
+#endif
+		)
 	{
 		opaque_pixels = Z_TryMallocAlign((size_t)texture->width * R_MASK_BYTES(texture->height), R_TEXTURE_WORK_TAG, NULL, 2);
 		if (!opaque_pixels)
@@ -664,6 +761,15 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	opaque_pixels = Z_Calloc((size_t)texture->width * R_MASK_BYTES(texture->height), R_TEXTURE_WORK_TAG, NULL);
 #else
 	opaque_pixels = Z_Calloc(total_pixels * sizeof(UINT8), R_TEXTURE_WORK_TAG, NULL);
+#endif
+#ifdef R_COMPOSITE_RETRY
+	if (composite_retried)
+	{
+		temp_columns = R_TryCompositeScratch(sizeof(column_t) * texture->width, R_TEXTURE_WORK_TAG);
+		if (!temp_columns)
+			goto retry_failed;
+	}
+	else
 #endif
 	temp_columns = Z_Calloc(sizeof(column_t) * texture->width, R_TEXTURE_WORK_TAG, NULL);
 #ifndef PS2_PROFILE
@@ -698,6 +804,12 @@ UINT8 *R_GenerateTexture(size_t texnum)
 
 		UINT16 wadnum = patch->wad;
 		lumpnum_t lumpnum = patch->lump;
+#ifdef R_COMPOSITE_RETRY
+		if (patch->style != AST_COPY || !R_CompositeRetrySource(wadnum, lumpnum))
+			retry_eligible = false;
+		if (composite_retried && !retry_eligible)
+			goto retry_failed;
+#endif
 #ifdef PS2_PROFILE
 		// The raw lump is only needed by the PNG/flat converters: PU_STATIC while in use, released below
 		UINT8 *pdata = NULL;
@@ -714,15 +826,36 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #ifndef NO_PNG_LUMPS
 		{
 			UINT8 header[PNG_HEADER_SIZE];
+#ifdef R_COMPOSITE_RETRY
+			if (composite_retried)
+			{
+				const size_t bytes = min((size_t)PNG_HEADER_SIZE, W_LumpLengthPwad(wadnum, lumpnum));
+				if (R_CompositeRetryRead(wadnum, lumpnum, header, bytes) != bytes)
+					goto retry_failed;
+			}
+			else
+#endif
 			W_ReadLumpHeaderPwad(wadnum, lumpnum, header, PNG_HEADER_SIZE, 0);
 			if (Picture_IsLumpPNG(header, W_LumpLengthPwad(wadnum, lumpnum)))
+			{
 				rawlump = true;
+#ifdef R_COMPOSITE_RETRY
+				if (!Picture_IsLumpCooked(header, W_LumpLengthPwad(wadnum, lumpnum)))
+					retry_eligible = false;
+				if (composite_retried && !retry_eligible)
+					goto retry_failed;
+#endif
+			}
 		}
 #endif
 		if (rawlump)
 		{
 #if defined(PS2)
-			pdata = R_TryReadLump(wadnum, lumpnum);
+			pdata =
+#ifdef R_COMPOSITE_RETRY
+				composite_retried ? R_TryCompositeLump(wadnum, lumpnum) :
+#endif
+				R_TryReadLump(wadnum, lumpnum);
 			if (!pdata)
 			{
 				Z_Free(temp_columns);
@@ -747,7 +880,11 @@ UINT8 *R_GenerateTexture(size_t texnum)
 				// PS2-178 (OPT11-STAB): the PNG probe above already read this lump into pdata; a second copy replaced the pointer and the first one stayed in the arena for
 				// good (tag PU_RENDERWORK, nothing frees it: 541 KB for one composite texture of MAPFB, in the middle of the arena after the level, MAPM3 did not load after 65 maps)
 				if (!pdata)
-					pdata = R_TryReadLump(wadnum, lumpnum);
+					pdata =
+#ifdef R_COMPOSITE_RETRY
+				composite_retried ? R_TryCompositeLump(wadnum, lumpnum) :
+#endif
+				R_TryReadLump(wadnum, lumpnum);
 				if (!pdata)
 				{
 					Z_Free(temp_columns);
@@ -764,6 +901,13 @@ UINT8 *R_GenerateTexture(size_t texnum)
 				if (Picture_IsLumpPNG(pdata, rawbytes) && !Picture_IsLumpCooked(pdata, rawbytes))
 				{
 					// PS2-100: a real PNG (add-on): the generic converter (patch cache) builds the patch
+#ifdef R_COMPOSITE_RETRY
+					if (composite_retried)
+					{
+						Z_Free(pdata);
+						goto retry_failed;
+					}
+#endif
 					rawpatch = NULL;
 					Z_Free(pdata);
 					pdata = NULL;
@@ -775,8 +919,22 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #ifndef NO_PNG_LUMPS
 				if (Picture_IsLumpPNG(pdata, rawbytes))
 				{
+#ifdef R_COMPOSITE_RETRY
+					if (composite_retried && rawbytes < PNG_HEADER_SIZE)
+					{
+						Z_Free(pdata);
+						goto retry_failed;
+					}
+#endif
 					rawpatch = (softwarepatch_t *)(pdata + PNG_HEADER_SIZE);
 					rawbytes -= PNG_HEADER_SIZE;
+				}
+#endif
+#ifdef R_COMPOSITE_RETRY
+				if (composite_retried && !R_CompositeRetryRawValid(rawpatch, rawbytes))
+				{
+					Z_Free(pdata);
+					goto retry_failed;
 				}
 #endif
 				if (rawbytes < 8 || SHORT(rawpatch->width) <= 0
@@ -902,10 +1060,28 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	}
 
 	// Now write the columns
+#ifdef R_COMPOSITE_RETRY
+	if (composite_retried)
+	{
+		column_posts = R_TryCompositeScratch(sizeof(unsigned) * texture->width, R_TEXTURE_WORK_TAG);
+		if (!column_posts)
+			goto retry_failed;
+	}
+	else
+#endif
 	column_posts = Z_Calloc(sizeof(unsigned) * texture->width, R_TEXTURE_WORK_TAG, NULL);
 
 #ifdef TEXTURE_255_IS_TRANSPARENT
 	total_posts = texture->width;
+#ifdef R_COMPOSITE_RETRY
+	if (composite_retried)
+	{
+		temp_posts = R_TryCompositeScratch(sizeof(post_t) * total_posts, PU_CACHE);
+		if (!temp_posts && total_posts)
+			goto retry_failed;
+	}
+	else
+#endif
 	temp_posts = Z_Realloc(temp_posts, sizeof(post_t) * total_posts, PU_CACHE, NULL);
 #endif
 
@@ -979,12 +1155,27 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #endif
 	if (!final_posts)
 	{
+#ifdef R_COMPOSITE_RETRY
+		if (composite_retried)
+		{
+			temp_posts = total_posts ? R_TryCompositeScratch(total_posts * sizeof(*temp_posts), PU_CACHE) : NULL;
+			if (!temp_posts && total_posts)
+				goto retry_failed;
+		}
+		else
+#endif
 		temp_posts = Z_Malloc(total_posts * sizeof(*temp_posts), PU_CACHE, NULL);
 		R_WriteTexturePosts(temp_posts, opaque_pixels, texture->width, texture->height);
 		Z_Free(opaque_pixels);
+#ifdef R_COMPOSITE_RETRY
+		opaque_pixels = NULL;
+#endif
 	}
 #else
 	Z_Free(opaque_pixels);
+#ifdef R_COMPOSITE_RETRY
+	opaque_pixels = NULL;
+#endif
 #endif
 #endif
 
@@ -992,6 +1183,12 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	blocksize = R_TextureCacheLayout(total_pixels, texture->width, total_posts, &columnofs, &postofs);
 #else
 	blocksize = (sizeof(column_t) * texture->width) + (sizeof(post_t) * total_posts) + (sizeof(UINT8) * total_pixels);
+#endif
+#ifdef R_COMPOSITE_RETRY
+	// Replace the first attempt's charge if the retry reaches this point.
+	// An earlier retry failure retains the original single fallback charge.
+	if (composite_retried)
+		texturememory -= retry_capacity;
 #endif
 	texturememory += blocksize;
 
@@ -1014,6 +1211,26 @@ UINT8 *R_GenerateTexture(size_t texnum)
 		Z_Free(temp_posts);
 #endif
 		Z_Free(column_posts);
+#ifdef R_COMPOSITE_RETRY
+		if (!composite_retried && retry_eligible)
+		{
+			// The pixel root and all work above were unpublished. Rebuild once
+			// with the final capacity reserved up front, avoiding simultaneous
+			// old/new pixel roots without releasing any live renderer cache.
+			composite_retried = true;
+			retry_capacity = blocksize;
+			temp_block = NULL;
+			temp_columns = NULL;
+			opaque_pixels = NULL;
+			temp_posts = NULL;
+			column_posts = NULL;
+			total_posts = 0;
+#ifdef R_COUNTED_POSTS
+			final_posts = false;
+#endif
+			goto multipatch;
+		}
+#endif
 		return R_FallbackTexture(texnum);
 	}
 #else
@@ -1050,6 +1267,9 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	}
 	else
 #endif
+#ifdef R_COMPOSITE_RETRY
+		if (!composite_retried || total_posts)
+#endif
 		memcpy(posts, temp_posts, sizeof(post_t) * total_posts);
 
 	texturecolumns[texnum] = columns;
@@ -1084,6 +1304,17 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	Z_Free(temp_columns);
 	Z_Free(temp_posts);
 	Z_Free(column_posts);
+#endif
+
+#ifdef R_COMPOSITE_RETRY
+	goto done;
+retry_failed:
+	Z_Free(temp_columns);
+	Z_Free(opaque_pixels);
+	Z_Free(temp_posts);
+	Z_Free(column_posts);
+	Z_Free(temp_block);
+	return R_FallbackTexture(texnum);
 #endif
 
 done:
