@@ -1475,9 +1475,12 @@ static void fill_ap88_ct32(void *ctx, u32 row, u8 *dst)
 	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 *d = (u32 *)(void *)dst, x;
 
-	for (x = 0; x < c.W2; x++)
+	// Advance the unsigned source column once per texel; the centre sample is unchanged.
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	for (x = 0; x < c.W2; x++, sx += step)
 	{
-		const u8 *p = s + (size_t)src_col(&c, x) * 2;
+		const u8 *p = s + (size_t)sx * 2;
 
 		d[x] = H.pal[p[0]] | (a8_to_gs(p[1]) << 24);
 	}
@@ -1492,9 +1495,12 @@ static void fill_ct32(void *ctx, u32 row, u8 *dst)
 	u32 *d = (u32 *)(void *)dst;
 	u32 x;
 
-	for (x = 0; x < c.W2; x++)
+	// Advance the unsigned source column once per texel; the centre sample is unchanged.
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	for (x = 0; x < c.W2; x++, sx += step)
 	{
-		u32 t = s[src_col(&c, x)];
+		u32 t = s[sx];
 
 		d[x] = (t & 0xFFFFFF) | (a8_to_gs(t >> 24) << 24);
 	}

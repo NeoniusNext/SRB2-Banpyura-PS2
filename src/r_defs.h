@@ -1189,6 +1189,12 @@ typedef struct
 	//  name eight times.
 	UINT8 rotate; // see spriterotateflags_t above
 
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_SPRFRAME_LAYOUT)
+	// Keep the full flip mask in the rotation selector's alignment padding.
+	// The lump arrays retain their offsets and natural alignment.
+	UINT16 flip;
+#endif
+
 	// Lump to use for view angles 0-7/15.
 	lumpnum_t lumppat[16]; // lump number 16 : 16 wad : lump
 #ifdef PS2_PROFILE
@@ -1198,7 +1204,9 @@ typedef struct
 #endif
 
 	// Flip bits (1 = flip) to use for view angles 0-7/15.
+#if !defined(PS2_PROFILE) || defined(PS2_NOOPT_SPRFRAME_LAYOUT)
 	UINT16 flip;
+#endif
 
 #ifdef ROTSPRITE
 #ifdef PS2_PROFILE

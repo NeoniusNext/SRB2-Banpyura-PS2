@@ -1945,6 +1945,8 @@ void R_DrawTranslucentSpan_NPO2_8 (void)
 		&& ystep > -fixedheight && ystep < fixedheight)
 	{
 		const INT32 flatwidth = ds_flatwidth;
+		// Retain the blend address; lookup contents remain live pixel reads.
+		const UINT8 *const transmap = ds_transmap;
 		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
 		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
 		// Preserve the original inclusive destination bound once per span.
@@ -1959,7 +1961,7 @@ void R_DrawTranslucentSpan_NPO2_8 (void)
 			x = (xposition >> FRACBITS);
 			y = (yposition >> FRACBITS);
 			val = ((y * flatwidth) + x);
-			*dest = *(ds_transmap + (colormap[source[val]] << 8) + *dest);
+			*dest = *(transmap + (colormap[source[val]] << 8) + *dest);
 			dest++;
 			xposition += xstep;
 			yposition += ystep;
@@ -2044,6 +2046,8 @@ void R_DrawWaterSpan_NPO2_8(void)
 		&& ystep > -fixedheight && ystep < fixedheight)
 	{
 		const INT32 flatwidth = ds_flatwidth;
+		// Retain the blend address; lookup contents remain live pixel reads.
+		const UINT8 *const transmap = ds_transmap;
 		const fixed_t xwrap = xstep < 0 ? fixedwidth : -fixedwidth;
 		const fixed_t ywrap = ystep < 0 ? fixedheight : -fixedheight;
 		// Preserve the original inclusive destination bound once per span.
@@ -2057,7 +2061,7 @@ void R_DrawWaterSpan_NPO2_8(void)
 				yposition += ywrap;
 			x = (xposition >> FRACBITS);
 			y = (yposition >> FRACBITS);
-			*dest++ = colormap[*(ds_transmap + (source[((y * flatwidth) + x)] << 8) + *dsrc++)];
+			*dest++ = colormap[*(transmap + (source[((y * flatwidth) + x)] << 8) + *dsrc++)];
 			xposition += xstep;
 			yposition += ystep;
 		}
