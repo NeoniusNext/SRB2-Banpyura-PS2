@@ -470,7 +470,7 @@ void PS2TexC_PrefetchLevel(void)
 
 		if (!mark[i] || (li = TC_Lump(i)) < 0)
 			continue;
-		items[nitems].pos = TC.lumps[li].position;
+		items[nitems].pos = W_LumpPosition(&TC.lumps[li]);
 		items[nitems].disk = TC.lumps[li].disksize;
 		items[nitems].tex = i;
 		items[nitems].lump = (UINT16)li;
@@ -570,7 +570,7 @@ void PS2TexC_PrefetchLevel(void)
 			if (!run)
 				break;
 		}
-		where.position = items[a].pos;
+		W_SetLumpPosition(&where, items[a].pos);
 		where.disksize = (UINT32)span;
 		if (WPack_ReadRaw(TC.handle, &where, run) != span)
 			break;

@@ -157,7 +157,7 @@ static pack_reader *PackOpen(lumpnum_t lump, const lumpinfo_t *info)
 		free(r->buf); free(r); return NULL;
 	}
 	setvbuf(fp, NULL, _IONBF, 0); // whole aligned windows are read straight into r->buf
-	r->fp = fp; r->base = (size_t)info->position; r->size = info->size;
+	r->fp = fp; r->base = (size_t)W_LumpPosition(info); r->size = info->size;
 	if (strlen(wadfiles[WADFILENUM(lump)]->filename) < sizeof r->path) strcpy(r->path, wadfiles[WADFILENUM(lump)]->filename);
 	return r;
 }

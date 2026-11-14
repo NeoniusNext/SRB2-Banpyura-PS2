@@ -1367,17 +1367,18 @@ static inline u32 src_col(const fillctx_t *c, u32 x)
 // 8-bit index data (P_8 or indices from scratch)
 static void fill_idx(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw;
 	u32 x;
 
-	if (!c->dx)
+	if (!c.dx)
 	{
-		memcpy(dst, s, c->W2);
+		memcpy(dst, s, c.W2);
 		return;
 	}
-	for (x = 0; x < c->W2; x++)
-		dst[x] = s[src_col(c, x)];
+	for (x = 0; x < c.W2; x++)
+		dst[x] = s[src_col(&c, x)];
 }
 
 // Gather the low byte of each of four 16-bit texels into a 32-bit word, preserving their order.
@@ -1398,18 +1399,19 @@ static inline u32 ap88_gather(u64 v)
 // AP_88 -> index with alpha 0 = index 255 (mode 0), or the chroma keyed variant: the index is kept, the alpha ignored (mode 1)
 static void fill_ap88(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 x;
 
-	if (!c->dx && !((uintptr_t)s & 7) && ((ps2hwd_fx2 & FX3_NOFILL) ? (!(c->W2 & 3) && !((uintptr_t)dst & 3)) : c->W2 >= 4))
+	if (!c.dx && !((uintptr_t)s & 7) && ((ps2hwd_fx2 & FX3_NOFILL) ? (!(c.W2 & 3) && !((uintptr_t)dst & 3)) : c.W2 >= 4))
 	{
 		// four texels (index, alpha pairs) in one 64-bit load: the index bytes are gathered, the alpha bytes that are zero become 0xFF (mode 0: a hole is index 255)
 		// PS2-HW-252 (FX3): any width and any alignment of the row (a patch is stored at the size of its picture: 3 of 4 rows of the patches were made texel by texel): four bytes
 		// at a time (an unaligned store is the swl / swr pair), the last 1..3 texels by the byte loop below
 		const u64 *s8 = (const u64 *)(const void *)s;
-		const int keyed = c->mode != 0;
-		const u32 x4 = c->W2 & ~3u;
+		const int keyed = c.mode != 0;
+		const u32 x4 = c.W2 & ~3u;
 		u8 *dp = dst;
 
 		for (x = 0; x < x4; x += 4)
@@ -1432,7 +1434,7 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 				*(u32 *)(void *)dp = idx;
 			dp += 4;
 		}
-		for (; x < c->W2; x++) // the last texels of the row (W2 not a multiple of 4)
+		for (; x < c.W2; x++) // the last texels of the row (W2 not a multiple of 4)
 		{
 			const u8 *t = s + (size_t)x * 2;
 
@@ -1442,26 +1444,26 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 		{
 			static unsigned fchecked, fbad;
 
-			for (x = 0; x < c->W2; x++)
+			for (x = 0; x < c.W2; x++)
 			{
 				const u8 *t = s + (size_t)x * 2;
 
-				if (dst[x] != ((c->mode == 0 && t[1] == 0) ? 255 : t[0]))
+				if (dst[x] != ((c.mode == 0 && t[1] == 0) ? 255 : t[0]))
 				{
 					fbad++;
 					break;
 				}
 			}
-			if (!(++fchecked & 1023) || (x < c->W2 && fbad < 5))
+			if (!(++fchecked & 1023) || (x < c.W2 && fbad < 5))
 				CONS_Printf("HWC fill check: %u rows, %u differ\n", fchecked, fbad);
 		}
 		return;
 	}
-	for (x = 0; x < c->W2; x++)
+	for (x = 0; x < c.W2; x++)
 	{
-		const u8 *t = s + (size_t)src_col(c, x) * 2;
+		const u8 *t = s + (size_t)src_col(&c, x) * 2;
 
-		dst[x] = (c->mode == 0 && t[1] == 0) ? 255 : t[0];
+		dst[x] = (c.mode == 0 && t[1] == 0) ? 255 : t[0];
 	}
 }
 

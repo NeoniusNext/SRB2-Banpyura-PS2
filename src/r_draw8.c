@@ -2865,6 +2865,14 @@ void R_DrawFogSpan_8(void)
 /**	\brief The R_DrawTiltedFogSpan_8 function
 	Draws a tilted span with fogging.
 */
+#ifdef PS2_OPT_DRAW
+#define SOLID_TILT_LIGHT solid_pzl[tiltlighting[solid_x++]] + solid_cmofs
+#define SOLID_TRANSMAP solid_transmap
+#else
+#define SOLID_TILT_LIGHT planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps)
+#define SOLID_TRANSMAP ds_transmap
+#endif
+
 void R_DrawTiltedFogSpan_8(void)
 {
 	int width = ds_x2 - ds_x1;
@@ -2873,12 +2881,32 @@ void R_DrawTiltedFogSpan_8(void)
 
 	R_CalcSlopeLight();
 
-	do
+#ifdef PS2_OPT_DRAW
+	// Keep the original do-once behavior for a single or reversed span.
+	if (width <= 0)
 	{
 		UINT8 *colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 		*dest = colormap[*dest];
 		dest++;
+		return;
+	}
+
+	// Renderer metadata storage is separate from framebuffer bytes; lookup
+	// contents stay live reads, including overlapping source/destination data.
+	lighttable_t **const solid_pzl = planezlight;
+	const ptrdiff_t solid_cmofs = ds_colormap - colormaps;
+	INT32 solid_x = ds_x1;
+#endif
+
+	do
+	{
+		UINT8 *colormap = SOLID_TILT_LIGHT;
+		*dest = colormap[*dest];
+		dest++;
 	} while (--width >= 0);
+#ifdef PS2_OPT_DRAW
+	ds_x1 = solid_x;
+#endif
 }
 
 /**	\brief The R_DrawSolidColorSpan_8 function
@@ -2906,9 +2934,13 @@ void R_DrawTransSolidColorSpan_8(void)
 
 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
 
+#ifdef PS2_OPT_DRAW
+	const UINT8 *const solid_transmap = ds_transmap;
+#endif
+
 	while (count-- && dest <= deststop)
 	{
-		*dest = *(ds_transmap + (source << 8) + *dest);
+		*dest = *(SOLID_TRANSMAP + (source << 8) + *dest);
 		dest++;
 	}
 }
@@ -2925,11 +2957,30 @@ void R_DrawTiltedSolidColorSpan_8(void)
 
 	R_CalcSlopeLight();
 
-	do
+#ifdef PS2_OPT_DRAW
+	// Keep the original do-once behavior for a single or reversed span.
+	if (width <= 0)
 	{
 		UINT8 *colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 		*dest++ = colormap[source];
+		return;
+	}
+
+	// Renderer metadata storage is separate from framebuffer bytes; lookup
+	// contents stay live reads, including overlapping source/destination data.
+	lighttable_t **const solid_pzl = planezlight;
+	const ptrdiff_t solid_cmofs = ds_colormap - colormaps;
+	INT32 solid_x = ds_x1;
+#endif
+
+	do
+	{
+		UINT8 *colormap = SOLID_TILT_LIGHT;
+		*dest++ = colormap[source];
 	} while (--width >= 0);
+#ifdef PS2_OPT_DRAW
+	ds_x1 = solid_x;
+#endif
 }
 
 /**	\brief The R_DrawTiltedTransSolidColorSpan_8 function
@@ -2944,12 +2995,36 @@ void R_DrawTiltedTransSolidColorSpan_8(void)
 
 	R_CalcSlopeLight();
 
-	do
+#ifdef PS2_OPT_DRAW
+	// Keep the original do-once behavior for a single or reversed span.
+	if (width <= 0)
 	{
 		UINT8 *colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 		*dest = *(ds_transmap + (colormap[source] << 8) + *dest);
 		dest++;
+		return;
+	}
+
+	// Renderer metadata storage is separate from framebuffer bytes; lookup
+	// contents stay live reads, including overlapping source/destination data.
+	lighttable_t **const solid_pzl = planezlight;
+	const ptrdiff_t solid_cmofs = ds_colormap - colormaps;
+	INT32 solid_x = ds_x1;
+#endif
+
+#ifdef PS2_OPT_DRAW
+	const UINT8 *const solid_transmap = ds_transmap;
+#endif
+
+	do
+	{
+		UINT8 *colormap = SOLID_TILT_LIGHT;
+		*dest = *(SOLID_TRANSMAP + (colormap[source] << 8) + *dest);
+		dest++;
 	} while (--width >= 0);
+#ifdef PS2_OPT_DRAW
+	ds_x1 = solid_x;
+#endif
 }
 
 /**	\brief The R_DrawWaterSolidColorSpan_8 function
@@ -2965,9 +3040,13 @@ void R_DrawWaterSolidColorSpan_8(void)
 	size_t count = (ds_x2 - ds_x1 + 1);
 	const UINT8 *deststop = screens[0] + vid.rowbytes * vid.height;
 
+#ifdef PS2_OPT_DRAW
+	const UINT8 *const solid_transmap = ds_transmap;
+#endif
+
 	while (count-- && dest <= deststop)
 	{
-		*dest = colormap[*(ds_transmap + (source << 8) + *dsrc++)];
+		*dest = colormap[*(SOLID_TRANSMAP + (source << 8) + *dsrc++)];
 		dest++;
 	}
 }
@@ -2985,11 +3064,34 @@ void R_DrawTiltedWaterSolidColorSpan_8(void)
 
 	R_CalcSlopeLight();
 
-	do
+#ifdef PS2_OPT_DRAW
+	// Keep the original do-once behavior for a single or reversed span.
+	if (width <= 0)
 	{
 		UINT8 *colormap = planezlight[tiltlighting[ds_x1++]] + (ds_colormap - colormaps);
 		*dest++ = *(ds_transmap + (colormap[source] << 8) + *dsrc++);
+		return;
+	}
+
+	// Renderer metadata storage is separate from framebuffer bytes; lookup
+	// contents stay live reads, including overlapping source/destination data.
+	lighttable_t **const solid_pzl = planezlight;
+	const ptrdiff_t solid_cmofs = ds_colormap - colormaps;
+	INT32 solid_x = ds_x1;
+#endif
+
+#ifdef PS2_OPT_DRAW
+	const UINT8 *const solid_transmap = ds_transmap;
+#endif
+
+	do
+	{
+		UINT8 *colormap = SOLID_TILT_LIGHT;
+		*dest++ = *(SOLID_TRANSMAP + (colormap[source] << 8) + *dsrc++);
 	} while (--width >= 0);
+#ifdef PS2_OPT_DRAW
+	ds_x1 = solid_x;
+#endif
 }
 
 /**	\brief The R_DrawFogColumn_8 function
@@ -2998,6 +3100,9 @@ void R_DrawTiltedWaterSolidColorSpan_8(void)
 void R_DrawFogColumn_8(void)
 {
 	const INT32 vwidth = vid.width; // PS2-83: a local, the compiler reloads vid.width after every pixel store (char alias)
+#ifdef PS2_OPT_DRAW
+	const lighttable_t *const colormap = dc_colormap;
+#endif
 	INT32 count;
 	UINT8 *dest;
 
@@ -3019,10 +3124,17 @@ void R_DrawFogColumn_8(void)
 	do
 	{
 		// Simple. Apply the colormap to what's already on the screen.
+#ifdef PS2_OPT_DRAW
+		*dest = colormap[*dest];
+#else
 		*dest = dc_colormap[*dest];
+#endif
 		dest += vwidth;
 	} while (count--);
 }
+
+#undef SOLID_TILT_LIGHT
+#undef SOLID_TRANSMAP
 
 /**	\brief The R_DrawShadeColumn_8 function
 	This is for 3D floors that cast shadows on walls.

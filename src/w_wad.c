@@ -171,8 +171,8 @@ void W_Shutdown(void)
 #endif
 		while (wad->numlumps--)
 		{
-			if (wad->lumpinfo[wad->numlumps].diskpath)
-				Z_Free(wad->lumpinfo[wad->numlumps].diskpath);
+			if (W_LumpDiskPath(&wad->lumpinfo[wad->numlumps]))
+				Z_Free(W_LumpDiskPath(&wad->lumpinfo[wad->numlumps]));
 			Z_Free(wad->lumpinfo[wad->numlumps].longname);
 			Z_Free(wad->lumpinfo[wad->numlumps].fullname);
 		}
@@ -422,7 +422,7 @@ static restype_t ResourceFileDetect (const char* filename)
 static lumpinfo_t* ResGetLumpsStandalone (FILE* handle, UINT16* numlumps, const char* lumpname)
 {
 	lumpinfo_t* lumpinfo = Z_Calloc(sizeof (*lumpinfo), PU_STATIC, NULL);
-	lumpinfo->position = 0;
+	W_InitLumpPosition(lumpinfo, 0);
 	fseek(handle, 0, SEEK_END);
 	lumpinfo->size = ftell(handle);
 	fseek(handle, 0, SEEK_SET);
@@ -494,13 +494,13 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
 	lump_p = lumpinfo = Z_Malloc(numlumps * sizeof (*lumpinfo), PU_STATIC, NULL);
 	for (i = 0; i < numlumps; i++, lump_p++, fileinfo++)
 	{
-		lump_p->position = LONG(fileinfo->filepos);
+		W_InitLumpPosition(lump_p, LONG(fileinfo->filepos));
 		lump_p->size = lump_p->disksize = LONG(fileinfo->size);
-		lump_p->diskpath = NULL;
+		W_SetLumpDiskPath(lump_p, NULL);
 		if (compressed) // wad is compressed, lump might be
 		{
 			UINT32 realsize = 0;
-			if (fseek(handle, lump_p->position, SEEK_SET)
+			if (fseek(handle, W_LumpPosition(lump_p), SEEK_SET)
 				== -1 || fread(&realsize, 1, sizeof realsize,
 				handle) < sizeof realsize)
 			{
@@ -519,7 +519,7 @@ static lumpinfo_t* ResGetLumpsWad (FILE* handle, UINT16* nlmp, const char* filen
 				lump_p->compression = CM_NOCOMPRESSION;
 			}
 
-			lump_p->position += 4;
+			W_SetLumpPosition(lump_p, W_LumpPosition(lump_p) + 4);
 			lump_p->disksize -= 4;
 		}
 		else
@@ -710,9 +710,9 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 			return NULL;
 		}
 
-		lump_p->position = zentry.offset; // NOT ACCURATE YET: we still need to read the local entry to find our true position
+		W_InitLumpPosition(lump_p, zentry.offset); // NOT ACCURATE YET: we still need to read the local entry to find our true position
 		lump_p->disksize = zentry.compsize;
-		lump_p->diskpath = NULL;
+		W_SetLumpDiskPath(lump_p, NULL);
 		lump_p->size = zentry.size;
 
 		fullname = malloc(zentry.namelen + 1);
@@ -777,14 +777,14 @@ static lumpinfo_t* ResGetLumpsZip (FILE* handle, UINT16* nlmp)
 	for (i = 0, lump_p = lumpinfo; i < numlumps; i++, lump_p++)
 	{
 		// skip and ignore comments/extra fields
-		if ((fseek(handle, lump_p->position, SEEK_SET) != 0) || (fread(&zlentry, 1, sizeof(zlentry_t), handle) < sizeof(zlentry_t)))
+		if ((fseek(handle, W_LumpPosition(lump_p), SEEK_SET) != 0) || (fread(&zlentry, 1, sizeof(zlentry_t), handle) < sizeof(zlentry_t)))
 		{
 			CONS_Alert(CONS_ERROR, "Local headers for lump %s are corrupt\n", lump_p->fullname);
 			Z_Free(lumpinfo);
 			return NULL;
 		}
 
-		lump_p->position += sizeof(zlentry_t) + zlentry.namelen + zlentry.xtralen;
+		W_SetLumpPosition(lump_p, W_LumpPosition(lump_p) + sizeof(zlentry_t) + zlentry.namelen + zlentry.xtralen);
 	}
 
 	*nlmp = numlumps;
@@ -872,9 +872,9 @@ static lumpinfo_t* ResGetLumpsZipFast (FILE* handle, UINT16* nlmp)
 			Z_Free(cd);
 			return NULL;
 		}
-		lump_p->position = zentry.offset | ZIP_LAZYPOS; // the local header, until the lump is read
+		W_InitLumpPosition(lump_p, zentry.offset | ZIP_LAZYPOS); // the local header, until the lump is read
 		lump_p->disksize = zentry.compsize;
-		lump_p->diskpath = NULL;
+		W_SetLumpDiskPath(lump_p, NULL);
 		lump_p->size = zentry.size;
 
 		fullname = malloc(zentry.namelen + 1);
@@ -938,14 +938,14 @@ static lumpinfo_t* ResGetLumpsZipFast (FILE* handle, UINT16* nlmp)
 static boolean W_ResolveZipPosition(FILE *handle, lumpinfo_t *l)
 {
 	zlentry_t zlentry;
-	unsigned long header = l->position & ~ZIP_LAZYPOS;
+	unsigned long header = W_LumpPosition(l) & ~ZIP_LAZYPOS;
 
 	if (fseek(handle, (long)header, SEEK_SET) != 0 || fread(&zlentry, 1, sizeof(zlentry_t), handle) < sizeof(zlentry_t))
 	{
 		CONS_Alert(CONS_ERROR, "Local headers for lump %s are corrupt\n", l->fullname);
 		return false;
 	}
-	l->position = header + sizeof(zlentry_t) + zlentry.namelen + zlentry.xtralen;
+	W_SetLumpPosition(l, header + sizeof(zlentry_t) + zlentry.namelen + zlentry.xtralen);
 	return true;
 }
 #endif
@@ -2671,26 +2671,26 @@ size_t W_LumpLengthPwad(UINT16 wad, UINT16 lump)
 	{
 		// pathisdirectory calls stat, so if anything wrong has happened,
 		// this is the time to be aware of it.
-		INT32 stat = pathisdirectory(l->diskpath);
+		INT32 stat = pathisdirectory(W_LumpDiskPath(l));
 
 		if (stat < 0)
 		{
 #ifndef AVOID_ERRNO
 			if (direrror == ENOENT)
-				I_Error("W_LumpLengthPwad: file %s doesn't exist", l->diskpath);
+				I_Error("W_LumpLengthPwad: file %s doesn't exist", W_LumpDiskPath(l));
 			else
-				I_Error("W_LumpLengthPwad: could not stat %s: %s", l->diskpath, strerror(direrror));
+				I_Error("W_LumpLengthPwad: could not stat %s: %s", W_LumpDiskPath(l), strerror(direrror));
 #else
-			I_Error("W_LumpLengthPwad: could not access %s", l->diskpath);
+			I_Error("W_LumpLengthPwad: could not access %s", W_LumpDiskPath(l));
 #endif
 		}
 		else if (stat == 1) // Path is a folder.
 			return 0;
 		else
 		{
-			FILE *handle = fopen(l->diskpath, "rb");
+			FILE *handle = fopen(W_LumpDiskPath(l), "rb");
 			if (handle == NULL)
-				I_Error("W_LumpLengthPwad: could not open file %s", l->diskpath);
+				I_Error("W_LumpLengthPwad: could not open file %s", W_LumpDiskPath(l));
 
 			fseek(handle, 0, SEEK_END);
 			l->size = l->disksize = ftell(handle);
@@ -2851,26 +2851,26 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 	{
 		// pathisdirectory calls stat, so if anything wrong has happened,
 		// this is the time to be aware of it.
-		INT32 stat = pathisdirectory(l->diskpath);
+		INT32 stat = pathisdirectory(W_LumpDiskPath(l));
 
 		if (stat < 0)
 		{
 #ifndef AVOID_ERRNO
 			if (direrror == ENOENT)
-				I_Error("W_ReadLumpHeaderPwad: file %s doesn't exist", l->diskpath);
+				I_Error("W_ReadLumpHeaderPwad: file %s doesn't exist", W_LumpDiskPath(l));
 			else
-				I_Error("W_ReadLumpHeaderPwad: could not stat %s: %s", l->diskpath, strerror(direrror));
+				I_Error("W_ReadLumpHeaderPwad: could not stat %s: %s", W_LumpDiskPath(l), strerror(direrror));
 #else
-			I_Error("W_ReadLumpHeaderPwad: could not access %s", l->diskpath);
+			I_Error("W_ReadLumpHeaderPwad: could not access %s", W_LumpDiskPath(l));
 #endif
 		}
 		else if (stat == 1) // Path is a folder.
 			return 0;
 		else
 		{
-			handle = fopen(l->diskpath, "rb");
+			handle = fopen(W_LumpDiskPath(l), "rb");
 			if (handle == NULL)
-				I_Error("W_ReadLumpHeaderPwad: could not open file %s", l->diskpath);
+				I_Error("W_ReadLumpHeaderPwad: could not open file %s", W_LumpDiskPath(l));
 
 			// Find length of file
 			fseek(handle, 0, SEEK_END);
@@ -2896,7 +2896,7 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 	if (wadfiles[wad]->type != RET_FOLDER)
 		handle = wadfiles[wad]->handle;
 #ifdef PS2_PROFILE
-	if ((l->position & ZIP_LAZYPOS) && !W_ResolveZipPosition(handle, l))
+	if ((W_LumpPosition(l) & ZIP_LAZYPOS) && !W_ResolveZipPosition(handle, l))
 		return 0;
 #endif
 #ifdef PS2_PROFILE
@@ -2915,9 +2915,9 @@ static size_t W_ReadLumpHeaderPwad_(UINT16 wad, UINT16 lump, void *dest, size_t 
 	// PS2-103: a compressed lump is always read from its start: the offset is into the decompressed data (the original seeks into
 	// the compressed stream and copies from the start of the decompressed one: wrong for any partial read of a deflated lump, e.g.
 	// the sublumps of a map WAD in a pk3, which vres_GetMap reads one at a time)
-	fseek(handle, (long)(l->position + (wadfiles[wad]->lumpinfo[lump].compression == CM_NOCOMPRESSION ? offset : 0)), SEEK_SET);
+	fseek(handle, (long)(W_LumpPosition(l) + (wadfiles[wad]->lumpinfo[lump].compression == CM_NOCOMPRESSION ? offset : 0)), SEEK_SET);
 #else
-	fseek(handle, (long)(l->position + offset), SEEK_SET);
+	fseek(handle, (long)(W_LumpPosition(l) + offset), SEEK_SET);
 #endif
 
 	// But let's not copy it yet. We support different compression formats on lumps, so we need to take that into account.

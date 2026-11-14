@@ -23,7 +23,6 @@ struct ps2_music
 	ps2_pcm pcm;
 	ps2_midi *midi;
 #ifdef PS2_AUDIO_VORBIS
-	OggVorbis_File ogg;
 	int ogg_open, ogg_half;
 #endif
 #ifdef PS2_AUDIO_MP3
@@ -36,6 +35,11 @@ struct ps2_music
 	size_t buffered, cursor;
 	unsigned skipped;                  // PS2-317: the position moved without decoding; the decoder is behind (resynchronised by PS2_MusicRender)
 	int16_t buffer[DECODE_FRAMES * 2] __attribute__((aligned(16))); // PS2-316: the VU0 PCM conversion stores 16 bytes at a time
+#ifdef PS2_AUDIO_VORBIS
+	// Only Ogg inputs need the Vorbis file state. Keep it in this same
+	// allocation without reserving it for WAV, MIDI or MP3 music.
+	OggVorbis_File ogg[];
+#endif
 };
 
 #if defined(PS2_AUDIO_VORBIS) || defined(PS2_AUDIO_MP3)
@@ -73,9 +77,13 @@ ps2_music *PS2_MusicOpen(const ps2_audio_input *in)
 {
 	uint8_t h[12];
 	ps2_music *m;
+	size_t bytes = sizeof *m;
 	if (!in || in->size > INT_MAX || PS2_AudioRead(in, 0, h, 12) != 12) return NULL;
-	m = memalign(16, sizeof *m); if (!m) return NULL;
-	memset(m, 0, sizeof *m);
+#ifdef PS2_AUDIO_VORBIS
+	if (!memcmp(h, "OggS", 4)) bytes += sizeof m->ogg[0];
+#endif
+	m = memalign(16, bytes); if (!m) return NULL;
+	memset(m, 0, bytes);
 	m->in = *in;
 	if (!memcmp(h, "RIFF", 4))
 	{
@@ -95,22 +103,22 @@ ps2_music *PS2_MusicOpen(const ps2_audio_input *in)
 		ov_callbacks cb = { OggRead, OggSeek, NULL, OggTell };
 		vorbis_info *info;
 		double duration;
-		if (ov_open_callbacks(m, &m->ogg, NULL, 0, cb)) goto bad;
+		if (ov_open_callbacks(m, m->ogg, NULL, 0, cb)) goto bad;
 		m->ogg_open = 1;
-		info = ov_info(&m->ogg, 0);
-		if (ov_streams(&m->ogg) != 1 || !info || info->channels < 1 || info->channels > 2
+		info = ov_info(m->ogg, 0);
+		if (ov_streams(m->ogg) != 1 || !info || info->channels < 1 || info->channels > 2
 			|| info->rate < 4000 || info->rate > 96000) goto bad;
 		m->type = PS2_MUSIC_OGG; m->rate = info->rate; m->channels = info->channels;
 		// Vorbis' native half-rate synthesis cuts transform/output work and
 		// applies its low-pass path, instead of generating unused 44/48k PCM.
-		if (m->rate >= 44000 && (m->rate & 1) == 0 && ov_halfrate(&m->ogg, 1) == 0)
+		if (m->rate >= 44000 && (m->rate & 1) == 0 && ov_halfrate(m->ogg, 1) == 0)
 		{ m->ogg_half = 1; m->rate /= 2; }
-		duration = ov_time_total(&m->ogg, -1);
+		duration = ov_time_total(m->ogg, -1);
 		if (duration <= 0 || duration > 86400) goto bad;
 		m->length_ms = (uint32_t)(duration * 1000);
 		// Native Vorbis comments, without a byte-by-byte scan of the track.
 		{
-			vorbis_comment *vc = ov_comment(&m->ogg, 0);
+			vorbis_comment *vc = ov_comment(m->ogg, 0);
 			const char *tag = vc ? vorbis_comment_query(vc, "LOOPMS", 0) : NULL;
 			int samples = 0;
 			char *end;
@@ -162,7 +170,7 @@ void PS2_MusicClose(ps2_music *m)
 	if (!m) return;
 	PS2_MIDIClose(m->midi);
 #ifdef PS2_AUDIO_VORBIS
-	if (m->ogg_open) ov_clear(&m->ogg);
+	if (m->ogg_open) ov_clear(m->ogg);
 #endif
 #ifdef PS2_AUDIO_MP3
 	if (m->mp3) mpg123_delete(m->mp3);
@@ -201,7 +209,7 @@ static int SeekFrame(ps2_music *m, uint64_t frame, uint32_t ms)
 	{ if (!PS2_MIDISeek(m->midi, ms)) return 0; }
 #ifdef PS2_AUDIO_VORBIS
 	else if (m->type == PS2_MUSIC_OGG)
-	{ if (ov_pcm_seek(&m->ogg, (ogg_int64_t)frame << m->ogg_half)) return 0; }
+	{ if (ov_pcm_seek(m->ogg, (ogg_int64_t)frame << m->ogg_half)) return 0; }
 #endif
 #ifdef PS2_AUDIO_MP3
 	else if (m->type == PS2_MUSIC_MP3)
@@ -271,7 +279,7 @@ static size_t Decode(ps2_music *m)
 		// ov_read_float + PS2_FloatToS16 gives the same samples as ov_read() without its per-sample double arithmetic
 		float **pcm;
 		int section = 0;
-		long got = ov_read_float(&m->ogg, &pcm, DECODE_FRAMES, &section);
+		long got = ov_read_float(m->ogg, &pcm, DECODE_FRAMES, &section);
 		if (got < 0 || section != 0) { m->error = 1; return 0; }
 		n = (size_t)got;
 		// At EOF libvorbis may return no PCM pointer along with zero frames.
