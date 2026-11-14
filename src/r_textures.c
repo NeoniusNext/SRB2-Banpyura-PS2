@@ -411,6 +411,8 @@ static void R_WriteTexturePosts(post_t *posts, const UINT8 *mask, INT32 width, I
 // stack. Other formats retain their existing construction/failure behavior.
 static boolean R_CompositeRetrySource(UINT16 wad, lumpnum_t lump)
 {
+	if (wad >= numwadfiles || !wadfiles[wad] || !wadfiles[wad]->lumpinfo || lump >= wadfiles[wad]->numlumps)
+		return false;
 	const lumpinfo_t *record = &wadfiles[wad]->lumpinfo[lump];
 	return wadfiles[wad]->pool && record->size <= 64u * 65536u
 		&& (record->compression == CM_NOCOMPRESSION || record->compression == CM_LZ4);
@@ -418,9 +420,11 @@ static boolean R_CompositeRetrySource(UINT16 wad, lumpnum_t lump)
 
 static size_t R_CompositeRetryRead(UINT16 wad, lumpnum_t lump, void *dest, size_t bytes)
 {
+	if (!R_CompositeRetrySource(wad, lump))
+		return 0;
 	wadfile_t *file = wadfiles[wad];
 	const lumpinfo_t *record = &file->lumpinfo[lump];
-	if (!R_CompositeRetrySource(wad, lump) || !WPack_CanReadWithoutAlloc(file->handle, record))
+	if (!WPack_CanReadWithoutAlloc(file->handle, record))
 		return 0;
 	return WPack_ReadLumpN((wpack_t *)file->pack, file->handle, lump, record, dest, bytes, 0);
 }
@@ -722,8 +726,9 @@ UINT8 *R_GenerateTexture(size_t texnum)
 	// A retry reserves the already-known final size before any scratch can
 	// split its free run. Normal calls retain their original allocation size.
 	const size_t pixels_capacity = retry_capacity > total_pixels ? retry_capacity : total_pixels;
+#define R_COMPOSITE_PIXELS_CAPACITY pixels_capacity
 #else
-	const size_t pixels_capacity = total_pixels;
+#define R_COMPOSITE_PIXELS_CAPACITY total_pixels
 #endif
 	if (total_pixels >= R_COMPOSITE_TRY_MIN
 #ifdef R_COMPOSITE_RETRY
@@ -731,10 +736,10 @@ UINT8 *R_GenerateTexture(size_t texnum)
 #endif
 		)
 	{
-		temp_block = Z_TryMallocAlign(pixels_capacity, R_TEXTURE_WORK_TAG, NULL, 2);
+		temp_block = Z_TryMallocAlign(R_COMPOSITE_PIXELS_CAPACITY, R_TEXTURE_WORK_TAG, NULL, 2);
 		if (!temp_block)
 			return R_FallbackTexture(texnum);
-		memset(temp_block, 0, pixels_capacity);
+		memset(temp_block, 0, R_COMPOSITE_PIXELS_CAPACITY);
 	}
 	else
 #endif
@@ -1322,6 +1327,8 @@ done:
 	Z_ChangeTag(block, PU_CACHE);
 	return blocktex;
 }
+
+#undef R_COMPOSITE_PIXELS_CAPACITY
 
 #if defined(PS2) && defined(PS2_PROFILE)
 // PS2-180 (OPT11-STAB): the flat of a big texture straight from its raw patches.
