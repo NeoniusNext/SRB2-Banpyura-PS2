@@ -1,0 +1,34 @@
+--- a/src/w_wad.c
++++ b/src/w_wad.c
+@@ -2185,0 +2186,29 @@
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_LUMPCACHE) && !defined(PS2_NOOPT_LUMPCACHEWALK)
++	const UINT32 hash = quickncasehash(name, longname ? 32 : 8);
++	const UINT32 *base = lumpnumcache.hash;
++	const UINT32 *split = base + lumpnumcacheindex + 1;
++	const UINT32 *p = split, *stop = base;
++	unsigned span;
++
++	// Visit the same circular order in two contiguous descending spans.
++	// Only a matching hash needs the slot number and its name/number arrays.
++	for (span = 0; span < 2; span++)
++	{
++		while (p != stop)
++		{
++			if (*--p == hash)
++			{
++				const UINT16 i = (UINT16)(p - base);
++
++				if (longname ? stricmp(W_CACHE_NAME(i), name) == 0
++					: W_CACHE_NAME(i)[8] == '\0' && strnicmp(W_CACHE_NAME(i), name, 8) == 0)
++				{
++					lumpnumcacheindex = i;
++					return W_CACHE_NUM(i);
++				}
++			}
++		}
++		p = base + LUMPNUMCACHESIZE;
++		stop = split;
++	}
++#else
+@@ -2216,0 +2246 @@
++#endif

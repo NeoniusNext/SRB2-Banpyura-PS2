@@ -186,8 +186,8 @@ static void host_init(int fb32)
 	H.pool_base = H.clut_base + ((CLUT_SLOTS * CLUT_BLOCKS + PAGE_BLOCKS - 1) / PAGE_BLOCKS) * PAGE_BLOCKS;
 	H.pool_blocks = VRAM_BLOCKS - H.pool_base;
 	H.free_n = 1;
-	H.free_start[0] = H.pool_base;
-	H.free_len[0] = H.pool_blocks;
+	H.free_range[0].start = H.pool_base;
+	H.free_range[0].len = H.pool_blocks;
 	H.rec_free = NOREC;
 	H.lru_head = H.lru_tail = NOREC;
 	H.cur_tex = NOREC;
@@ -1308,14 +1308,14 @@ static void test_allocator(void)
 
 			for (i = 0; i < H.free_n; i++)
 			{
-				EXPECT(H.free_len[i] > 0 && (i == 0 || H.free_start[i] > prev_end), "free list entry %d not sorted/merged: %u+%u after end %u", i, H.free_start[i], H.free_len[i], prev_end);
-				prev_end = H.free_start[i] + H.free_len[i];
-				free_total += H.free_len[i];
+				EXPECT(H.free_range[i].len > 0 && (i == 0 || H.free_range[i].start > prev_end), "free list entry %d not sorted/merged: %u+%u after end %u", i, H.free_range[i].start, H.free_range[i].len, prev_end);
+				prev_end = H.free_range[i].start + H.free_range[i].len;
+				free_total += H.free_range[i].len;
 				{
 					u32 j;
 
-					for (j = 0; j < H.free_len[i]; j++)
-						EXPECT(!used[H.free_start[i] + j], "block %u is free and allocated", H.free_start[i] + j);
+					for (j = 0; j < H.free_range[i].len; j++)
+						EXPECT(!used[H.free_range[i].start + j], "block %u is free and allocated", H.free_range[i].start + j);
 				}
 			}
 			EXPECT(free_total + expect_used == H.pool_blocks, "free %u + used %u != pool %u", free_total, expect_used, H.pool_blocks);
@@ -1816,7 +1816,7 @@ static void test_screen_resources(void)
 	host_init(1);
 	H.fbw = H.vw = 64; H.fbh = H.vh = 32;
 	H.scr_w = 32; H.scr_h = 16; H.sx = H.sy = 2.0f;
-	H.pool_blocks = 64; H.free_len[0] = 64; // exactly two full captures
+	H.pool_blocks = 64; H.free_range[0].len = 64; // exactly two full captures
 	bytes = 64 * 32 * 4;
 	for (i = 0; i < 2; i++)
 	{
