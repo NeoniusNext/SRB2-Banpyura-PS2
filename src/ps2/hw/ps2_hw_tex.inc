@@ -1468,13 +1468,14 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 // AP_88 with partial alpha (or opaque index 255 next to holes) needs direct colour: palette colour, GS alpha.
 static void fill_ap88_ct32(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 *d = (u32 *)(void *)dst, x;
 
-	for (x = 0; x < c->W2; x++)
+	for (x = 0; x < c.W2; x++)
 	{
-		const u8 *p = s + (size_t)src_col(c, x) * 2;
+		const u8 *p = s + (size_t)src_col(&c, x) * 2;
 
 		d[x] = H.pal[p[0]] | (a8_to_gs(p[1]) << 24);
 	}
@@ -1483,14 +1484,15 @@ static void fill_ap88_ct32(void *ctx, u32 row, u8 *dst)
 // RGBA -> CT32 with the GS alpha scale (0x80 = opaque)
 static void fill_ct32(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u32 *s = (const u32 *)(const void *)(c->src + (size_t)src_row(c, row) * c->sw * 4);
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u32 *s = (const u32 *)(const void *)(c.src + (size_t)src_row(&c, row) * c.sw * 4);
 	u32 *d = (u32 *)(void *)dst;
 	u32 x;
 
-	for (x = 0; x < c->W2; x++)
+	for (x = 0; x < c.W2; x++)
 	{
-		u32 t = s[src_col(c, x)];
+		u32 t = s[src_col(&c, x)];
 
 		d[x] = (t & 0xFFFFFF) | (a8_to_gs(t >> 24) << 24);
 	}
@@ -1499,14 +1501,15 @@ static void fill_ct32(void *ctx, u32 row, u8 *dst)
 // ALPHA_INTENSITY_88 -> CT32 grey with alpha
 static void fill_ia88(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 *d = (u32 *)(void *)dst;
 	u32 x;
 
-	for (x = 0; x < c->W2; x++)
+	for (x = 0; x < c.W2; x++)
 	{
-		const u8 *t = s + (size_t)src_col(c, x) * 2;
+		const u8 *t = s + (size_t)src_col(&c, x) * 2;
 
 		d[x] = (u32)t[0] * 0x010101u | (a8_to_gs(t[1]) << 24);
 	}

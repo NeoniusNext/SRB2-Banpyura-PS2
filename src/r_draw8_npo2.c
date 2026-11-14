@@ -24,20 +24,19 @@
 #endif
 
 #ifdef PS2_OPT_DRAW
-// A plane's spans share their flat dimensions. Generating these descriptors
-// needs a 64-bit divide on the EE; keep two descriptors per axis across all
-// tilted drawers, including alternating floor/sprite dimensions. Copy them
-// into span-local storage before any pixel stores.
+// A plane's spans share their flat dimensions. Keep two bounded reciprocal
+// descriptors per axis across all tilted drawers, including alternating
+// floor/sprite dimensions. Each miss needs only a 32-bit divide; copy the
+// reciprocal into span-local storage before pixel stores.
 // No source/cache pointer is retained, so flat eviction and mode/level changes
 // need no invalidation. Zero dimensions still take libdivide's error path.
-static void R_NPO2SlopeDividers(struct libdivide_u32_t *x, struct libdivide_u32_t *y)
+static void R_NPO2SlopeReciprocals(UINT32 *x, UINT32 *y)
 {
-	// Keep the magic words aligned even though libdivide's descriptor is packed.
+	// Keep each reciprocal word aligned, with the same two-entry cache sizes.
 	static struct
 	{
-		UINT32 magic;
+		UINT32 reciprocal;
 		UINT16 dimension;
-		UINT8 more;
 	} xcached[2], ycached[2];
 	static UINT8 xnext, ynext;
 	const UINT16 flatwidth = ds_flatwidth, flatheight = ds_flatheight;
@@ -48,10 +47,11 @@ static void R_NPO2SlopeDividers(struct libdivide_u32_t *x, struct libdivide_u32_
 		xi = 1;
 		if (!flatwidth || xcached[1].dimension != flatwidth)
 		{
-			const struct libdivide_u32_t divider = libdivide_u32_gen(flatwidth);
+			if (!flatwidth)
+				(void)libdivide_u32_gen(flatwidth);
+			const UINT32 reciprocal = 0x7fffffffU / flatwidth + 1U;
 			xi = xnext;
-			xcached[xi].magic = divider.magic;
-			xcached[xi].more = divider.more;
+			xcached[xi].reciprocal = reciprocal;
 			xcached[xi].dimension = flatwidth;
 			xnext ^= 1;
 		}
@@ -61,18 +61,30 @@ static void R_NPO2SlopeDividers(struct libdivide_u32_t *x, struct libdivide_u32_
 		yi = 1;
 		if (!flatheight || ycached[1].dimension != flatheight)
 		{
-			const struct libdivide_u32_t divider = libdivide_u32_gen(flatheight);
+			if (!flatheight)
+				(void)libdivide_u32_gen(flatheight);
+			const UINT32 reciprocal = 0x7fffffffU / flatheight + 1U;
 			yi = ynext;
-			ycached[yi].magic = divider.magic;
-			ycached[yi].more = divider.more;
+			ycached[yi].reciprocal = reciprocal;
 			ycached[yi].dimension = flatheight;
 			ynext ^= 1;
 		}
 	}
-	x->magic = xcached[xi].magic;
-	x->more = xcached[xi].more;
-	y->magic = ycached[yi].magic;
-	y->more = ycached[yi].more;
+	*x = xcached[xi].reciprocal;
+	*y = ycached[yi].reciprocal;
+}
+
+// Perspective texture coordinates become signed 16-bit integers before wrapping.
+// For 0 <= n <= 32767 and 1 <= d <= 65535, ceil(2^31 / d) gives the exact
+// quotient as high32((n << 1) * reciprocal): the reciprocal's excess is too
+// small to cross the next multiple of d. Complementing negative coordinates
+// preserves the original Euclidean wrap, including exact negative multiples.
+static inline UINT32 R_NPO2SlopeWrap(fixed_t coordinate, UINT16 dimension, UINT32 reciprocal)
+{
+	const UINT32 sign = (UINT32)(coordinate >> 31);
+	const UINT32 magnitude = (UINT32)coordinate ^ sign;
+	const UINT32 quotient = libdivide_mullhi_u32(magnitude << 1, reciprocal);
+	return (UINT32)coordinate - (quotient ^ sign) * dimension;
 }
 #endif
 
@@ -212,8 +224,8 @@ void R_DrawTiltedSpan_NPO2_8(void)
 	UINT32 stepu, stepv;
 
 #ifdef PS2_OPT_DRAW
-	struct libdivide_u32_t x_divider, y_divider;
-	R_NPO2SlopeDividers(&x_divider, &y_divider);
+	UINT32 x_reciprocal, y_reciprocal;
+	R_NPO2SlopeReciprocals(&x_reciprocal, &y_reciprocal);
 #else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
@@ -252,6 +264,10 @@ void R_DrawTiltedSpan_NPO2_8(void)
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
 			fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+			x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+			y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 			// Carefully align all of my Friends.
 			if (x < 0)
 				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -261,6 +277,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
 				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 			*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 		}
@@ -302,6 +319,10 @@ void R_DrawTiltedSpan_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -311,6 +332,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 			}
@@ -334,6 +356,10 @@ void R_DrawTiltedSpan_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -343,6 +369,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 			}
@@ -371,6 +398,10 @@ void R_DrawTiltedSpan_NPO2_8(void)
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
 					fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+					x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+					y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 					// Carefully align all of my Friends.
 					if (x < 0)
 						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -380,6 +411,7 @@ void R_DrawTiltedSpan_NPO2_8(void)
 						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
 						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 					*dest = colormap[source[((y * NPO2_TILT_WIDTH) + x)]];
 				}
@@ -416,8 +448,8 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 	UINT32 stepu, stepv;
 
 #ifdef PS2_OPT_DRAW
-	struct libdivide_u32_t x_divider, y_divider;
-	R_NPO2SlopeDividers(&x_divider, &y_divider);
+	UINT32 x_reciprocal, y_reciprocal;
+	R_NPO2SlopeReciprocals(&x_reciprocal, &y_reciprocal);
 #else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
@@ -456,6 +488,10 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
 			fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+			x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+			y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 			// Carefully align all of my Friends.
 			if (x < 0)
 				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -465,6 +501,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
 				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 			*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 		}
@@ -506,6 +543,10 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -515,6 +556,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 			}
@@ -538,6 +580,10 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -547,6 +593,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 			}
@@ -575,6 +622,10 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
 					fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+					x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+					y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 					// Carefully align all of my Friends.
 					if (x < 0)
 						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -584,6 +635,7 @@ void R_DrawTiltedTranslucentSpan_NPO2_8(void)
 						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
 						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 					*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dest);
 				}
@@ -619,8 +671,8 @@ void R_DrawTiltedSplat_NPO2_8(void)
 	UINT32 stepu, stepv;
 
 #ifdef PS2_OPT_DRAW
-	struct libdivide_u32_t x_divider, y_divider;
-	R_NPO2SlopeDividers(&x_divider, &y_divider);
+	UINT32 x_reciprocal, y_reciprocal;
+	R_NPO2SlopeReciprocals(&x_reciprocal, &y_reciprocal);
 #else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
@@ -659,6 +711,10 @@ void R_DrawTiltedSplat_NPO2_8(void)
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
 			fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+			x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+			y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 			// Carefully align all of my Friends.
 			if (x < 0)
 				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -668,6 +724,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
 				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 			val = source[((y * NPO2_TILT_WIDTH) + x)];
 		}
@@ -713,6 +770,10 @@ void R_DrawTiltedSplat_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -722,6 +783,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
@@ -747,6 +809,10 @@ void R_DrawTiltedSplat_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -756,6 +822,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
@@ -786,6 +853,10 @@ void R_DrawTiltedSplat_NPO2_8(void)
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
 					fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+					x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+					y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 					// Carefully align all of my Friends.
 					if (x < 0)
 						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -795,6 +866,7 @@ void R_DrawTiltedSplat_NPO2_8(void)
 						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
 						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 					val = source[((y * NPO2_TILT_WIDTH) + x)];
 				}
@@ -832,8 +904,8 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 	UINT32 stepu, stepv;
 
 #ifdef PS2_OPT_DRAW
-	struct libdivide_u32_t x_divider, y_divider;
-	R_NPO2SlopeDividers(&x_divider, &y_divider);
+	UINT32 x_reciprocal, y_reciprocal;
+	R_NPO2SlopeReciprocals(&x_reciprocal, &y_reciprocal);
 #else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
@@ -873,6 +945,10 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
 			fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+			x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+			y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 			// Carefully align all of my Friends.
 			if (x < 0)
 				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -882,6 +958,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
 				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 			val = source[((y * NPO2_TILT_WIDTH) + x)];
 		}
@@ -927,6 +1004,10 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -936,6 +1017,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
@@ -961,6 +1043,10 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -970,6 +1056,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 			}
@@ -1000,6 +1087,10 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
 					fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+					x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+					y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 					// Carefully align all of my Friends.
 					if (x < 0)
 						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -1009,6 +1100,7 @@ void R_DrawTiltedTranslucentSplat_NPO2_8(void)
 						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
 						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 					val = source[((y * NPO2_TILT_WIDTH) + x)];
 				}
@@ -1465,8 +1557,8 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 	UINT32 stepu, stepv;
 
 #ifdef PS2_OPT_DRAW
-	struct libdivide_u32_t x_divider, y_divider;
-	R_NPO2SlopeDividers(&x_divider, &y_divider);
+	UINT32 x_reciprocal, y_reciprocal;
+	R_NPO2SlopeReciprocals(&x_reciprocal, &y_reciprocal);
 #else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
@@ -1515,6 +1607,10 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
 			fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+			x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+			y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 			// Carefully align all of my Friends.
 			if (x < 0)
 				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -1524,6 +1620,7 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
 				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 			val = source[((y * NPO2_TILT_WIDTH) + x)];
 			if (val & 0xFF00)
@@ -1548,6 +1645,10 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -1557,6 +1658,7 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
@@ -1585,6 +1687,10 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -1594,6 +1700,7 @@ void R_DrawTiltedFloorSprite_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
@@ -1630,8 +1737,8 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 	UINT32 stepu, stepv;
 
 #ifdef PS2_OPT_DRAW
-	struct libdivide_u32_t x_divider, y_divider;
-	R_NPO2SlopeDividers(&x_divider, &y_divider);
+	UINT32 x_reciprocal, y_reciprocal;
+	R_NPO2SlopeReciprocals(&x_reciprocal, &y_reciprocal);
 #else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
@@ -1681,6 +1788,10 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
 			fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+			x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+			y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 			// Carefully align all of my Friends.
 			if (x < 0)
 				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -1690,6 +1801,7 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
 				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 			val = source[((y * NPO2_TILT_WIDTH) + x)];
 			if (val & 0xFF00)
@@ -1714,6 +1826,10 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -1723,6 +1839,7 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
@@ -1751,6 +1868,10 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -1760,6 +1881,7 @@ void R_DrawTiltedTranslucentFloorSprite_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				val = source[((y * NPO2_TILT_WIDTH) + x)];
 				if (val & 0xFF00)
@@ -1991,8 +2113,8 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 	UINT32 stepu, stepv;
 
 #ifdef PS2_OPT_DRAW
-	struct libdivide_u32_t x_divider, y_divider;
-	R_NPO2SlopeDividers(&x_divider, &y_divider);
+	UINT32 x_reciprocal, y_reciprocal;
+	R_NPO2SlopeReciprocals(&x_reciprocal, &y_reciprocal);
 #else
 	struct libdivide_u32_t x_divider = libdivide_u32_gen(ds_flatwidth);
 	struct libdivide_u32_t y_divider = libdivide_u32_gen(ds_flatheight);
@@ -2032,6 +2154,10 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 			fixed_t x = (((fixed_t)u) >> FRACBITS);
 			fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+			x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+			y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 			// Carefully align all of my Friends.
 			if (x < 0)
 				x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -2041,6 +2167,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 				y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 			else
 				y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 			*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 		}
@@ -2082,6 +2209,10 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -2091,6 +2222,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 			}
@@ -2114,6 +2246,10 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 				fixed_t x = (((fixed_t)u) >> FRACBITS);
 				fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+				x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+				y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 				// Carefully align all of my Friends.
 				if (x < 0)
 					x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -2123,6 +2259,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 					y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 				else
 					y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 				*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 			}
@@ -2151,6 +2288,10 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 					fixed_t x = (((fixed_t)u) >> FRACBITS);
 					fixed_t y = (((fixed_t)v) >> FRACBITS);
 
+#ifdef PS2_OPT_DRAW
+					x = R_NPO2SlopeWrap(x, NPO2_TILT_WIDTH, x_reciprocal);
+					y = R_NPO2SlopeWrap(y, NPO2_TILT_HEIGHT, y_reciprocal);
+#else
 					// Carefully align all of my Friends.
 					if (x < 0)
 						x += (libdivide_u32_do((UINT32)(-x-1), &x_divider) + 1) * NPO2_TILT_WIDTH;
@@ -2160,6 +2301,7 @@ void R_DrawTiltedWaterSpan_NPO2_8(void)
 						y += (libdivide_u32_do((UINT32)(-y-1), &y_divider) + 1) * NPO2_TILT_HEIGHT;
 					else
 						y -= libdivide_u32_do((UINT32)y, &y_divider) * NPO2_TILT_HEIGHT;
+#endif
 
 					*dest = *(NPO2_TILT_TRANSMAP + (colormap[source[((y * NPO2_TILT_WIDTH) + x)]] << 8) + *dsrc++);
 				}

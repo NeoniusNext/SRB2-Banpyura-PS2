@@ -7034,10 +7034,10 @@ static void HWR_FX_ExtMake(UINT32 spr, hwr_fx_ext_t *e)
 
 			if (id >= numspritelumps)
 				continue;
-			w = FIXED_TO_FLOAT(spritecachedinfo[id].width);
-			off = FIXED_TO_FLOAT(spritecachedinfo[id].offset);
-			h = FIXED_TO_FLOAT(spritecachedinfo[id].height);
-			top = FIXED_TO_FLOAT(spritecachedinfo[id].topoffset);
+			w = FIXED_TO_FLOAT(SPRCACHE_WIDTH(spritecachedinfo[id]));
+			off = FIXED_TO_FLOAT(SPRCACHE_OFFSET(spritecachedinfo[id]));
+			h = FIXED_TO_FLOAT(SPRCACHE_HEIGHT(spritecachedinfo[id]));
+			top = FIXED_TO_FLOAT(SPRCACHE_TOPOFFSET(spritecachedinfo[id]));
 			a = fabsf(off);
 			b = fabsf(w - off);
 			a = a > b ? a : b;
@@ -7546,10 +7546,10 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 	}
 
 	HWD_LAP(HWP_PS_B);
-	spr_width = spritecachedinfo[lumpoff].width;
-	spr_height = spritecachedinfo[lumpoff].height;
-	spr_offset = spritecachedinfo[lumpoff].offset;
-	spr_topoffset = spritecachedinfo[lumpoff].topoffset;
+	spr_width = SPRCACHE_WIDTH(spritecachedinfo[lumpoff]);
+	spr_height = SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]);
+	spr_offset = SPRCACHE_OFFSET(spritecachedinfo[lumpoff]);
+	spr_topoffset = SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]);
 	{
 		SINT8 flipoffset = 1;
 
@@ -7981,10 +7981,10 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	if (thing->skin && ((skin_t *)thing->skin)->flags & SF_HIRES)
 		this_scale *= FIXED_TO_FLOAT(((skin_t *)thing->skin)->highresscale);
 
-	spr_width = spritecachedinfo[lumpoff].width;
-	spr_height = spritecachedinfo[lumpoff].height;
-	spr_offset = spritecachedinfo[lumpoff].offset;
-	spr_topoffset = spritecachedinfo[lumpoff].topoffset;
+	spr_width = SPRCACHE_WIDTH(spritecachedinfo[lumpoff]);
+	spr_height = SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]);
+	spr_offset = SPRCACHE_OFFSET(spritecachedinfo[lumpoff]);
+	spr_topoffset = SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]);
 
 #ifdef ROTSPRITE
 	spriterotangle = R_SpriteRotationAngle(&interp);
@@ -8398,13 +8398,13 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	rightcos = FIXED_TO_FLOAT(FINECOSINE((viewangle + ANGLE_90)>>ANGLETOFINESHIFT));
 	if (flip)
 	{
-		x1 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].width - spritecachedinfo[lumpoff].offset);
-		x2 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].offset);
+		x1 = FIXED_TO_FLOAT(SPRCACHE_WIDTH(spritecachedinfo[lumpoff]) - SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
+		x2 = FIXED_TO_FLOAT(SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
 	}
 	else
 	{
-		x1 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].offset);
-		x2 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].width - spritecachedinfo[lumpoff].offset);
+		x1 = FIXED_TO_FLOAT(SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
+		x2 = FIXED_TO_FLOAT(SPRCACHE_WIDTH(spritecachedinfo[lumpoff]) - SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
 	}
 
 	z1 = tr_y + x1 * rightsin;
@@ -8415,8 +8415,8 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 #ifdef PS2_PROFILE
 	{
 		// PS2-HW-72: the same for the snow and the rain: a flake that holds no pixel centre (or lies outside the view) is not made
-		const float gzt_p = FIXED_TO_FLOAT(interp.z + spritecachedinfo[lumpoff].topoffset);
-		const float gz_p = gzt_p - FIXED_TO_FLOAT(spritecachedinfo[lumpoff].height);
+		const float gzt_p = FIXED_TO_FLOAT(interp.z + SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]));
+		const float gz_p = gzt_p - FIXED_TO_FLOAT(SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]));
 		const boolean aim = cv_glspritebillboarding.value && !R_ThingIsPaperSprite((mobj_t *)thing) && fabsf(gl_viewludcos) > 1.0e-6f;
 		const float basey = P_MobjFlip((mobj_t *)thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
@@ -8462,8 +8462,8 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	vis->colormap = NULL;
 
 	// set top/bottom coords
-	vis->gzt = FIXED_TO_FLOAT(interp.z + spritecachedinfo[lumpoff].topoffset);
-	vis->gz = vis->gzt - FIXED_TO_FLOAT(spritecachedinfo[lumpoff].height);
+	vis->gzt = FIXED_TO_FLOAT(interp.z + SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]));
+	vis->gz = vis->gzt - FIXED_TO_FLOAT(SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]));
 
 	vis->precip = true;
 	vis->bbox = false;
