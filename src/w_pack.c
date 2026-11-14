@@ -134,10 +134,26 @@ typedef struct
 	long size;     // size of the file (-1: not known)
 	const wpack_policy_t *pol;
 	int magic;     // 0: the first bytes were not looked at, 1: the file is a pack, -1: it is not
+#ifndef PS2_NOOPT_PACKHEADER
+	// hdrok selects the lifetime: the raw probe is needed until validation
+	// succeeds; later reads use only the parsed header and extension. Failed
+	// parses leave the raw probe intact for the next attempt.
+	union
+	{
+		UINT8 first[SRP2_HEADER_SIZE + sizeof (srp2_ext_t)];
+		struct
+		{
+			srp2_header_t h;
+			srp2_ext_t ext;
+		};
+	};
+	boolean hdrok;
+#else
 	UINT8 first[SRP2_HEADER_SIZE + sizeof (srp2_ext_t)]; // the first bytes of the file (read once, with the signature)
 	boolean hdrok; // header and extension below are parsed and checked
 	srp2_header_t h;
 	srp2_ext_t ext;
+#endif
 	char path[192]; // for the re-open of a retry
 } pkstream_t;
 
@@ -785,11 +801,30 @@ long WPack_FileSize(FILE *handle)
 	return s ? s->size : -1;
 }
 
+#ifndef PS2_NOOPT_PACKHEADER
+// ReadHeader can validate an unprobed stream (for example after slot turnover).
+// A later signature probe must keep that already cached parsed header, even
+// when the file changed. Isolate its temporary from the ordinary probe frame.
+static boolean FUNCNOINLINE PeekCheckedMagic(pkstream_t *s)
+{
+	UINT8 first[SRP2_HEADER_SIZE + sizeof (srp2_ext_t)];
+
+	memset(first, 0, sizeof first);
+	s->magic = ReadBulk(s, 0, first, sizeof first) && memcmp(first, "SRP2", 4) == 0 ? 1 : -1;
+	lseek(s->fd, 0, SEEK_SET);
+	return s->magic > 0;
+}
+#endif
+
 // Is the file a pack? (the first bytes, read below stdio: the stream's own buffer is chosen after the answer; the answer and the bytes are kept)
 static boolean PeekMagic(pkstream_t *s)
 {
 	if (!s->magic)
 	{
+#ifndef PS2_NOOPT_PACKHEADER
+		if (s->hdrok)
+			return PeekCheckedMagic(s);
+#endif
 		memset(s->first, 0, sizeof s->first);
 		s->magic = ReadBulk(s, 0, s->first, sizeof s->first) && memcmp(s->first, "SRP2", 4) == 0 ? 1 : -1;
 		lseek(s->fd, 0, SEEK_SET); // what stdio will do next starts at the beginning, as for a stream nobody touched

@@ -66,6 +66,27 @@ struct GLMipmap_s
 	struct GLColormap_s  *colormap;
 
 #ifdef PS2_PROFILE
+#if !defined(PS2_NOOPT_MIPMAP_LAYOUT)
+	// PS2: group full-width metadata by alignment. The eight byte fields and
+	// three UINT16 fields fill natural padding: 88 -> 76 bytes on EE. No field
+	// loses bits, changes lifetime, or moves the leading data owner/pixel pointer.
+	INT32                 regen_id; // Map texture / level flat index (kind 1 / 2).
+	struct GLMipmap_s    *ps2_twin; // Chroma variant -> original, sharing its GS image.
+	UINT32                ps2_planfr; // Driver frame + 1 of the current plan.
+	UINT32                ps2_ihfr, ps2_imfr; // Hint plan / last immediate draw frame + 1.
+	UINT32                ps2_full_fr; // Last unplanned full-size draw frame + 1.
+	UINT32                ps2_gcv; // Last geometry-cache view that selected this texture.
+	UINT32                ps2_spv; // Last fused-sprite view that selected this texture.
+	UINT16                ps2_pi; // Frame-plan record index while ps2_planfr is current.
+	UINT16                ps2_uw, ps2_uh; // Actual stored patch extent within the power-of-two mipmap.
+	UINT8                 regen_kind; // 0 patch, 1 map texture, 2 level flat.
+	UINT8                 ps2_h255; // 0 unknown, 1 no index 255, 2 index 255 present.
+	UINT8                 ps2_want; // Resolved frame-plan mip level (0 is full size).
+	UINT8                 ps2_ihint; // Immediate-draw hint, valid for two frames after ps2_ihfr.
+	UINT8                 ps2_vis; // At least one polygon in the frame is visible.
+	UINT8                 ps2_nup, ps2_drop; // Saturating upload count / last drop reason.
+	UINT8                 ps2_cost; // Last rebuild cost in units of 2^18 cycles, saturating.
+#else
 	// PS2-HW-16: the GS driver asks for the data of a map texture / level flat again when it is drawn and the zone dropped it
 	// (HWR_PS2_RegenerateMipmap): kind 0 = no way (patches stay as they are), 1 = map texture `regen_id`, 2 = level flat `regen_id`
 	INT32                 regen_id;
@@ -87,6 +108,7 @@ struct GLMipmap_s
 	UINT32                ps2_spv; // OPT13 IS (PS2-HW-700): the sprite view (hw_main.c hwr_fx_view) whose fused sprite draw last made this texture current (touch and tag change once per view)
 	UINT8                 ps2_nup, ps2_drop; // OPT12 HWDRV (PS2-HW-441): uploads of this texture so far (saturating) / why its VRAM image was dropped last (1 evicted, 2 upgrade, 3 downgrade, 4 cap, 5 other)
 	UINT8                 ps2_cost; // OPT12 HWDRV (PS2-HW-442): what the last make-again of its data cost, in units of 2^18 cycles (0 = never made again, 255 = more)
+#endif
 #endif
 };
 typedef struct GLMipmap_s GLMipmap_t;

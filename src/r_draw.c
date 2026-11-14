@@ -917,8 +917,38 @@ static void R_CalcTiltedLighting(fixed_t start, fixed_t end)
 	// of this function. Here's my own.
 	INT32 left = ds_x1, right = ds_x2;
 	fixed_t step = (end-start)/(ds_x2-ds_x1+1);
+#ifndef PS2_OPT_DRAW
 	INT32 i;
+#endif
 
+#ifdef PS2_OPT_DRAW
+	// Keep the signed accumulation and negative-light path; count down the
+	// existing width and select the nonnegative upper clamp without a branch.
+	if (left <= right)
+	{
+		INT32 remaining = right-left+1;
+		INT32 *dest = &tiltlighting[left];
+		do {
+			INT32 light = (start += step) >> FRACBITS;
+			if (light < 0)
+				*dest = 0;
+			else
+			{
+#if defined(_EE) && defined(__mips__)
+				INT32 above;
+				const INT32 high = MAXLIGHTSCALE-1;
+				// Retain the original helper's clobber set and caller code.
+				__asm__("slt %0,%2,%1\n\tmovn %1,%2,%0" : "=&r"(above), "+r"(light) : "r"(high) : "$9");
+#else
+				if (light >= MAXLIGHTSCALE)
+					light = MAXLIGHTSCALE-1;
+#endif
+				*dest = light;
+			}
+			dest++;
+		} while (--remaining);
+	}
+#else
 	// I wanna do some optimizing by checking for out-of-range segments on either side to fill in all at once,
 	// but I'm too bad at coding to not crash the game trying to do that. I guess this is fast enough for now...
 
@@ -929,6 +959,7 @@ static void R_CalcTiltedLighting(fixed_t start, fixed_t end)
 		else if (tiltlighting[i] >= MAXLIGHTSCALE)
 			tiltlighting[i] = MAXLIGHTSCALE-1;
 	}
+#endif
 }
 
 #ifdef PS2_OPT_SLOPE

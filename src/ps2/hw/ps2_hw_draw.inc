@@ -130,7 +130,7 @@ typedef struct
 static void state_flush(const gsstate_t *s)
 {
 	u64 vals[10];
-	u32 regs[10];
+	u8 regs[10];
 	int n = 0, i;
 	const u64 cld_mask = 7ull << 61;
 
