@@ -405,16 +405,17 @@ static inline __attribute__((always_inline)) void HWR_PBPut(hwr_pbk_t *b, UINT32
 		smin = hwr_minf(smin, sf_); smax = hwr_maxf(smax, sf_); tmin = hwr_minf(tmin, tf_); tmax = hwr_maxf(tmax, tf_); } while (0)
 		smin = smax = hwr_i2f(w[3]);
 		tmin = tmax = hwr_i2f(w[4]);
+		// Every caller rejects n < 3 before collection. Vertex zero already
+		// initialized the extrema; retain its exact five-word copy only.
+		HWR_PBC(0);
 		if (n == 4)
 		{
-			HWR_PBV(0);
 			HWR_PBV(1);
 			HWR_PBV(2);
 			HWR_PBV(3);
 		}
 		else if (n == 3)
 		{
-			HWR_PBV(0);
 			HWR_PBV(1);
 			HWR_PBV(2);
 		}
@@ -422,7 +423,7 @@ static inline __attribute__((always_inline)) void HWR_PBPut(hwr_pbk_t *b, UINT32
 		{
 			FUINT k;
 
-			for (k = 0; k < n; k++)
+			for (k = 1; k < n; k++)
 				HWR_PBV(k);
 		}
 #undef HWR_PBV

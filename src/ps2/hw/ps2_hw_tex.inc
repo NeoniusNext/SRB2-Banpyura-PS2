@@ -1364,15 +1364,24 @@ static void fill_idx(void *ctx, u32 row, u8 *dst)
 	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
 	const fillctx_t c = *(const fillctx_t *)ctx;
 	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw;
-	u32 x;
+	u32 remaining;
 
 	if (!c.dx)
 	{
 		memcpy(dst, s, c.W2);
 		return;
 	}
-	for (x = 0; x < c.W2; x++)
-		dst[x] = s[src_col(&c, x)];
+	remaining = c.W2;
+	if (!remaining)
+		return;
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	// One sample body; the final unused unsigned/cursor advances perform no access.
+	do
+	{
+		*dst++ = s[sx];
+		sx += step;
+	} while (--remaining);
 }
 
 // Gather the low byte of each of four 16-bit texels into a 32-bit word, preserving their order.
@@ -1507,14 +1516,21 @@ static void fill_ia88(void *ctx, u32 row, u8 *dst)
 	const fillctx_t c = *(const fillctx_t *)ctx;
 	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 *d = (u32 *)(void *)dst;
-	u32 x;
+	u32 remaining;
 
-	for (x = 0; x < c.W2; x++)
+	remaining = c.W2;
+	if (!remaining)
+		return;
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	// One sample body; wrap in u32 before scaling the source column to bytes.
+	do
 	{
-		const u8 *t = s + (size_t)src_col(&c, x) * 2;
+		const u8 *t = s + (size_t)sx * 2;
 
-		d[x] = (u32)t[0] * 0x010101u | (a8_to_gs(t[1]) << 24);
-	}
+		*d++ = (u32)t[0] * 0x010101u | (a8_to_gs(t[1]) << 24);
+		sx += step;
+	} while (--remaining);
 }
 
 // why the last tex_upload failed (diagnostics of hw_SetTexture)
