@@ -2,9 +2,9 @@
 //
 // One engine vertex: clip = M * (x, y, z, 1), the six clip flags against the guard band, 1/w, and the GS integers of the vertex
 // (X, Y in 12.4 fixed point with the 2048 offset, Z24) - the arithmetic of xform_vertex + outcode + put_vertex, in about a fifth of the
-// EE cycles. The matrix and the batch constants are loaded into VU0 registers once per plan (vu0_batch_load, called by begin_draw);
-// no other code of the engine uses COP2. VU0 arithmetic is not IEEE (results truncate, no NaN/inf): the GS integers can differ from the
-// scalar path by one LSB (1/16 pixel); tools/ps2/hw_test.c measures that (group vu0_transform).
+// EE cycles. The matrix and the batch constants are loaded on demand once per plan (vu0_need calls vu0_batch_load);
+// the audio kernels preserve the renderer's COP2 state. VU0 arithmetic is not IEEE (results truncate, no NaN/inf); rounding and the order of accumulation
+// differ from the scalar path, particularly after cancellation. tools/ps2/hw_test.c measures projected differences (group vu0_transform).
 // The host test build has no VU0: the scalar functions of ps2_hw_xform.inc / ps2_hw_draw.inc are the only path there.
 
 #if defined(__mips__) && !defined(PS2HWD_NO_VU0)

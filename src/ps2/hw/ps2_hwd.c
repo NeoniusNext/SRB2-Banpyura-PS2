@@ -686,6 +686,9 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		surf.PolyColor.rgba = 0xFFFFFFFFu;
 		if (!begin_draw(PF_NoTexture | PF_Modulated | PF_Occlude, &surf))
 			return;
+		// begin_draw leaves VU0 constants lazy, as on the production EE path.
+		// This hook calls vu0_xform directly rather than through emit_poly.
+		vu0_need();
 		if (ps2hwd_dbg_flags & 256) // negative control of tools/ps2/hw_test.c: a wrong scale in VU0
 			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx * 1.01f, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
 		pts = malloc((size_t)n * sizeof *pts);
