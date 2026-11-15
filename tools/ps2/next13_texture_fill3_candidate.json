@@ -1,0 +1,55 @@
+{
+  "baseline_source_revision": "353cc94103aeb38cef87d26151c779302135d0e9",
+  "baseline_texture_sha256": "76de33ef5d73da9aae8f59b3e1bbdb34502e8c21319b31d765235344a252fe8a",
+  "candidate_texture_sha256": "091e790814cf00002765b633f0bf12aa6d875880eefec59685f6ba5fb02401ea",
+  "patch_sha256": "1c1976a28d89c09deafac3ae797803ee3076a069dd1d9f30f263093701437151",
+  "changed_functions": [
+    "fill_idx",
+    "fill_ia88"
+  ],
+  "candidate_full_default_Hardware_ELF_sha256": "b1935097c273fc6a6625a3cf5cee31d392c912cfb49255345ce7f55ae2297671",
+  "executed_native_fixture_sha256": "d76050489a5a7fec99301d9e53055e82a132e55401ab20a40e11170f14aafa1f",
+  "full_native_rows": 384,
+  "repetitions_per_row": 9,
+  "faster": 288,
+  "ties": 96,
+  "slower": 0,
+  "summed_native_median_change_percent": -13.361301807068514,
+  "complete_changed_text_delta_bytes": -24,
+  "_end_delta_bytes": 0,
+  "_gp_delta_bytes": 0,
+  "filler_frames_delta_bytes": 0,
+  "persistent_heap_ring_VRAM_added_bytes": 0,
+  "status": "Imported in local under-test5481bbbd; selector-complete provenance-pinned canonical/diagnostic binding passed; game/GS/pressure admission remains a separate root gate",
+  "verified_combined_ELF_sha256": "ab3e3f163c1bb67b3dadacc6f368f17f6d73178ff348df186fb094474faa370a",
+  "verified_combined_binding_sha256": "350ab0fb5541e13cace581a8346290a41ba114a2eeb5e92e9ead16de29ae6f01",
+  "verified_combined_build": "/workspace/SRB2-Banpyura-PS2/build/nov15-next13/combined-classic-v1",
+  "canonical_source_commit": "5481bbbdc5aa3167c046836f3e51e4dbb31ad807",
+  "canonical_Hardware_ELF_sha256": "7e4764fb609a1b3665936c0594ad4358c4bf1891545f6d4c48da13f5a0e7a9af",
+  "canonical_binding_sha256": "45a56531f5fb1e2e58730c47add225bcee78985141b9881685818985c9fc7f97",
+  "both_diagnostic_binding_sha256": "edd29da3d0fcdc016192a10b1cfd03674e5d4be2bebca8b8c7bd8ea1fc0c91ea",
+  "diagnostic_ELF_sha256": {
+    "01b2d3f5": "95b7f6d534362de126011d1f7cdba72d15d7e6fc0ce22971981c984cee0e182f",
+    "9e3779b9": "26f81d076a9a1033530641355ebc5ced348d2559dac96cc9ba8c2ba207361442"
+  },
+  "canonical_binding_revision": "selector-complete-v2-pinned",
+  "canonical_binding": "build/nov15-next13/texture-fill3-classic/final-canonical-binding-v2-pinned/final-binding.json",
+  "both_diagnostic_binding": "build/nov15-next13/texture-fill3-classic/final-diagnostic-binding-v2-pinned/diagnostic-binding.json",
+  "canonical_checker_provenance": {
+    "checker_sha256": "c45b5469140f27d862d5e44bc68c9ce18d4144cbd773743474ce7f047ca49f30",
+    "snapshot_manifest": "/workspace/SRB2-Banpyura-PS2/build/nov15-next13/texture-fill3-classic/final-canonical-binding-v2-pinned/checker-provenance.json",
+    "snapshot_manifest_sha256": "0d2b150a169cc1220fb4d7b3ce5639aa09c64023e24beca4ca27edbb600c2b14",
+    "all_loaded_repository_checker_sources_unchanged": true,
+    "all_frozen_checker_source_bytes_unchanged": true,
+    "dependency_count": 23
+  },
+  "diagnostic_checker_provenance": {
+    "checker_sha256": "d2f2a940ea50ed06472002b8f2113f3a8fc26736d72ccd3be9d675c4c1dc41ac",
+    "snapshot_manifest": "/workspace/SRB2-Banpyura-PS2/build/nov15-next13/texture-fill3-classic/final-diagnostic-binding-v2-pinned/checker-provenance.json",
+    "snapshot_manifest_sha256": "388ca96b61faca41bd59035430f66139c68d3aa2c381182bf868d4f2988b8cef",
+    "all_loaded_repository_checker_sources_unchanged": true,
+    "all_frozen_checker_source_bytes_unchanged": true,
+    "dependency_count": 10
+  },
+  "older_frozen_V2_core_continuity_sha256": "c20292614c8029e164cd371a3da315327062fdf6e50b972c38b8a8d17905852f"
+}
