@@ -1,0 +1,20 @@
+--- a/src/ps2/hw/ps2_hw_tex.inc
++++ b/src/ps2/hw/ps2_hw_tex.inc
+@@ -2193,10 +2193,16 @@
+ 				{
+ 					has255 = scan_has_ff(data, (sw >> lv) * (sh >> lv)); // the stored texels are those of the level (not cached: the full size may differ)
+ 				}
++				else if (dsrc)
++				{
++					// A cached mip can lose index 255 even when the original has holes.
++					// Its classification belongs to this upload, never to the full source.
++					has255 = scan_has_ff(data, ssw * ssh);
++				}
+ 				else
+ 				{
+ 					if (!m->ps2_h255)
+-						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, dsrc ? ssw * ssh : n) ? 2 : 1);
++						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, n) ? 2 : 1);
+ 					has255 = m->ps2_h255 == 2;
+ 				}
+ 				if (clut == 2 && !has255)

@@ -580,6 +580,13 @@ void PS2HWD_SetScreenSize(INT32 w, INT32 h)
 			nh = cfg.fbh;
 		if (nw == H.vw && nh == H.vh)
 		{
+			if (!PS2HWD_Sync()) // consume queued overlays/VU chunks before their plan state is reset
+			{
+				hw_failure("GS fence for a logical screen-size change failed");
+				return;
+			}
+			H.imm_tex = NULL;
+			plan_reset(); // logical-size changes invalidate previous density hints too
 			cfg.screen_w = w;
 			cfg.screen_h = h;
 			H.scr_w = w;
@@ -1733,8 +1740,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 		int vis = 1;
 
 		want = tex_want(TexInfo, &vis);
-		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != H.frame_no + 1)
-			pk->ps2_full_fr = H.frame_no + 1;
+		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != plan_stamp())
+			pk->ps2_full_fr = plan_stamp();
 		if (!vis && !r && !TT.on) // PS2-HW-69: the conformance test draws textures no frame plan sees
 		{
 			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
@@ -1964,6 +1971,17 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		tex_drop((int)(r - H.rec), 0);
 	}
 	TexInfo->downloaded = 0;
+	if (H.up && TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && !TexInfo->ps2_twin)
+	{
+		int i;
+
+		// The engine deletes the child variant before the canonical object.
+		// A new object under this number must not inherit its cached source.
+		TexInfo->ps2_h255 = 0;
+		for (i = 0; i < DC_MAX; i++)
+			if (dc[i].key == dc_key(TexInfo))
+				dc_drop(&dc[i]);
+	}
 }
 
 static void hw_GClipRect(INT32 minx, INT32 miny, INT32 maxx, INT32 maxy, float nearclip)

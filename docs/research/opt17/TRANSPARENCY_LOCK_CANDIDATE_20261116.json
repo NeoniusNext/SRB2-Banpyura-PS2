@@ -1,0 +1,13 @@
+{
+  "scope": "Minimal temporary mip-conversion source lock balance. Remember the source identity before data becomes the new mip. Unlock only after temporary cached-source busy decrement and when no queued old-source DMA refs remain; engine full sources have no queued old refs in this branch. Source pixels and level policy unchanged.",
+  "base_texture_sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+  "candidate_texture_sha256": "1bc12837efb10a2c283c1e24f10b777b8e0cca8d49e3ccd3010ff2f95890233b",
+  "patch_sha256": "50836ad57bf3e38355311e609c7e1a4329194216434ee6b4842f71bdf9ec898d",
+  "host_proof": "build/nov17-transparency-lock-host-v2/report.json",
+  "exact_before_after": {
+    "before_lock": "\t\t\tu32 dt0 = cyc();\n\n\t\t\tif (srcblk && data == (const u8 *)srcblk)\n\t\t\t\tHWR_PS2_LockData(srcblk);",
+    "after_lock": "\t\t\tu32 dt0 = cyc();\n\t\t\tconst int src_locked = srcblk && data == (const u8 *)srcblk;\n\n\t\t\tif (src_locked)\n\t\t\t\tHWR_PS2_LockData(srcblk);",
+    "before_unlock": "\t\t\tif (srcblk && data == (const u8 *)srcblk)\n\t\t\t\tHWR_PS2_UnlockData(srcblk);",
+    "after_unlock": "\t\t\tif (src_locked && (!l0 || !l0->busy) && (!dsrc || !dsrc->busy))\n\t\t\t\tHWR_PS2_UnlockData(srcblk);"
+  }
+}

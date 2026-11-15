@@ -1,0 +1,348 @@
+{
+  "scope": "Execute mip-source lock ownership in real z_zone.c, without an emulator.",
+  "source_root": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source",
+  "callbacks": {
+    "void HWR_PS2_LockData(void *data)": "faf146448f28110d4d53102e4ee08ef8feac79e36c44adbc895509b6cb55238c",
+    "void HWR_PS2_UnlockData(void *data)": "97fe612c5e6735406ddaaed96ca0c74cb3e2bf4ebb17d3d5653167e081148a44",
+    "void HWR_PS2_FreeData(void *data)": "e0dad19e3d8c5563ced7f899b8ad06c189960197538795ff27dc2940f4fc5556",
+    "void *HWR_PS2_AllocData(size_t bytes, void **newuser)": "e6e128532b6e7f04fb08cd1322165ce7e7834684c47d82a67d92e783f8f79ba0",
+    "void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser)": "7641b6ece96dcc74eec7e74eaf934670a5edaeac473c5743b03d6b1e5f810ae3",
+    "void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)": "cda8c017dc4ed739084a203138914aa7a28a57479af704ad3254d29d71500e33"
+  },
+  "variants": {
+    "baseline": {
+      "source_inputs": {
+        "src/hardware/hw_defs.h": "8af2f4fd02999542aa881150f86cbfda3c0194ed4e834b1495b1f89413de2394",
+        "src/hardware/hw_data.h": "ae19d9a3ce26bda9a11acb9fe52906712edb5b711b759cf9d070e63077c190a7",
+        "src/doomtype.h": "7b10522ac20f9f904153842629f01a36be09a4a78a445633a452a7ebc8da3c47",
+        "src/hardware/hw_drv.h": "fdad1a3906b99d531104e8459e86434d6549bd0f189f973d97043fb2d3686c51",
+        "src/hardware/hw_model.h": "fb82c084d84c131840416d8da63dd9ee1f8d453c812f908a9c5c79596c20ae07",
+        "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+        "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+        "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+        "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+        "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+        "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+        "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+        "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+      },
+      "results": {
+        "normal": [
+          {
+            "mode": "0",
+            "source_tag_before": "48",
+            "source_busy_before": "0",
+            "source_tag_queued": "48",
+            "source_busy_queued": "0",
+            "source_tag_done": "48",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "1",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "1",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "48",
+            "source_busy_queued": "0",
+            "source_tag_done": "48",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "1",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "2",
+            "source_tag_before": "48",
+            "source_busy_before": "1",
+            "source_tag_queued": "48",
+            "source_busy_queued": "1",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "3",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "48",
+            "source_busy_queued": "0",
+            "source_tag_done": "48",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "1",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "db0d34a9"
+          }
+        ],
+        "sanitize": [
+          {
+            "mode": "0",
+            "source_tag_before": "48",
+            "source_busy_before": "0",
+            "source_tag_queued": "48",
+            "source_busy_queued": "0",
+            "source_tag_done": "48",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "1",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "1",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "48",
+            "source_busy_queued": "0",
+            "source_tag_done": "48",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "1",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "2",
+            "source_tag_before": "48",
+            "source_busy_before": "1",
+            "source_tag_queued": "48",
+            "source_busy_queued": "1",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "3",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "48",
+            "source_busy_queued": "0",
+            "source_tag_done": "48",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "1",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "db0d34a9"
+          }
+        ]
+      }
+    },
+    "fixed": {
+      "source_inputs": {
+        "src/hardware/hw_defs.h": "8af2f4fd02999542aa881150f86cbfda3c0194ed4e834b1495b1f89413de2394",
+        "src/hardware/hw_data.h": "ae19d9a3ce26bda9a11acb9fe52906712edb5b711b759cf9d070e63077c190a7",
+        "src/doomtype.h": "7b10522ac20f9f904153842629f01a36be09a4a78a445633a452a7ebc8da3c47",
+        "src/hardware/hw_drv.h": "fdad1a3906b99d531104e8459e86434d6549bd0f189f973d97043fb2d3686c51",
+        "src/hardware/hw_model.h": "fb82c084d84c131840416d8da63dd9ee1f8d453c812f908a9c5c79596c20ae07",
+        "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+        "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+        "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+        "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+        "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+        "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+        "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+        "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+      },
+      "results": {
+        "normal": [
+          {
+            "mode": "0",
+            "source_tag_before": "48",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "1",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "2",
+            "source_tag_before": "48",
+            "source_busy_before": "1",
+            "source_tag_queued": "48",
+            "source_busy_queued": "1",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "3",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "db0d34a9"
+          }
+        ],
+        "sanitize": [
+          {
+            "mode": "0",
+            "source_tag_before": "48",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "1",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "2",
+            "source_tag_before": "48",
+            "source_busy_before": "1",
+            "source_tag_queued": "48",
+            "source_busy_queued": "1",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "3",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "db0d34a9"
+          }
+        ]
+      }
+    },
+    "premature_unlock_control": {
+      "source_inputs": {
+        "src/hardware/hw_defs.h": "8af2f4fd02999542aa881150f86cbfda3c0194ed4e834b1495b1f89413de2394",
+        "src/hardware/hw_data.h": "ae19d9a3ce26bda9a11acb9fe52906712edb5b711b759cf9d070e63077c190a7",
+        "src/doomtype.h": "7b10522ac20f9f904153842629f01a36be09a4a78a445633a452a7ebc8da3c47",
+        "src/hardware/hw_drv.h": "fdad1a3906b99d531104e8459e86434d6549bd0f189f973d97043fb2d3686c51",
+        "src/hardware/hw_model.h": "fb82c084d84c131840416d8da63dd9ee1f8d453c812f908a9c5c79596c20ae07",
+        "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+        "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+        "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+        "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+        "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+        "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+        "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+        "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+      },
+      "results": {
+        "normal": [
+          {
+            "mode": "0",
+            "source_tag_before": "48",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "1",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          }
+        ],
+        "sanitize": [
+          {
+            "mode": "0",
+            "source_tag_before": "48",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          },
+          {
+            "mode": "1",
+            "source_tag_before": "27",
+            "source_busy_before": "0",
+            "source_tag_queued": "27",
+            "source_busy_queued": "0",
+            "source_tag_done": "27",
+            "source_busy_done": "0",
+            "source_alive_before_purge": "1",
+            "source_alive_after_purge": "0",
+            "new_mip_alive_after_purge": "0",
+            "index_crc": "94aaa930"
+          }
+        ]
+      }
+    }
+  },
+  "retained_report": {
+    "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-lock-host-v2/report.json",
+    "sha256": "da211295a71c51e9a0940e34349a4de1c537b6591995f7f18b62ffea4784d700"
+  },
+  "scope_note": "Real zone allocator/tag/owner/purge proof with actual engine callbacks. DMA completion is a boundary service; no physical-PS2 or whole-game RAM reduction claim."
+}

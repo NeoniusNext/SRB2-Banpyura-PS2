@@ -1,0 +1,7 @@
+{
+  "scope": "Isolated canonical DeleteTexture source-cache invalidation. Child view deletion keeps live sibling source; canonical deletion invalidates same-key full+derived cache only after existing DMA fence. No production edit.",
+  "base_driver_sha256": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72",
+  "candidate_driver_sha256": "4bc9fedb349259d420271e86b2954bcc0bff9611c22fb87bc9e61b63ec776b81",
+  "patch_sha256": "0d9dc95f8bfcd6fd73e0c61b1f4603240922802a3b6267dd0614e36d02ab3e0b",
+  "host_proof": "build/nov17-transparency-delete-host-v1/report.json"
+}

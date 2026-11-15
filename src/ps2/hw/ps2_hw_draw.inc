@@ -530,7 +530,7 @@ static void plan_tex_touch(texrec_t *r)
 			{
 				const GLMipmap_t *pk = im->owner->ps2_twin ? im->owner->ps2_twin : im->owner;
 
-				if (pk->ps2_planfr == H.frame_no + 1)
+				if (pk->ps2_planfr == plan_stamp())
 				{
 					TX.need_in_plan += im->nblk;
 				}

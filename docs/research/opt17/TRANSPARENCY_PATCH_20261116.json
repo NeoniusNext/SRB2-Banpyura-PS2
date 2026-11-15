@@ -1,0 +1,6 @@
+{
+  "base_source_sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+  "fixed_source_sha256": "8f725406de6ea7b54c05146bdee0d3b81062b8af5263dc0b787082997e8da00d",
+  "patch_sha256": "47d68f9144c9eb9f3557a88e68a5ff1b4ae6d8fb265782269c54b408f0fbc7e6",
+  "scope": "Only derived cached-mip classification becomes upload-local; original 0/1/2 canonical state domain unchanged; no texture bytes, level policy, physics or feature changes."
+}

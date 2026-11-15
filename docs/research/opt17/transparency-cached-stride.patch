@@ -1,0 +1,11 @@
+--- a/src/ps2/hw/ps2_hw_tex.inc
++++ b/src/ps2/hw/ps2_hw_tex.inc
+@@ -2480,6 +2480,8 @@
+ 		{
+ 			lvdec = 1;
+ 			c->dx = c->dy = 0; // the texels are decimated already
++			ssw = W2;
++			ssh = H2; // packed cached rows have the stored level's stride
+ 		}
+ 		TX.lvl_up[lv > 5 ? 5 : lv]++;
+ 	}

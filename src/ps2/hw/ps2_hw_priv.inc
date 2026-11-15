@@ -420,6 +420,16 @@ static const char *skip_why;
 #define PLAN_MIN_TEXELS 65536u // PS2-HW-34: smaller textures are always stored at full size: their share of the working set is small and the estimate costs cycles
 #define PLAN_FULL_KEEP 150 // frames a texture that was drawn unplanned keeps its full size in the plans
 
+// Texture planner stamps outlive GS state; keep their clock separate from frame diagnostics.
+static u32 plan_clock = 1; // zero is reserved for unknown engine stamps
+static inline u32 plan_stamp(void) { return plan_clock; }
+static inline void plan_advance(u32 amount)
+{
+	plan_clock += amount;
+	if (!plan_clock)
+		plan_clock = 1;
+}
+
 // OPT9 (HT): texture statistics of the window of 105 frames; printed as HWTEX lines when ps2hwd_dbg_flags has bit 1024 (-hwdbg 1024)
 typedef struct
 {

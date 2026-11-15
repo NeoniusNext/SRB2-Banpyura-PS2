@@ -672,6 +672,7 @@ static void frame_end(void)
 		hash_frame = 0;
 	}
 	H.frame_no++;
+	plan_advance(1u);
 	if ((ps2hwd_dbg_flags & HWDBG_TEX) && ++TX.frames >= 105)
 		tx_report();
 	pk_flush();

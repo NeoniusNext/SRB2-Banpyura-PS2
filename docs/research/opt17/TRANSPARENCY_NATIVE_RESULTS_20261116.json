@@ -1,0 +1,349 @@
+{
+  "scope": "Actual EE/GS execution in PCSX2: exact CLUT VRAM alpha, decoded TEX0 CLUT address, masked-hole frame interior and opaque control before/after a real SetScreenSize restart. Boundary allocator/raw-flat reads are fixture services; full-engine scenes and physical PS2 remain separate gates.",
+  "build": {
+    "scope": "Build-only paired real EE/GS witness: actual streaming, mip source selection, CLUT VRAM readback, TEX0, keyed mask drawing and frame RGB readback before/after a real resolution restart. Allocation and raw-lump reads are fixture boundary services. No emulator run by this builder.",
+    "source_root": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source",
+    "source_texture_sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+    "fixture_inputs": {
+      "transparency_native.py": "55d94b83b2440b1173653b2d9f29a46a649b1f958a522f8b4e6a87f08b01cc7c",
+      "transparency_native_driver.inc": "30ee87a43847400e7bbf567a8332fe5c99cf4694779fa5cc556076d9c8af22dd",
+      "transparency_native_main.inc": "b904647a56b523993049d7b4dd9df2f17fa070511d801f7e80fcc6a1a47e5189",
+      "transparency_hosttest.py": "d4cf7db75df99563eda19fc43f5a89f55cb41781415cf4abe2a5d9467471fc26",
+      "hw_test.c": "da3a46f11debb2d9a66310ecedf443f4c39cf7fd1f2972519ffda6b1618694d4"
+    },
+    "variants": {
+      "baseline": {
+        "elf": "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/baseline/T17.ELF",
+        "elf_sha256": "97fed76476a6653a1012ca0d3b9cd5006af786340bcc2eae84b9801eec6b694e",
+        "elf_bytes": 1783904,
+        "texture_sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+        "driver_sha256": "8cea7f154b400bbff676035000eacf923b87b1186b585738df155a6581ba7c6d",
+        "fixture_sha256": "66d6e8bc38a0a3af74c8fb989b4e416cdaa37fab5df1972acd9f2c1b84053b93"
+      },
+      "fixed": {
+        "elf": "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/fixed/T17.ELF",
+        "elf_sha256": "958ea26e41af84c7eded3392c3ffeb32e7e1fe95b38a9a43f8e899198e922232",
+        "elf_bytes": 1784160,
+        "texture_sha256": "8f725406de6ea7b54c05146bdee0d3b81062b8af5263dc0b787082997e8da00d",
+        "driver_sha256": "8cea7f154b400bbff676035000eacf923b87b1186b585738df155a6581ba7c6d",
+        "fixture_sha256": "66d6e8bc38a0a3af74c8fb989b4e416cdaa37fab5df1972acd9f2c1b84053b93"
+      }
+    }
+  },
+  "variants": {
+    "baseline": {
+      "expected_behavior_observed": true,
+      "phases": [
+        {
+          "phase": "streamed-L1",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a405dd308f20",
+          "level": 1,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "derived-L2",
+          "canonical": 1,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a40599308f20",
+          "level": 2,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-plain",
+          "canonical": 1,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a40621310f20",
+          "level": 0,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-keyed",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a40621310f20",
+          "level": 0,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "streamed-L1",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "0001a405dd308f20",
+          "level": 1,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "derived-L2",
+          "canonical": 1,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "0001a40599308f20",
+          "level": 2,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-plain",
+          "canonical": 1,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 13440,
+          "tex0": "2006900621313680",
+          "level": 0,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-keyed",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 13440,
+          "tex0": "2006900621313680",
+          "level": 0,
+          "tex0_cbp_matches": true
+        }
+      ],
+      "pixels": [
+        {
+          "restart": 0,
+          "read": 0,
+          "wrong": 7120,
+          "compared": 7120,
+          "hole": "00aaff",
+          "expected_hole": "332211",
+          "opaque": "d67c29",
+          "expected_opaque": "d67c29",
+          "clut_alpha": 128,
+          "canonical": 1
+        },
+        {
+          "restart": 1,
+          "read": 0,
+          "wrong": 28640,
+          "compared": 28640,
+          "hole": "00aaff",
+          "expected_hole": "332211",
+          "opaque": "d67c29",
+          "expected_opaque": "d67c29",
+          "clut_alpha": 128,
+          "canonical": 1
+        }
+      ],
+      "baseline_expected_failure_control": true,
+      "complete": [
+        [
+          "26",
+          "0"
+        ]
+      ]
+    },
+    "fixed": {
+      "expected_behavior_observed": true,
+      "phases": [
+        {
+          "phase": "streamed-L1",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a405dd308f20",
+          "level": 1,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "derived-L2",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a40599308f20",
+          "level": 2,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-plain",
+          "canonical": 2,
+          "has255": 1,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a40621310f20",
+          "level": 0,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-keyed",
+          "canonical": 0,
+          "has255": 1,
+          "clut": 2,
+          "clut255": "0000aaff",
+          "clut_alpha": 0,
+          "cbp": 3364,
+          "tex0": "2001a48621310f20",
+          "level": 0,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "streamed-L1",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a405dd308f20",
+          "level": 1,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "derived-L2",
+          "canonical": 0,
+          "has255": 0,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 3360,
+          "tex0": "2001a40599308f20",
+          "level": 2,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-plain",
+          "canonical": 2,
+          "has255": 1,
+          "clut": 1,
+          "clut255": "8000aaff",
+          "clut_alpha": 128,
+          "cbp": 13440,
+          "tex0": "2006900621313680",
+          "level": 0,
+          "tex0_cbp_matches": true
+        },
+        {
+          "phase": "full-keyed",
+          "canonical": 0,
+          "has255": 1,
+          "clut": 2,
+          "clut255": "0000aaff",
+          "clut_alpha": 0,
+          "cbp": 13444,
+          "tex0": "2006908621313680",
+          "level": 0,
+          "tex0_cbp_matches": true
+        }
+      ],
+      "pixels": [
+        {
+          "restart": 0,
+          "read": 0,
+          "wrong": 0,
+          "compared": 7120,
+          "hole": "332211",
+          "expected_hole": "332211",
+          "opaque": "d67c29",
+          "expected_opaque": "d67c29",
+          "clut_alpha": 0,
+          "canonical": 2
+        },
+        {
+          "restart": 1,
+          "read": 0,
+          "wrong": 0,
+          "compared": 28640,
+          "hole": "332211",
+          "expected_hole": "332211",
+          "opaque": "d67c29",
+          "expected_opaque": "d67c29",
+          "clut_alpha": 0,
+          "canonical": 2
+        }
+      ],
+      "baseline_expected_failure_control": false,
+      "complete": [
+        [
+          "26",
+          "0"
+        ]
+      ]
+    }
+  },
+  "manifest": {
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/baseline/gs.log": {
+      "bytes": 38010,
+      "sha256": "097ccdbef848c47f3569f8042eb946410ef4a3664b3d7c27b9acdaf3e6d96d0d"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/baseline/T17.ELF": {
+      "bytes": 1783904,
+      "sha256": "97fed76476a6653a1012ca0d3b9cd5006af786340bcc2eae84b9801eec6b694e"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/baseline/native-lto.o": {
+      "bytes": 576044,
+      "sha256": "fda156f75512b278a40de12275e4cfc83c2999bc763f0f80f84d72bf1fba59de"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/baseline/source/src/ps2/hw/ps2_hw_tex.inc": {
+      "bytes": 97279,
+      "sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/fixed/gs.log": {
+      "bytes": 35636,
+      "sha256": "a00799e37b9c80b2bcd8e7652049e4d11f521ca35b60c19a69a075a0b91e38b4"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/fixed/T17.ELF": {
+      "bytes": 1784160,
+      "sha256": "958ea26e41af84c7eded3392c3ffeb32e7e1fe95b38a9a43f8e899198e922232"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/fixed/native-lto.o": {
+      "bytes": 576284,
+      "sha256": "4d8c84bdb41fa4a273360c0a9c6a1a4f5438b8a8c8a2047ce0c0243a0f0c01c2"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/fixed/source/src/ps2/hw/ps2_hw_tex.inc": {
+      "bytes": 97486,
+      "sha256": "8f725406de6ea7b54c05146bdee0d3b81062b8af5263dc0b787082997e8da00d"
+    },
+    "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": {
+      "sha256": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-native-v4/build-report.json": {
+      "sha256": "93c40546e56402d110c84452b1358c742213fa14958f1d26ec93b63f39bcc0d5"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_native_report.py": {
+      "sha256": "503501c024593af34e6695375a0c3ad2857499bafb9630ac9c3d7fa3134171dc"
+    }
+  },
+  "passed": true,
+  "zero_pixel_tolerance": true,
+  "physical_PS2_tested": false
+}

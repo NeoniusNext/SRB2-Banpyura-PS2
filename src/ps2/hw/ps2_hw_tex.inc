@@ -2523,8 +2523,9 @@ static int tex_upload(GLMipmap_t *m)
 			dcent_t *ne;
 			void *srcblk = dsrc ? (void *)dsrc->p : l0 ? (void *)l0->p : (void *)m->data;
 			u32 dt0 = cyc();
+			const int src_locked = srcblk && data == (const u8 *)srcblk;
 
-			if (srcblk && data == (const u8 *)srcblk)
+			if (src_locked)
 				HWR_PS2_LockData(srcblk); // the allocation below may purge the zone's caches, the source among them
 			if (l0)
 				l0->busy++;
@@ -2588,7 +2589,7 @@ static int tex_upload(GLMipmap_t *m)
 				l0->busy--;
 			if (dsrc)
 				dsrc->busy--;
-			if (srcblk && data == (const u8 *)srcblk)
+			if (src_locked && (!l0 || !l0->busy) && (!dsrc || !dsrc->busy))
 				HWR_PS2_UnlockData(srcblk);
 		}
 		else
