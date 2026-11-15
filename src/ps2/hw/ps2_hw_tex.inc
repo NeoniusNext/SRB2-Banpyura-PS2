@@ -1015,7 +1015,44 @@ static int p4_band(const u8 *src, u32 n, u32 *band)
 	if (!n)
 		return 0;
 	high = src[0] & 0xF0u;
-	for (i = 1; i < n; i++)
+	i = 1;
+#ifdef __mips__
+	if (n >= 16u && !((uintptr_t)src & 15u))
+	{
+		const u8 *s = src;
+		u32 groups = n >> 4;
+		u64 mask, expect, value, upper, mismatch;
+
+		// All sixteen original bytes must keep the same high nibble. Reduce
+		// both register halves before the early reject; scalar checks the tail.
+		__asm__ volatile(
+			".set push\n\t.set noreorder\n\t"
+			"pcpyld %[mask],%[highmask],%[highmask]\n\t"
+			"pextlw %[expect],%[high],%[high]\n\t"
+			"pcpyld %[expect],%[expect],%[expect]\n\t"
+			"1:\n\t"
+			"lq %[value],0(%[s])\n\t"
+			"pxor %[value],%[value],%[expect]\n\t"
+			"pand %[value],%[value],%[mask]\n\t"
+			"pcpyud %[upper],%[value],%[value]\n\t"
+			"or %[mismatch],%[value],%[upper]\n\t"
+			"bnez %[mismatch],2f\n\t"
+			"addiu %[s],%[s],16\n\t"
+			"addiu %[groups],%[groups],-1\n\t"
+			"bnez %[groups],1b\n\t"
+			"nop\n\t"
+			"2:\n\t.set pop\n\t"
+			: [s] "+r"(s), [groups] "+r"(groups), [mask] "=&r"(mask),
+			  [expect] "=&r"(expect), [value] "=&r"(value),
+			  [upper] "=&r"(upper), [mismatch] "=&r"(mismatch)
+			: [highmask] "r"((u64)0xF0F0F0F0F0F0F0F0ULL), [high] "r"(high * 0x01010101u)
+			: "memory");
+		if (mismatch)
+			return 0;
+		i = n & ~15u;
+	}
+#endif
+	for (; i < n; i++)
 		if ((src[i] & 0xF0u) != high)
 			return 0;
 	*band = high >> 4;
@@ -1419,9 +1456,50 @@ static void fill_p4(void *ctx, u32 row, u8 *dst)
 {
 	const fillctx_t *c = ctx;
 	const u8 *src = c->src + (size_t)src_row(c, row) * c->sw;
-	u32 x;
+	u32 x = 0;
 
-	for (x = 0; x < c->W2; x += 2)
+	// Only the complete, undecimated source has contiguous original columns.
+	// LQ and SD require aligned addresses; short, unaligned and tail texels
+	// retain the byte path below. No source or packet bytes are read past W2.
+	if (!c->dx && !c->dy && c->W2 == c->sw && c->H2 == c->sh
+		&& c->W2 >= 16u && !((uintptr_t)src & 15u) && !((uintptr_t)dst & 7u))
+	{
+		const u32 end = c->W2 & ~15u;
+#ifdef __mips__
+		const u8 *s = src;
+		u8 *d = dst;
+		u32 groups = end >> 4;
+		u64 mask, value, odd;
+
+		// Each halfword holds two masked indices. Its shifted odd nibble
+		// joins the even nibble; PPACB gathers the eight low bytes for SD.
+		// Keep 128-bit register contents entirely inside this asm block.
+		__asm__ volatile(
+			".set push\n\t.set noreorder\n\t"
+			"pcpyld %[mask],%[low],%[low]\n\t"
+			"1:\n\t"
+			"lq %[value],0(%[s])\n\t"
+			"pand %[value],%[value],%[mask]\n\t"
+			"psrlh %[odd],%[value],4\n\t"
+			"por %[value],%[value],%[odd]\n\t"
+			"ppacb %[value],$zero,%[value]\n\t"
+			"sd %[value],0(%[d])\n\t"
+			"addiu %[s],%[s],16\n\t"
+			"addiu %[groups],%[groups],-1\n\t"
+			"bnez %[groups],1b\n\t"
+			"addiu %[d],%[d],8\n\t"
+			".set pop\n\t"
+			: [s] "+r"(s), [d] "+r"(d), [groups] "+r"(groups),
+			  [mask] "=&r"(mask), [value] "=&r"(value), [odd] "=&r"(odd)
+			: [low] "r"((u64)0x0F0F0F0F0F0F0F0FULL)
+			: "memory");
+#else
+		for (x = 0; x < end; x += 2)
+			dst[x >> 1] = (u8)((src[x] & 15u) | ((src[x + 1] & 15u) << 4));
+#endif
+		x = end;
+	}
+	for (; x < c->W2; x += 2)
 		dst[x >> 1] = (u8)((src[src_col(c, x)] & 15u) | ((src[src_col(c, x + 1)] & 15u) << 4));
 }
 #endif

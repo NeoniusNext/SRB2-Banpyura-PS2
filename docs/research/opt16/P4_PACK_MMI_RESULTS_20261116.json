@@ -1,0 +1,715 @@
+{
+  "passed": true,
+  "date_UTC": "2026-11-16",
+  "change": "Aligned R5900 MMI exact full-source P4 nibble packing and palette-band eligibility scan",
+  "production_changes": [
+    "src/ps2/hw/ps2_hw_tex.inc:p4_band",
+    "src/ps2/hw/ps2_hw_tex.inc:fill_p4"
+  ],
+  "production_lines": {
+    "insertions": 81,
+    "deletions": 3
+  },
+  "source_sha256": "80ac35dad5945143d5bd6a752e3c954fb03e942854ce0cd1ede71e5c2cb1ae55",
+  "artifact_sha256": {
+    "build/nov16-hwopt/pack-research/baseline/src/ps2/hw/ps2_hw_tex.inc": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+    "build/nov16-hwopt/pack-research/candidate-band/src/ps2/hw/ps2_hw_tex.inc": "80ac35dad5945143d5bd6a752e3c954fb03e942854ce0cd1ede71e5c2cb1ae55",
+    "src/ps2/hw/ps2_hw_tex.inc": "80ac35dad5945143d5bd6a752e3c954fb03e942854ce0cd1ede71e5c2cb1ae55",
+    "build/nov16-hwopt/pack-research/packing-band.patch": "d41e88d0ed0b104b6d1eb2789b62e7889893f3e4c4518131103bbbca41f67723",
+    "build/nov16-hwopt/pack-research/band-tests/ee/PACK_BENCH.ELF": "0c8589652393bff63ee3d7b2bf7c2cbff631ae6d840519ec6ce211c54b08ab77",
+    "build/nov16-hwopt/pack-research/band-tests/actual-functions.inc": "b608b44870cd8d1cba0fea0dca6c2444ac5c2158daf895bb13f04c508469c67e",
+    "build/nov16-hwopt/pack-research/band-tests/pack_fixture.c": "8d2b3e45ea8fbd0dbc238b56f02d6e0ed1c3d28247659706e2d857f14440a403",
+    "build/nov16-hwopt/pack-research/build_fixture.py": "4c8a06d38f603e8b1d62f51a85da54e871b2f5db77c7efc3771b6b3b2920d819",
+    "build/nov16-hwopt/pack-research/band-tests/build-report.json": "a44fac1e2a5ab9014064055445a06a0fa0f52d1aeeaa29290d39d3eb499f1bc0",
+    "build/nov16-hwopt/pack-research/band-tests/ee/run.log": "0fbbca1ba8761c8d99938cb2a125fbe6f6cccf81f4d4d0934127174b8c54b9cd",
+    "build/nov16-hwopt/pack-research/corpus/full-texels.bin": "af8b6db337884ff8bedcfddc65c3472d8b1f5affb1b32d9ee944c1c71627d3f8",
+    "build/nov16-hwopt/pack-research/corpus/report.json": "26361644298b39c99b0727e95cbbb8deb96ada1911aea3f21b5cd33b14bba2a7",
+    "build/nov16-hwopt/pack-research/final-production-host/report.json": "cba7f88450f9f616f9e802676525db090ae8a37c5659d44f776e646aed9cbe94"
+  },
+  "native_actual_source": {
+    "checks": 10653592,
+    "cases": 66544,
+    "failures": 0
+  },
+  "native_executed_mutations": {
+    "detected": 4,
+    "expected": 4,
+    "changes": [
+      "Packing halfword shift 4 to 5",
+      "PPACB source operand swap",
+      "Packing nibble mask 0x0F to 0x0E",
+      "Band reduction drops upper 64 register bits"
+    ]
+  },
+  "native_stock_corpus": {
+    "textures": 1386,
+    "source_bytes": 34735104,
+    "packed_source_bytes": 8796160
+  },
+  "full_production_host": {
+    "plain": {
+      "checks": 101434367,
+      "texels": 101369320,
+      "uploads": 2232,
+      "corpus_cases": 1386,
+      "bands": 16,
+      "CLUT_rows": 32,
+      "palette_epochs": 3,
+      "ring_flushes": 322,
+      "policy_counterexample": {
+        "budgets": [
+          4300,
+          4812
+        ],
+        "levels": [
+          [
+            1,
+            1,
+            0
+          ],
+          [
+            2,
+            0,
+            1
+          ]
+        ],
+        "reject_naive_no_quality_loss_claim": true
+      }
+    },
+    "ASan_UBSan": {
+      "checks": 101434367,
+      "texels": 101369320,
+      "uploads": 2232,
+      "corpus_cases": 1386,
+      "bands": 16,
+      "CLUT_rows": 32,
+      "palette_epochs": 3,
+      "ring_flushes": 322,
+      "policy_counterexample": {
+        "budgets": [
+          4300,
+          4812
+        ],
+        "levels": [
+          [
+            1,
+            1,
+            0
+          ],
+          [
+            2,
+            0,
+            1
+          ]
+        ],
+        "reject_naive_no_quality_loss_claim": true
+      }
+    },
+    "source_inputs": {
+      "doomtype.h": "7b10522ac20f9f904153842629f01a36be09a4a78a445633a452a7ebc8da3c47",
+      "hardware/hw_defs.h": "8af2f4fd02999542aa881150f86cbfda3c0194ed4e834b1495b1f89413de2394",
+      "hardware/hw_data.h": "ae19d9a3ce26bda9a11acb9fe52906712edb5b711b759cf9d070e63077c190a7",
+      "hardware/hw_drv.h": "fdad1a3906b99d531104e8459e86434d6549bd0f189f973d97043fb2d3686c51",
+      "hardware/hw_model.h": "fb82c084d84c131840416d8da63dd9ee1f8d453c812f908a9c5c79596c20ae07",
+      "ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+      "ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+      "ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+      "ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+      "ps2/hw/ps2_hw_tex.inc": "80ac35dad5945143d5bd6a752e3c954fb03e942854ce0cd1ede71e5c2cb1ae55",
+      "ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+      "ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+      "ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c",
+      "ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
+      "ps2/hw/ps2_hwd.c": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72",
+      "executed_literal_policy_sha256": "b773399772875894601727973fe7f133173f73af328e9c49aa693ebc352098cc",
+      "baseline_policy_sha256": "b773399772875894601727973fe7f133173f73af328e9c49aa693ebc352098cc"
+    }
+  },
+  "native_packing_Count_observations": [
+    {
+      "width": 8,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 145413,
+      "candidate_count": 156677,
+      "texels": 8192,
+      "speedup": 0.9281068695469022
+    },
+    {
+      "width": 8,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 145413,
+      "candidate_count": 156677,
+      "texels": 8192,
+      "speedup": 0.9281068695469022
+    },
+    {
+      "width": 16,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 260101,
+      "candidate_count": 82949,
+      "texels": 16384,
+      "speedup": 3.135673727229985
+    },
+    {
+      "width": 16,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 260101,
+      "candidate_count": 268293,
+      "texels": 16384,
+      "speedup": 0.9694662179035607
+    },
+    {
+      "width": 24,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 374789,
+      "candidate_count": 287237,
+      "texels": 24576,
+      "speedup": 1.3048075282780423
+    },
+    {
+      "width": 24,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 374789,
+      "candidate_count": 378885,
+      "texels": 24576,
+      "speedup": 0.9891893318553123
+    },
+    {
+      "width": 40,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 604165,
+      "candidate_count": 405509,
+      "texels": 40960,
+      "speedup": 1.4898929493550082
+    },
+    {
+      "width": 40,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 604165,
+      "candidate_count": 600069,
+      "texels": 40960,
+      "speedup": 1.0068258816902722
+    },
+    {
+      "width": 64,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 948229,
+      "candidate_count": 129029,
+      "texels": 65536,
+      "speedup": 7.348960311247859
+    },
+    {
+      "width": 64,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 948229,
+      "candidate_count": 931845,
+      "texels": 65536,
+      "speedup": 1.017582323240453
+    },
+    {
+      "width": 128,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 1865733,
+      "candidate_count": 190469,
+      "texels": 131072,
+      "speedup": 9.795468028918092
+    },
+    {
+      "width": 128,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 1865733,
+      "candidate_count": 1816581,
+      "texels": 131072,
+      "speedup": 1.027057422707823
+    },
+    {
+      "width": 256,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 3700741,
+      "candidate_count": 313349,
+      "texels": 262144,
+      "speedup": 11.810285017664011
+    },
+    {
+      "width": 256,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 3700741,
+      "candidate_count": 3586053,
+      "texels": 262144,
+      "speedup": 1.0319816801369082
+    },
+    {
+      "width": 512,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 7370757,
+      "candidate_count": 559109,
+      "texels": 524288,
+      "speedup": 13.183041231673966
+    },
+    {
+      "width": 512,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 7370757,
+      "candidate_count": 7124997,
+      "texels": 524288,
+      "speedup": 1.0344926461021668
+    },
+    {
+      "width": 1024,
+      "height": 1024,
+      "source_offset": 0,
+      "scalar_count": 14710789,
+      "candidate_count": 1050629,
+      "texels": 1048576,
+      "speedup": 14.001887440761678
+    },
+    {
+      "width": 1024,
+      "height": 1024,
+      "source_offset": 1,
+      "scalar_count": 14710789,
+      "candidate_count": 14202885,
+      "texels": 1048576,
+      "speedup": 1.0357606218736546
+    }
+  ],
+  "native_band_Count_observations": [
+    {
+      "texels": 1048576,
+      "source_offset": 0,
+      "scalar_count": 9437191,
+      "candidate_count": 852017,
+      "sink": 35276,
+      "speedup": 11.07629425234473
+    },
+    {
+      "texels": 1048576,
+      "source_offset": 1,
+      "scalar_count": 9437191,
+      "candidate_count": 11534349,
+      "sink": 35416,
+      "speedup": 0.8181815029179367
+    }
+  ],
+  "aligned_1024_squared_helpers_combined": {
+    "scalar_Count": 24147980,
+    "candidate_Count": 1902646,
+    "speedup": 12.691788172891856,
+    "reduction_percent": 92.12088961478352
+  },
+  "measurement": {
+    "timer": "R5900 COP0 Count via mfc0 $9",
+    "repetitions": 7,
+    "statistic": "minimum",
+    "environment": "Official locked run_pcsx2.py, frozen standard 32 MiB PCSX2 profile",
+    "measured_work": "Actual-source fill_p4 callbacks for complete rows; separate full-source p4_band; no texture packet construction, DMA, full game, or physical PS2 timing",
+    "FPS_claim": false
+  },
+  "guards": {
+    "packing": "dx=dy=0, W2=sw, H2=sh, at least16 texels, source16-byte aligned and destination8-byte aligned. Full16-byte source groups only; byte loop retains tail and every rejected context.",
+    "band_scan": "At least16 source bytes and source16-byte alignment; compare both halves per16 bytes, reject on any high-nibble mismatch, check scalar tail, publish band only after complete success.",
+    "feature_policy": "P4 remains confined to existing explicit full-size mode (-hwdbg33554432) and all prior eligibility/allocation/source-lock rules."
+  },
+  "memory": {
+    "new_allocations": 0,
+    "new_persistent_mutable_bytes": 0,
+    "new_persistent_texture_cache_bytes": 0,
+    "new_stored_source_images": 0,
+    "non_LTO_target_object_before": {
+      "text": 283423,
+      "data": 1048,
+      "bss": 267514
+    },
+    "non_LTO_target_object_after": {
+      "text": 283879,
+      "data": 1048,
+      "bss": 267514
+    },
+    "non_LTO_text_growth_bytes": 456,
+    "non_LTO_tex_upload_stack_bytes_before": 304,
+    "non_LTO_tex_upload_stack_bytes_after": 304,
+    "note": "Code/stack sizes are isolated non-LTO EE driver observations, not final linked ELF growth."
+  },
+  "limits": [
+    "Unaligned full1MiB band fallback regresses from9,437,191 to11,534,349 Count (+22.2%) in this fixture. Source is read with the scalar fallback and all correctness/alignment checks pass. Root verified common eligible engine MakeBlockEx alignment exponent4 (16B) and DCE alignment exponent6 (64B).",
+    "Width8 packing fallback costs156,677 vs145,413 Count for8x1024 (+11,264 Count, 1.375 Count/texel). No MMI access is issued for the short row.",
+    "Host fallback checks cannot prove MMI instruction semantics; the native actual-source corpus, lane tests and four executed native mutations supply that evidence."
+  ],
+  "production_apply": {
+    "production_tex_before_sha256": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+    "production_tex_after_sha256": "80ac35dad5945143d5bd6a752e3c954fb03e942854ce0cd1ede71e5c2cb1ae55",
+    "functions": [
+      "p4_band",
+      "fill_p4"
+    ],
+    "other_files_written": [],
+    "authorization": "Parent explicit approval after combinednative pass"
+  },
+  "public_test_promotion": {
+    "files": {
+      "tools/ps2/p4_pack_mmi_hosttest.py": "50c4ad480daa804f81748f1abc8e79d7ff9ebafce1bef2ead74ceb78b4014390",
+      "tools/ps2/p4_pack_mmi_hosttest.c": "e56b4f2361d1834a9a2696487116e3ddd44c18d090c9b0ad110072b5f690ce90"
+    },
+    "scalar_reference_commit": "dbc98504e1ad2cc6c2e8e1d24a6ef5d2f31d6ebf",
+    "reference": "Literal scalar fill_p4 and p4_band from pinned Git source, with identical fillctx_t/src_row/src_col required; no independent packing model.",
+    "py_compile_passed": true,
+    "host": {
+      "host": {
+        "passed": true,
+        "checks": 10653591,
+        "cases": 66544,
+        "failures": 0,
+        "executed_mutations_detected": 3,
+        "corpus": {
+          "textures": 1386,
+          "source_bytes": 34735104,
+          "packed_source_bytes": 8796160
+        }
+      },
+      "sanitize": {
+        "passed": true,
+        "checks": 10653591,
+        "cases": 66544,
+        "failures": 0,
+        "executed_mutations_detected": 3,
+        "corpus": {
+          "textures": 1386,
+          "source_bytes": 34735104,
+          "packed_source_bytes": 8796160
+        }
+      }
+    },
+    "EE_build": {
+      "built": true,
+      "executed": false,
+      "ELF_sha256": "da5019b56a3f8148f4ecfcfc4d9922b9764d2fa072f3f66bc05389c628e8b75d",
+      "ELF_bytes": 1308416,
+      "compiler": "/workspace/.onboarding/ps2dev-v2/ps2dev/ee/bin/mips64r5900el-ps2-elf-gcc",
+      "compiler_sha256": "5c0edc1bad39523295932a42c024849c6143fbde200b0f602ed6b2db77d5b3fa",
+      "flags": [
+        "-G8",
+        "-O2",
+        "-std=gnu23",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-D_EE",
+        "-DPS2",
+        "-DPS2_PROFILE",
+        "-DNOHW",
+        "-DPS2_AUDIO_VORBIS",
+        "-DPS2_AUDIO_MP3",
+        "-DNOMUMBLE",
+        "-DNO_IPV6",
+        "-DNOUPNP",
+        "-DCMAKECONFIG",
+        "-D_LARGEFILE64_SOURCE",
+        "-DNOEXECINFO",
+        "-DUNIXCOMMON",
+        "-Wall",
+        "-Wextra",
+        "-Wno-trigraphs",
+        "-Wno-unused-parameter",
+        "-fwrapv",
+        "-DHAVE_ZLIB",
+        "-DHAVE_PNG",
+        "-DNDEBUG",
+        "-mno-abicalls",
+        "-Werror",
+        "-I/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/pack-research/public-runner-final"
+      ],
+      "frozen_input_sha256": {
+        "fixture.c": "e56b4f2361d1834a9a2696487116e3ddd44c18d090c9b0ad110072b5f690ce90",
+        "actual-functions.inc": "b608b44870cd8d1cba0fea0dca6c2444ac5c2158daf895bb13f04c508469c67e",
+        "ee/full-texels.bin": "af8b6db337884ff8bedcfddc65c3472d8b1f5affb1b32d9ee944c1c71627d3f8",
+        "ee/PACK_BENCH.ELF": "da5019b56a3f8148f4ecfcfc4d9922b9764d2fa072f3f66bc05389c628e8b75d"
+      }
+    },
+    "new_emulator_run": false,
+    "actual_functions_byte_identical_to_executed_native_bundle": true,
+    "actual_functions_sha256": "b608b44870cd8d1cba0fea0dca6c2444ac5c2158daf895bb13f04c508469c67e",
+    "public_fixture_changes_since_native_execution": [
+      "Reference wrapper calls the already extracted pinned scalar function instead of an independent arithmetic oracle.",
+      "Malformed corpus header/bounds rejection.",
+      "Comments."
+    ],
+    "unchanged_native_C_sections": {
+      "row_case": {
+        "unchanged": true,
+        "sha256": "d920f1a86971fcf9a515b6d3a5525fa86cf6bc58ff8c4041183a1abe1972eaca"
+      },
+      "pairs": {
+        "unchanged": true,
+        "sha256": "c332856060320cc2f4cc10f368d66e5abfbcda07edd7f7a109c3fae3bfe84014"
+      },
+      "bands": {
+        "unchanged": true,
+        "sha256": "5de79d5594bee41d0540336d1cbcc86ad30a603380db15b372c3de99d79226db"
+      },
+      "exact_allocations": {
+        "unchanged": true,
+        "sha256": "bad1818f2e2a065797d12beb7d73577ba1a92fdf3fc5cc814b93e1772b26cc6f"
+      },
+      "mutation_controls": {
+        "unchanged": true,
+        "sha256": "e10247858e37fca83cd47c862f7f624b196d35ee241dd79de43f5c0acf0bfe17"
+      },
+      "bench_fill": {
+        "unchanged": true,
+        "sha256": "acd0bc5060a209f996117ffb699d25007500d170d0677c8e4ccac5b450d8c33d"
+      },
+      "benchmarks": {
+        "unchanged": true,
+        "sha256": "b1c2068b6780bed581c5aa0573fc2b58aa9a95331ea2c106661946056eb3cda2"
+      }
+    },
+    "historical_native_log_parsed_by_public_runner": {
+      "passed": true,
+      "checks": 10653592,
+      "cases": 66544,
+      "failures": 0,
+      "executed_mutations_detected": 4,
+      "corpus": {
+        "textures": 1386,
+        "source_bytes": 34735104,
+        "packed_source_bytes": 8796160
+      },
+      "packing_Count": [
+        {
+          "width": 8,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 145413,
+          "candidate": 156677,
+          "texels": 8192
+        },
+        {
+          "width": 8,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 145413,
+          "candidate": 156677,
+          "texels": 8192
+        },
+        {
+          "width": 16,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 260101,
+          "candidate": 82949,
+          "texels": 16384
+        },
+        {
+          "width": 16,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 260101,
+          "candidate": 268293,
+          "texels": 16384
+        },
+        {
+          "width": 24,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 374789,
+          "candidate": 287237,
+          "texels": 24576
+        },
+        {
+          "width": 24,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 374789,
+          "candidate": 378885,
+          "texels": 24576
+        },
+        {
+          "width": 40,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 604165,
+          "candidate": 405509,
+          "texels": 40960
+        },
+        {
+          "width": 40,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 604165,
+          "candidate": 600069,
+          "texels": 40960
+        },
+        {
+          "width": 64,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 948229,
+          "candidate": 129029,
+          "texels": 65536
+        },
+        {
+          "width": 64,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 948229,
+          "candidate": 931845,
+          "texels": 65536
+        },
+        {
+          "width": 128,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 1865733,
+          "candidate": 190469,
+          "texels": 131072
+        },
+        {
+          "width": 128,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 1865733,
+          "candidate": 1816581,
+          "texels": 131072
+        },
+        {
+          "width": 256,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 3700741,
+          "candidate": 313349,
+          "texels": 262144
+        },
+        {
+          "width": 256,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 3700741,
+          "candidate": 3586053,
+          "texels": 262144
+        },
+        {
+          "width": 512,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 7370757,
+          "candidate": 559109,
+          "texels": 524288
+        },
+        {
+          "width": 512,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 7370757,
+          "candidate": 7124997,
+          "texels": 524288
+        },
+        {
+          "width": 1024,
+          "height": 1024,
+          "source_offset": 0,
+          "scalar": 14710789,
+          "candidate": 1050629,
+          "texels": 1048576
+        },
+        {
+          "width": 1024,
+          "height": 1024,
+          "source_offset": 1,
+          "scalar": 14710789,
+          "candidate": 14202885,
+          "texels": 1048576
+        }
+      ],
+      "band_Count": [
+        {
+          "texels": 1048576,
+          "source_offset": 0,
+          "scalar": 9437191,
+          "candidate": 852017,
+          "sink": 35276
+        },
+        {
+          "texels": 1048576,
+          "source_offset": 1,
+          "scalar": 9437191,
+          "candidate": 11534349,
+          "sink": 35416
+        }
+      ]
+    },
+    "malformed_corpus_rejection_checks": [
+      {
+        "name": "truncated",
+        "exit": 1,
+        "semantic_rejection": true,
+        "ASan_UBSan_errors": false
+      },
+      {
+        "name": "odd-width",
+        "exit": 1,
+        "semantic_rejection": true,
+        "ASan_UBSan_errors": false
+      }
+    ],
+    "frozen_source_root_host_check": {
+      "host": {
+        "passed": true,
+        "checks": 10653591,
+        "cases": 66544,
+        "failures": 0,
+        "executed_mutations_detected": 3,
+        "corpus": {
+          "textures": 1386,
+          "source_bytes": 34735104,
+          "packed_source_bytes": 8796160
+        }
+      },
+      "sanitize": {
+        "passed": true,
+        "checks": 10653591,
+        "cases": 66544,
+        "failures": 0,
+        "executed_mutations_detected": 3,
+        "corpus": {
+          "textures": 1386,
+          "source_bytes": 34735104,
+          "packed_source_bytes": 8796160
+        }
+      }
+    },
+    "verification_report": "build/nov16-hwopt/pack-research/public-runner-final/report.json",
+    "verification_report_sha256": "214eb65d7347b532d0940b46bbbb931eaada88943042547a83f49111a00a44a2",
+    "reproduce": {
+      "corpus": "python3 tools/ps2/next12_p4_corpus.py --asset /path/to/srb2.pk3 --out build/p4-pack-mmi-corpus",
+      "host": "python3 tools/ps2/p4_pack_mmi_hosttest.py --corpus build/p4-pack-mmi-corpus/full-texels.bin --out build/p4-pack-mmi-host",
+      "EE_build": "python3 tools/ps2/p4_pack_mmi_hosttest.py --corpus build/p4-pack-mmi-corpus/full-texels.bin --out build/p4-pack-mmi-ee --ee build",
+      "EE_run": "python3 tools/ps2/p4_pack_mmi_hosttest.py --out build/p4-pack-mmi-ee --ee run --timeout 120 --lock-wait 20"
+    }
+  },
+  "final_complete_production_proof": {
+    "report": "build/nov16-hwopt/p4-production-mmi-host-v1/report.json",
+    "source_tex_sha256": "80ac35dad5945143d5bd6a752e3c954fb03e942854ce0cd1ede71e5c2cb1ae55",
+    "all_six_scalar_controls_detected": true,
+    "plain_and_ASan_UBSan_passed": true,
+    "VU_packet_data_map_passed": true,
+    "EE_record_ABI_bytes": 140,
+    "record_growth_bytes": 0,
+    "report_sha256": "960c3645f78c2621d0230328e9e3f05ffb863b7d8942891123fff7b97517b8cb",
+    "VU_data_map_report_sha256": "84ccbf06553768611eabf23de3e03811604b6d143b54ce3862435928fa50171c"
+  }
+}
