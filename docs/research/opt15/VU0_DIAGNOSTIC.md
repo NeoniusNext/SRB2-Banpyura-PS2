@@ -6,8 +6,8 @@
 
 **Причина сигнатуры `outcode_diff=24625/49152` установлена: диагностический
 hook пропускал ленивую загрузку констант VU0.** Исправлен только
-`PS2HWD_TestVU0`: после `begin_draw` он вызывает `vu0_need`, как производственный
-путь `emit_poly`, затем применяет прежний negative control `256`.
+`PS2HWD_TestVU0`: после `begin_draw` он загружает те же константы, что
+`vu0_need` в производственном пути `emit_poly`, с прежним negative control `256`.
 Инструкции `vu0_xform` / `vu0_xform2`, скалярный oracle и допуски не изменены.
 
 После исправления outcodes совпадают на всех 49 152 вершинах. Однако старый
@@ -131,10 +131,67 @@ Compile/link output проверяется на diagnostics, кроме изве
 Это отдельный численный вопрос, сохранённый как strict FAIL, а не продолжение
 прежней missing-load ошибки harness.
 
+## Компактная реализация hook
+
+Ниже сохранён ход измерения компактного варианта. В итоговой сборке helper
+используется только для двух вызовов парной correctness-проверки; последний
+scalar-correctness transform снова прямой. Так убран один вызов на вершину
+вне timed loops. Также удалены лишнее накопление `xs` и условное искусственное
+`n++`: volatile asm с memory clobber и используемые `oc/pv` уже сохраняют
+вычисления и stores. Последовательность 120 COP2-инструкций, включая 12 stores
+в самом TestVU0, при этом сохранилась.
+
+EE `-O3`: pair-only вариант занимает 3508 байт (3320 + helper 188), итог после
+удаления `xs` — **3484 байта**, на 116 меньше исходного hook. Полная итоговая
+сборка сохраняет базовые `_end` и `_gp`, без padding или изменения резервов.
+Её diagnostic stack достигает 640 байт (caller 624 + helper 16) против исходных
+608; ordinary game stack этим hook не затрагивается. Отдельное evidence:
+`build/opt15-vu0/pair-helper-size/` и `build/opt15-vu0/no-xs-size/`.
+
+Первое исправление вызывало `vu0_need`, затем при negative control повторно
+встраивало `vu0_batch_load`. Дополнительный код диагностики повлиял на границу
+ELF и доступный начальный размер арены, поэтому эта избыточность убрана:
+
+- Один безусловный `vu0_batch_load` выбирает X scale как
+  `(ps2hwd_dbg_flags & 256) ? P.kx * 1.01f : P.kx` и устанавливает
+  `P.vu0_ld = 1`. `P.kx` скалярного эталона и `P.vu0` не меняются.
+- Три вызова одиночного transform вне измеряемых циклов используют частный
+  `noinline` helper `test_vu0_vertex`, вместо трёх встроенных копий. Измеряемый
+  одиночный цикл вызывает `vu0_xform` напрямую; измеряемый парный цикл не изменён.
+- Производственные helpers, инструкции transform, число входных вершин,
+  допуски, размеры пулов и резервы не менялись.
+
+Реальный EE GCC 15.2.0, `-O3 -G8 -mno-abicalls`, размеры машинного кода:
+
+| Вариант | TestVU0 + частный helper |
+|---|---:|
+| Исходный hook с пропущенным preload | 3600 B |
+| Первое корректное исправление | 3808 B |
+| Только один preload | 3608 B |
+| Один preload и общий helper для correctness | **3336 B** (3148 + 188) |
+
+Таким образом, диагностический код уменьшен на **472 B** относительно первого
+исправления и на **264 B** относительно исходного неисправного hook. Варианты
+одного preload с ternary, локальной веткой и множителем дали одинаковые
+3608 B; выбран ternary, который оставляет обычный `P.kx` без умножения.
+Размеры из препроцессированных вариантов подтверждены отдельной компиляцией
+окончательного исходного `ps2_hwd.c` без препроцессирования: diagnostics 0,
+`PS2HWD_TestVU0=0xc4c`, `test_vu0_vertex=0xbc`.
+Артефакты codegen: `build/opt15-vu0/preload-size/{sizes.json,final-build.log,final.o}`.
+Размер полного linked ELF и начальная арена проверяются общей интеграцией.
+
+Финальный EE/PCSX2 запуск находится в `build/opt15-vu0/compact/`. Все parsed
+metrics normal, negative control, no-load и loaded численно совпали
+с предыдущим `fixed/report.json`: `common_visible=23005`, `max_dx=1`,
+`max_dy=1`, `max_dz=86`, `max_q_rel=3.61343e-05`; negative control даёт
+`max_dx=278`. `diagnosis_passed=true`, `passed=false`, exit 1 сохранены.
+Worst cases также не изменились.
+
 ## Артефакты
 
 - `build/opt15-vu0/baseline/{run.log,report.json,commands.json,build.log}`
 - `build/opt15-vu0/fixed/{run.log,report.json,commands.json,build.log}`
+- `build/opt15-vu0/compact/{run.log,report.json,commands.json,build.log}`
 
 SHA256 ELF baseline:
 `b862904edd1693e10e0964b34705c4e522e9789dd0b4d832afe296dbf4c72a20`.
@@ -144,6 +201,10 @@ SHA256 run.log baseline:
 `506ab473c723f32082e661aaeb057e8eef433cd5b468150cbc747accb5c1b3fd`.
 SHA256 run.log fixed:
 `93fc60de9beb10858f4491d4a8fd69dc49b5f2fed46a8f61e8f9cfe6061b7b3b`.
+SHA256 ELF compact:
+`5a9bbb96919d8c21669fc17cd3319b87058e9c7766197564aa6895ede1219eb0`.
+SHA256 run.log compact:
+`0210fb7ea3a0223af41300e94a4b6da5378ae97418dea197d5461bd816825dda`.
 
 Полные GS readbacks и сравнение игровых кадров выполняются отдельно.
 Диагностическая правка не меняет производственный transform или его точность.

@@ -639,6 +639,15 @@ void PS2HWD_DumpWorkingSet(void)
 	CONS_Printf("HWWS total resident-in-frame blocks %u (last frame)\n", (unsigned)total);
 }
 
+#ifdef HW_VU0
+// Share the correctness checks' transform body; the timed loop calls vu0_xform
+// directly, so this diagnostic-only size saving adds no measured call overhead.
+static __attribute__((noinline)) int test_vu0_vertex(const FOutVector *s, cv_t *d, pv_t *pv)
+{
+	return vu0_xform(s, d, pv);
+}
+#endif
+
 // scalar reference of vu0_xform: xform_vertex + outcode + the projection of put_vertex
 static void scalar_xform(const FOutVector *s, int *oc, int *xi, int *yi, int *zi, float *q)
 {
@@ -663,7 +672,6 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		FTransform t;
 		FSurfaceInfo surf;
 		unsigned int i, rng = seed * 2654435761u + 12345u;
-		float xs = 0.0f;
 		FOutVector *pts; // OPT13 RDRV: was `static FOutVector pts[4096]` = 80 KB of .bss in the product for the -hwvu0bench measurement only
 		u32 c0;
 
@@ -686,11 +694,10 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		surf.PolyColor.rgba = 0xFFFFFFFFu;
 		if (!begin_draw(PF_NoTexture | PF_Modulated | PF_Occlude, &surf))
 			return;
-		// begin_draw leaves VU0 constants lazy, as on the production EE path.
-		// This hook calls vu0_xform directly rather than through emit_poly.
-		vu0_need();
-		if (ps2hwd_dbg_flags & 256) // negative control of tools/ps2/hw_test.c: a wrong scale in VU0
-			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx * 1.01f, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		// begin_draw leaves constants lazy. Load once, with the same values as
+		// vu0_need except for negative control 256's deliberately wrong X scale.
+		vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), (ps2hwd_dbg_flags & 256) ? P.kx * 1.01f : P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		P.vu0_ld = 1;
 		pts = malloc((size_t)n * sizeof *pts);
 		if (!pts)
 			return;
@@ -737,8 +744,8 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 				pv_t p1[2], p2[2];
 				int oc1[2], oc2[2];
 
-				oc1[0] = vu0_xform(&pts[i], &d1[0], &p1[0]);
-				oc1[1] = vu0_xform(&pts[i + 1], &d1[1], &p1[1]);
+				oc1[0] = test_vu0_vertex(&pts[i], &d1[0], &p1[0]);
+				oc1[1] = test_vu0_vertex(&pts[i + 1], &d1[1], &p1[1]);
 				vu0_xform2(&pts[i], &pts[i + 1], &d2[0], &d2[1], &p2[0], &p2[1], &oc2[0], &oc2[1]);
 				if (oc1[0] != oc2[0] || oc1[1] != oc2[1] || memcmp(&d1[0], &d2[0], sizeof(float) * 6) || memcmp(&d1[1], &d2[1], sizeof(float) * 6) || memcmp(&p1[0], &p2[0], sizeof p1[0])
 					|| memcmp(&p1[1], &p2[1], sizeof p1[1]))
@@ -756,7 +763,6 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 
 			scalar_xform(&v, &oc, &xi, &yi, &zi, &q);
 			oc2 = vu0_xform(&v, &d, &pv);
-			xs += d.x;
 			out->n++;
 			if (oc != oc2)
 				out->oc_diff++;
@@ -779,8 +785,6 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 				if (qd > out->max_q_rel) out->max_q_rel = qd;
 			}
 		}
-		if (xs == 12345.678f)
-			out->n++; // keeps the compiler from dropping the clip results
 		free(pts);
 #undef TRND
 	}
