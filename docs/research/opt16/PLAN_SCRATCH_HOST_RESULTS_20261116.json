@@ -1,15 +1,15 @@
 {
   "baseline": "604cfd150c5240142d8cb5367950b53d987916d1",
   "compiler": "gcc (Debian 14.2.0-19) 14.2.0",
-  "candidate_source_root": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate/source",
+  "candidate_source_root": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source",
   "candidate_sources": {
     "src/ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
-    "src/ps2/hw/ps2_hw_tex.inc": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+    "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
     "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41"
   },
   "working_tree_sources": {
     "src/ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
-    "src/ps2/hw/ps2_hw_tex.inc": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+    "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
     "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41"
   },
   "candidate_matches_working_tree": true,
@@ -80,7 +80,7 @@
       "expected_failure": false,
       "exit": 0,
       "passed": true,
-      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/plain/run.log",
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/plain/run.log",
       "results": {
         "cases": 703,
         "checks": 907039,
@@ -102,7 +102,7 @@
       "expected_failure": false,
       "exit": 0,
       "passed": true,
-      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/sanitized/run.log",
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/sanitized/run.log",
       "results": {
         "cases": 703,
         "checks": 907039,
@@ -124,7 +124,7 @@
       "expected_failure": true,
       "exit": 1,
       "passed": true,
-      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/missing-cap-cost/run.log",
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/missing-cap-cost/run.log",
       "observed_failure": "cap-five-cold: baseline last/exact=1/4 candidate=0/4\nPLAN SCRATCH FAIL: working-set blocks differ case=1 plan=1 immediate=0"
     },
     {
@@ -132,8 +132,8 @@
       "expected_failure": true,
       "exit": 1,
       "passed": true,
-      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/run.log",
-      "observed_failure": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/extracted.inc:235:13: runtime error: index 6 out of bounds for type 'u32 [6]'\n    #0 0x40d04d in candidate_PlanEnd /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/extracted.inc:235\n    #1 0x40f112 in candidate_PlanEnd /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/extracted.inc:162\n    #2 0x40f112 in candidate_run /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/wrapper.c:76\n    #3 0x403770 in run_case /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:70\n    #4 0x4012e5 in boundary_controls /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:121\n    #5 0x4012e5 in main /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:268\n    #6 0x7f1914683ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)\n    #7 0x7f1914683d64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)\n    #8 0x402c50 in _start (/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/plan_scratch_hosttest+0x402c50) (BuildId: 8ee23199d8cebe37ba5b5312123fe9735db6b0b7)"
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/cap-plus-one-oob/run.log",
+      "observed_failure": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/cap-plus-one-oob/candidate/extracted.inc:235:13: runtime error: index 6 out of bounds for type 'u32 [6]'\n    #0 0x40d04d in candidate_PlanEnd /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/cap-plus-one-oob/candidate/extracted.inc:235\n    #1 0x40f112 in candidate_PlanEnd /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/cap-plus-one-oob/candidate/extracted.inc:162\n    #2 0x40f112 in candidate_run /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/cap-plus-one-oob/candidate/wrapper.c:76\n    #3 0x403770 in run_case /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:70\n    #4 0x4012e5 in boundary_controls /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:121\n    #5 0x4012e5 in main /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:268\n    #6 0x7fe644cc4ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)\n    #7 0x7fe644cc4d64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)\n    #8 0x402c50 in _start (/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner-v7/cap-plus-one-oob/plan_scratch_hosttest+0x402c50) (BuildId: 60a5605ed614267db6f9e6098fddb600b07c4c79)"
     }
   ],
   "limits": "Host decision/memory proof; no EE timing or whole-game visual claim.",

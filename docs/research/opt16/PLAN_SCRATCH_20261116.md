@@ -37,13 +37,15 @@ tree by default. `--source-root` selects a frozen source root containing
 
 ```sh
 python3 tools/ps2/plan_scratch_opt16_hosttest.py \
-  --source-root build/nov16-hwopt/candidate/source \
-  --out build/nov16-hwopt/final-planner
+  --source-root build/nov16-hwopt/candidate-v7/source \
+  --out build/nov16-hwopt/final-planner-v7
 ```
 
-The final working-tree run and frozen-source run both pass; their three input
-files are byte-identical. The durable JSON names the frozen source root and
-records both sets of full-file hashes.
+The final frozen-v7 run passes; its three input files are byte-identical to
+the working tree recorded in the report. The durable JSON names the frozen
+source root and records both sets of full-file hashes. The later MMI helpers
+and texture-allocation retry changes lie outside the extracted planner
+dependencies; the reviewed P4 footprint case remains unchanged.
 
 It extracts the complete actual `PS2HWD_PlanEnd` and its actual
 `plan_lmax`, `plan_blocks`, histogram quantile, LOD choice, GS footprint and
@@ -123,8 +125,7 @@ The machine-readable snapshot is
 [`PLAN_SCRATCH_HOST_RESULTS_20261116.json`](PLAN_SCRATCH_HOST_RESULTS_20261116.json).
 It records source/function/fixture hashes, compiler identity, outcomes and
 scratch symbols. Generated sources, commands and full logs are under
-`build/nov16-hwopt/final-planner/`; the matching working-tree rerun is under
-`build/nov16-hwopt/final-planner-current/`.
+`build/nov16-hwopt/final-planner-v7/`.
 
 This establishes host planner parity and scratch safety for this change. The
 removed call counts are work counts, not EE cycle measurements. Whole-game

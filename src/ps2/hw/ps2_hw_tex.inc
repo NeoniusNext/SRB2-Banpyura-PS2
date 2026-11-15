@@ -602,7 +602,27 @@ static u32 vram_alloc_evicting(u32 n, u32 align, int hi)
 			tex_drop(o - 1, 1);
 		}
 	}
-	return 0;
+	// The final victim may have made room; small oldest-first victims may
+	// also leave only scattered holes. Finish one existing safe window.
+	b = hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
+	if (b)
+		return b;
+	w = best_window(n, align);
+	if (w == NOWIN)
+		return 0;
+	for (e = w; e < w + n;)
+	{
+		u16 o = blk_owner[e];
+
+		if (!o)
+		{
+			e++;
+			continue;
+		}
+		e = H.rec[o - 1].blk + H.rec[o - 1].nblk;
+		tex_drop(o - 1, 1);
+	}
+	return hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
 }
 
 static inline texrec_t *rec_of(const GLMipmap_t *m)
