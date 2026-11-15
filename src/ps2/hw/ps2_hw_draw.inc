@@ -235,9 +235,25 @@ static void tex_regs(const texrec_t *r, int wms, int wmt, int linear, u32 cbp, i
 	*clamp = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34); // REGION_CLAMP (2): MINU = MINV = 0, MAXU = w - 1, MAXV = h - 1
 	*tex1 = 1ull | ((u64)linear << 5) | ((u64)linear << 6); // LCM = 1 (fixed LOD), MMAG, MMIN
 	t0 = (u64)r->blk | ((u64)r->tbw << 14) | ((u64)r->psm << 20) | ((u64)r->tw << 26) | ((u64)r->th << 30) | ((u64)(r->notcc ? 0 : 1) << 34) | ((u64)(decal ? 1 : 0) << 35);
-	if (r->psm == PSM_T8)
+	if (psm_indexed(r->psm))
 	{
 		t0 |= (u64)cbp << 37; // CPSM = CT32, CSM1, CSA = 0
+#ifndef PS2_NOOPT_P4_BAND
+		if (r->psm == PSM_T4)
+		{
+			// CSA chooses the internal CLUT bank, not its source. Load all
+			// 256 original entries as T8 before selecting the unchanged band.
+			if (H.clut_loaded != cbp)
+			{
+				qw_t *p = ad_alloc(1);
+				ad_set(p, ((u64)PSM_T8 << 20) | ((u64)cbp << 37) | (1ull << 61), GSR_TEX2_1);
+				H.clut_loaded = cbp;
+				H.gsr.valid &= ~RV_TEX0;
+			}
+			t0 |= (u64)r->csa << 56;
+		}
+		else
+#endif
 		if (H.clut_loaded != cbp)
 		{
 			cld = 1;
@@ -504,7 +520,7 @@ static void plan_tex_touch(texrec_t *r)
 			im->imgws = H.frame_no + 1;
 			TX.need_blk += im->nblk;
 			TX.need_n++;
-			if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+			if (!(im->owner && im->owner->regen_kind && psm_indexed(im->psm) && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
 			{
 				H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
 				if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60 && im->owner)
@@ -640,7 +656,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		wall = H.shader == 1 || H.shader == 2 || H.shader == 3; // wall fudges: wall, sprite, model; floor fudges: floor, water, fog
 		light_setup(&P.rs.lp, (int)surf->LightInfo.light_level, wall, (int)surf->LightInfo.fade_start, (int)surf->LightInfo.fade_end);
 		// PS2-HW-71: palette rendering: the engine gave the polygon a light table; a palette texture is lit by the CLUT of the colormap row
-		if (surf->LightTableId && lt_ok(surf->LightTableId) && textured && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2)
+		if (surf->LightTableId && lt_ok(surf->LightTableId) && textured && psm_indexed(r->psm) && (r->clut == 1 || r->clut == 2)
 			&& blend != PF_Fog && blend != (PF_Multiplicative & PF_Blending) && !(dbg & 2048))
 		{
 			P.rs.lp.pal = 1;
@@ -942,7 +958,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	if (lit && blend != PF_Fog && blend != (PF_Multiplicative & PF_Blending))
 	{
 		int solid = occlude && !(flags & PF_NoDepthTest) && !invisible && P.npass == 1 && P.pass[0].abe == 0
-			&& (!textured || (r->psm == PSM_T8 && r->clut == 1)) && !P.water && !(flags & PF_Ripple);
+			&& (!textured || (psm_indexed(r->psm) && r->clut == 1)) && !P.water && !(flags & PF_Ripple);
 
 		(void)solid;
 		// Use actual staircase boundaries: a sampled depth ramp moves transitions by up to one ramp texel.
@@ -1337,7 +1353,7 @@ static void pass_setup(int k, int force_tex)
 		const texrec_t *r = P.r;
 		u32 cbp = 0;
 
-		if (r->psm == PSM_T8)
+		if (psm_indexed(r->psm))
 		{
 			if (ps->clut_kind)
 				cbp = clut_get(ps->clut_kind, ps->clut_param, ps->clut_keyed);
@@ -2722,7 +2738,7 @@ static void sprite_tex(texrec_t *r, int linear, u64 frame, u64 alpha, int abe, i
 	if (OV.n)
 		ov_flush();
 	memset(&s, 0, sizeof s);
-	if (r->psm == PSM_T8 && !cbp)
+	if (psm_indexed(r->psm) && !cbp)
 		cbp = clut_get(r->clut == 3 ? CK_ALPHA : (r->clut == 2 ? CK_KEYED : CK_OPAQUE), 0, 0);
 	tex_regs(r, 1, 1, linear, cbp, 1, &s.tex0, &s.tex1, &s.clamp);
 	s.test = TEST_BITS(0, ATST_ALWAYS, 0) | (1ull << 16) | (1ull << 17);

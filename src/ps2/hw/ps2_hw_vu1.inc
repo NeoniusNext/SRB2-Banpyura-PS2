@@ -31,6 +31,7 @@ extern const u8 VU1Spr_EntryDraw[];
 #define VU_NCONST 18 // constant quad words (vu1/ps2_hw_vu1.vsm, K0..K17)
 #define VU_ROWTAB 32 // VU1 memory address of the TEX0 table of the colormap rows (one quad word per row)
 #define VU_PLANES 20 // VU1 memory address of the plane table (uploaded at boot)
+#define VU_P4_TEX2 28 // unused quadword between the plane bits and row table: P4 selection after a full T8 CLUT load
 #define VU_BASE 64 // double buffer of the input: BASE / OFFSET of the VIF
 #define VU_OFFSET 256
 
@@ -420,6 +421,10 @@ static void vu_consts_build(const vlight_t *vl)
 	w[1] = ps->tex ? 1u : 0u; // textured
 	w[2] = vl ? (u32)vl->rlo : 0u; // the row the GS holds (pass_setup wrote the TEX0 of the first row)
 	w[3] = 0;
+#ifndef PS2_NOOPT_P4_BAND
+	if (vl && P.r && P.r->psm == PSM_T4)
+		w[3] = 1;
+#endif
 }
 
 static void vu_chunk_end(void);
@@ -433,8 +438,13 @@ static void vu_consts_send(int send_rows, int what)
 	qw_t *b, *t;
 	const u32 nrow = send_rows ? (u32)(VU.rhi - VU.rlo + 1) : 0;
 	const u32 nc = what ? 1u : (u32)VU_NCONST;
+#ifndef PS2_NOOPT_P4_BAND
+	const int p4 = VU.rowmode && P.r && P.r->psm == PSM_T4;
+#else
+	const int p4 = 0;
+#endif
 
-	vu_room(1 + nc + 1 + nrow + 2);
+	vu_room(1 + nc + 1 + nrow + 2 + (p4 ? 2u : 0u));
 	t = vu_tag_slot();
 	b = H.ring[H.cur];
 	t->d[0] = dma_tag(nc, DMAT_CNT, 0);
@@ -449,6 +459,17 @@ static void vu_consts_send(int send_rows, int what)
 		memcpy(b + H.wr, &VU.rt[VU.rlo], nrow * sizeof(qw_t));
 		H.wr += nrow;
 	}
+#ifndef PS2_NOOPT_P4_BAND
+	if (p4)
+	{
+		const u64 select = ((u64)PSM_T4 << 20) | ((u64)P.r->csa << 56);
+
+		t = b + H.wr++;
+		t->d[0] = dma_tag(1, DMAT_CNT, 0);
+		t->d[1] = (u64)VIF_NOP | ((u64)VIF_UNPACK_V4_32(VU_P4_TEX2, 1, 0) << 32);
+		ad_set(b + H.wr++, select, GSR_TEX2_1); // CLD0: select an internal band, never a partial load
+	}
+#endif
 	vu_next_run();
 	VU.consts_ok = 1;
 	VU.cgen++;
@@ -468,7 +489,7 @@ static void vu_retex(void)
 
 	if (!ps->tex || !r)
 		return;
-	if (r->psm == PSM_T8)
+	if (psm_indexed(r->psm))
 	{
 		if (ps->clut_kind)
 			cbp = clut_get(ps->clut_kind, ps->clut_param, ps->clut_keyed);
@@ -527,7 +548,7 @@ static __attribute__((noinline)) int vu_plan_setup(void)
 		const u32 tbl = P.pal_tbl;
 		int keyed;
 
-		if (tbl >= PR_TBL || !r || r->psm != PSM_T8)
+		if (tbl >= PR_TBL || !r || !psm_indexed(r->psm))
 		{
 			VU.stat_rowfail++;
 			return 0;
@@ -595,6 +616,9 @@ static __attribute__((noinline)) int vu_plan_setup(void)
 		if (VU.rowmode)
 		{
 			((u32 *)(void *)VU.cn[16])[2] = (u32)VU.rlo;
+#ifndef PS2_NOOPT_P4_BAND
+			((u32 *)(void *)VU.cn[16])[3] = r && r->psm == PSM_T4;
+#endif
 			vu_consts_send(send_rows, 1);
 		}
 		c1 = cyc();
@@ -698,6 +722,10 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 		w[10] = w[11] = w[12] = w[13] = w[14] = w[15] = w[16] = 0;
 	}
 	w[17] = 0;
+#ifndef PS2_NOOPT_P4_BAND
+	if (r && r->psm == PSM_T4)
+		w[17] = r->csa; // a band change retargets the restore constant, even with the same PSM and image address
+#endif
 	w[18] = xf_ver;
 	w[19] = f2u_(H.vpx);
 	w[20] = f2u_(H.vpy);
@@ -757,6 +785,10 @@ static int vu_state_rec(void)
 
 	if (!VU.open || VU.kind || P.pal || !ps->tex || !r || vu_norecord)
 		return 0;
+#ifndef PS2_NOOPT_P4_BAND
+	if (r->psm == PSM_T4)
+		return 0; // a full CLUT preload must precede the new TEX0 through the ordered PATH2 setup
+#endif
 	if ((H.gsr.valid & (RV_CLAMP | RV_TEX1 | RV_TEX0)) != (RV_CLAMP | RV_TEX1 | RV_TEX0))
 		return 0;
 	if (VU.chunk_n + 6 > VU_CHUNK_QW || H.wr + 6 + 3 > BUF_QW)

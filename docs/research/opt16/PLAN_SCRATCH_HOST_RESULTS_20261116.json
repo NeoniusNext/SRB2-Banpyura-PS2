@@ -1,0 +1,151 @@
+{
+  "baseline": "604cfd150c5240142d8cb5367950b53d987916d1",
+  "compiler": "gcc (Debian 14.2.0-19) 14.2.0",
+  "candidate_source_root": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate/source",
+  "candidate_sources": {
+    "src/ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
+    "src/ps2/hw/ps2_hw_tex.inc": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+    "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41"
+  },
+  "working_tree_sources": {
+    "src/ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
+    "src/ps2/hw/ps2_hw_tex.inc": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+    "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41"
+  },
+  "candidate_matches_working_tree": true,
+  "planner_cost_psm": {
+    "macro": "PSM_T8",
+    "value": "0x13",
+    "candidate_P4_case_enabled": true
+  },
+  "source_guard_negative_controls": [
+    {
+      "name": "changed-old-T8-path",
+      "rejected": true,
+      "reason": "unexpected arithmetic dependency change: tex_footprint"
+    },
+    {
+      "name": "changed-reviewed-P4-case",
+      "rejected": true,
+      "reason": "unexpected arithmetic dependency change: tex_footprint"
+    }
+  ],
+  "baseline_sources": {
+    "src/ps2/hw/ps2_hw_plan.inc": "4705ff5b6edc5c3c121fa188c5eb1dae8a63adc89e6e0af48c89911f687788f1",
+    "src/ps2/hw/ps2_hw_tex.inc": "091e790814cf00002765b633f0bf12aa6d875880eefec59685f6ba5fb02401ea",
+    "src/ps2/hw/ps2_hw_priv.inc": "e5f90041c72f3dd99c839895ec0343a4fc064865be91276df9834f1d476a69d6"
+  },
+  "extracted_functions": {
+    "plan_bin_hi": {
+      "baseline": "db54e50afc5d5b46cfd45818d1397b3cb7a8af6e5a97162396be68cf0717b42d",
+      "candidate": "db54e50afc5d5b46cfd45818d1397b3cb7a8af6e5a97162396be68cf0717b42d"
+    },
+    "plan_seps": {
+      "baseline": "9dbebbf40a2976b6dd3ba94fb098abbc7ae8d531d3931a229b9b6eabcfe3b14b",
+      "candidate": "9dbebbf40a2976b6dd3ba94fb098abbc7ae8d531d3931a229b9b6eabcfe3b14b"
+    },
+    "plan_lmax": {
+      "baseline": "9b9a4c38b75fca4e963433c028fbd59d3519d172eeb4f7734ba69f796a2d3ff3",
+      "candidate": "6d354f97035e001ba63525388f7f0d0cab8af28949cae1dd4476abcba879ca0e"
+    },
+    "plan_blocks": {
+      "baseline": "71feb920b5dc123408c38b755b97e4db20316e10b7f7f2f1ea8df3108fc19a13",
+      "candidate": "71feb920b5dc123408c38b755b97e4db20316e10b7f7f2f1ea8df3108fc19a13"
+    },
+    "PS2HWD_PlanEnd": {
+      "baseline": "32267ff64852b53df3947c5308c690c1a209544fb2aa8e09ed60fc340c9e35d5",
+      "candidate": "23c631a24c78cfec553c33141a93d872a8de6f0e3d6b8f23bfd333f5200ce032"
+    },
+    "tex_footprint": {
+      "baseline": "98d3d1bd936873bb1a3e083d400a10161e84f1eca6c6af3077a62062e1975afb",
+      "candidate": "1563c0c01ca07d8a1bddd0875995b475ba3ce726aca747a99868d63197a1bd12"
+    },
+    "tex_plan_blocks": {
+      "baseline": "6863fc74e1ff20dcd5c98ea06d7a853a12b57bd2c43d35acc859b55a775c72fe",
+      "candidate": "6863fc74e1ff20dcd5c98ea06d7a853a12b57bd2c43d35acc859b55a775c72fe"
+    },
+    "lod_level_for": {
+      "baseline": "819c17dcb8934d638f408d844d9841fe3f0df5206311e5edd6ad37c0abc640a9",
+      "candidate": "819c17dcb8934d638f408d844d9841fe3f0df5206311e5edd6ad37c0abc640a9"
+    }
+  },
+  "fixture_sources": {
+    "plan_scratch_opt16_hosttest.c": "7be35bbe885dc0033fa216a0ab30aac3bff04dd084da6c2df22a15b63586be43",
+    "plan_scratch_opt16_hosttest.h": "7c70e0f2b79c8cfb0556064db1100fa9552e387ae9f17bb9dcfa4e998a0a4978",
+    "plan_scratch_opt16_hosttest.py": "aba2eeb9f60ba342570c93bc84b777f34a74c123000b23387fa2e4290ea543be"
+  },
+  "runs": [
+    {
+      "name": "plain",
+      "expected_failure": false,
+      "exit": 0,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/plain/run.log",
+      "results": {
+        "cases": 703,
+        "checks": 907039,
+        "texture_decisions": 191216,
+        "assembled_counts": 273,
+        "cap_values": 6,
+        "lmax_axis_sizes": 16384,
+        "removed_footprint_calls": 71708,
+        "overbudget_cases": 538,
+        "debug_cases": 33,
+        "largest_cost_blocks": 1048576,
+        "baseline_scratch_bytes": 8704,
+        "candidate_scratch_bytes": 6528,
+        "saved_bytes": 2176
+      }
+    },
+    {
+      "name": "sanitized",
+      "expected_failure": false,
+      "exit": 0,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/sanitized/run.log",
+      "results": {
+        "cases": 703,
+        "checks": 907039,
+        "texture_decisions": 191216,
+        "assembled_counts": 273,
+        "cap_values": 6,
+        "lmax_axis_sizes": 16384,
+        "removed_footprint_calls": 71708,
+        "overbudget_cases": 538,
+        "debug_cases": 33,
+        "largest_cost_blocks": 1048576,
+        "baseline_scratch_bytes": 8704,
+        "candidate_scratch_bytes": 6528,
+        "saved_bytes": 2176
+      }
+    },
+    {
+      "name": "missing-cap-cost",
+      "expected_failure": true,
+      "exit": 1,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/missing-cap-cost/run.log",
+      "observed_failure": "cap-five-cold: baseline last/exact=1/4 candidate=0/4\nPLAN SCRATCH FAIL: working-set blocks differ case=1 plan=1 immediate=0"
+    },
+    {
+      "name": "cap-plus-one-oob",
+      "expected_failure": true,
+      "exit": 1,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/run.log",
+      "observed_failure": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/extracted.inc:235:13: runtime error: index 6 out of bounds for type 'u32 [6]'\n    #0 0x40d04d in candidate_PlanEnd /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/extracted.inc:235\n    #1 0x40f112 in candidate_PlanEnd /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/extracted.inc:162\n    #2 0x40f112 in candidate_run /workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/candidate/wrapper.c:76\n    #3 0x403770 in run_case /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:70\n    #4 0x4012e5 in boundary_controls /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:121\n    #5 0x4012e5 in main /workspace/SRB2-Banpyura-PS2/tools/ps2/plan_scratch_opt16_hosttest.c:268\n    #6 0x7f1914683ca7  (/lib/x86_64-linux-gnu/libc.so.6+0x29ca7) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)\n    #7 0x7f1914683d64 in __libc_start_main (/lib/x86_64-linux-gnu/libc.so.6+0x29d64) (BuildId: 5e5b51f4c39af9ac589408c1dc432ba390a273cc)\n    #8 0x402c50 in _start (/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/final-planner/cap-plus-one-oob/plan_scratch_hosttest+0x402c50) (BuildId: 8ee23199d8cebe37ba5b5312123fe9735db6b0b7)"
+    }
+  ],
+  "limits": "Host decision/memory proof; no EE timing or whole-game visual claim.",
+  "compiled_scratch_symbols": {
+    "baseline": {
+      "symbol": "blk_l.3",
+      "bytes": 8704
+    },
+    "candidate": {
+      "symbol": "blk_l.3",
+      "bytes": 6528
+    }
+  },
+  "passed": true
+}

@@ -98,6 +98,8 @@ def main():
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--pak', type=Path, default=ROOT / 'build/pak')
     parser.add_argument('--scenes', default=','.join(SCENES))
+    parser.add_argument('--full-textures', action='store_true',
+                        help='Explicit full-size mode in BOTH roles: -hwdbg 33554432 (default frame planning remains unchanged)')
     parser.add_argument('--diagnostic-seed', type=lambda value: int(value, 0),
                         help='Verify already patched fixed-local-RNG copies against both original build directories')
     parser.add_argument('--baseline-build', type=Path)
@@ -132,6 +134,8 @@ def main():
             inputs += [build / 'SRB2.ELF', build / 'build-report.json']
     manifest = {str(p): sha(p) for p in inputs}
     ready = {'input_sha256': manifest, 'scenes': scenes}
+    if args.full_textures:
+        ready['explicit_engine_args_both_roles'] = ['-hwdbg', '33554432']
     if admissions:
         ready['diagnostic_admissions'] = admissions
     args.out.mkdir(parents=True, exist_ok=True)
@@ -148,6 +152,8 @@ def main():
               'diagnostic_seed': args.diagnostic_seed,
               'FPS_claimed': False, 'physical_PS2_tested': False,
               'shutdown_limit': 'Marker follows save and sound/graphics shutdown; later W_Shutdown/PS2Boot_Exit unproved.'}
+    if args.full_textures:
+        report['explicit_engine_args_both_roles'] = ['-hwdbg', '33554432']
     for scene in scenes:
         mapname, extra, scripted = SCENES[scene]
         for role, elf in elfs.items():
@@ -155,6 +161,8 @@ def main():
             run = args.out / 'runs' / name
             selected = fixtures if scripted else []
             engine_args = ['-singletics', '-loadprof', '-loadhash', '-astat', *extra]
+            if args.full_textures:
+                engine_args += ['-hwdbg', '33554432']
             if scripted:
                 engine_args += ['-file', *['host:/.srb2/' + target for _, target in selected]]
             engine_args += ['-vidshot', 'l20,l70,l140', '-renderer', 'Hardware']

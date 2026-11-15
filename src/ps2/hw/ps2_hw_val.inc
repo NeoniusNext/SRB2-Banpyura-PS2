@@ -642,6 +642,12 @@ static void val_gsreg(u32 addr, u64 d)
 				val_err(VE_IMGORDER, "TRXDIR written while %d qwords of the previous transfer are missing", VAL.img_left);
 			VAL.img_open = 0;
 			VAL.img_left = 0;
+#ifndef PS2_NOOPT_P4_BAND
+			if ((dir == 0 || dir == 2) && dpsm == PSM_T4 && ((dsax & 3u) || (rrw & 7u)))
+				val_err(VE_TRX, "PSMT4 transfer needs start X multiple of 4 and width multiple of 8 (X=%u W=%u)", dsax, rrw);
+			if (dir == 1 && dpsm == PSM_T4)
+				val_err(VE_TRX, "PSMT4 local-to-host transfer is unsupported by the GS");
+#endif
 			if ((dir == 0 || dir == 2) && bpp && rrw && rrh)
 			{
 				const u32 hi = val_end(dpsm, dbp, dbw, dsax, dsay, rrw, rrh);

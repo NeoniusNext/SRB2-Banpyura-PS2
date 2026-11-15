@@ -1,0 +1,148 @@
+{
+  "status": "Adopted in production working source; coordinator whole-game integration pending.",
+  "baseline": "604cfd150c5240142d8cb5367950b53d987916d1",
+  "activation": "-hwfulltex, equivalent to -hwdbg 33554432; all other eligibility constraints apply.",
+  "ordinary_planner_mode_VRAM_saving_claim": false,
+  "production_source_sha256": {
+    "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c",
+    "src/ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
+    "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+    "src/ps2/hw/ps2_hw_tex.inc": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+    "src/ps2/hw/ps2_hw_val.inc": "df958312ebe4becda71a502ea4a7eadfd06d5789c0336e929e475bbe8c81ac6a",
+    "src/ps2/hw/ps2_hw_vu1.inc": "254fd78f6c88bd70b5a96ea2994d0b6dbc8cd4e83af2c90fdf62933b69ab82c2",
+    "src/ps2/hw/ps2_hwd.c": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72",
+    "src/ps2/hw/vu1/ps2_hw_vu1.vsm": "c953a47b08bcbdea3ea64b97cb4ef48bba85a7b39ee6fe960eb953add2817d29"
+  },
+  "host": {
+    "report": "build/nov15-opt16/p4-production-host-v1/report.json",
+    "report_sha256": "4d32619faa1d059a4e42a2c7d63fcb6da0e945c6e9fd8e519d72faf34e5056fc",
+    "results": {
+      "plain": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      },
+      "sanitize": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      }
+    },
+    "detected_negative_controls": 6,
+    "private_record_bytes": 140,
+    "private_record_growth_bytes": 0,
+    "all_previous_offsets_and_widths_preserved": true,
+    "separate_planner_proof_sha256": "8cc8ac93dd29dae6e960110440b79667a1d7c9047cd374e147a142a2080d6257"
+  },
+  "native": {
+    "directory": "build/nov15-opt16/p4-native-target-v4",
+    "ELF_sha256": "1127c7b7bc8ae422cf50e108c214174c3869c3bd3d304b82d267c90d002927ed",
+    "ELF_bytes": 2252864,
+    "compile_diagnostics": 0,
+    "link_diagnostics_except_known_sdk_abi_warning": 0,
+    "variants": {
+      "ct32": {
+        "wrapper_report": "build/nov15-opt16/p4-native-target-v4/hwt-p4-ct32.json",
+        "wrapper_report_sha256": "517b552ee93dccc6673949e20cf1a9a95db767ab1750832756d7c6521c4b3632",
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=447 failures=0"
+        ],
+        "exact_complete_frame_pairs": 74,
+        "compared_pixels": 5304320,
+        "cropped_pixels": 0,
+        "tolerance": 0
+      },
+      "ct16": {
+        "wrapper_report": "build/nov15-opt16/p4-native-target-v4/hwt-p4-ct16.json",
+        "wrapper_report_sha256": "c65bc92e8bcd513863bf87656a4f4b7caeddf539476b1b0b71197a3ef7970fea",
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=447 failures=0"
+        ],
+        "exact_complete_frame_pairs": 74,
+        "compared_pixels": 5304320,
+        "cropped_pixels": 0,
+        "tolerance": 0
+      }
+    }
+  },
+  "native_allocations": [
+    {
+      "size": [
+        512,
+        512
+      ],
+      "T8_bytes": 262144,
+      "T4_bytes": 131072,
+      "saved_usable_VRAM_bytes": 131072
+    },
+    {
+      "size": [
+        1024,
+        512
+      ],
+      "T8_bytes": 524288,
+      "T4_bytes": 262144,
+      "saved_usable_VRAM_bytes": 262144
+    },
+    {
+      "size": [
+        1024,
+        1024
+      ],
+      "T8_bytes": 1048576,
+      "T4_bytes": 524288,
+      "saved_usable_VRAM_bytes": 524288
+    }
+  ],
+  "limits": "Component EE/VU/GS tests in PCSX2, not full-game LTO execution or physical-console timing. Per-image savings in the same explicit full-size mode, not simultaneous stock residency or default-mode savings."
+}

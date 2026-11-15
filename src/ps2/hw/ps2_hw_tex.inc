@@ -193,6 +193,12 @@ static u32 tex_footprint(int psm, u32 w, u32 h, u32 tbw)
 	h--;
 	switch (psm)
 	{
+#ifndef PS2_NOOPT_P4_BAND
+		case PSM_T4:
+			lastpage = (h >> 7) * ((tbw + 1) >> 1) + (w >> 7);
+			maxblk = blk_16[(h >> 4) & 7][(w >> 5) & 3];
+			break;
+#endif
 		case PSM_T8:
 			lastpage = (h >> 6) * ((tbw + 1) >> 1) + (w >> 7);
 			maxblk = blk_32_8[(h >> 4) & 3][(w >> 4) & 7];
@@ -999,6 +1005,24 @@ static int rgba_to_indices(const u32 *src, u32 n, u8 *dst, int *holes, int *uses
 	return 1;
 }
 
+#ifndef PS2_NOOPT_P4_BAND
+// Exact P8 eligibility: the low nibble plus one unchanged aligned CLUT band
+// represents every source index. A partial scan never publishes a band.
+static int p4_band(const u8 *src, u32 n, u32 *band)
+{
+	u32 i, high;
+
+	if (!n)
+		return 0;
+	high = src[0] & 0xF0u;
+	for (i = 1; i < n; i++)
+		if ((src[i] & 0xF0u) != high)
+			return 0;
+	*band = high >> 4;
+	return 1;
+}
+#endif
+
 // write rows [r0, r0+nr) of the stored texture: W2 pixels per row of bpp bytes, produced by fill(row, dst)
 typedef void (*rowfill_t)(void *ctx, u32 row, u8 *dst);
 
@@ -1013,6 +1037,10 @@ static inline void vram_guard(u32 blk, int psm, u32 W2, u32 H2, u32 tbw, const c
 static void upload_bands(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, u32 bpp, rowfill_t fill, void *ctx)
 {
 	u32 rowbytes = W2 * bpp;
+#ifndef PS2_NOOPT_P4_BAND
+	if (psm == PSM_T4)
+		rowbytes = W2 >> 1; // eligibility requires legal RRW: a multiple of eight texels
+#endif
 
 	vram_guard(blk, (int)psm, W2, H2, tbw, "texture upload outside the texture pool of the GS memory");
 	u32 band = (65536u / rowbytes) & ~15u; // rows per band, multiple of 16
@@ -1384,6 +1412,20 @@ static void fill_idx(void *ctx, u32 row, u8 *dst)
 	} while (--remaining);
 }
 
+#ifndef PS2_NOOPT_P4_BAND
+// Packed directly into the existing DMA ring. No second persistent image and
+// no new scratch allocation; legal even transfer rows start a fresh byte.
+static void fill_p4(void *ctx, u32 row, u8 *dst)
+{
+	const fillctx_t *c = ctx;
+	const u8 *src = c->src + (size_t)src_row(c, row) * c->sw;
+	u32 x;
+
+	for (x = 0; x < c->W2; x += 2)
+		dst[x >> 1] = (u8)((src[src_col(c, x)] & 15u) | ((src[src_col(c, x + 1)] & 15u) << 4));
+}
+#endif
+
 // Gather the low byte of each of four 16-bit texels into a 32-bit word, preserving their order.
 static inline u32 ap88_gather(u64 v)
 {
@@ -1658,7 +1700,7 @@ static struct
 
 static void tx_note_upload(const GLMipmap_t *m, int psm, u32 nblk)
 {
-	u32 k = psm != PSM_T8 ? 3u : m->regen_kind == 1 ? 0u : m->regen_kind == 2 ? 1u : 2u;
+	u32 k = !psm_indexed(psm) ? 3u : m->regen_kind == 1 ? 0u : m->regen_kind == 2 ? 1u : 2u;
 	u32 h = (u32)(((uintptr_t)m >> 4) * 2654435761u) >> 21;
 
 	TX.up_n[k]++;
@@ -1978,6 +2020,11 @@ static int tex_upload(GLMipmap_t *m)
 	int lvdec = 0; // the stored texels are those of the cache entry of that level
 	int split = 0; // PS2-HW-70: the image has more than 1024 rows and is stored as two images (rows [0, H2) and the hb rows after them)
 	u32 hb = 0, nblkA = 0;
+	int store_psm;
+#ifndef PS2_NOOPT_P4_BAND
+	u32 csa = 0;
+	int can_p4 = 0;
+#endif
 
 	tex_fail_why = "ok";
 	zc_last = 0;
@@ -2161,6 +2208,19 @@ static int tex_upload(GLMipmap_t *m)
 			return NOREC;
 	}
 
+#ifndef PS2_NOOPT_P4_BAND
+	// Exact packing is confined to the explicitly selected full-size mode.
+	// Its frame/immediate planners are off and no cap or budget feeds back
+	// into stored levels. Only a complete original P8 source can enter here:
+	// DMA retirement cannot select a different non-associative mip source.
+	if (m->format == GL_TEXFMT_P_8 && shareable && H.pal_set && !has255
+		&& (m->flags & TF_WRAPXY) == TF_WRAPXY && n >= 2048u
+		&& sw <= 1024u && sh <= 1024u && !(sw & 7u)
+		&& !H.cap_adapt && !H.tex_cap_blocks && !cfg.tex_max_bytes
+		&& ps2hwd_dbg_flags == HWDBG_NOPLAN && !lv && !lvdec && !dsrc)
+		can_p4 = p4_band(data, n, &csa);
+#endif
+
 	// The GS takes at most 1024 texels per axis, and the pool of the PS2 is a fifth of what the engine's textures can add up to
 	// in a frame: a texture over the limit (or over the footprint cap in force) is stored decimated by powers of two (PS2-HW-20).
 	// OPT8 (PS2-HW-24): the cap is chosen by tex_cap_control from the working set, and a texture that does not fit the pool even
@@ -2197,7 +2257,13 @@ static int tex_upload(GLMipmap_t *m)
 			hb = sh - tex_split_rows;
 		}
 		tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
-		nblkA = tex_footprint(psm, W2, H2, tbw);
+		store_psm = psm;
+#ifndef PS2_NOOPT_P4_BAND
+		if (can_p4 && !split && !dx && !dy && W2 == sw && H2 == sh && !(W2 & 7u)
+			&& tex_footprint(PSM_T4, W2, H2, tbw) < tex_footprint(psm, W2, H2, tbw))
+			store_psm = PSM_T4;
+#endif
+		nblkA = tex_footprint(store_psm, W2, H2, tbw);
 		if (split)
 			nblkA = (nblkA + PAGE_BLOCKS - 1) & ~(u32)(PAGE_BLOCKS - 1); // the second piece starts on a page (the first one owns the few blocks in between)
 		nblk = nblkA;
@@ -2215,6 +2281,14 @@ static int tex_upload(GLMipmap_t *m)
 		blk = vram_alloc_evicting(nblk, align, nblk >= BIG_IMAGE_BLOCKS ? 1 : 0); // PS2-HW-39: big images from the top of the pool, small ones from the bottom: they do not cut each other's room into pieces
 		if (blk)
 			break;
+#ifndef PS2_NOOPT_P4_BAND
+		if (store_psm == PSM_T4)
+		{
+			// Retry the complete original T8 allocation and failure policy.
+			can_p4 = 0;
+			continue;
+		}
+#endif
 		if (!H.cap_adapt || H.cap_idx >= NCAPS - 1)
 		{
 			tex_fail_why = "no VRAM block (pool)";
@@ -2359,7 +2433,7 @@ static int tex_upload(GLMipmap_t *m)
 		data = (const u8 *)p;
 		c->src = data;
 	}
-	if (dce && fill == fill_idx && psm == PSM_T8 && !c->dx && !c->dy && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15))
+	if (dce && fill == fill_idx && psm == PSM_T8 && store_psm == PSM_T8 && !c->dx && !c->dy && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15))
 	{
 		// PS2-HW-32: the texels go by DMA reference, from the cache entry (locked until the DMA has read it)
 		rel_room(n);
@@ -2376,7 +2450,22 @@ static int tex_upload(GLMipmap_t *m)
 	}
 	else
 	{
-		upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
+#ifndef PS2_NOOPT_P4_BAND
+		if (store_psm == PSM_T4)
+		{
+			// The source remains the existing P8 cache block. Packet construction
+			// consumes it synchronously; queued DMA sees only the packed ring.
+			if (dce && dce->busy == 255)
+				dma_fence(); // leave one reference count for this synchronous read
+			if (dce && !dce->busy++)
+				HWR_PS2_LockData(dce->p);
+			upload_bands(blk, tbw, store_psm, W2, H2, 0, fill_p4, c);
+			if (dce && !--dce->busy)
+				HWR_PS2_UnlockData(dce->p);
+		}
+		else
+#endif
+			upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
 		if (split)
 		{
 			c->src = data + (size_t)H2 * sw;
@@ -2406,7 +2495,10 @@ static int tex_upload(GLMipmap_t *m)
 		r->tw = (u8)log2_u32(W2);
 		r->th = (u8)log2_u32(H2);
 		r->tbw = (u8)tbw;
-		r->psm = (u8)psm;
+		r->psm = (u8)store_psm;
+#ifndef PS2_NOOPT_P4_BAND
+		r->csa = store_psm == PSM_T4 ? (u8)csa : 0;
+#endif
 		r->clut = (u8)clut;
 		r->wrapx = (m->flags & TF_WRAPX) ? 1 : 0;
 		r->wrapy = (m->flags & TF_WRAPY) ? 1 : 0;
@@ -2476,9 +2568,9 @@ static int tex_upload(GLMipmap_t *m)
 	}
 	m->downloaded = (UINT32)(ri + 1);
 	H.st.uploads++;
-	H.st.upload_bytes += W2 * (H2 + hb) * bpp;
+	H.st.upload_bytes += store_psm == PSM_T4 ? (W2 * H2) >> 1 : W2 * (H2 + hb) * bpp;
 	H.st.cyc_tex += cyc() - t0;
-	tx_note_upload(m, psm, nblk);
+	tx_note_upload(m, store_psm, nblk);
 	if (dlock && dlock->p && !dlock->busy)
 		HWR_PS2_UnlockData(dlock->p); // a zero-copy upload keeps the lock (busy) until its DMA has read the texels
 	return ri;

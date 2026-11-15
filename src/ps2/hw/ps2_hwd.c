@@ -90,6 +90,32 @@ static int trace_frame = -1;
 
 void PS2HWD_SetTrace(int frame, int dbg_flags)
 {
+#ifndef PS2_NOOPT_P4_BAND
+	if (H.up && ((ps2hwd_dbg_flags ^ dbg_flags) & HWDBG_NOPLAN))
+	{
+		int i;
+
+		// Consume every old draw/reference before changing its quality mode.
+		ov_flush_all();
+		dma_fence();
+		H.imm_tex = NULL;
+		for (i = 0; i < plan_n; i++)
+			if (plan_info[i].key)
+				plan_info[i].key->ps2_planfr = 0;
+		plan_reset();
+		// A newly selected quality mode starts with the initialization policy,
+		// not reserve/thrash history measured with the preceding format set.
+		H.plan_reserve = H.unplanned_cur = H.plan_last = H.plan_exact = 0;
+		H.plan_pct = H.plan_calm = H.thrash_n = H.thrash_blk = 0;
+		for (i = 0; i < H.rec_n; i++)
+			if (H.rec[i].used)
+			{
+				H.rec[i].imgws = 0; // existing T8 images may recharge the new mode's reserve this frame
+				if (H.rec[i].psm == PSM_T4)
+					tex_drop(img_of(i), 0); // owners and every plain/keyed view
+			}
+	}
+#endif
 	trace_frame = frame;
 	ps2hwd_dbg_flags = dbg_flags;
 }
@@ -326,6 +352,11 @@ boolean PS2HWD_Init(void)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	if (M_CheckParm("-hwfulltex"))
+	{
+		ps2hwd_dbg_flags |= HWDBG_NOPLAN; // explicit full-size mode; default planning stays on
+		CONS_Printf("HWD full-size textures selected (-hwfulltex = -hwdbg 33554432)\n");
+	}
 	plan_nofid = 0;
 	if (M_CheckParm("-hwfid") && M_IsNextParm())
 		plan_nofid = atoi(M_GetNextParm()) != 0; // PS2-HW-443: 1 = no fidelity pass in the frame plan (the images stay at the level where a texel is a pixel)
@@ -1146,7 +1177,7 @@ int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int s
 	{
 		const texrec_t *r = &H.rec[m->downloaded - 1];
 
-		return r->used && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2) && !r->screen;
+		return r->used && psm_indexed(r->psm) && (r->clut == 1 || r->clut == 2) && !r->screen;
 	}
 	return 0;
 }

@@ -41,12 +41,22 @@
 #define PSM_CT16 0x02
 #define PSM_CT16S 0x0A
 #define PSM_T8 0x13
+#define PSM_T4 0x14
 #define PSM_Z24 0x31
 #define PSM_Z32 0x30
 // ... and in FRAME/ZBUF (the Z formats there are 4 bits)
 #define ZPSM_32 0x00
 #define ZPSM_24 0x01
 #define ZPSM_16S 0x0A
+
+static inline int psm_indexed(int psm)
+{
+	return psm == PSM_T8
+#ifndef PS2_NOOPT_P4_BAND
+		|| psm == PSM_T4
+#endif
+		;
+}
 
 // GS memory
 #define VRAM_BLOCKS 16384 // 4 MiB in 256-byte blocks
@@ -225,7 +235,7 @@ typedef struct
 	u16 sw, sh; // OPT8: the engine's size of the texture (the stored size is w x h = sw >> dx, sh >> dy)
 	u8 dx, dy; // decimation shifts of the stored texture
 	u8 capi; // footprint cap index (CAPS[]) the stored plan was made for
-	u8 pad2;
+	u8 csa; // PSMT4: original aligned 16-entry palette band; zero for other formats
 	u16 fp[NCAPS]; // footprint in blocks the texture would take under each cap (working set prediction)
 	// OPT9 (PS2-HW-30): one VRAM image for the CLUT variants of a map texture / flat (chroma keyed or not): the variants are separate records
 	// (own owner, clut, flags) and only the first one owns the blocks.
@@ -359,7 +369,7 @@ static struct
 	u32 pal[256]; // GS CLUT entries, 0x00BBGGRR, no alpha, in index order
 	int pal_set;
 	u32 pal_gen; // bumped by every palette change; CLUT variants older than this are rebuilt
-	u32 clut_loaded; // block of the CLUT in the GS CLUT buffer, 0 = unknown
+	u32 clut_loaded; // all 256 CT32 CSM1 entries of this block are in the single GS CLUT buffer; 0 = unknown
 
 	// engine view
 	int scr_w, scr_h;

@@ -18,6 +18,7 @@
 static int plan_active;
 
 #define PLAN_MAX 256 // images of one frame's plan (more are stored at full size)
+#define PLAN_LEVEL_MAX 5 // plan_lmax bounds every entry's level and coarsening cap
 #define PLAN_BINS 32 // texel size histogram: 4 bins per octave, 2^-5 .. 2^3 pixels
 #define PLAN_EPS 0.02f // share of an image's visible area that may be magnified by more than the plan allows
 #define PLAN_PCT_MAX 75u // the planned images of a frame may take this share of the pool (per cent; the rest is for sprites, patches, the small textures)
@@ -725,7 +726,7 @@ void PS2HWD_PlanBlock(GLMipmap_t *m, const void *vb)
 // the most levels an image of this size may be reduced by: every axis keeps at least 16 texels and the size divides
 static int plan_lmax(const GLMipmap_t *m)
 {
-	int lv = 5;
+	int lv = PLAN_LEVEL_MAX;
 
 	while (lv > 0 && ((m->width >> lv) < 16 || (m->height >> lv) < 16 || (m->width & ((1u << lv) - 1)) || (m->height & ((1u << lv) - 1))))
 		lv--;
@@ -819,7 +820,7 @@ void PS2HWD_PlanEnd(void)
 	static float tot[ENT_MAX];
 	static u8 lx[ENT_MAX], cap[ENT_MAX];
 	static u32 npl[ENT_MAX];
-	static u32 blk_l[ENT_MAX][8]; // blocks of an entry at level l (filled for lx..cap + 1 when the plan is over budget)
+	static u32 blk_l[ENT_MAX][PLAN_LEVEL_MAX + 1]; // only lx..cap are read; lx + 1 is used only while lx < cap
 	u32 budget, sum = 0, exact_sum;
 	int i, n = 0, step;
 
@@ -892,7 +893,7 @@ void PS2HWD_PlanEnd(void)
 		{
 			int l;
 
-			for (l = lx[i]; l <= cap[i] + 1 && l < 8; l++)
+			for (l = lx[i]; l <= cap[i]; l++)
 				blk_l[i][l] = plan_blocks(key[i], l);
 		}
 	}
@@ -995,6 +996,8 @@ static u32 tex_want(const GLMipmap_t *m, int *visible)
 	const GLMipmap_t *k = m->ps2_twin ? m->ps2_twin : m;
 
 	*visible = 1;
+	if (ps2hwd_dbg_flags & HWDBG_NOPLAN)
+		return 0; // full-size mode also rejects any stale same-frame hint
 	if (imm_level >= 0)
 		return (u32)imm_level;
 	if (k->ps2_planfr != H.frame_no + 1 || batch_phase != 2 || k->ps2_pi == 0xFFFFu)

@@ -70,6 +70,8 @@ def main():
     parser.add_argument('--seed', type=lambda value: int(value, 0), default=0x01b2d3f5)
     parser.add_argument('--frames', type=int, default=350)
     parser.add_argument('--map', default='MAP02')
+    parser.add_argument('--full-textures', action='store_true',
+                        help='Explicit full-size mode in BOTH roles: -hwdbg 33554432; strict stream/memory gates are retained')
     parser.add_argument('--analyze-only', action='store_true')
     args = parser.parse_args()
     args.out = args.out.resolve()
@@ -87,6 +89,8 @@ def main():
     manifest = {str(path): sha(path) for path in inputs}
     ready = {'admissions': admissions, 'input_sha256': manifest,
              'map': args.map, 'frames': args.frames, 'seed': args.seed}
+    if args.full_textures:
+        ready['explicit_engine_args_both_roles'] = ['-hwdbg', '33554432']
     args.out.mkdir(parents=True, exist_ok=True)
     readiness = args.out / 'readiness.json'
     if args.analyze_only:
@@ -98,10 +102,14 @@ def main():
         readiness.write_text(json.dumps(ready, indent=2) + '\n')
     report = {'runs': {}, 'errors': [], 'FPS_claimed': False, 'physical_PS2_tested': False,
               'observer': 'con_hudlines 0; existing memory/profiler/log observers in both runs'}
+    if args.full_textures:
+        report['explicit_engine_args_both_roles'] = ['-hwdbg', '33554432']
     for role, elf in elfs.items():
         engine_args = ['-singletics', '-keepspawn', '-loadprof', '-loadhash', '-zck', '-zheap', '35', '-zstack',
                        '-zquit', str(args.frames), '-astat', '-renderer', 'Hardware', '-ps2prof',
                        '-hwfb', '-hwstats', '35', '-hwpolyhash', '-zspill']
+        if args.full_textures:
+            engine_args += ['-hwdbg', '33554432']
         command = [sys.executable, '-B', str(TOOLS / 'opt_run.py'), '--name', role,
                    '--elf', str(elf), '--ram', '32', '--pak', str(args.pak.resolve()),
                    '--out', str(args.out / 'runs'), '--map', args.map, '--timeout', '300',
