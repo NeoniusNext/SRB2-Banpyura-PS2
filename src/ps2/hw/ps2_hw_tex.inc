@@ -1427,7 +1427,11 @@ typedef struct
 	u32 dx, dy; // the stored texture takes every (1 << dx)-th column / (1 << dy)-th row of the source (PS2-HW-20); 0 = all of them
 	int mode; // fill-specific
 	int holes;
+#ifdef HWR_PS2_PACKED_PATCHES
+	const GLMipmap_t *patch; // compact AP88 source; occupies the old EE padding word
+#else
 	u8 pad[4];
+#endif
 } fillctx_t;
 
 // Without decimation uploads preserve source rows and columns exactly. A decimated texture (dx/dy > 0) keeps the texel at the centre of
@@ -1628,6 +1632,64 @@ static void fill_ap88_ct32(void *ctx, u32 row, u8 *dst)
 		d[x] = H.pal[p[0]] | (a8_to_gs(p[1]) << 24);
 	}
 }
+
+#ifdef HWR_PS2_PACKED_PATCHES
+static void fill_patch8(void *ctx, u32 row, u8 *dst)
+{
+	const fillctx_t *c = ctx;
+	const GLMipmap_t *m = c->patch;
+	const u32 sy = src_row(c, row);
+	u32 x;
+
+	if (c->mode || (m->ps2_cpu & HWR_PS2_CPU_HOLES255))
+	{
+		u32 copied = 0;
+
+		if (sy < m->ps2_uh)
+		{
+			const u8 *src = (const u8 *)m->data + (size_t)sy * m->ps2_uw;
+			u32 sx = (1u << c->dx) >> 1;
+
+			if (sx < m->ps2_uw)
+			{
+				const u32 step = 1u << c->dx;
+				const u32 valid = (m->ps2_uw - sx + step - 1u) >> c->dx;
+
+				copied = c->W2 < valid ? c->W2 : valid;
+				if (!c->dx)
+					memcpy(dst, src, copied);
+				else
+					for (x = 0; x < copied; x++, sx += step)
+						dst[x] = src[sx];
+			}
+		}
+		if (copied < c->W2)
+			memset(dst + copied, 255, c->W2 - copied);
+		return;
+	}
+	for (x = 0; x < c->W2; x++)
+	{
+		const u16 pixel = HWR_PS2_ReadAP88(m, src_col(c, x), sy);
+
+		dst[x] = (!c->mode && !(pixel >> 8)) ? 255 : (u8)pixel;
+	}
+}
+
+static void fill_patch32(void *ctx, u32 row, u8 *dst)
+{
+	const fillctx_t *c = ctx;
+	const u32 sy = src_row(c, row);
+	u32 *out = (u32 *)(void *)dst;
+	u32 x;
+
+	for (x = 0; x < c->W2; x++)
+	{
+		const u16 pixel = HWR_PS2_ReadAP88(c->patch, src_col(c, x), sy);
+
+		out[x] = H.pal[pixel & 255u] | (a8_to_gs(pixel >> 8) << 24);
+	}
+}
+#endif
 
 // RGBA -> CT32 with the GS alpha scale (0x80 = opaque)
 static void fill_ct32(void *ctx, u32 row, u8 *dst)
@@ -2100,6 +2162,39 @@ static void ap88_scan(const u16 *d16, u32 sw, u32 cw, u32 ch, u32 pal255, int fa
 	}
 }
 
+#ifdef HWR_PS2_PACKED_PATCHES
+static void ap88_scan_patch(const GLMipmap_t *m, u32 cw, u32 ch, u32 pal255, int *hole, int *opaque255, int *hole_rgb)
+{
+	u32 y, x;
+
+	// tex_upload scans before tex_plan: the full real rectangle when cropped,
+	// otherwise the whole logical rectangle including its transparent border.
+	// These cached facts describe source bytes, independent of palette epochs.
+	if (cw >= m->ps2_uw && ch >= m->ps2_uh
+		&& ((m->ps2_cpu & HWR_PS2_CPU_HOLES255) || !(m->ps2_cpu & HWR_PS2_CPU_HAS_HOLES)))
+	{
+		*hole |= (m->ps2_cpu & HWR_PS2_CPU_HAS_HOLES) != 0 || cw > m->ps2_uw || ch > m->ps2_uh;
+		*opaque255 |= (m->ps2_cpu & HWR_PS2_CPU_OPAQUE255) != 0;
+		return;
+	}
+	for (y = 0; y < ch; y++)
+		for (x = 0; x < cw; x++)
+		{
+			const u16 pixel = HWR_PS2_ReadAP88(m, x, y);
+			const u32 index = pixel & 255u;
+
+			if (pixel >> 8)
+				*opaque255 |= index == 255u;
+			else
+			{
+				*hole = 1;
+				if (index != 255u && H.pal[index] != pal255)
+					*hole_rgb = 1;
+			}
+		}
+}
+#endif
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -2168,6 +2263,9 @@ static int tex_upload(GLMipmap_t *m)
 	}
 
 	memset(c, 0, sizeof *c);
+#ifdef HWR_PS2_PACKED_PATCHES
+	c->patch = HWR_PS2_IsPackedPatch(m) ? m : NULL;
+#endif
 	n = sw * sh;
 	// PS2-HW-39: a patch (sprite) is a block of the next power of two size around the real picture (a 100 x 150 sprite is 128 x 256): only the picture
 	// is stored (texture coordinates are scaled by the size of the block, clamping at the picture's edge), a quarter to a half of the blocks and bytes
@@ -2193,10 +2291,16 @@ static int tex_upload(GLMipmap_t *m)
 				{
 					has255 = scan_has_ff(data, (sw >> lv) * (sh >> lv)); // the stored texels are those of the level (not cached: the full size may differ)
 				}
+				else if (dsrc)
+				{
+					// A cached mip can lose index 255 even when the original has holes.
+					// Its classification belongs to this upload, never to the full source.
+					has255 = scan_has_ff(data, ssw * ssh);
+				}
 				else
 				{
 					if (!m->ps2_h255)
-						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, dsrc ? ssw * ssh : n) ? 2 : 1);
+						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, n) ? 2 : 1);
 					has255 = m->ps2_h255 == 2;
 				}
 				if (clut == 2 && !has255)
@@ -2219,6 +2323,10 @@ static int tex_upload(GLMipmap_t *m)
 
 			psm = PSM_T8;
 			fill = fill_ap88;
+#ifdef HWR_PS2_PACKED_PATCHES
+			if (c->patch)
+				fill = fill_patch8;
+#endif
 			if (m->flags & TF_CHROMAKEYED) // index 255 is the hole, the alpha byte is ignored
 			{
 				u32 y, x;
@@ -2227,13 +2335,22 @@ static int tex_upload(GLMipmap_t *m)
 				c->mode = 1;
 				for (y = 0; y < ch && !holes; y++)
 					for (x = 0; x < cw; x++)
-						if (data[((size_t)y * sw + x) * 2] == 255)
+						if (
+#ifdef HWR_PS2_PACKED_PATCHES
+							c->patch ? (HWR_PS2_ReadAP88(m, x, y) & 255u) == 255u :
+#endif
+							data[((size_t)y * sw + x) * 2] == 255)
 						{
 							holes = 1;
 							break;
 						}
 				break;
 			}
+#ifdef HWR_PS2_PACKED_PATCHES
+			if (c->patch)
+				ap88_scan_patch(m, cw, ch, H.pal[255], &hole, &opaque255, &hole_rgb);
+			else
+#endif
 			{
 				// one pass over the stored part (the real picture of a patch): binary alpha (0 / 255), holes, an opaque texel of index 255, holes whose colour is not
 				// the hole colour of the palette
@@ -2265,6 +2382,10 @@ static int tex_upload(GLMipmap_t *m)
 				clut = 0;
 				baked = 1;
 				fill = fill_ap88_ct32;
+#ifdef HWR_PS2_PACKED_PATCHES
+				if (c->patch)
+					fill = fill_patch32;
+#endif
 			}
 			else
 			{
@@ -2480,6 +2601,8 @@ static int tex_upload(GLMipmap_t *m)
 		{
 			lvdec = 1;
 			c->dx = c->dy = 0; // the texels are decimated already
+			ssw = W2;
+			ssh = H2; // packed cached rows have the stored level's stride
 		}
 		TX.lvl_up[lv > 5 ? 5 : lv]++;
 	}

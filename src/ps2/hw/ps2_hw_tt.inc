@@ -56,7 +56,26 @@ static void tt_capture(const GLMipmap_t *m)
 		TT.buf = b;
 		TT.cap = n;
 	}
-	memcpy(TT.buf, m->data, n);
+#ifdef HWR_PS2_PACKED_PATCHES
+	if (HWR_PS2_IsPackedPatch(m))
+	{
+		u32 y, x;
+
+		// Keep the existing independent logical AP88 snapshot. The source may
+		// be purged after capture; tt_expect never follows it again.
+		for (y = 0; y < m->height; y++)
+			for (x = 0; x < m->width; x++)
+			{
+				const u16 pixel = HWR_PS2_ReadAP88(m, x, y);
+				const size_t p = ((size_t)y * m->width + x) * 2u;
+
+				TT.buf[p] = (u8)pixel;
+				TT.buf[p + 1u] = (u8)(pixel >> 8);
+			}
+	}
+	else
+#endif
+		memcpy(TT.buf, m->data, n);
 	TT.w = m->width;
 	TT.h = m->height;
 	TT.bpp = bpp;

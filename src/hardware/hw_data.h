@@ -79,6 +79,7 @@ struct GLMipmap_s
 	UINT8                 ps2_h255 : 2; // 0 unknown, 1 absent, 2 present.
 	UINT8                 ps2_vis : 1; // At least one visible polygon.
 	UINT8                 ps2_drop : 3; // 0 none; reasons 1..5.
+	UINT8                 ps2_cpu; // Private patch source representation; consumes EE tail padding.
 #else
 	// for UpdateTexture
 	GLTextureFormat_t     format;
@@ -136,10 +137,47 @@ struct GLMipmap_s
 	UINT8                 ps2_nup, ps2_drop; // OPT12 HWDRV (PS2-HW-441): uploads of this texture so far (saturating) / why its VRAM image was dropped last (1 evicted, 2 upgrade, 3 downgrade, 4 cap, 5 other)
 	UINT8                 ps2_cost; // OPT12 HWDRV (PS2-HW-442): what the last make-again of its data cost, in units of 2^18 cycles (0 = never made again, 255 = more)
 #endif
+#ifdef PS2
+	UINT8                 ps2_cpu; // Private patch source representation; consumes EE tail padding.
+#endif
 #endif
 #endif
 };
 typedef struct GLMipmap_s GLMipmap_t;
+
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PATCH_PIXELS)
+#define HWR_PS2_PACKED_PATCHES
+#define HWR_PS2_CPU_PATCH 1u
+#define HWR_PS2_CPU_HOLES255 2u
+#define HWR_PS2_CPU_HAS_HOLES 4u
+#define HWR_PS2_CPU_OPAQUE255 8u
+
+static inline boolean HWR_PS2_IsPackedPatch(const GLMipmap_t *m)
+{
+	return (m->ps2_cpu & HWR_PS2_CPU_PATCH) && m->format == GL_TEXFMT_AP_88
+		&& !m->regen_kind && m->ps2_uw && m->ps2_uh
+		&& m->ps2_uw <= m->width && m->ps2_uh <= m->height;
+}
+
+// Logical AP88 coordinates remain the power-of-two mipmap coordinates.
+// Compact sources store the real rectangle, then one coverage bit per texel.
+// Index and alpha outside that rectangle are the original 0x00ff background.
+static inline UINT16 HWR_PS2_ReadAP88(const GLMipmap_t *m, UINT32 x, UINT32 y)
+{
+	const UINT8 *data = m->data;
+	size_t p;
+
+	if (HWR_PS2_IsPackedPatch(m))
+	{
+		if (x >= m->ps2_uw || y >= m->ps2_uh)
+			return 0x00ffu;
+		p = (size_t)y * m->ps2_uw + x;
+		return (UINT16)(data[p] | ((data[(size_t)m->ps2_uw * m->ps2_uh + (p >> 3)] & (1u << (p & 7u))) ? 0xff00u : 0u));
+	}
+	p = ((size_t)y * m->width + x) * 2u;
+	return (UINT16)(data[p] | ((UINT16)data[p + 1u] << 8));
+}
+#endif
 
 
 //

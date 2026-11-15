@@ -1,0 +1,499 @@
+--- a/src/hardware/hw_cache.c
++++ b/src/hardware/hw_cache.c
+@@ -565,6 +565,9 @@
+ 	UINT16 bu16 = ((0x00 <<8) | HWR_PATCHES_CHROMAKEY_COLORINDEX);
+ 	INT32 blocksize = (grMipmap->width * grMipmap->height);
+ 
++#if defined(PS2) && defined(PS2_PROFILE)
++	grMipmap->ps2_cpu = 0;
++#endif
+ 	bpp =  format2bpp(grMipmap->format);
+ #ifdef PS2
+ 	if (try)
+@@ -613,6 +616,149 @@
+ {
+ 	return MakeBlockEx(grMipmap, false);
+ }
++
++#ifdef HWR_PS2_PACKED_PATCHES
++// Only canonical binary-alpha patch columns can omit the AP88 alpha bytes and
++// power-of-two padding. Other formats and unusual post extents keep MakeBlock.
++static boolean HWR_PS2_CanPackPatch(const patch_t *patch, const GLMipmap_t *m)
++{
++	INT32 x;
++
++	if (!patch || m->regen_kind || m->format != GL_TEXFMT_AP_88
++		|| patch->width <= 0 || patch->height <= 0 || !patch->columns
++		|| m->ps2_uw != (UINT16)patch->width || m->ps2_uh != (UINT16)patch->height
++		|| m->ps2_uw > m->width || m->ps2_uh > m->height
++		|| (size_t)m->width * m->height > (size_t)0x7ffffff0u / 2u)
++		return false;
++	for (x = 0; x < patch->width; x++)
++	{
++		const column_t *column = &patch->columns[x];
++		unsigned i;
++
++		if (column->num_posts && !column->posts)
++			return false;
++		for (i = 0; i < column->num_posts; i++)
++		{
++			const post_t *post = &column->posts[i];
++
++			if (post->topdelta > (unsigned)patch->height
++				|| post->length > (unsigned)patch->height - post->topdelta
++				|| (post->length && !column->pixels))
++				return false;
++		}
++	}
++	return true;
++}
++
++static UINT8 *HWR_PS2_MakePatchBitmap(GLMipmap_t *m, const patch_t *patch, boolean try)
++{
++	if (HWR_PS2_CanPackPatch(patch, m))
++	{
++		const size_t pixels = (size_t)m->ps2_uw * m->ps2_uh;
++		const size_t bytes = pixels + ((pixels + 7u) >> 3);
++		const UINT8 *cm = m->colormap ? m->colormap->data : NULL;
++		UINT8 *block, *coverage;
++		UINT8 mode = HWR_PS2_CPU_PATCH | HWR_PS2_CPU_HOLES255;
++		size_t covered = 0, opaque255 = 0;
++		INT32 y0, x;
++
++		m->ps2_cpu = 0;
++		block = try ? Z_TryMallocAlign(bytes, PU_HWRCACHE, &m->data, sizeof(void *))
++			: Z_Malloc(bytes, PU_HWRCACHE, &m->data);
++		if (!block)
++			return NULL;
++		coverage = block + pixels;
++		memset(block, 255, pixels);
++		memset(coverage, 0, bytes - pixels);
++		// Keep the preceding banded drawer's source order and locality, without
++		// allocating an unpacked AP88 image or a separate staging buffer.
++		for (y0 = 0; y0 < patch->height; y0 += 64)
++		{
++			const INT32 y1 = y0 + 64 < patch->height ? y0 + 64 : patch->height;
++
++			for (x = 0; x < patch->width; x++)
++			{
++				const column_t *column = &patch->columns[x];
++				unsigned i;
++
++				for (i = 0; i < column->num_posts; i++)
++				{
++					const post_t *post = &column->posts[i];
++					const INT32 top = (INT32)post->topdelta;
++					const INT32 end = top + (INT32)post->length;
++					const INT32 ys = top > y0 ? top : y0;
++					const INT32 ye = end < y1 ? end : y1;
++					const UINT8 *src;
++					INT32 y;
++
++					if (ys >= ye)
++						continue;
++					src = column->pixels + post->data_offset + (size_t)(ys - top);
++					for (y = ys; y < ye; y++)
++					{
++						const UINT8 original = *src++;
++						const UINT8 index = cm ? cm[original] : original;
++						const size_t p = (size_t)y * m->ps2_uw + (size_t)x;
++						const UINT8 bit = (UINT8)(1u << (p & 7u));
++						const UINT8 previous = coverage[p >> 3];
++
++						// Maintain exact byte facts even when later posts overwrite
++						// a covered pixel. No palette RGB equivalence is cached.
++						if (previous & bit)
++						{
++							covered--;
++							opaque255 -= block[p] == 255;
++						}
++						block[p] = index;
++						if ((m->flags & TF_CHROMAKEYED) && original == 255)
++						{
++							coverage[p >> 3] = previous & (UINT8)~bit;
++							if (index != 255)
++								mode &= (UINT8)~HWR_PS2_CPU_HOLES255;
++						}
++						else
++						{
++							coverage[p >> 3] = previous | bit;
++							covered++;
++							opaque255 += index == 255;
++						}
++					}
++				}
++			}
++		}
++		if (covered < pixels)
++			mode |= HWR_PS2_CPU_HAS_HOLES;
++		else
++			mode |= HWR_PS2_CPU_HOLES255;
++		if (opaque255)
++			mode |= HWR_PS2_CPU_OPAQUE255;
++		m->ps2_cpu = mode;
++		return block;
++	}
++	if (!MakeBlockEx(m, try))
++		return NULL;
++	HWR_DrawPatchInCache(m, m->width, m->height, patch->width, patch->height, patch);
++	return m->data;
++}
++
++static boolean HWR_PS2_PatchBitmapMatches(const GLMipmap_t *m, const UINT8 *raw, size_t bytes)
++{
++	UINT32 y, x;
++
++	if (!(m->ps2_cpu & HWR_PS2_CPU_PATCH))
++		return !memcmp(raw, m->data, bytes);
++	for (y = 0; y < m->height; y++)
++		for (x = 0; x < m->width; x++)
++		{
++			const size_t p = ((size_t)y * m->width + x) * 2u;
++			const UINT16 pixel = HWR_PS2_ReadAP88(m, x, y);
++
++			if (raw[p] != (UINT8)pixel || raw[p + 1u] != (UINT8)(pixel >> 8))
++				return false;
++		}
++	return true;
++}
++#endif
+ 
+ #ifdef PS2
+ // PS2-140 (OPT10-S): the picture of one entry of a composite texture, built as HWR_GenerateTexture below builds it but for lumps of this size
+@@ -947,6 +1093,9 @@
+ 
+ 	Z_Free(grMipmap->data);
+ 	grMipmap->data = NULL;
++#if defined(PS2) && defined(PS2_PROFILE)
++	grMipmap->ps2_cpu = 0;
++#endif
+ 
+ 	if (makebitmap)
+ 	{
+@@ -955,7 +1104,11 @@
+ #endif
+ #ifdef PS2
+ 		// PS2-140: a patch of 64 KB and more as a texture (a 1024x512 one is 1 MB) that does not fit has no data: the driver skips the draws that need it
++#ifdef HWR_PS2_PACKED_PATCHES
++		if (!HWR_PS2_MakePatchBitmap(grMipmap, patch, (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format) >= HWR_TRYPATCH_MIN))
++#else
+ 		if (!MakeBlockEx(grMipmap, (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format) >= HWR_TRYPATCH_MIN))
++#endif
+ 		{
+ 			static unsigned ps2_nopatch_reports;
+ 
+@@ -967,10 +1120,12 @@
+ 		MakeBlock(grMipmap);
+ #endif
+ 
++#ifndef HWR_PS2_PACKED_PATCHES
+ 		HWR_DrawPatchInCache(grMipmap,
+ 			grMipmap->width, grMipmap->height,
+ 			patch->width, patch->height,
+ 			patch);
++#endif
+ #ifdef PS2_PROFILE
+ 		ps2hwt_mkpatch_n++;
+ 		ps2hwt_mkpatch_cyc += ps2hwt_now() - t0;
+@@ -987,7 +1142,12 @@
+ 			HWR_DrawPatchInCache(&chk, chk.width, chk.height, patch->width, patch->height, patch);
+ 			ps2_slow_composite = false;
+ 			checked++;
+-			if (!chk.data || memcmp(chk.data, grMipmap->data, bytes))
++			if (!chk.data ||
++#ifdef HWR_PS2_PACKED_PATCHES
++				!HWR_PS2_PatchBitmapMatches(grMipmap, chk.data, bytes))
++#else
++				memcmp(chk.data, grMipmap->data, bytes))
++#endif
+ 			{
+ 				bad++;
+ 				CONS_Printf("HWC patch composite MISMATCH %dx%d (patch %dx%d) colormap %d (%u of %u checked differ)\n", (int)grMipmap->width, (int)grMipmap->height, (int)patch->width, (int)patch->height,
+@@ -1169,6 +1329,9 @@
+ 		HWD.pfnDeleteTexture(grPatch->mipmap);
+ 	if (grPatch->mipmap->data)
+ 		Z_Free(grPatch->mipmap->data);
++#if defined(PS2) && defined(PS2_PROFILE)
++	grPatch->mipmap->ps2_cpu = 0;
++#endif
+ }
+ 
+ void HWR_FreeTexture(patch_t *patch)
+@@ -1731,9 +1894,14 @@
+ 	// pointer: the read-only search has finished before any pixels are made.
+ 	if (!patch || patch->width > m->width || patch->height > m->height)
+ 		return;
++#ifdef HWR_PS2_PACKED_PATCHES
++	if (!HWR_PS2_MakePatchBitmap(m, patch, true))
++		return;
++#else
+ 	if (!MakeBlockEx(m, true))
+ 		return;
+ 	HWR_DrawPatchInCache(m, m->width, m->height, patch->width, patch->height, patch);
++#endif
+ }
+ #endif
+ 
+--- a/src/hardware/hw_data.h
++++ b/src/hardware/hw_data.h
+@@ -79,6 +79,7 @@
+ 	UINT8                 ps2_h255 : 2; // 0 unknown, 1 absent, 2 present.
+ 	UINT8                 ps2_vis : 1; // At least one visible polygon.
+ 	UINT8                 ps2_drop : 3; // 0 none; reasons 1..5.
++	UINT8                 ps2_cpu; // Private patch source representation; consumes EE tail padding.
+ #else
+ 	// for UpdateTexture
+ 	GLTextureFormat_t     format;
+@@ -136,10 +137,47 @@
+ 	UINT8                 ps2_nup, ps2_drop; // OPT12 HWDRV (PS2-HW-441): uploads of this texture so far (saturating) / why its VRAM image was dropped last (1 evicted, 2 upgrade, 3 downgrade, 4 cap, 5 other)
+ 	UINT8                 ps2_cost; // OPT12 HWDRV (PS2-HW-442): what the last make-again of its data cost, in units of 2^18 cycles (0 = never made again, 255 = more)
+ #endif
++#ifdef PS2
++	UINT8                 ps2_cpu; // Private patch source representation; consumes EE tail padding.
++#endif
+ #endif
+ #endif
+ };
+ typedef struct GLMipmap_s GLMipmap_t;
++
++#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PATCH_PIXELS)
++#define HWR_PS2_PACKED_PATCHES
++#define HWR_PS2_CPU_PATCH 1u
++#define HWR_PS2_CPU_HOLES255 2u
++#define HWR_PS2_CPU_HAS_HOLES 4u
++#define HWR_PS2_CPU_OPAQUE255 8u
++
++static inline boolean HWR_PS2_IsPackedPatch(const GLMipmap_t *m)
++{
++	return (m->ps2_cpu & HWR_PS2_CPU_PATCH) && m->format == GL_TEXFMT_AP_88
++		&& !m->regen_kind && m->ps2_uw && m->ps2_uh
++		&& m->ps2_uw <= m->width && m->ps2_uh <= m->height;
++}
++
++// Logical AP88 coordinates remain the power-of-two mipmap coordinates.
++// Compact sources store the real rectangle, then one coverage bit per texel.
++// Index and alpha outside that rectangle are the original 0x00ff background.
++static inline UINT16 HWR_PS2_ReadAP88(const GLMipmap_t *m, UINT32 x, UINT32 y)
++{
++	const UINT8 *data = m->data;
++	size_t p;
++
++	if (HWR_PS2_IsPackedPatch(m))
++	{
++		if (x >= m->ps2_uw || y >= m->ps2_uh)
++			return 0x00ffu;
++		p = (size_t)y * m->ps2_uw + x;
++		return (UINT16)(data[p] | ((data[(size_t)m->ps2_uw * m->ps2_uh + (p >> 3)] & (1u << (p & 7u))) ? 0xff00u : 0u));
++	}
++	p = ((size_t)y * m->width + x) * 2u;
++	return (UINT16)(data[p] | ((UINT16)data[p + 1u] << 8));
++}
++#endif
+ 
+ 
+ //
+--- a/src/ps2/hw/ps2_hw_tex.inc
++++ b/src/ps2/hw/ps2_hw_tex.inc
+@@ -1427,7 +1427,11 @@
+ 	u32 dx, dy; // the stored texture takes every (1 << dx)-th column / (1 << dy)-th row of the source (PS2-HW-20); 0 = all of them
+ 	int mode; // fill-specific
+ 	int holes;
++#ifdef HWR_PS2_PACKED_PATCHES
++	const GLMipmap_t *patch; // compact AP88 source; occupies the old EE padding word
++#else
+ 	u8 pad[4];
++#endif
+ } fillctx_t;
+ 
+ // Without decimation uploads preserve source rows and columns exactly. A decimated texture (dx/dy > 0) keeps the texel at the centre of
+@@ -1629,6 +1633,64 @@
+ 	}
+ }
+ 
++#ifdef HWR_PS2_PACKED_PATCHES
++static void fill_patch8(void *ctx, u32 row, u8 *dst)
++{
++	const fillctx_t *c = ctx;
++	const GLMipmap_t *m = c->patch;
++	const u32 sy = src_row(c, row);
++	u32 x;
++
++	if (c->mode || (m->ps2_cpu & HWR_PS2_CPU_HOLES255))
++	{
++		u32 copied = 0;
++
++		if (sy < m->ps2_uh)
++		{
++			const u8 *src = (const u8 *)m->data + (size_t)sy * m->ps2_uw;
++			u32 sx = (1u << c->dx) >> 1;
++
++			if (sx < m->ps2_uw)
++			{
++				const u32 step = 1u << c->dx;
++				const u32 valid = (m->ps2_uw - sx + step - 1u) >> c->dx;
++
++				copied = c->W2 < valid ? c->W2 : valid;
++				if (!c->dx)
++					memcpy(dst, src, copied);
++				else
++					for (x = 0; x < copied; x++, sx += step)
++						dst[x] = src[sx];
++			}
++		}
++		if (copied < c->W2)
++			memset(dst + copied, 255, c->W2 - copied);
++		return;
++	}
++	for (x = 0; x < c->W2; x++)
++	{
++		const u16 pixel = HWR_PS2_ReadAP88(m, src_col(c, x), sy);
++
++		dst[x] = (!c->mode && !(pixel >> 8)) ? 255 : (u8)pixel;
++	}
++}
++
++static void fill_patch32(void *ctx, u32 row, u8 *dst)
++{
++	const fillctx_t *c = ctx;
++	const u32 sy = src_row(c, row);
++	u32 *out = (u32 *)(void *)dst;
++	u32 x;
++
++	for (x = 0; x < c->W2; x++)
++	{
++		const u16 pixel = HWR_PS2_ReadAP88(c->patch, src_col(c, x), sy);
++
++		out[x] = H.pal[pixel & 255u] | (a8_to_gs(pixel >> 8) << 24);
++	}
++}
++#endif
++
+ // RGBA -> CT32 with the GS alpha scale (0x80 = opaque)
+ static void fill_ct32(void *ctx, u32 row, u8 *dst)
+ {
+@@ -2099,6 +2161,39 @@
+ 		}
+ 	}
+ }
++
++#ifdef HWR_PS2_PACKED_PATCHES
++static void ap88_scan_patch(const GLMipmap_t *m, u32 cw, u32 ch, u32 pal255, int *hole, int *opaque255, int *hole_rgb)
++{
++	u32 y, x;
++
++	// tex_upload scans before tex_plan: the full real rectangle when cropped,
++	// otherwise the whole logical rectangle including its transparent border.
++	// These cached facts describe source bytes, independent of palette epochs.
++	if (cw >= m->ps2_uw && ch >= m->ps2_uh
++		&& ((m->ps2_cpu & HWR_PS2_CPU_HOLES255) || !(m->ps2_cpu & HWR_PS2_CPU_HAS_HOLES)))
++	{
++		*hole |= (m->ps2_cpu & HWR_PS2_CPU_HAS_HOLES) != 0 || cw > m->ps2_uw || ch > m->ps2_uh;
++		*opaque255 |= (m->ps2_cpu & HWR_PS2_CPU_OPAQUE255) != 0;
++		return;
++	}
++	for (y = 0; y < ch; y++)
++		for (x = 0; x < cw; x++)
++		{
++			const u16 pixel = HWR_PS2_ReadAP88(m, x, y);
++			const u32 index = pixel & 255u;
++
++			if (pixel >> 8)
++				*opaque255 |= index == 255u;
++			else
++			{
++				*hole = 1;
++				if (index != 255u && H.pal[index] != pal255)
++					*hole_rgb = 1;
++			}
++		}
++}
++#endif
+ 
+ // returns the record index or NOREC (nothing was changed then)
+ static int tex_upload(GLMipmap_t *m)
+@@ -2168,6 +2263,9 @@
+ 	}
+ 
+ 	memset(c, 0, sizeof *c);
++#ifdef HWR_PS2_PACKED_PATCHES
++	c->patch = HWR_PS2_IsPackedPatch(m) ? m : NULL;
++#endif
+ 	n = sw * sh;
+ 	// PS2-HW-39: a patch (sprite) is a block of the next power of two size around the real picture (a 100 x 150 sprite is 128 x 256): only the picture
+ 	// is stored (texture coordinates are scaled by the size of the block, clamping at the picture's edge), a quarter to a half of the blocks and bytes
+@@ -2219,6 +2317,10 @@
+ 
+ 			psm = PSM_T8;
+ 			fill = fill_ap88;
++#ifdef HWR_PS2_PACKED_PATCHES
++			if (c->patch)
++				fill = fill_patch8;
++#endif
+ 			if (m->flags & TF_CHROMAKEYED) // index 255 is the hole, the alpha byte is ignored
+ 			{
+ 				u32 y, x;
+@@ -2227,13 +2329,22 @@
+ 				c->mode = 1;
+ 				for (y = 0; y < ch && !holes; y++)
+ 					for (x = 0; x < cw; x++)
+-						if (data[((size_t)y * sw + x) * 2] == 255)
++						if (
++#ifdef HWR_PS2_PACKED_PATCHES
++							c->patch ? (HWR_PS2_ReadAP88(m, x, y) & 255u) == 255u :
++#endif
++							data[((size_t)y * sw + x) * 2] == 255)
+ 						{
+ 							holes = 1;
+ 							break;
+ 						}
+ 				break;
+ 			}
++#ifdef HWR_PS2_PACKED_PATCHES
++			if (c->patch)
++				ap88_scan_patch(m, cw, ch, H.pal[255], &hole, &opaque255, &hole_rgb);
++			else
++#endif
+ 			{
+ 				// one pass over the stored part (the real picture of a patch): binary alpha (0 / 255), holes, an opaque texel of index 255, holes whose colour is not
+ 				// the hole colour of the palette
+@@ -2265,6 +2376,10 @@
+ 				clut = 0;
+ 				baked = 1;
+ 				fill = fill_ap88_ct32;
++#ifdef HWR_PS2_PACKED_PATCHES
++				if (c->patch)
++					fill = fill_patch32;
++#endif
+ 			}
+ 			else
+ 			{
+--- a/src/ps2/hw/ps2_hw_tt.inc
++++ b/src/ps2/hw/ps2_hw_tt.inc
+@@ -56,7 +56,26 @@
+ 		TT.buf = b;
+ 		TT.cap = n;
+ 	}
+-	memcpy(TT.buf, m->data, n);
++#ifdef HWR_PS2_PACKED_PATCHES
++	if (HWR_PS2_IsPackedPatch(m))
++	{
++		u32 y, x;
++
++		// Keep the existing independent logical AP88 snapshot. The source may
++		// be purged after capture; tt_expect never follows it again.
++		for (y = 0; y < m->height; y++)
++			for (x = 0; x < m->width; x++)
++			{
++				const u16 pixel = HWR_PS2_ReadAP88(m, x, y);
++				const size_t p = ((size_t)y * m->width + x) * 2u;
++
++				TT.buf[p] = (u8)pixel;
++				TT.buf[p + 1u] = (u8)(pixel >> 8);
++			}
++	}
++	else
++#endif
++		memcpy(TT.buf, m->data, n);
+ 	TT.w = m->width;
+ 	TT.h = m->height;
+ 	TT.bpp = bpp;

@@ -1,0 +1,28 @@
+{
+  "baseline": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source",
+  "candidate": "/workspace/SRB2-Banpyura-PS2/build/nov17-sprite-cache/flags-source",
+  "total_snapshot_files": 637,
+  "changes": {
+    "src/hardware/hw_cache.c": {
+      "before": "2ff513529707134b55d2fc6e048ecbe9177d77c96e9e4cec22da5bc69fe9e542",
+      "after": "f60ebfdf390dad165b60f618521aee0cc2ac757083ef048462a8dfb817ec70f6"
+    },
+    "src/hardware/hw_data.h": {
+      "before": "ae19d9a3ce26bda9a11acb9fe52906712edb5b711b759cf9d070e63077c190a7",
+      "after": "63bb3b275a5d05a539ffff51f3f5724fe3e45b172dee12c76e84debd28a15701"
+    },
+    "src/ps2/hw/ps2_hw_tex.inc": {
+      "before": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+      "after": "fbd6d8d09f06ef38a26e3a0268af9d63637bb6ad202a912f3e2df80c3546e790"
+    },
+    "src/ps2/hw/ps2_hw_tt.inc": {
+      "before": "f047073526a99d73a851e69e185685c570a4799be45a6a627c24bdd6ac4c08fa",
+      "after": "a3adfaf0c27ed7147e6a02ee46b69d43f9578555e025b91c9d9839217c7fe799"
+    }
+  },
+  "diagnostic_optout": "PS2_NOOPT_PATCH_PIXELS",
+  "host_report": "/workspace/SRB2-Banpyura-PS2/build/nov17-sprite-cache/host-v4/report.json",
+  "native_run": "/workspace/SRB2-Banpyura-PS2/build/nov17-sprite-cache/native-v5/run-post.json",
+  "scope": "Isolated candidate only; awaiting coordinator approval before production apply.",
+  "total_src_files": 602
+}

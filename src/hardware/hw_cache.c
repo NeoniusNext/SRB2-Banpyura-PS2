@@ -565,6 +565,9 @@ static UINT8 *MakeBlockEx(GLMipmap_t *grMipmap, boolean try)
 	UINT16 bu16 = ((0x00 <<8) | HWR_PATCHES_CHROMAKEY_COLORINDEX);
 	INT32 blocksize = (grMipmap->width * grMipmap->height);
 
+#if defined(PS2) && defined(PS2_PROFILE)
+	grMipmap->ps2_cpu = 0;
+#endif
 	bpp =  format2bpp(grMipmap->format);
 #ifdef PS2
 	if (try)
@@ -613,6 +616,149 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
 {
 	return MakeBlockEx(grMipmap, false);
 }
+
+#ifdef HWR_PS2_PACKED_PATCHES
+// Only canonical binary-alpha patch columns can omit the AP88 alpha bytes and
+// power-of-two padding. Other formats and unusual post extents keep MakeBlock.
+static boolean HWR_PS2_CanPackPatch(const patch_t *patch, const GLMipmap_t *m)
+{
+	INT32 x;
+
+	if (!patch || m->regen_kind || m->format != GL_TEXFMT_AP_88
+		|| patch->width <= 0 || patch->height <= 0 || !patch->columns
+		|| m->ps2_uw != (UINT16)patch->width || m->ps2_uh != (UINT16)patch->height
+		|| m->ps2_uw > m->width || m->ps2_uh > m->height
+		|| (size_t)m->width * m->height > (size_t)0x7ffffff0u / 2u)
+		return false;
+	for (x = 0; x < patch->width; x++)
+	{
+		const column_t *column = &patch->columns[x];
+		unsigned i;
+
+		if (column->num_posts && !column->posts)
+			return false;
+		for (i = 0; i < column->num_posts; i++)
+		{
+			const post_t *post = &column->posts[i];
+
+			if (post->topdelta > (unsigned)patch->height
+				|| post->length > (unsigned)patch->height - post->topdelta
+				|| (post->length && !column->pixels))
+				return false;
+		}
+	}
+	return true;
+}
+
+static UINT8 *HWR_PS2_MakePatchBitmap(GLMipmap_t *m, const patch_t *patch, boolean try)
+{
+	if (HWR_PS2_CanPackPatch(patch, m))
+	{
+		const size_t pixels = (size_t)m->ps2_uw * m->ps2_uh;
+		const size_t bytes = pixels + ((pixels + 7u) >> 3);
+		const UINT8 *cm = m->colormap ? m->colormap->data : NULL;
+		UINT8 *block, *coverage;
+		UINT8 mode = HWR_PS2_CPU_PATCH | HWR_PS2_CPU_HOLES255;
+		size_t covered = 0, opaque255 = 0;
+		INT32 y0, x;
+
+		m->ps2_cpu = 0;
+		block = try ? Z_TryMallocAlign(bytes, PU_HWRCACHE, &m->data, sizeof(void *))
+			: Z_Malloc(bytes, PU_HWRCACHE, &m->data);
+		if (!block)
+			return NULL;
+		coverage = block + pixels;
+		memset(block, 255, pixels);
+		memset(coverage, 0, bytes - pixels);
+		// Keep the preceding banded drawer's source order and locality, without
+		// allocating an unpacked AP88 image or a separate staging buffer.
+		for (y0 = 0; y0 < patch->height; y0 += 64)
+		{
+			const INT32 y1 = y0 + 64 < patch->height ? y0 + 64 : patch->height;
+
+			for (x = 0; x < patch->width; x++)
+			{
+				const column_t *column = &patch->columns[x];
+				unsigned i;
+
+				for (i = 0; i < column->num_posts; i++)
+				{
+					const post_t *post = &column->posts[i];
+					const INT32 top = (INT32)post->topdelta;
+					const INT32 end = top + (INT32)post->length;
+					const INT32 ys = top > y0 ? top : y0;
+					const INT32 ye = end < y1 ? end : y1;
+					const UINT8 *src;
+					INT32 y;
+
+					if (ys >= ye)
+						continue;
+					src = column->pixels + post->data_offset + (size_t)(ys - top);
+					for (y = ys; y < ye; y++)
+					{
+						const UINT8 original = *src++;
+						const UINT8 index = cm ? cm[original] : original;
+						const size_t p = (size_t)y * m->ps2_uw + (size_t)x;
+						const UINT8 bit = (UINT8)(1u << (p & 7u));
+						const UINT8 previous = coverage[p >> 3];
+
+						// Maintain exact byte facts even when later posts overwrite
+						// a covered pixel. No palette RGB equivalence is cached.
+						if (previous & bit)
+						{
+							covered--;
+							opaque255 -= block[p] == 255;
+						}
+						block[p] = index;
+						if ((m->flags & TF_CHROMAKEYED) && original == 255)
+						{
+							coverage[p >> 3] = previous & (UINT8)~bit;
+							if (index != 255)
+								mode &= (UINT8)~HWR_PS2_CPU_HOLES255;
+						}
+						else
+						{
+							coverage[p >> 3] = previous | bit;
+							covered++;
+							opaque255 += index == 255;
+						}
+					}
+				}
+			}
+		}
+		if (covered < pixels)
+			mode |= HWR_PS2_CPU_HAS_HOLES;
+		else
+			mode |= HWR_PS2_CPU_HOLES255;
+		if (opaque255)
+			mode |= HWR_PS2_CPU_OPAQUE255;
+		m->ps2_cpu = mode;
+		return block;
+	}
+	if (!MakeBlockEx(m, try))
+		return NULL;
+	HWR_DrawPatchInCache(m, m->width, m->height, patch->width, patch->height, patch);
+	return m->data;
+}
+
+static boolean HWR_PS2_PatchBitmapMatches(const GLMipmap_t *m, const UINT8 *raw, size_t bytes)
+{
+	UINT32 y, x;
+
+	if (!(m->ps2_cpu & HWR_PS2_CPU_PATCH))
+		return !memcmp(raw, m->data, bytes);
+	for (y = 0; y < m->height; y++)
+		for (x = 0; x < m->width; x++)
+		{
+			const size_t p = ((size_t)y * m->width + x) * 2u;
+			const UINT16 pixel = HWR_PS2_ReadAP88(m, x, y);
+
+			if (raw[p] != (UINT8)pixel || raw[p + 1u] != (UINT8)(pixel >> 8))
+				return false;
+		}
+	return true;
+}
+#endif
 
 #ifdef PS2
 // PS2-140 (OPT10-S): the picture of one entry of a composite texture, built as HWR_GenerateTexture below builds it but for lumps of this size
@@ -947,6 +1093,9 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 
 	Z_Free(grMipmap->data);
 	grMipmap->data = NULL;
+#if defined(PS2) && defined(PS2_PROFILE)
+	grMipmap->ps2_cpu = 0;
+#endif
 
 	if (makebitmap)
 	{
@@ -955,7 +1104,11 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 #endif
 #ifdef PS2
 		// PS2-140: a patch of 64 KB and more as a texture (a 1024x512 one is 1 MB) that does not fit has no data: the driver skips the draws that need it
+#ifdef HWR_PS2_PACKED_PATCHES
+		if (!HWR_PS2_MakePatchBitmap(grMipmap, patch, (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format) >= HWR_TRYPATCH_MIN))
+#else
 		if (!MakeBlockEx(grMipmap, (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format) >= HWR_TRYPATCH_MIN))
+#endif
 		{
 			static unsigned ps2_nopatch_reports;
 
@@ -967,10 +1120,12 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 		MakeBlock(grMipmap);
 #endif
 
+#ifndef HWR_PS2_PACKED_PATCHES
 		HWR_DrawPatchInCache(grMipmap,
 			grMipmap->width, grMipmap->height,
 			patch->width, patch->height,
 			patch);
+#endif
 #ifdef PS2_PROFILE
 		ps2hwt_mkpatch_n++;
 		ps2hwt_mkpatch_cyc += ps2hwt_now() - t0;
@@ -987,7 +1142,12 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 			HWR_DrawPatchInCache(&chk, chk.width, chk.height, patch->width, patch->height, patch);
 			ps2_slow_composite = false;
 			checked++;
-			if (!chk.data || memcmp(chk.data, grMipmap->data, bytes))
+			if (!chk.data ||
+#ifdef HWR_PS2_PACKED_PATCHES
+				!HWR_PS2_PatchBitmapMatches(grMipmap, chk.data, bytes))
+#else
+				memcmp(chk.data, grMipmap->data, bytes))
+#endif
 			{
 				bad++;
 				CONS_Printf("HWC patch composite MISMATCH %dx%d (patch %dx%d) colormap %d (%u of %u checked differ)\n", (int)grMipmap->width, (int)grMipmap->height, (int)patch->width, (int)patch->height,
@@ -1169,6 +1329,9 @@ void HWR_FreeTextureData(patch_t *patch)
 		HWD.pfnDeleteTexture(grPatch->mipmap);
 	if (grPatch->mipmap->data)
 		Z_Free(grPatch->mipmap->data);
+#if defined(PS2) && defined(PS2_PROFILE)
+	grPatch->mipmap->ps2_cpu = 0;
+#endif
 }
 
 void HWR_FreeTexture(patch_t *patch)
@@ -1731,9 +1894,14 @@ static void HWR_PS2_RegeneratePatch(GLMipmap_t *m)
 	// pointer: the read-only search has finished before any pixels are made.
 	if (!patch || patch->width > m->width || patch->height > m->height)
 		return;
+#ifdef HWR_PS2_PACKED_PATCHES
+	if (!HWR_PS2_MakePatchBitmap(m, patch, true))
+		return;
+#else
 	if (!MakeBlockEx(m, true))
 		return;
 	HWR_DrawPatchInCache(m, m->width, m->height, patch->width, patch->height, patch);
+#endif
 }
 #endif
 
