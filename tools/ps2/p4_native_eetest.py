@@ -39,6 +39,38 @@ int P4Test_SetVU(int on)
 }
 unsigned int P4Test_VUPolys(void) { return G.s_vu; }
 int P4Test_RowMode(void) { return P.pal && VU.rowmode; }
+int P4Test_RebootVU(void)
+{
+    PS2HWD_Sync();
+    if (VU.open || V.chunk_open) return 0;
+    vu_plan_valid = 0; VU.consts_ok = 0; H.gsr.valid = 0; H.serial++;
+    return vu1_boot();
+}
+void P4Test_ReadPlanes(unsigned int *out)
+{
+    unsigned int i;
+    PS2HWD_Sync();
+    for (i = 0; i < 48; i++) out[i] = VU1_DATA[20 * 4 + i];
+}
+void P4Test_Guard(float *out)
+{
+    xf_update();
+    out[0] = (float)H.guard_x / 1024.0f;
+    out[1] = (float)H.guard_y / 1024.0f;
+    out[2] = H.near_plane; out[3] = FAR_CLIPPING_PLANE;
+}
+int P4Test_Crosses(const FOutVector *v, int n, int plane)
+{
+    int i, outside = 0;
+    const float gx = (float)H.guard_x / 1024.0f, gy = (float)H.guard_y / 1024.0f;
+    xf_update();
+    for (i = 0; i < n; i++) {
+        cv_t c;
+        xform_vertex(&v[i], NULL, &c);
+        outside += !!(outcode(&c, gx, gy) & (1 << plane));
+    }
+    return outside > 0 && outside < n;
+}
 '''
 
 

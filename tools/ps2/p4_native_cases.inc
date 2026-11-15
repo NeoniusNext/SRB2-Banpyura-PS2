@@ -6,6 +6,10 @@ extern int P4Test_Query(const GLMipmap_t *, unsigned int *);
 extern int P4Test_SetVU(int);
 extern unsigned int P4Test_VUPolys(void);
 extern int P4Test_RowMode(void);
+extern int P4Test_RebootVU(void);
+extern void P4Test_ReadPlanes(unsigned int *);
+extern void P4Test_Guard(float *);
+extern int P4Test_Crosses(const FOutVector *, int, int);
 static unsigned int p4test_id = 1000;
 #define P4TEST_NOPLAN 0x2000000
 
@@ -156,6 +160,115 @@ static int p4test_row_light(int row)
 	return row == 0 ? 255 : (int)floor(155.0 - ((double)row + 0.5) / 0.26);
 }
 
+static void p4test_clip_polygon(FOutVector *v, const float *guard, int plane, int single)
+{
+	float nx[4] = {-0.7f, 0.7f, 0.7f, -0.7f};
+	float ny[4] = {-0.7f, -0.7f, 0.7f, 0.7f};
+	float depth[4] = {2, 2, 2, 2};
+	int i, count = single ? 1 : 2;
+	/* With SetTransform(NULL), the 90-degree projection has w=world z.
+	 * Go beyond the actual GS guard volume, which is much wider than NDC1. */
+	for (i = 0; i < count; i++)
+	{
+		int corner;
+		if (plane == 0) { corner = i ? 3 : 0; nx[corner] = -guard[0] * 1.5f; }
+		else if (plane == 1) { corner = i ? 2 : 1; nx[corner] = guard[0] * 1.5f; }
+		else if (plane == 2) { corner = i ? 1 : 0; ny[corner] = -guard[1] * 1.5f; }
+		else if (plane == 3) { corner = i ? 3 : 2; ny[corner] = guard[1] * 1.5f; }
+		else
+		{
+			corner = i ? 3 : 0;
+			if (plane == 4) depth[corner] = guard[2] * 0.4f;
+			else if (plane == 5) depth[corner] = guard[3] * 1.5f;
+			else depth[corner] = -guard[2]; /* eye/negative w, crosses near too */
+		}
+	}
+	if (plane == 5)
+		for (i = 0; i < 4; i++) if (depth[i] == 2) depth[i] = guard[3] * 0.4f;
+	for (i = 0; i < 4; i++)
+	{
+		v[i].x = nx[i] * depth[i]; v[i].y = ny[i] * depth[i]; v[i].z = depth[i];
+		v[i].s = (i == 1 || i == 2) ? 1.0f : 0.0f;
+		v[i].t = i < 2 ? 1.0f : 0.0f;
+	}
+}
+
+static void p4test_clip_boundaries(void)
+{
+	static UINT8 indices[32 * 256];
+	GLMipmap_t *plain = p4test_tex(8, 0, 0, 128, 128, 0);
+	GLMipmap_t *packed = p4test_tex(8, 1, 0, 128, 128, 0);
+	GLMipmap_t *warm_plain = p4test_tex(8, 0, 0, 128, 128, 1);
+	GLMipmap_t *warm_packed = p4test_tex(8, 1, 0, 128, 128, 1);
+	FSurfaceInfo warm = surf_rgba(255, 255, 255, 255), surface;
+	UINT32 id;
+	u32 flags = PF_Masked | PF_Modulated | PF_ColorMapped | PF_Occlude;
+	int plane, single, sequence, row, i;
+	p4test_palette_mode = 1; D.pfnSetTexturePalette(PAL);
+	for (row = 0; row < 32; row++) for (i = 0; i < 256; i++) indices[row * 256 + i] = (UINT8)((i + row * 7) % 255);
+	id = PS2HWD_CreateIndexedLightTable(indices, PAL);
+	warm.LightTableId = id; warm.LightInfo.light_level = 128; warm.LightInfo.fade_end = 31;
+	surface = warm; surface.LightInfo.light_level = 255;
+	CHECK("p4_clip_vu_transport", P4Test_SetVU(1) == 1 && id, "fresh-reference native clipping id=%u", (unsigned)id);
+	D.pfnSetSpecialState(HWD_SET_TEXTUREFILTERMODE, HWD_SET_TEXTUREFILTER_POINTSAMPLED);
+	D.pfnSetSpecialState(HWD_SET_SHADERS, 1); D.pfnSetShader(0);
+	for (plane = 0; plane < 7; plane++)
+		for (single = 0; single < 2; single++)
+			for (sequence = 0; sequence < 3; sequence++)
+			{
+				FOutVector v[4]; float guard[4];
+				unsigned int original[48], observed[48], vu0;
+				int r, badplanes = 0, crossing;
+				/* Oracle: restore the original plane/mask table and capture
+				 * clipped P8 BEFORE ANY P4 plan since this fresh VU boot. */
+				PS2HWD_SetTrace(-1, P4TEST_NOPLAN);
+				CHECK("p4_clip_clean_oracle_boot", P4Test_RebootVU(), "plane=%d single=%d sequence=%d", plane, single, sequence);
+				P4Test_ReadPlanes(original);
+				frame_start(rgb(17, 23, 31)); D.pfnSetTexture(warm_plain);
+				quad2d(&warm, 12, 12, 44, 44, 0, 0, 1, 1, flags);
+				PS2HWD_Sync();
+				if (sequence == 2) PS2HWD_SetTrace(-1, 0);
+				frame_start(rgb(17, 23, 31)); P4Test_Guard(guard);
+				p4test_clip_polygon(v, guard, plane, single);
+				crossing = P4Test_Crosses(v, 4, plane == 6 ? 4 : plane);
+				vu0 = P4Test_VUPolys(); D.pfnSetTexture(plain);
+				D.pfnDrawPolygon(&surface, v, 4, flags);
+				r = frame_grab(); memcpy(fb2, fb, (size_t)FW * FH * 4);
+				CHECK("p4_clip_oracle_path", crossing && P4Test_VUPolys() - vu0 == 1,
+					"plane=%d single=%d sequence=%d crosses=%d real_VU_polys=%u guard=%g,%g near=%g far=%g",
+					plane, single, sequence, crossing, P4Test_VUPolys() - vu0, guard[0], guard[1], guard[2], guard[3]);
+				/* Target: fresh boot, complete P4 row plan, then no reboot or
+				 * plane-table rewrite until clipped T8/T4/mode-exit T8. */
+				PS2HWD_SetTrace(-1, P4TEST_NOPLAN);
+				CHECK("p4_clip_target_boot", P4Test_RebootVU(), "plane=%d single=%d sequence=%d", plane, single, sequence);
+				frame_start(rgb(17, 23, 31)); D.pfnSetTexture(warm_packed);
+				vu0 = P4Test_VUPolys();
+				quad2d(&warm, 12, 12, 44, 44, 0, 0, 1, 1, flags);
+				P4Test_ReadPlanes(observed); /* Sync completes the real P4 send */
+				for (i = 0; i < 48; i++) badplanes += observed[i] != original[i];
+				CHECK("p4_clip_persistent_planes", !badplanes && P4Test_VUPolys() - vu0 == 1 && P4Test_RowMode(),
+					"plane=%d single=%d sequence=%d all48 native VU1 plane/mask words changed=%d real_P4_row_polys=%u",
+					plane, single, sequence, badplanes, P4Test_VUPolys() - vu0);
+				if (sequence == 2) PS2HWD_SetTrace(-1, 0);
+				frame_start(rgb(17, 23, 31));
+				D.pfnSetTexture(sequence == 1 ? packed : plain);
+				vu0 = P4Test_VUPolys(); D.pfnDrawPolygon(&surface, v, 4, flags);
+				r |= frame_grab();
+				CHECK("p4_clip_target_path", P4Test_VUPolys() - vu0 == 1,
+					"plane=%d single=%d sequence=%d real_VU_polys=%u flags=0x%x",
+					plane, single, sequence, P4Test_VUPolys() - vu0, ps2hwd_dbg_flags);
+				p4test_compare("p4_clip_full_rgb", r, plane, sequence * 2 + single);
+				if (plane == 0 && !single && sequence == 0)
+				{
+					dump_ppm("p4-clip-reference", fb2); dump_ppm("p4-clip-target", fb);
+				}
+			}
+	PS2HWD_SetTrace(-1, P4TEST_NOPLAN);
+	D.pfnSetShader(-1); D.pfnSetSpecialState(HWD_SET_SHADERS, 0);
+	D.pfnClearLightTables(); p4test_palette_mode = 0;
+	tex_free(plain); tex_free(packed); tex_free(warm_plain); tex_free(warm_packed);
+}
+
 static void p4test_rows(void)
 {
 	static UINT8 table[32 * 256];
@@ -279,7 +392,7 @@ static int p4test_main(int argc, char **argv)
 	FW = INFO.vw; FH = INFO.vh; FB32 = INFO.fb32; SX = (float)FW / SW; SY = (float)FH / SH;
 	fb = memalign(64, (size_t)FW * FH * 4); fb2 = memalign(64, (size_t)FW * FH * 4); zb = memalign(64, (size_t)FW * FH * 4);
 	printf("H0 p4 scope explicit NOPLAN, no quality controller; scalar transport test hook is symmetric; complete raw readbacks; no FPS or physical PS2 claim\n");
-	p4test_scalar(); p4test_big_allocations(); p4test_rows(); p4test_transition();
+	p4test_scalar(); p4test_big_allocations(); p4test_clip_boundaries(); p4test_rows(); p4test_transition();
 	PS2HWD_GetStats(&st, 0);
 	CHECK("p4_no_runtime_errors", !st.timeouts && !st.tex_missing && !st.tex_skipped,
 		"timeouts=%u missing=%u skipped=%u", st.timeouts, st.tex_missing, st.tex_skipped);

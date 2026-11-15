@@ -77,6 +77,9 @@ def prepare(work, source, baseline_source, mutation, planner_proof):
                 3: ("rowbytes = W2 >> 1;", "rowbytes = W2;"),
                 6: ("for (i = 1; i < n; i++)\n\t\tif ((src[i] & 0xF0u) != high)", "for (i = 1; i + 1 < n; i++)\n\t\tif ((src[i] & 0xF0u) != high)"),
             }[mutation]
+            if mutation == 6 and old not in text:
+                old = "for (; i < n; i++)\n\t\tif ((src[i] & 0xF0u) != high)"
+                new = "for (; i + 1 < n; i++)\n\t\tif ((src[i] & 0xF0u) != high)"
             if text.count(old) != 1:
                 raise RuntimeError("Missing exact source mutation: " + old)
             text = text.replace(old, new, 1)
@@ -188,6 +191,18 @@ def main():
         report["emulator_invoked"] = False
     if args.corpus:
         report["full_corpus_sha256"] = sha(args.corpus.resolve())
+    # Texture/CLUT texels alone did not expose the original QW28 collision.
+    # Every positive replay must also execute the actual boot/constant packets.
+    vu_work = work / "vu-memory"
+    vu_command = [sys.executable, str(ROOT / "tools/ps2/p4_vu_memory_hosttest.py"),
+                  "--src", str(source), "--out", str(vu_work)]
+    vu_run = subprocess.run(vu_command, cwd=ROOT, capture_output=True, text=True)
+    (work / "vu-memory-driver.log").write_text(vu_run.stdout + vu_run.stderr)
+    if vu_run.returncode:
+        raise RuntimeError("VU data-map proof failed: " + str(work / "vu-memory-driver.log"))
+    report["VU_data_map"] = {"report": str(vu_work / "report.json"),
+                             "report_sha256": sha(vu_work / "report.json"),
+                             "results": json.loads((vu_work / "report.json").read_text())["results"]}
     if args.negative_controls:
         report["negative_controls"] = []
         for mutation in range(1, 7):

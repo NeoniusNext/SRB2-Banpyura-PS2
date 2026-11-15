@@ -31,7 +31,10 @@ extern const u8 VU1Spr_EntryDraw[];
 #define VU_NCONST 18 // constant quad words (vu1/ps2_hw_vu1.vsm, K0..K17)
 #define VU_ROWTAB 32 // VU1 memory address of the TEX0 table of the colormap rows (one quad word per row)
 #define VU_PLANES 20 // VU1 memory address of the plane table (uploaded at boot)
-#define VU_P4_TEX2 28 // unused quadword between the plane bits and row table: P4 selection after a full T8 CLUT load
+#define VU_P4_TEX2 856 // first free quadword after the three 20-vertex lists; sprite scratch starts at 1000
+#if VU_P4_TEX2 < 856 || VU_P4_TEX2 >= 1000
+#error P4 selector overlaps polygon data or sprite scratch
+#endif
 #define VU_BASE 64 // double buffer of the input: BASE / OFFSET of the VIF
 #define VU_OFFSET 256
 

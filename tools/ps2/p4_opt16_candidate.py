@@ -49,6 +49,16 @@ def replace(path, old, new):
 
 def bound_mode(baseline, candidate):
     hw = candidate / "src/ps2/hw"
+    replace(hw / "ps2_hw_vu1.inc",
+            "#define VU_P4_TEX2 28 // unused quadword between the plane bits and row table: P4 selection after a full T8 CLUT load",
+            "#define VU_P4_TEX2 856 // first free quadword after the three 20-vertex lists; sprite scratch starts at 1000\n"
+            "#if VU_P4_TEX2 < 856 || VU_P4_TEX2 >= 1000\n"
+            "#error P4 selector overlaps polygon data or sprite scratch\n#endif")
+    replace(hw / "vu1/ps2_hw_vu1.vsm",
+            ";    28     TEX2 PSMT4/CLD0/CSA selector; 20..27 remain the plane vectors and bits",
+            ";    20..25 clip plane vectors, 26..31 immutable outcode/remaining-plane masks\n"
+            ";    856    TEX2 PSMT4/CLD0/CSA selector; lists end at855, sprite scratch begins1000")
+    replace(hw / "vu1/ps2_hw_vu1.vsm", ".equ\tP4_TEX2,\t28", ".equ\tP4_TEX2,\t856")
     replace(hw / "ps2_hw_tex.inc", """	// Only immutable P8 map/flat sources with the ordinary wrap policy. Other
 	// formats, debug/cap/budget modes, split/oversized and illegal RRW widths
 	// keep the complete preceding T8 path. The selected level is still planned
