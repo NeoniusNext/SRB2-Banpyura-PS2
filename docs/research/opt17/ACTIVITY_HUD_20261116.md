@@ -4,7 +4,8 @@ The existing `showmem` display now adds an integer activity line above its two
 memory lines: `CPU 72%  GPU~ 38%`. Saved values remain compatible: Off=0,
 On=1, RAM=2, VRAM=3. RAM and VRAM retain their existing details in each mode.
 The menu label is “Show RAM/VRAM/CPU/GPU”. This reviewed change is applied to
-the working tree; combined full-game native validation is pending.
+the working tree and has passed the scoped core-v9 native HUD admission below.
+Experimental tile residency and a later final shipping build are outside that scope.
 
 ## Meaning of the percentages
 
@@ -107,6 +108,28 @@ compile/link diagnostics beyond the already allowed SDK ABI warning.
 
 The [host evidence and committable-file manifest](ACTIVITY_HUD_HOST_RESULTS_20261116.json)
 bind the source, tools, font asset, section measurements and fixture results.
-The next gate is the combined shipping build in the 32-MiB emulator profile:
-Hardware/Software switches, resolution changes, On/Off/RAM/VRAM screenshots
-and FPS/ping placement. Physical-console utilization accuracy is not claimed.
+## Native core-v9 HUD admission
+
+The full 32-MiB engine ELF `f1214fcb257d70003d61948356d081b5a09af1df8486718e960574349646a871`
+completed 125 MAP01 frames. Seven complete captures cover On/RAM/VRAM/Off,
+Hardware 320×200 → Software 640×400 → Hardware 320×200. The saved configuration
+contains the valid `showfps Full`; the 320×200 frame was visually checked with
+all three monitor lines above the enabled FPS line. The final fresh reading
+reports CPU 100%, GPU~ 7%, GPU validity 1; all readings use the definitions above.
+No fatal, heap failure, audio error or automatic Hardware fallback was observed.
+Frozen inputs, emulator binary and non-UI settings remain unchanged.
+
+The first native attempt requested the invalid value `showfps Yes`, which the
+engine saved as No. Its overall FPS admission remains failed and is preserved;
+it was superseded by this fresh Full-configured run, without editing old inputs.
+
+There are 40 retained `selected while collecting` draw diagnostics. The strict
+missing-draw gate remains red; this HUD-specific admission does not exempt those
+signals or establish renderer-wide graphics correctness. Ping placement has host
+coverage; the native run uses showping Off. There is no physical-console CPU/GPU
+accuracy or whole-game FPS improvement claim. Source/timing scope, all seven
+frame hashes, ordered commands, final RAM numbers and invariant evidence are in
+[ACTIVITY_HUD_NATIVE_RESULTS_20261116.json](ACTIVITY_HUD_NATIVE_RESULTS_20261116.json).
+The core source revision is 96f4; build metadata is pinned to 604 for A/B and the
+604-file source manifest defines the actual program. Final tile integration still
+requires its separate native and full-engine gates.

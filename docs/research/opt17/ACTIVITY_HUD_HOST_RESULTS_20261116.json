@@ -627,10 +627,18 @@
     "tools/ps2/opt17/activity_hosttest.py": "bdf230ede0f24a0ad4ee00ee7e058d2f0b8ed0c7dfe7a92a1ab079d46b27c4d9",
     "tools/ps2/opt17/activity_hosttest.c": "149607df91efc4c74272591b3fa14a84c7589649bb4372ff67a5b7bcfdabae76",
     "tools/ps2/opt17/activity_hud_fixture.inc": "a58189dca96996024dc5c1aefc002977c0070691e672fd20f3e8db3d512897f1",
-    "docs/research/opt17/ACTIVITY_HUD_20261116.md": "42a4aa964058fb123cddc45539b9712fea69560705b5d33e6905037077dc04a8",
+    "docs/research/opt17/ACTIVITY_HUD_20261116.md": "3fb099e4426004022218a19b77d05e6ae34e8319414bee5bb2ccd5fa403c53bb",
     "build/nov17-activity/source-proof.json": "bc70cdaafb6dee2c1cbd9e5c1b725ad1fabe8368366303e2c0557650a7ca11d1",
     "build/nov17-activity/activity-hud.patch": "ddb892d2dc917761bdbb767598d0a478fe4ef96c4d36b794f593a4a1a0f39a97",
     "build/nov17-activity/hook-audit.json": "16cdca680140e7614f6cd8a07dc749b2400bfdefc422bb6b042b28926e76242c",
     "build/nov17-activity/bss/results.json": "69427859ddf42990c20f53727e6243180ae702909c3da72516a830242e36c448"
+  },
+  "historical_doc_sha256_before_native_admission": "42a4aa964058fb123cddc45539b9712fea69560705b5d33e6905037077dc04a8",
+  "native_HUD_admission": {
+    "report": "docs/research/opt17/ACTIVITY_HUD_NATIVE_RESULTS_20261116.json",
+    "sha256": "a1d07d3da54867349ade10048003096f945c9b1832f0c81b6e85151f4563c3fa",
+    "passed": true,
+    "source_commit": "96f4c0d756b13cfbb35deb1d779bea8f7944edac",
+    "final_tile_shipping_scope": false
   }
 }
