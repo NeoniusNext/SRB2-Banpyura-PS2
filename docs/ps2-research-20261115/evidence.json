@@ -1,0 +1,773 @@
+{
+  "schema_version": 1,
+  "checked_utc_date": "2026-11-15",
+  "scope": "Own research metadata and short status descriptions only. No PDF/manual/source bodies, assets, BIOS or runtime configuration. No functional/performance/hardware validation is claimed.",
+  "manuals": [
+    {
+      "catalog_id": "M1",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Overview_Manual.pdf",
+      "status": 200,
+      "bytes": 571805,
+      "sha256": "0da2ae41ee7fce72e5cf2962fa4a54836a03c212d4d5a39b75254643b046bb4c",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 64
+    },
+    {
+      "catalog_id": "M2",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Users_Manual.pdf",
+      "status": 200,
+      "bytes": 1963242,
+      "sha256": "55bdc71d3aebc33752a7dad6526b78248b6c258294fcf8a3ebed1f010da22365",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 218
+    },
+    {
+      "catalog_id": "M3",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Core_Users_Manual.pdf",
+      "status": 200,
+      "bytes": 1306759,
+      "sha256": "0ad766eb827157fad19aa579fd9df54f2ca312211e7f0dbdb4b723992b566ce3",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 180
+    },
+    {
+      "catalog_id": "M4",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Core_Instruction_Set_Manual.pdf",
+      "status": 200,
+      "bytes": 1820607,
+      "sha256": "104205afc6f5a5071168d8bf693a6c8b4db9a02e1aa66eb51a828e8951f5c069",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 408
+    },
+    {
+      "catalog_id": "M5",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual.pdf",
+      "status": 200,
+      "bytes": 1265948,
+      "sha256": "daf72c776f6e27721149f28dc46ad47443e560b22a04f3d8ff4bcf74f254bf12",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 176
+    },
+    {
+      "catalog_id": "M6",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual_Supplement.pdf",
+      "status": 200,
+      "bytes": 393773,
+      "sha256": "352ff1e8ac7d4c0c5c389ac98c0ec06db48384b48d0b4cc02192502c630281d8",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 22
+    },
+    {
+      "catalog_id": "M7",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/VU_Users_Manual.pdf",
+      "status": 200,
+      "bytes": 1787849,
+      "sha256": "a858ef55cd2638accdfca612d5359eb6e48a48c7fd6792b18080d866e610fde5",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 368
+    },
+    {
+      "catalog_id": "A8",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/vu-instruction-manual.pdf",
+      "status": 200,
+      "bytes": 800785,
+      "sha256": "71a498be53a10a81b04aa43145f4db91a48f82fb69cd382b6ddb57d270312b89",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 128
+    },
+    {
+      "catalog_id": "M8",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/SPU2_Overview_Manual.pdf",
+      "status": 200,
+      "bytes": 581782,
+      "sha256": "1531ae3887986eb7f5bb768bb4e714a9bc0adf9d2d75d83fda6344a2f0875475",
+      "content_type": "application/octet-stream",
+      "pdf_pages": 80
+    }
+  ],
+  "papers": [
+    {
+      "catalog_id": "A3",
+      "url": "https://www.lukasz.dk/files/rgreen_procedural_renderinggdc2001.pdf",
+      "status": 200,
+      "bytes": 1354822,
+      "sha256": "ae1a104579a673144e56738b8f7ba58445f7c18613dd1da3863c86a7c0080026",
+      "content_type": "application/pdf",
+      "pdf_pages": 32
+    },
+    {
+      "catalog_id": "A5",
+      "url": "https://www.lukasz.dk/files/final-gdc2002-clippingps2.pdf",
+      "status": 200,
+      "bytes": 92683,
+      "sha256": "e80b0a673e9ec575049cc05800e536e3b9d4b427def7bc2c618b5f695ad33517",
+      "content_type": "application/pdf",
+      "pdf_pages": 36
+    },
+    {
+      "catalog_id": "A4",
+      "url": "https://www.lukasz.dk/files/PS2Optimisations.pdf",
+      "status": 200,
+      "bytes": 409953,
+      "sha256": "5aac24404470ef39a116f8c1d2435389bd929c4bb736d3cc3e01affa88803ec7",
+      "content_type": "application/pdf",
+      "pdf_pages": 39
+    },
+    {
+      "catalog_id": "A6",
+      "url": "https://www.lukasz.dk/files/TextureGeometrySyncing.pdf",
+      "status": 200,
+      "bytes": 23286,
+      "sha256": "f0761f2be2f9a23b8fd8143f6d688e09ae6eae697414b78f406f045d849ecf62",
+      "content_type": "application/pdf",
+      "pdf_pages": 4
+    },
+    {
+      "catalog_id": "A7",
+      "url": "https://www.lukasz.dk/files/gs-perfect-sprite.pdf",
+      "status": 200,
+      "bytes": 58459,
+      "sha256": "559c2f24836aa49227afab6aa868a02801b04e6739d3b68dfbfe7af9c51f16d1",
+      "content_type": "application/pdf",
+      "pdf_pages": 5
+    },
+    {
+      "catalog_id": "M9",
+      "url": "https://www.lukasz.dk/files/tx79architecture.pdf",
+      "status": 200,
+      "bytes": 4049210,
+      "sha256": "a19dff7177b9c0096b16d3ac96a80ed8726d53f9c1bab00b06c986ead1ef7be7",
+      "content_type": "application/pdf",
+      "pdf_pages": 727
+    },
+    {
+      "catalog_id": "V1",
+      "url": "https://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/pubs/vfcullbox.pdf.gz",
+      "status": 200,
+      "bytes": 303541,
+      "sha256": "dde7aac35302b9a6dcf3e90fd39444059831164710f4f18078b3f0198ec31b07",
+      "content_type": "application/x-gzip",
+      "expanded_pdf_pages": 10
+    },
+    {
+      "catalog_id": "V3",
+      "url": "https://www2.eecs.berkeley.edu/Pubs/TechRpts/1992/Archive/CSD-92-708.pdf",
+      "status": 200,
+      "bytes": 7692315,
+      "sha256": "c380945dd6a68e01da186c683e654a0ead43ec72c6670780f3f8cff4fa8bb666",
+      "content_type": "application/pdf",
+      "pdf_pages": 184
+    },
+    {
+      "catalog_id": "V4",
+      "url": "https://www.cs.princeton.edu/courses/archive/spr01/cs598b/papers/greene93.pdf",
+      "status": 200,
+      "bytes": 177123,
+      "sha256": "a08e6ea2dd6c0f415213df2ecd6911a895a1c289cd8514b92f26f3a33789425e",
+      "content_type": "application/pdf",
+      "pdf_pages": 7
+    }
+  ],
+  "additional_pdf_checks": [
+    {
+      "catalog_id": "A1",
+      "url": "https://www.eecg.utoronto.ca/~moshovos/ACA08/readings/EmotionEngine.pdf",
+      "error": "<urlopen error Tunnel connection failed: 403 Forbidden>",
+      "checked_utc_date": "2026-11-15",
+      "method": "GET; original successful web-reader inspection remains separately recorded"
+    },
+    {
+      "catalog_id": "A2",
+      "url": "https://www.cecs.uci.edu/~papers/compendium94-03/papers/2001/date01/pdffiles/09e_1.pdf",
+      "status": 200,
+      "bytes": 16937,
+      "sha256": "b8629d07e379b6e2a5576ef4372873f977a30eba6a4b757b8dc792538afa8182",
+      "pdf_pages": 1,
+      "content_type": "application/pdf",
+      "checked_utc_date": "2026-11-15",
+      "method": "GET; pdfinfo; PDF retained only temporarily outside repository"
+    },
+    {
+      "catalog_id": "V5",
+      "url": "https://www.cg.tuwien.ac.at/research/vr/chcull/bittner-eg04-chcull.pdf",
+      "status": 200,
+      "bytes": 1105728,
+      "sha256": "c61dc36d797f7fdd3fe6f54b0cf50b8560ac04069a59b138d8f51427f031655b",
+      "pdf_pages": 10,
+      "content_type": "application/pdf",
+      "checked_utc_date": "2026-11-15",
+      "method": "GET; pdfinfo; PDF retained only temporarily outside repository"
+    }
+  ],
+  "web_pdf_inspections": [
+    {
+      "catalog_id": "A1",
+      "url": "https://www.eecg.utoronto.ca/~moshovos/ACA08/readings/EmotionEngine.pdf",
+      "body_inspection": "Web reader successfully parsed original eight-page PDF",
+      "pdf_pages": 8,
+      "sha256": null,
+      "limitation": "Execution-proxy HEAD and GET denied; no independently downloaded byte checksum available"
+    },
+    {
+      "catalog_id": "A2",
+      "url": "https://www.cecs.uci.edu/~papers/compendium94-03/papers/2001/date01/pdffiles/09e_1.pdf",
+      "body_inspection": "Web reader parsed one-page abstract, not full paper",
+      "pdf_pages": 1,
+      "download_checksum": "additional_pdf_checks"
+    },
+    {
+      "catalog_id": "V5",
+      "url": "https://www.cg.tuwien.ac.at/research/vr/chcull/bittner-eg04-chcull.pdf",
+      "body_inspection": "Web reader parsed ten-page paper",
+      "pdf_pages": 10,
+      "download_checksum": "additional_pdf_checks"
+    }
+  ],
+  "maintainer_sources": [
+    {
+      "id": "S1",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/dma/src/dma.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/dma/src/dma.c",
+      "git_blob_sha1": "6fb6d44820a9d08004bc94285133c049d1735336",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S2",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/kernel/src/kernel.S",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/kernel/src/kernel.S",
+      "git_blob_sha1": "ea533a7603751c0f41f97937069955b3e774bdf1",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S3",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/kernel/src/sifrpc.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/kernel/src/sifrpc.c",
+      "git_blob_sha1": "22e67da102dcebe4daf466c91dda7b9be058111a",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S4",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/audsrv/src/audsrv_rpc.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/rpc/audsrv/src/audsrv_rpc.c",
+      "git_blob_sha1": "98a6e47dde8c6db9c1c8ddb4a5a9a21d4297c5d9",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S5",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/audsrv/include/audsrv.h",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/rpc/audsrv/include/audsrv.h",
+      "git_blob_sha1": "e758b2f611ae10026c494c04ea08b169ec818044",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S6",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/iop/sound/audsrv/src/audsrv.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "iop/sound/audsrv/src/audsrv.c",
+      "git_blob_sha1": "17857e9f1a6e544f787f0ddbe309a053df4c73d9",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S7",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/filexio/src/fileXio_rpc.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/rpc/filexio/src/fileXio_rpc.c",
+      "git_blob_sha1": "f590b5635c63cfeaf81f254cb087f90c51594e82",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S8",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/cdvd/src/ncmd.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/rpc/cdvd/src/ncmd.c",
+      "git_blob_sha1": "38f7454e90d21a55e5a95a077e8430058c4511c6",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S9",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/iop/fs/libbdm/src/bd_cache.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "iop/fs/libbdm/src/bd_cache.c",
+      "git_blob_sha1": "bcac039a86f3fdbf6b93459adaab98722e137c5f",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S10",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/packet2/include/packet2_vif.h",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/packet2/include/packet2_vif.h",
+      "git_blob_sha1": "69242bf23a828d41388c5b70ff0246856e824585",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S11",
+      "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsTexture.c",
+      "repository": "ps2dev/gsKit",
+      "commit": "8ef73d05f022d14b3ded7c70cba670fe333ed61a",
+      "path": "ee/gs/src/gsTexture.c",
+      "git_blob_sha1": "73ef218dfcb9924d4b8884ff5f9b9279628419b7",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S12",
+      "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsCore.c",
+      "repository": "ps2dev/gsKit",
+      "commit": "8ef73d05f022d14b3ded7c70cba670fe333ed61a",
+      "path": "ee/gs/src/gsCore.c",
+      "git_blob_sha1": "488ae6b058fd04711d3b3a855175c1876935b474",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S13",
+      "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsInit.c",
+      "repository": "ps2dev/gsKit",
+      "commit": "8ef73d05f022d14b3ded7c70cba670fe333ed61a",
+      "path": "ee/gs/src/gsInit.c",
+      "git_blob_sha1": "f6564433f0d016f5ff1252f767be7c4982a4d792",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S14",
+      "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsTexManager.c",
+      "repository": "ps2dev/gsKit",
+      "commit": "8ef73d05f022d14b3ded7c70cba670fe333ed61a",
+      "path": "ee/gs/src/gsTexManager.c",
+      "git_blob_sha1": "228bcaa38d733dc2b78fe463fd5e3690cd0104b7",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S15",
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/libvux/src/vuhw.c",
+      "repository": "ps2dev/ps2sdk",
+      "commit": "b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+      "path": "ee/libvux/src/vuhw.c",
+      "git_blob_sha1": "c7bb25065c55eb3b706847f168beef870c6193d7",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S16",
+      "url": "https://github.com/lz4/lz4/blob/6b589e8053bd9c524138d78adec78fcaefa35cab/doc/lz4_Block_format.md",
+      "repository": "lz4/lz4",
+      "commit": "6b589e8053bd9c524138d78adec78fcaefa35cab",
+      "path": "doc/lz4_Block_format.md",
+      "connector_body_inspection": "success"
+    },
+    {
+      "id": "S17",
+      "url": "https://github.com/PCSX2/pcsx2/blob/0ab00c49b157be667a8a2f0bf4cda83f75a9198e/pcsx2/GS/GSClut.cpp",
+      "repository": "PCSX2/pcsx2",
+      "commit": "0ab00c49b157be667a8a2f0bf4cda83f75a9198e",
+      "path": "pcsx2/GS/GSClut.cpp",
+      "connector_body_inspection": "success"
+    }
+  ],
+  "repository_source_map": {
+    "checked_utc_date": "2026-11-15",
+    "head": "85bd9716b1ed114d46f95831c64a87623038eeaa",
+    "scope": "Read-only research binding; no compile/emulator/run/production edit by research agent",
+    "files": [
+      {
+        "path": "docs/HW_RENDERER.md",
+        "bytes": 46869,
+        "sha256": "d05bd0117bc93826143cc3002d031b04929ab1fefd6316579e947e654846608f"
+      },
+      {
+        "path": "docs/PS2_MEMORY.md",
+        "bytes": 15538,
+        "sha256": "fc0ccb9ed1470c92a37c113b72106779a7620d2fd75db5cc9b8a5f7830fcc87f"
+      },
+      {
+        "path": "docs/PS2_PACK_SCRATCH_NEXT3_20261114.md",
+        "bytes": 3631,
+        "sha256": "28d11cfaa16d9092c3f20b022e52d580799d3da60df0c56baa1acd9ad1af756e"
+      },
+      {
+        "path": "docs/PS2_GS_NEXT10_20261115.md",
+        "bytes": 16324,
+        "sha256": "f8113f90521c6b3dc07d9ba685b3d7cccd9a9e7e4b01d7527b1b80f3a7dfe80c"
+      },
+      {
+        "path": "docs/PS2_MEMORY_NEXT11_20261115.md",
+        "bytes": 10317,
+        "sha256": "f97b7cdef8662df4a840226549a7e5d454d344e2070bbd4c28bd143bf881e7a2"
+      },
+      {
+        "path": "docs/PS2_IO_NEXT11_20261115.md",
+        "bytes": 14842,
+        "sha256": "b690c61bc03cbf1da5b409eb8da57a78fb3475f8d1ca44710e6a4a5894371da8"
+      },
+      {
+        "path": "docs/PS2_GS_NEXT11_20261115.md",
+        "bytes": 12491,
+        "sha256": "e788936f386dd8dffdfa4118c47f47ba230f13884e187f0d9cfac669a8a3c1c2"
+      },
+      {
+        "path": "docs/PS2_OPTIMIZATION_NEXT11_20261115.md",
+        "bytes": 10680,
+        "sha256": "f1b01e43fe18fc1ed68496889d5c962ac8b20d028ebd0174702e500a2228b6f6"
+      },
+      {
+        "path": "src/ps2/hw/ps2_hw_priv.inc",
+        "bytes": 20852,
+        "sha256": "5593d046960f038160f031352f71dff140ecaeb8e086f27155e6062b79c0c792"
+      },
+      {
+        "path": "src/ps2/hw/ps2_hw_gs.inc",
+        "bytes": 29782,
+        "sha256": "fdf12939e01ba31472ebad75a4418aeb1fada38784f0c4bc796a8b5bd2b71d1e"
+      },
+      {
+        "path": "src/ps2/hw/ps2_hw_tex.inc",
+        "bytes": 90840,
+        "sha256": "76de33ef5d73da9aae8f59b3e1bbdb34502e8c21319b31d765235344a252fe8a"
+      },
+      {
+        "path": "src/ps2/hw/ps2_hw_vu1.inc",
+        "bytes": 57517,
+        "sha256": "d2ab6312210f3b3d649ae8c09e38706720551076908a9a88b211c8aac89cc122"
+      },
+      {
+        "path": "src/ps2/hw/ps2_hw_fx2.inc",
+        "bytes": 4154,
+        "sha256": "b4cb9252148517a3ce22cc5a67451b91aa7e0b072fd5e23668e9ff122577b09b"
+      },
+      {
+        "path": "src/ps2/hw/ps2_hw_xform.inc",
+        "bytes": 9019,
+        "sha256": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c"
+      },
+      {
+        "path": "src/ps2/hw/ps2_hw_screen.inc",
+        "bytes": 16088,
+        "sha256": "ffce2fd191a5d2c18f311fe14b6f85672a8234f465e98c454a87974ef402fd27"
+      },
+      {
+        "path": "src/hardware/hw_front.inc",
+        "bytes": 17963,
+        "sha256": "dd471f5d22a3d1d485ddafce18f7fd8e7eb4d825950a8a825f5a7c79386380ce"
+      },
+      {
+        "path": "src/hardware/hw_main.c",
+        "bytes": 343598,
+        "sha256": "242aab57b342cf5c5cccd138f62225b15573fbcfc5faf3e92196114541928945"
+      },
+      {
+        "path": "src/hardware/hw_cache.c",
+        "bytes": 73065,
+        "sha256": "e6adbc9f55958402afad680fb23c8e480468a98cd3274ea5fd59b0cb4897b23b"
+      },
+      {
+        "path": "src/hardware/hw_batching.c",
+        "bytes": 68771,
+        "sha256": "dcb399087b2cb513c07dd74aa0e3427eed287e19db2549447491a298496d21f4"
+      },
+      {
+        "path": "src/ps2/vorbis/ps2_vu0a.h",
+        "bytes": 29700,
+        "sha256": "340bfd8b5e318f9432465d3c06c3df85aece2b14d3d36436f9b936b27b164b39"
+      },
+      {
+        "path": "src/ps2/ps2_prof.c",
+        "bytes": 16087,
+        "sha256": "733ed3a7376341862b391cb3321f125baf0a1ef83dc284964e62164c8d56c678"
+      },
+      {
+        "path": "src/ps2/ps2_spill.c",
+        "bytes": 6762,
+        "sha256": "c808a0c6f5eb3a702bcf197677155424ed07cce10fe4b5467eb5cfd1d0ba8f73"
+      },
+      {
+        "path": "src/w_pack.c",
+        "bytes": 49445,
+        "sha256": "94532c49e6a1886677099849ce96ecd5e804eb2facd6a05c1732660443ab2664"
+      }
+    ]
+  },
+  "link_verification": {
+    "method": "HEAD; original check retained unchanged",
+    "external_unique": 55,
+    "head_success_count": 54,
+    "links": [
+      {
+        "url": "https://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/publications.html",
+        "status": 200
+      },
+      {
+        "url": "https://fileadmin.cs.lth.se/cs/Personal/Tomas_Akenine-Moller/pubs/vfcullbox.pdf.gz",
+        "status": 200
+      },
+      {
+        "url": "https://fobes.dev/ee/2024/02/02/ps2-dmac-basics.html",
+        "status": 200
+      },
+      {
+        "url": "https://fobes.dev/ps2/detecting-emu-gs-backpressure",
+        "status": 200
+      },
+      {
+        "url": "https://fobes.dev/ps2/detecting-emu-vu-floats",
+        "status": 200
+      },
+      {
+        "url": "https://fobes.dev/ps2/detecting-emu-vu0-pipeline",
+        "status": 200
+      },
+      {
+        "url": "https://fobes.dev/ps2/fragmenting-memory-with-the-ct24-format",
+        "status": 200
+      },
+      {
+        "url": "https://fobes.dev/ps2/ps2-cache-mapping",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/PCSX2/pcsx2/blob/0ab00c49b157be667a8a2f0bf4cda83f75a9198e/pcsx2/GS/GSClut.cpp",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/PSI-Rockin/ps2tek",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/id-Software/DOOM/blob/master/linuxdoom-1.10/r_bsp.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/lz4/lz4/blob/6b589e8053bd9c524138d78adec78fcaefa35cab/doc/lz4_Block_format.md",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/README.md",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsCore.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsInit.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsTexManager.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/gsKit/blob/8ef73d05f022d14b3ded7c70cba670fe333ed61a/ee/gs/src/gsTexture.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/gsKit/commit/8ef73d05f022d14b3ded7c70cba670fe333ed61a",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/dma/src/dma.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/kernel/src/kernel.S",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/kernel/src/sifrpc.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/libvux/src/vuhw.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/packet2/include/packet2_vif.h",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/audsrv/include/audsrv.h",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/audsrv/src/audsrv_rpc.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/cdvd/src/ncmd.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/rpc/filexio/src/fileXio_rpc.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/iop/fs/libbdm/src/bd_cache.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/iop/sound/audsrv/src/audsrv.c",
+        "status": 200
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/commit/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05",
+        "status": 200
+      },
+      {
+        "url": "https://old.cescg.org/CESCG-2002/DSykoraJJelinek/",
+        "status": 200
+      },
+      {
+        "url": "https://psi-rockin.github.io/ps2tek/",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Core_Instruction_Set_Manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Core_Users_Manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Overview_Manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/EE_Users_Manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual_Supplement.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/SPU2_Overview_Manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/VU_Users_Manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/vu-instruction-manual.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.cecs.uci.edu/~papers/compendium94-03/papers/2001/date01/pdffiles/09e_1.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.cg.tuwien.ac.at/research/vr/chcull/",
+        "status": 200
+      },
+      {
+        "url": "https://www.cg.tuwien.ac.at/research/vr/chcull/bittner-eg04-chcull.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.cs.princeton.edu/courses/archive/spr01/cs598b/papers/greene93.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.eecg.utoronto.ca/~moshovos/ACA08/readings/EmotionEngine.pdf",
+        "error": "<urlopen error Tunnel connection failed: 403 Forbidden>"
+      },
+      {
+        "url": "https://www.lukasz.dk/files/PS2Optimisations.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.lukasz.dk/files/TextureGeometrySyncing.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.lukasz.dk/files/final-gdc2002-clippingps2.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.lukasz.dk/files/gs-perfect-sprite.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.lukasz.dk/files/rgreen_procedural_renderinggdc2001.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.lukasz.dk/files/tx79architecture.pdf",
+        "status": 200
+      },
+      {
+        "url": "https://www.lukasz.dk/playstation-2-programming/archive/",
+        "status": 200
+      },
+      {
+        "url": "https://www2.eecs.berkeley.edu/Pubs/TechRpts/1992/6250.html",
+        "status": 200
+      },
+      {
+        "url": "https://www2.eecs.berkeley.edu/Pubs/TechRpts/1992/Archive/CSD-92-708.pdf",
+        "status": 200
+      }
+    ],
+    "access_limit": "Toronto A1 direct requests denied by execution proxy despite successful eight-page web-reader body inspection. HEAD status and body inspection are different checks."
+  },
+  "original_catalog_verification": {
+    "document": "docs/PS2_ARCHITECTURE_AND_OPTIMIZATION_SOURCES_20261115.md",
+    "sha256": "33645e47f880f76f495d296650e6f6a2ad63a450f04914b1921119aa8624bc66",
+    "catalog_entries": 47,
+    "local_link_count": 32,
+    "invalid_local_links": [],
+    "format_issues": [],
+    "scope": "Historical workspace check of the original catalog before replacing ignored-build evidence links. This is not the hash of the published documentation variant."
+  },
+  "archived_original_records": {
+    "README.md": {
+      "bytes": 3994,
+      "sha256": "2f73d0b1c5cec771a9d632e673d6060b4d8ec984fc55bbf4cf24c46614e96c5a"
+    },
+    "manual-url-checks.json": {
+      "bytes": 4532,
+      "sha256": "9779278c950520095ccf5fa6e4902545c9d66014da427969bc8c2c9dcc0d1bef"
+    },
+    "paper-url-checks.json": {
+      "bytes": 3196,
+      "sha256": "b44812b4384fe0c7eec6fc1e630ca2bea00cd5825d118898424aedf213ee90d9"
+    },
+    "maintainer-source-checks.json": {
+      "bytes": 9376,
+      "sha256": "d9409210869b438d25d47d62ff4bddbfef701f8545d8edd32f2e86c5b5adeed6"
+    },
+    "repo-source-map.json": {
+      "bytes": 3925,
+      "sha256": "9ef947b983c2f02ad0563b8f6592b863be231b9bb8606d65f8f2437b3754b948"
+    },
+    "catalog-link-checks.json": {
+      "bytes": 21750,
+      "sha256": "983b0e66e46b1727c4c710c3cb141a909a096c348e23e9c7eb7c3de5bd4a780f"
+    },
+    "final-document-check.json": {
+      "bytes": 693,
+      "sha256": "2fe6d3a24fb5fbb62d3f457515ac536fc70f2460fa27d13756d55ea78e5ebbd5"
+    },
+    "clut-source-review.md": {
+      "bytes": 1938,
+      "sha256": "63d5734246739dd1147c40b8ff671a8223ccf389934a52092b8e4addaf209e5e"
+    }
+  },
+  "clut_review": "See README.md#clut-source-rationale. Source review identifies proof obligations; it validates no P4 implementation or physical GS behavior."
+}
