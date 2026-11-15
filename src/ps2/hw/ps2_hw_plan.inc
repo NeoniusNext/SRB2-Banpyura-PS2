@@ -735,6 +735,29 @@ static int plan_lmax(const GLMipmap_t *m)
 
 static inline u32 plan_blocks(const GLMipmap_t *m, int lv)
 {
+	const GLMipmap_t *k = m->ps2_twin ? m->ps2_twin : m;
+	const texrec_t *r;
+
+	// A live full-size hint cannot be reduced by the plan. Its current virtual
+	// image owns no GS blocks; the shared upload tile is already excluded from
+	// tex_usable_blocks(). Keep the ordinary costs for adaptable/expired images.
+	if (!lv && k->ps2_full_fr && plan_stamp() - k->ps2_full_fr < PLAN_FULL_KEEP)
+	{
+		r = rec_of(m);
+		if (!r && m != k)
+			r = rec_of(k);
+		if (!r)
+			for (const GLMipmap_t *v = k->nextcolormap; v; v = v->nextcolormap)
+				if (v->ps2_twin == k && (r = rec_of(v)) != NULL)
+					break;
+		if (r)
+		{
+			const texrec_t *image = &H.rec[img_of((int)(r - H.rec))];
+
+			if (image->used && image->tiled == 1 && !image->nblk)
+				return 0;
+		}
+	}
 	return tex_plan_blocks(PSM_T8, m->width, m->height, (u32)lv, (u32)lv);
 }
 
@@ -831,7 +854,7 @@ void PS2HWD_PlanEnd(void)
 	TX.plan_cyc += cyc() - plan_t0; // the measuring of the polygons (PlanPolygon) is the time between Begin and End
 	if (!H.plan_pct)
 		H.plan_pct = PLAN_PCT_MAX;
-	budget = H.pool_blocks / 100u * H.plan_pct;
+	budget = tex_usable_blocks() / 100u * H.plan_pct;
 	if (budget > H.plan_reserve)
 		budget -= H.plan_reserve;
 	for (i = 0; i < plan_n; i++)
@@ -881,6 +904,10 @@ void PS2HWD_PlanEnd(void)
 		cap[n] = (u8)(lrx > lm ? lm : lrx);
 		if (cap[n] < lx[n])
 			cap[n] = lx[n];
+		// A carried virtual image under a live full-size hint is still forced
+		// to L0 by tex_want. Its zero cost cannot become a coarsening "saving".
+		if (k->ps2_full_fr && plan_stamp() - k->ps2_full_fr < PLAN_FULL_KEEP && !plan_blocks(k, 0))
+			lx[n] = cap[n] = 0;
 		sum += plan_blocks(k, lx[n]);
 		if (imm_pseps[i] < 1.0e5f && plan_blocks(k, lx[n]) >= PLAN_BIG_BLOCKS && lx[n] + PLAN_BIG_EXTRA <= lm)
 			cap[n] = (u8)(lx[n] + PLAN_BIG_EXTRA); // (the sky dome, whose polygons are not known, stays)

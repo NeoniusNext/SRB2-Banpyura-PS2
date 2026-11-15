@@ -42,7 +42,7 @@
 
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
 boolean ps2hwt_comp_old; // OPT13 RDRV: -hwcomp 0 = the composition as before (A/B): the raw lump read per patch use, the GL structures and the patch built and freed for every placement
-typedef struct { UINT16 wad, lump; patch_t *p; } ps2_cpatch_t;
+typedef struct { UINT16 wad, lump; patch_t *p; INT32 last; } ps2_cpatch_t;
 #define PS2_CPATCH_MAX 32 // distinct patches held while one texture is composed (a placement of the same patch again in the texture finds it)
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
 static inline unsigned int ps2hwt_now(void)
@@ -58,9 +58,9 @@ static inline unsigned int ps2hwt_now(void)
 // the sprite is missing for the frame). ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old rule, A/B).
 #ifdef PS2_PROFILE
 INT32 ps2hwt_patchtag = PU_HWRCACHE_LRU;
-#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), ps2hwt_patchtag)
+#define HWR_PATCH_UNLOCKED(m) HWR_RELEASE_MIPMAP_DATA((m), ps2hwt_patchtag)
 #else
-#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), PU_HWRCACHE_UNLOCKED)
+#define HWR_PATCH_UNLOCKED(m) HWR_RELEASE_MIPMAP_DATA((m), PU_HWRCACHE_UNLOCKED)
 #endif
 
 INT32 patchformat = GL_TEXFMT_AP_88; // use alpha for holes
@@ -825,7 +825,7 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 #endif
 #ifdef PS2_PROFILE
 	const unsigned int gt0 = ps2hwt_now(); // OPT13 IZ (PS2-603): what making this texture cost, for the eviction (Z_SetRebuildCost)
-	ps2_cpatch_t held[PS2_CPATCH_MAX]; // OPT13 RDRV: patches read for this texture, kept until it is composed
+	ps2_cpatch_t held[PS2_CPATCH_MAX]; // Patches loaded here, retained through their final placement only.
 	INT32 nheld = 0, h;
 #endif
 
@@ -965,7 +965,13 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 						{
 							held[nheld].wad = wadnum;
 							held[nheld].lump = lumpnum;
+							INT32 j;
+
 							held[nheld].p = realpatch;
+							held[nheld].last = i;
+							for (j = i + 1; j < texture->patchcount; j++)
+								if (texture->patches[j].wad == wadnum && texture->patches[j].lump == lumpnum)
+									held[nheld].last = j;
 							nheld++;
 						}
 						else
@@ -993,11 +999,22 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 		// the arena then ran out); a texture is composed again only after the GS pool or the texture cache dropped it
 		else if (loaded_here)
 			Patch_Free(realpatch);
+		else
+			for (h = 0; h < nheld; h++)
+				if (held[h].p == realpatch && held[h].last == i)
+				{
+					// Only patches loaded by this call belong to held. Keep every
+					// later reuse, then release after the final synchronous copy.
+					Patch_Free(realpatch);
+					held[h].p = NULL;
+					break;
+				}
 #endif
 	}
 #ifdef PS2_PROFILE
 	for (h = 0; h < nheld; h++)
-		Patch_Free(held[h].p); // OPT13 RDRV: the patches this texture was composed from are not kept (PS2-146: the arena would fill with the patches of every texture seen)
+		if (held[h].p)
+			Patch_Free(held[h].p); // Entries stay numbered as before, including the original 32-entry fallback.
 #endif
 #ifdef PS2
 	if (missing)
@@ -1667,7 +1684,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap); // PS2-HW-32: the driver asks for the texels (HWR_PS2_RegenerateMipmap) when its data cache has not got them
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grMipmap, PU_HWRCACHE_UNLOCKED);
 
 	return grtex;
 }
@@ -1734,7 +1751,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap);
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grMipmap, PU_HWRCACHE_UNLOCKED);
 
 	return grtex;
 }
@@ -1776,7 +1793,7 @@ void HWR_GetRawFlat(lumpnum_t flatlumpnum)
 	HWR_SetCurrentTexture(grmip);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grmip->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grmip, PU_HWRCACHE_UNLOCKED);
 }
 
 static void MakeLevelFlatMipmap(GLMipmap_t *grMipmap, INT32 texturenum, UINT16 flags)
@@ -1838,7 +1855,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap); // PS2-HW-32: as HWR_GetTexture
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grMipmap, PU_HWRCACHE_UNLOCKED);
 }
 
 #if defined(PS2) && !defined(PS2_NOOPT_PATCH_RESCUE)
@@ -1996,7 +2013,7 @@ static void HWR_WarmTexture(INT32 tex)
 	m->regen_id = tex;
 	HWR_GenerateTexture(tex, grtex, m);
 	if (m->data)
-		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+		HWR_RELEASE_MIPMAP_DATA(m, PU_HWRCACHE_UNLOCKED);
 }
 
 static void HWR_PS2_WarmLevel(void)
@@ -2139,7 +2156,7 @@ void HWR_PS2_FlatUnpin(const UINT8 *p, size_t bytes)
 
 void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)
 {
-	Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(m, PU_HWRCACHE_UNLOCKED);
 }
 
 // PS2-HW-32: zero-copy uploads: the GS driver sends the texels with DMA references, so the zone must not move or purge them until the
@@ -2252,7 +2269,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap);
 	HWR_SetCurrentTexture(grMipmap);
 
-	HWR_PATCH_UNLOCKED(grMipmap->data);
+	HWR_PATCH_UNLOCKED(grMipmap);
 }
 
 #endif
@@ -2272,7 +2289,7 @@ static void HWR_LoadPatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	HWR_PATCH_UNLOCKED(grMipmap->data);
+	HWR_PATCH_UNLOCKED(grMipmap);
 }
 
 // ----------------------+
@@ -2292,7 +2309,7 @@ static void HWR_UpdatePatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	HWR_PATCH_UNLOCKED(grMipmap->data);
+	HWR_PATCH_UNLOCKED(grMipmap);
 }
 
 // -----------------+
@@ -2365,7 +2382,7 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
 	if (!gpatch)
 		return;
 
-	HWR_PATCH_UNLOCKED(gpatch->mipmap->data);
+	HWR_PATCH_UNLOCKED(gpatch->mipmap);
 }
 
 patch_t *HWR_GetCachedGLPatchPwad(UINT16 wadnum, UINT16 lumpnum)
@@ -2482,7 +2499,7 @@ void HWR_GetFadeMask(lumpnum_t fademasklumpnum)
 	HWD.pfnSetTexture(grmip);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grmip->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grmip, PU_HWRCACHE_UNLOCKED);
 }
 
 // =================================================

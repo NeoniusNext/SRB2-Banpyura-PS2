@@ -1182,7 +1182,7 @@ static void HWR_GetBlendedTexture(patch_t *patch, patch_t *blendpatch, INT32 ski
 				else
 					HWD.pfnSetTexture(grMipmap); // found the colormap, set it to the correct texture
 
-				Z_ChangeTag(grMipmap->data, PU_HWRMODELTEXTURE_UNLOCKED);
+				HWR_RELEASE_MIPMAP_DATA(grMipmap, PU_HWRMODELTEXTURE_UNLOCKED);
 				return;
 			}
 		}
@@ -1207,7 +1207,7 @@ static void HWR_GetBlendedTexture(patch_t *patch, patch_t *blendpatch, INT32 ski
 	HWR_CreateBlendedTexture(patch, blendpatch, newMipmap, skinnum, color);
 
 	HWD.pfnSetTexture(newMipmap);
-	Z_ChangeTag(newMipmap->data, PU_HWRMODELTEXTURE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(newMipmap, PU_HWRMODELTEXTURE_UNLOCKED);
 }
 
 #endif // PS2_PROFILE

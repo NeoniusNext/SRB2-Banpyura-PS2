@@ -708,7 +708,7 @@ static void vu_key_make(vukey_t *k, u32 flags, const FSurfaceInfo *surf)
 	{
 		// the kind: what of the texture decides the plan (begin_draw_inner), the same bits as the plan cache's key
 		w[5] = (u32)r->psm | ((u32)r->clut << 6) | ((u32)(r->notcc != 0) << 8) | ((u32)(r->screen != 0) << 9) | ((u32)(r->wrapx != 0) << 10) | ((u32)(r->wrapy != 0) << 11)
-			| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17);
+			| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17) | ((u32)(r->tiled == 1) << 19);
 		w[10] = (u32)H.cur_tex + 1u;
 		w[11] = r->blk;
 		w[12] = (u32)r->psm | ((u32)r->clut << 8) | ((u32)r->wrapx << 12) | ((u32)r->wrapy << 13) | ((u32)r->nearest_only << 14) | ((u32)r->notcc << 15) | ((u32)r->region << 16)

@@ -74,6 +74,9 @@ static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
 #include "ps2_hw_wire.inc" // OPT11-MODEL (PS2-HW-270): PF_WireFrame and gr_wireframe as GS lines
+static int sprite_screen(texrec_t *source, int linear, u64 frame, u64 alpha, int abe,
+	int x0, int y0, int x1, int y1, float u0, float v0, float u1, float v1,
+	int sciss_w, int sciss_h, u32 clut_blk); // shared tiled sprite path, defined with screen helpers
 #include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
 #include "ps2_hw_bench.inc" // OPT11 round 2: -hwbench, what the instructions cost
 
@@ -334,9 +337,15 @@ boolean PS2HWD_Init(void)
 
 	if (H.up)
 		return true;
+	tile_stencil_reset_state();
 	if (!hwbig_alloc())
 		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
+	tile_stencil_reset_state();
+	tile_stencil_rectangles = tile_stencil_mask_sprites = 0;
+	tile_stencil_triangle_submissions = tile_stencil_bbox_pixels = 0;
+	tile_run_peak_bytes = 0;
+	tile_core_fast_triangles = tile_box_nodes = tile_pixel_fallbacks = 0;
 	// PS2-HW-255 (OPT11 round 3, FX3): the sprite stream is opt-in (-hwspr). Measured on the tree with the VU2 collection of polygons in blocks (docs/GATES/g1/opt11-FX.md 7.7): the stream costs the EE
 	// what the batch costs for the same sprites (D1 +1.3 % of the sprite set, D2 -2.7 %, D3 -1.5 %, D4 +4.6 %, against the cheap projection alone), and its lists are 75 KB of the zone, which is
 	// at its edge on 32 MB (DEMO_003 ends in "Out of memory" on the tip of the main branch already). Without -hwspr the lists are not made and every sprite goes through the batch.
@@ -427,6 +436,19 @@ boolean PS2HWD_Init(void)
 	H.up = 1;
 	if (!H.fb32)
 		hw_limit(HW_SCREEN_LOSS, "opt-in CT16S frame buffer loses RGB precision and continuous destination alpha");
+	// A high-resolution mode necessarily streams screen images. Reserve its
+	// one 16 KiB tile before engine textures can fill the pool; later screen
+	// draws can then retain their saved selected texture throughout the draw.
+	if (fb_pages(H.fbw, H.fbh, H.fb32) * PAGE_BLOCKS > H.pool_blocks
+		&& tile_cache_get() == NOREC)
+	{
+		CONS_Alert(CONS_ERROR, "PS2 GS: lossless screen tile allocation failed\n");
+		PS2HWD_Shutdown();
+		return false;
+	}
+	if (tile_cache_rec != NOREC && tile_cache_rec < H.rec_n && H.rec[tile_cache_rec].used)
+		CONS_Printf("PS2 GS: full-size streaming tile %ux%u, %u blocks reserved; ordinary texture capacity %u/%u blocks\n",
+			TILE_SIZE, TILE_SIZE, (unsigned)H.rec[tile_cache_rec].nblk, (unsigned)tex_usable_blocks(), (unsigned)H.pool_blocks);
 	gs_irq_selftest();
 	clut_fixed_refresh(1);
 	gs_clear_both();
@@ -446,6 +468,9 @@ boolean PS2HWD_Init(void)
 void PS2HWD_Shutdown(void)
 {
 	int i;
+
+	if (tile_stencil_active && H.up && H.ring[0]) tile_stencil_end();
+	tile_stencil_reset_state();
 
 	if (!H.up)
 		return;
@@ -512,6 +537,7 @@ void PS2HWD_Shutdown(void)
 	if (PS2_ACTIVITY_ON)
 		PS2Activity_RendererReset(cyc());
 	memset(&H, 0, sizeof H);
+	tile_stencil_reset_state();
 	hwbig_free();
 }
 
@@ -521,6 +547,8 @@ void PS2HWD_Shutdown(void)
 void PS2HWD_Abort(void)
 {
 	u32 irq;
+
+	tile_stencil_reset_state();
 
 	if (!H.up || !H.ring[0])
 		return;
@@ -1655,6 +1683,8 @@ static void hw_SetBlend(FBITFIELD PolyFlags)
 
 static void hw_ClearBuffer(FBOOLEAN ColorMask, FBOOLEAN DepthMask, FRGBAFloat *ClearColor)
 {
+	if (tile_stencil_active && H.up && H.ring[0]) tile_stencil_end();
+	tile_stencil_reset_state();
 	if (!H.up)
 		return;
 	do_clear(ColorMask ? 1 : 0, DepthMask ? 1 : 0, ClearColor);
@@ -1866,7 +1896,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 		HWR_PS2_FlatUnpin(tex_flatpin, (size_t)TexInfo->width * TexInfo->height);
 		tex_flatpin = NULL;
 	}
-	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
+	if (!zc_last && !(ri != NOREC && H.rec[ri].tiled == 1 && H.rec[ri].tile_source)) // queued DMA or a non-regenerable tile proxy retains the source
 		HWR_PS2_ReleaseMipmapData(TexInfo);
 	if (ri == NOREC)
 	{
@@ -1951,6 +1981,16 @@ static void hw_UpdateTexture(GLMipmap_t *TexInfo)
 	{
 		ov_flush_all();
 		dma_fence(); // the engine has changed the texels: no queued reference may still read the old ones
+		if (r->tiled == 1 && r->tile_source && TexInfo->data)
+		{
+			// An explicit free/reallocation may reuse the old source address.
+			// Protect the current block and transfer its lease to re-admission;
+			// deleting the old proxy must not unlock this new generation.
+			HWR_PS2_LockData(TexInfo->data);
+			r->tile_source = NULL;
+			r->tile_source_bytes = 0;
+			TexInfo->ps2_cpu &= ~(u8)HWR_PS2_CPU_TILED_SOURCE;
+		}
 		tex_drop((int)(r - H.rec), 0);
 	}
 	settex_now(TexInfo);
@@ -1999,6 +2039,9 @@ static void hw_ClearMipMapCache(void)
 {
 	int i;
 
+	if (tile_stencil_active && H.up && H.ring[0]) tile_stencil_end();
+	tile_stencil_reset_state();
+
 	if (!H.up)
 		return;
 	ov_flush_all();
@@ -2008,7 +2051,7 @@ static void hw_ClearMipMapCache(void)
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)
-		if (H.rec[i].used && !H.rec[i].screen)
+		if (H.rec[i].used && !H.rec[i].screen && H.rec[i].tiled != 2)
 			tex_drop(i, 0);
 	H.cur_tex = NOREC;
 	H.cur_missing = 0;

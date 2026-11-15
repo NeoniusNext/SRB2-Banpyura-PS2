@@ -145,6 +145,15 @@ struct GLMipmap_s
 };
 typedef struct GLMipmap_s GLMipmap_t;
 
+#if defined(PS2) && defined(PS2_PROFILE)
+#define HWR_PS2_CPU_TILED_SOURCE 16u // driver retains this original CPU source for a tiled image
+#define HWR_RELEASE_MIPMAP_DATA(m_, tag_) do { \
+	if (!((m_)->ps2_cpu & HWR_PS2_CPU_TILED_SOURCE)) Z_ChangeTag((m_)->data, (tag_)); \
+} while (0)
+#else
+#define HWR_RELEASE_MIPMAP_DATA(m_, tag_) Z_ChangeTag((m_)->data, (tag_))
+#endif
+
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PATCH_PIXELS)
 #define HWR_PS2_PACKED_PATCHES
 #define HWR_PS2_CPU_PATCH 1u

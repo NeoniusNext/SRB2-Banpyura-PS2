@@ -15,7 +15,7 @@ static u64 frame_reg(int buf, u32 fbmsk)
 
 static u64 zbuf_reg(int zmsk)
 {
-	return (u64)(H.z_addr / 8192) | ((u64)ZPSM_24 << 24) | ((u64)(zmsk ? 1 : 0) << 32);
+	return (u64)(H.z_addr / 8192) | ((u64)(tile_stencil_active ? 0 : ZPSM_24) << 24) | ((u64)(zmsk ? 1 : 0) << 32);
 }
 
 static u64 scissor_reg(int x0, int y0, int x1, int y1)

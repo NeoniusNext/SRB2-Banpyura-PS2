@@ -245,14 +245,23 @@ typedef struct
 	u8 has255; // owner: the image has texels of index 255 (holes under the keyed CLUT)
 	u8 shareable; // owner: P_8 data of a map texture or flat: views for the other variants may share it
 	u8 dmapend; // zero-copy upload (PS2-HW-32): the image data is read by queued DMA
-	u8 pad3;
+	u8 tiled; // 1: full-size source streamed through halo tiles; 2: the pinned reusable GS tile
 	u32 imgws; // owner: frame_no + 1 of the last frame in which a draw used the image (through any of its records)
 	u32 lodfr; // owner: frame_no + 1 of the frame lod belongs to
 	u8 lod; // owner: the finest mip level (0 = full size) a polygon of the frame needed (instrumentation, PS2-HW-34)
 	// OPT10 (PS2-HW-70): an image of more than 1024 rows (the GS limit) is stored as two images, the rows [0, 1024) and the rest, each with its own blocks
 	u8 psplit; // 0 = an ordinary image, 1 = the first piece (what the engine's texture is bound to), 2 = the second piece
 	int pnext, ppar; // first piece: the record of the second (NOREC = none); second piece: the first. One of them goes, the other goes with it
-	float pt0, pt1, ptk; // the piece holds the engine texture rows [pt0, pt1) of one repeat (fractions of the height); a polygon's t in the piece is (t - pt0) * ptk
+	union
+	{
+		struct { float pt0, pt1, ptk; }; // split: engine rows [pt0,pt1), t = (t - pt0) * ptk
+		struct
+		{
+			u32 *tile_palette; // tiled==1, never psplit: optional 1 KiB RGBA index history
+			void *tile_source; // non-regenerable source retained in place while its proxy exists
+			u32 tile_source_bytes;
+		};
+	}; // split metadata and tiled RGBA history are mutually exclusive; EE record size is unchanged
 } texrec_t;
 
 #define NOREC (-1)
@@ -396,6 +405,20 @@ static struct
 	ps2hwd_stats_t st;
 	u32 warned;
 } H __attribute__((aligned(16)));
+
+// Transient tile stencil uses only Z24's otherwise unused upper byte.
+static int tile_stencil_active;
+static u32 tile_stencil_zor;
+static u32 tile_stencil_rectangles, tile_stencil_mask_sprites;
+static u64 tile_stencil_triangle_submissions, tile_stencil_bbox_pixels;
+static void tile_stencil_reset_region(void);
+static void tile_stencil_reset_state(void)
+{
+	tile_stencil_reset_region();
+	tile_stencil_active = 0;
+	tile_stencil_zor = 0;
+}
+
 
 int ps2hwd_dbg_flags;
 int ps2hwd_force_lt = -1;

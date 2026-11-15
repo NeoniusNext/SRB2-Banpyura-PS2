@@ -854,7 +854,7 @@ static void draw_model(model_t *model, INT32 frameIndex, float duration, float t
 			int done = 0;
 
 #ifdef HW_VU0
-			if (tiny && mesh->numVertices <= MDL_FAST_MAXV && mesh->numTriangles <= MDL_FAST_MAXT && !(ps2hwd_model_ab & 5) && P.vu0 && P.npass == 1 && !P.cutx && !P.cuty && !P.water
+			if (tiny && mesh->numVertices <= MDL_FAST_MAXV && mesh->numTriangles <= MDL_FAST_MAXT && !(ps2hwd_model_ab & 5) && P.vu0 && !(P.r && P.r->tiled == 1) && P.npass == 1 && !P.cutx && !P.cuty && !P.water
 				&& !P.pass[0].ramp && P.textured && P.pass[0].tex && !P.wrapx && !P.wrapy && (P.lmode == LM_NONE || P.lmode == LM_BANDS)
 				&& mdl_fast_get((u32)mesh->numVertices, (u32)mesh->numTriangles))
 				done = mdl_mesh_fast(mesh, fi, ni, ml, light);

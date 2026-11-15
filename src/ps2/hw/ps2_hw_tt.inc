@@ -181,15 +181,17 @@ static void tt_tile(texrec_t *r, u32 tx, u32 ty, u32 tw, u32 th)
 {
 	const u32 mw = tw - (tx + tw == 1024 ? 1u : 0u), mh = th - (ty + th == 1024 ? 1u : 0u);
 	const u64 fr = frame_reg(H.target, 0);
+	texrec_t source = *r; // first tiled upload may grow the record table
+	r = &source;
 
 	if (mw && mh)
-		sprite_tex(r, 0, fr, 0, 0, 0, 0, (int)mw, (int)mh, (float)tx, (float)ty, (float)(tx + mw), (float)(ty + mh), H.vw, H.vh, 0);
+		sprite_screen(r, 0, fr, 0, 0, 0, 0, (int)mw, (int)mh, (float)tx, (float)ty, (float)(tx + mw), (float)(ty + mh), H.vw, H.vh, 0);
 	if (mw < tw && mh)
-		sprite_tex(r, 0, fr, 0, 0, (int)mw, 0, (int)mw + 1, (int)mh, (float)(tx + mw), (float)ty, 1023.9375f, (float)(ty + mh), H.vw, H.vh, 0);
+		sprite_screen(r, 0, fr, 0, 0, (int)mw, 0, (int)mw + 1, (int)mh, (float)(tx + mw), (float)ty, 1023.9375f, (float)(ty + mh), H.vw, H.vh, 0);
 	if (mh < th && mw)
-		sprite_tex(r, 0, fr, 0, 0, 0, (int)mh, (int)mw, (int)mh + 1, (float)tx, (float)(ty + mh), (float)(tx + mw), 1023.9375f, H.vw, H.vh, 0);
+		sprite_screen(r, 0, fr, 0, 0, 0, (int)mh, (int)mw, (int)mh + 1, (float)tx, (float)(ty + mh), (float)(tx + mw), 1023.9375f, H.vw, H.vh, 0);
 	if (mw < tw && mh < th)
-		sprite_tex(r, 0, fr, 0, 0, (int)mw, (int)mh, (int)mw + 1, (int)mh + 1, (float)(tx + mw), (float)(ty + mh), 1023.9375f, 1023.9375f, H.vw, H.vh, 0);
+		sprite_screen(r, 0, fr, 0, 0, (int)mw, (int)mh, (int)mw + 1, (int)mh + 1, (float)(tx + mw), (float)(ty + mh), 1023.9375f, 1023.9375f, H.vw, H.vh, 0);
 }
 
 static void tt_clear(void)

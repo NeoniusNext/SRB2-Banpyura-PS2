@@ -161,6 +161,7 @@ static u32 wd_last_flips = ~0u; // the flip count of the last recovery
 static void wd_recover(const char *why)
 {
 	u32 irq;
+	const int interrupted_stencil = tile_stencil_active;
 
 	H.st.timeouts++;
 	wd_diag(why);
@@ -202,6 +203,15 @@ static void wd_recover(const char *why)
 	if (irq)
 		EIntr();
 	rel_release_all();
+	if (interrupted_stencil)
+	{
+		// A reset discarded part of a high-byte mask/primitive sequence.
+		// Do not resume with an unknowable mask: unwind this frame through
+		// the existing renderer resource guard after stopping all transport.
+		PS2HWD_Abort();
+		hw_failure("PS2 GS watchdog interrupted a tiled stencil frame");
+		abort(); // resource handlers must not return; standalone probes fail closed
+	}
 }
 
 // Sleep until at most `limit` buffers are queued or in flight.
