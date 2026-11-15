@@ -1,0 +1,49 @@
+diff --git a/src/hardware/hw_pbatch.inc b/src/hardware/hw_pbatch.inc
+--- a/src/hardware/hw_pbatch.inc
++++ b/src/hardware/hw_pbatch.inc
+@@ -65,0 +66,8 @@
++#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PB_SCRATCH)
++// The planner consumes every (block, bucket) pair before the draw walk writes its
++// offsets. One UINT32 allocation holds both phases, with two words per planner
++// entry and one word per walk entry. No planner entry survives the plan pass.
++static UINT32 *pb_plan;
++#define HWR_PB_PLAN_BLK(i) pb_plan[2u * (i)]
++#define HWR_PB_PLAN_BUCKET(i) pb_plan[2u * (i) + 1u]
++#else
+@@ -67,0 +76,3 @@
++#define HWR_PB_PLAN_BLK(i) pb_plan[(i)].blk
++#define HWR_PB_PLAN_BUCKET(i) pb_plan[(i)].bucket
++#endif
+@@ -142,0 +154 @@
++#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
+@@ -143,0 +156 @@
++#endif
+@@ -162,0 +176 @@
++#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
+@@ -163,0 +178 @@
++#endif
+@@ -168,0 +184 @@
++#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
+@@ -169,0 +186 @@
++#endif
+@@ -220,0 +238 @@
++#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
+@@ -221,0 +240 @@
++#endif
+@@ -453,2 +472,2 @@
+-		pb_plan[pb_nplan].blk = blk;
+-		pb_plan[pb_nplan].bucket = bi;
++		HWR_PB_PLAN_BLK(pb_nplan) = blk;
++		HWR_PB_PLAN_BUCKET(pb_nplan) = bi;
+@@ -537 +556 @@
+-		PS2HWD_PlanBlock(pb_bk[pb_plan[k].bucket].texture, pb_pool + pb_plan[k].blk);
++		PS2HWD_PlanBlock(pb_bk[HWR_PB_PLAN_BUCKET(k)].texture, pb_pool + HWR_PB_PLAN_BLK(k));
+@@ -672,0 +692,3 @@
++#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PB_SCRATCH)
++		UINT32 *const pb_walk = pb_plan;
++#endif
+@@ -1198,2 +1220,2 @@
+-				pb_plan[pb_nplan].blk = blk;
+-				pb_plan[pb_nplan].bucket = bi;
++				HWR_PB_PLAN_BLK(pb_nplan) = blk;
++				HWR_PB_PLAN_BUCKET(pb_nplan) = bi;

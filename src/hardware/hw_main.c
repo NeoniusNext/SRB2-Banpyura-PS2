@@ -6573,6 +6573,47 @@ void HWR_AddTransparentPolyobjectFloor(levelflat_t *levelflat, polyobj_t *polyse
 gl_drawnode_t *sortnode;
 size_t *sortindex;
 
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN)
+// The unchanged sort index already identifies each node: planes, polyplanes,
+// then walls. Keep the original bases/counts instead of four pointers per node.
+// Capture after allocation and before filling indices, matching the old tuples
+// even if a later draw callback changes a source list's global pointer/count.
+static struct
+{
+	planeinfo_t *plane;
+	polyplaneinfo_t *polyplane;
+	wallinfo_t *wall;
+	size_t nplane, npolyplane;
+} dn_source;
+
+static inline gl_drawnode_t HWR_ImplicitDrawNode(size_t n)
+{
+	gl_drawnode_t node = {NULL, NULL, NULL, NULL};
+
+	if (n < dn_source.nplane)
+		node.plane = &dn_source.plane[n];
+	else if (n - dn_source.nplane < dn_source.npolyplane)
+		node.polyplane = &dn_source.polyplane[n - dn_source.nplane];
+	else
+		node.wall = &dn_source.wall[n - dn_source.nplane - dn_source.npolyplane];
+	return node;
+}
+// The comparator needs only the draw count. Keep its scalar result separate
+// from the draw loop's pointer tuple, avoiding repeated tuple construction.
+static inline INT32 HWR_ImplicitDrawCount(size_t n)
+{
+	if (n < dn_source.nplane)
+		return dn_source.plane[n].drawcount;
+	if (n - dn_source.nplane < dn_source.npolyplane)
+		return dn_source.polyplane[n - dn_source.nplane].drawcount;
+	return dn_source.wall[n - dn_source.nplane - dn_source.npolyplane].drawcount;
+}
+
+#define HWR_SORTNODE(n) HWR_ImplicitDrawNode(n)
+#else
+#define HWR_SORTNODE(n) sortnode[n]
+#endif
+
 static int CompareDrawNodes(const void *p1, const void *p2)
 {
 	size_t n1 = *(const size_t*)p1;
@@ -6580,21 +6621,27 @@ static int CompareDrawNodes(const void *p1, const void *p2)
 	INT32 v1 = 0;
 	INT32 v2 = 0;
 	INT32 diff;
-	if (sortnode[n1].plane)
-		v1 = sortnode[n1].plane->drawcount;
-	else if (sortnode[n1].polyplane)
-		v1 = sortnode[n1].polyplane->drawcount;
-	else if (sortnode[n1].wall)
-		v1 = sortnode[n1].wall->drawcount;
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN)
+	v1 = HWR_ImplicitDrawCount(n1);
+	v2 = HWR_ImplicitDrawCount(n2);
+#else
+	if (HWR_SORTNODE(n1).plane)
+		v1 = HWR_SORTNODE(n1).plane->drawcount;
+	else if (HWR_SORTNODE(n1).polyplane)
+		v1 = HWR_SORTNODE(n1).polyplane->drawcount;
+	else if (HWR_SORTNODE(n1).wall)
+		v1 = HWR_SORTNODE(n1).wall->drawcount;
 	else I_Error("CompareDrawNodes: n1 unknown");
 
-	if (sortnode[n2].plane)
-		v2 = sortnode[n2].plane->drawcount;
-	else if (sortnode[n2].polyplane)
-		v2 = sortnode[n2].polyplane->drawcount;
-	else if (sortnode[n2].wall)
-		v2 = sortnode[n2].wall->drawcount;
+	if (HWR_SORTNODE(n2).plane)
+		v2 = HWR_SORTNODE(n2).plane->drawcount;
+	else if (HWR_SORTNODE(n2).polyplane)
+		v2 = HWR_SORTNODE(n2).polyplane->drawcount;
+	else if (HWR_SORTNODE(n2).wall)
+		v2 = HWR_SORTNODE(n2).wall->drawcount;
 	else I_Error("CompareDrawNodes: n2 unknown");
+
+#endif
 
 	diff = v2 - v1;
 	if (diff == 0) I_Error("CompareDrawNodes: diff is zero");
@@ -6605,9 +6652,15 @@ static int CompareDrawNodePlanes(const void *p1, const void *p2)
 {
 	size_t n1 = *(const size_t*)p1;
 	size_t n2 = *(const size_t*)p2;
-	if (!sortnode[n1].plane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n1)");
-	if (!sortnode[n2].plane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n2)");
-	return abs(sortnode[n2].plane->fixedheight - viewz) - abs(sortnode[n1].plane->fixedheight - viewz);
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN)
+	if (n1 >= dn_source.nplane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n1)");
+	if (n2 >= dn_source.nplane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n2)");
+	return abs(dn_source.plane[n2].fixedheight - viewz) - abs(dn_source.plane[n1].fixedheight - viewz);
+#else
+	if (!HWR_SORTNODE(n1).plane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n1)");
+	if (!HWR_SORTNODE(n2).plane) I_Error("CompareDrawNodePlanes: Uh.. This isn't a plane! (n2)");
+	return abs(HWR_SORTNODE(n2).plane->fixedheight - viewz) - abs(HWR_SORTNODE(n1).plane->fixedheight - viewz);
+#endif
 }
 
 //
@@ -6623,7 +6676,9 @@ static void HWR_CreateDrawNodes(void)
 	// Hell yes! But sort algorithm must be modified to use a linked list.
 #ifdef PS2_PROFILE // PS2-HW-40: persistent work arrays instead of two PU_STATIC zone blocks per frame (every one of them walked the arena: Z_MoveFrontier, 1..7 M cycles a frame)
 	{
+#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN))
 		static gl_drawnode_t *dn_buf;
+#endif
 		static size_t *di_buf;
 		static size_t dn_cap;
 		const size_t need = numplanes + numpolyplanes + numwalls;
@@ -6634,14 +6689,22 @@ static void HWR_CreateDrawNodes(void)
 
 			while (cap < need)
 				cap += cap / 2;
+#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN))
 			dn_buf = realloc(dn_buf, cap * sizeof *dn_buf);
+#endif
 			di_buf = realloc(di_buf, cap * sizeof *di_buf);
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN)
+			if (!di_buf)
+#else
 			if (!dn_buf || !di_buf)
+#endif
 				I_Error("HWR_CreateDrawNodes: out of memory (%lu nodes)", (unsigned long)cap);
 			dn_cap = cap;
 		}
+#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN))
 		memset(dn_buf, 0, need * sizeof *dn_buf);
 		sortnode = dn_buf;
+#endif
 		sortindex = di_buf;
 	}
 #else
@@ -6658,21 +6721,35 @@ static void HWR_CreateDrawNodes(void)
 	PS_START_TIMING(ps_hw_nodesorttime);
 	HWP_SPAN_BEGIN(hwp_tnsort);
 
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN)
+	dn_source.plane = planeinfo;
+	dn_source.polyplane = polyplaneinfo;
+	dn_source.wall = wallinfo;
+	dn_source.nplane = numplanes;
+	dn_source.npolyplane = numpolyplanes;
+#endif
+
 	for (i = 0; i < numplanes; i++, p++)
 	{
+#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN))
 		sortnode[p].plane = &planeinfo[i];
+#endif
 		sortindex[p] = p;
 	}
 
 	for (i = 0; i < numpolyplanes; i++, p++)
 	{
+#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN))
 		sortnode[p].polyplane = &polyplaneinfo[i];
+#endif
 		sortindex[p] = p;
 	}
 
 	for (i = 0; i < numwalls; i++, p++)
 	{
+#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN))
 		sortnode[p].wall = &wallinfo[i];
+#endif
 		sortindex[p] = p;
 	}
 
@@ -6688,13 +6765,13 @@ static void HWR_CreateDrawNodes(void)
 	while (run_start < p-1)// p-1 because a 1 plane run at the end of the list does not count
 	{
 		// locate run start
-		if (sortnode[sortindex[run_start]].plane)
+		if (HWR_SORTNODE(sortindex[run_start]).plane)
 		{
 			// found it, now look for run end
 			size_t run_end;// (inclusive)
 			for (i = run_start+1; i < p; i++)// size_t and UINT32 being used mixed here... shouldnt break anything though..
 			{
-				if (!sortnode[sortindex[i]].plane) break;
+				if (!HWR_SORTNODE(sortindex[i]).plane) break;
 			}
 			run_end = i-1;
 			if (run_end > run_start)// if there are multiple consecutive planes, not just one
@@ -6722,7 +6799,13 @@ static void HWR_CreateDrawNodes(void)
 
 	for (i = 0; i < p; i++)
 	{
-		if (sortnode[sortindex[i]].plane)
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_IMPLICIT_DN)
+		const gl_drawnode_t drawnode = HWR_SORTNODE(sortindex[i]);
+#define HWR_DN_DRAW drawnode
+#else
+#define HWR_DN_DRAW HWR_SORTNODE(sortindex[i])
+#endif
+		if (HWR_DN_DRAW.plane)
 		{
 			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
 			gl_frontsector = NULL;
@@ -6730,44 +6813,45 @@ static void HWR_CreateDrawNodes(void)
 #ifdef PS2_PROFILE
 			const UINT32 nt0 = ps2hwp_now();
 #endif
-			if (!(sortnode[sortindex[i]].plane->blend & PF_NoTexture))
-				HWR_GetLevelFlat(sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->chromakeyed);
-			HWR_RenderPlane(NULL, sortnode[sortindex[i]].plane->xsub, sortnode[sortindex[i]].plane->isceiling, sortnode[sortindex[i]].plane->fixedheight, sortnode[sortindex[i]].plane->blend, sortnode[sortindex[i]].plane->lightlevel,
-				sortnode[sortindex[i]].plane->levelflat, sortnode[sortindex[i]].plane->FOFSector, sortnode[sortindex[i]].plane->alpha, sortnode[sortindex[i]].plane->planecolormap);
+			if (!(HWR_DN_DRAW.plane->blend & PF_NoTexture))
+				HWR_GetLevelFlat(HWR_DN_DRAW.plane->levelflat, HWR_DN_DRAW.plane->chromakeyed);
+			HWR_RenderPlane(NULL, HWR_DN_DRAW.plane->xsub, HWR_DN_DRAW.plane->isceiling, HWR_DN_DRAW.plane->fixedheight, HWR_DN_DRAW.plane->blend, HWR_DN_DRAW.plane->lightlevel,
+				HWR_DN_DRAW.plane->levelflat, HWR_DN_DRAW.plane->FOFSector, HWR_DN_DRAW.plane->alpha, HWR_DN_DRAW.plane->planecolormap);
 #ifdef PS2_PROFILE
 			gc.nd_pl++;
 			gc.nd_plc += ps2hwp_now() - nt0;
-			if (sortnode[sortindex[i]].plane->blend & PF_Ripple)
+			if (HWR_DN_DRAW.plane->blend & PF_Ripple)
 				gc.nd_rip++;
 #endif
 		}
-		else if (sortnode[sortindex[i]].polyplane)
+		else if (HWR_DN_DRAW.polyplane)
 		{
 			// We aren't traversing the BSP tree, so make gl_frontsector null to avoid crashes.
 			gl_frontsector = NULL;
 
-			polyobj_t *po = sortnode[sortindex[i]].polyplane->polysector;
+			polyobj_t *po = HWR_DN_DRAW.polyplane->polysector;
 
-			if (!(sortnode[sortindex[i]].polyplane->blend & PF_NoTexture))
-				HWR_GetLevelFlat(sortnode[sortindex[i]].polyplane->levelflat, po->flags & POF_SPLAT);
-			HWR_RenderPolyObjectPlane(po, sortnode[sortindex[i]].polyplane->isceiling, sortnode[sortindex[i]].polyplane->fixedheight, sortnode[sortindex[i]].polyplane->blend, sortnode[sortindex[i]].polyplane->lightlevel,
-				sortnode[sortindex[i]].polyplane->levelflat, sortnode[sortindex[i]].polyplane->FOFSector, sortnode[sortindex[i]].polyplane->alpha, sortnode[sortindex[i]].polyplane->planecolormap);
+			if (!(HWR_DN_DRAW.polyplane->blend & PF_NoTexture))
+				HWR_GetLevelFlat(HWR_DN_DRAW.polyplane->levelflat, po->flags & POF_SPLAT);
+			HWR_RenderPolyObjectPlane(po, HWR_DN_DRAW.polyplane->isceiling, HWR_DN_DRAW.polyplane->fixedheight, HWR_DN_DRAW.polyplane->blend, HWR_DN_DRAW.polyplane->lightlevel,
+				HWR_DN_DRAW.polyplane->levelflat, HWR_DN_DRAW.polyplane->FOFSector, HWR_DN_DRAW.polyplane->alpha, HWR_DN_DRAW.polyplane->planecolormap);
 		}
-		else if (sortnode[sortindex[i]].wall)
+		else if (HWR_DN_DRAW.wall)
 		{
 #ifdef PS2_PROFILE
 			const UINT32 nt1 = ps2hwp_now();
 #endif
-			if (!(sortnode[sortindex[i]].wall->blend & PF_NoTexture))
-				HWR_GetTexture(sortnode[sortindex[i]].wall->texnum, true);
-			HWR_RenderWall(sortnode[sortindex[i]].wall->wallVerts, &sortnode[sortindex[i]].wall->Surf, sortnode[sortindex[i]].wall->blend, sortnode[sortindex[i]].wall->fogwall,
-				sortnode[sortindex[i]].wall->lightlevel, sortnode[sortindex[i]].wall->wallcolormap);
+			if (!(HWR_DN_DRAW.wall->blend & PF_NoTexture))
+				HWR_GetTexture(HWR_DN_DRAW.wall->texnum, true);
+			HWR_RenderWall(HWR_DN_DRAW.wall->wallVerts, &HWR_DN_DRAW.wall->Surf, HWR_DN_DRAW.wall->blend, HWR_DN_DRAW.wall->fogwall,
+				HWR_DN_DRAW.wall->lightlevel, HWR_DN_DRAW.wall->wallcolormap);
 #ifdef PS2_PROFILE
 			gc.nd_wl++;
 			gc.nd_wlc += ps2hwp_now() - nt1;
 #endif
 		}
 	}
+#undef HWR_DN_DRAW
 
 	PS_STOP_TIMING(ps_hw_nodedrawtime);
 	HWP_SPAN_END(hwp_tndraw, HWP_NODEDRAW);
@@ -7034,10 +7118,10 @@ static void HWR_FX_ExtMake(UINT32 spr, hwr_fx_ext_t *e)
 
 			if (id >= numspritelumps)
 				continue;
-			w = FIXED_TO_FLOAT(spritecachedinfo[id].width);
-			off = FIXED_TO_FLOAT(spritecachedinfo[id].offset);
-			h = FIXED_TO_FLOAT(spritecachedinfo[id].height);
-			top = FIXED_TO_FLOAT(spritecachedinfo[id].topoffset);
+			w = FIXED_TO_FLOAT(SPRCACHE_WIDTH(spritecachedinfo[id]));
+			off = FIXED_TO_FLOAT(SPRCACHE_OFFSET(spritecachedinfo[id]));
+			h = FIXED_TO_FLOAT(SPRCACHE_HEIGHT(spritecachedinfo[id]));
+			top = FIXED_TO_FLOAT(SPRCACHE_TOPOFFSET(spritecachedinfo[id]));
 			a = fabsf(off);
 			b = fabsf(w - off);
 			a = a > b ? a : b;
@@ -7546,10 +7630,10 @@ static boolean HWR_ProjectPlain(mobj_t *thing)
 	}
 
 	HWD_LAP(HWP_PS_B);
-	spr_width = spritecachedinfo[lumpoff].width;
-	spr_height = spritecachedinfo[lumpoff].height;
-	spr_offset = spritecachedinfo[lumpoff].offset;
-	spr_topoffset = spritecachedinfo[lumpoff].topoffset;
+	spr_width = SPRCACHE_WIDTH(spritecachedinfo[lumpoff]);
+	spr_height = SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]);
+	spr_offset = SPRCACHE_OFFSET(spritecachedinfo[lumpoff]);
+	spr_topoffset = SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]);
 	{
 		SINT8 flipoffset = 1;
 
@@ -7981,10 +8065,10 @@ static void HWR_ProjectSprite(mobj_t *thing)
 	if (thing->skin && ((skin_t *)thing->skin)->flags & SF_HIRES)
 		this_scale *= FIXED_TO_FLOAT(((skin_t *)thing->skin)->highresscale);
 
-	spr_width = spritecachedinfo[lumpoff].width;
-	spr_height = spritecachedinfo[lumpoff].height;
-	spr_offset = spritecachedinfo[lumpoff].offset;
-	spr_topoffset = spritecachedinfo[lumpoff].topoffset;
+	spr_width = SPRCACHE_WIDTH(spritecachedinfo[lumpoff]);
+	spr_height = SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]);
+	spr_offset = SPRCACHE_OFFSET(spritecachedinfo[lumpoff]);
+	spr_topoffset = SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]);
 
 #ifdef ROTSPRITE
 	spriterotangle = R_SpriteRotationAngle(&interp);
@@ -8398,13 +8482,13 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	rightcos = FIXED_TO_FLOAT(FINECOSINE((viewangle + ANGLE_90)>>ANGLETOFINESHIFT));
 	if (flip)
 	{
-		x1 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].width - spritecachedinfo[lumpoff].offset);
-		x2 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].offset);
+		x1 = FIXED_TO_FLOAT(SPRCACHE_WIDTH(spritecachedinfo[lumpoff]) - SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
+		x2 = FIXED_TO_FLOAT(SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
 	}
 	else
 	{
-		x1 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].offset);
-		x2 = FIXED_TO_FLOAT(spritecachedinfo[lumpoff].width - spritecachedinfo[lumpoff].offset);
+		x1 = FIXED_TO_FLOAT(SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
+		x2 = FIXED_TO_FLOAT(SPRCACHE_WIDTH(spritecachedinfo[lumpoff]) - SPRCACHE_OFFSET(spritecachedinfo[lumpoff]));
 	}
 
 	z1 = tr_y + x1 * rightsin;
@@ -8415,8 +8499,8 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 #ifdef PS2_PROFILE
 	{
 		// PS2-HW-72: the same for the snow and the rain: a flake that holds no pixel centre (or lies outside the view) is not made
-		const float gzt_p = FIXED_TO_FLOAT(interp.z + spritecachedinfo[lumpoff].topoffset);
-		const float gz_p = gzt_p - FIXED_TO_FLOAT(spritecachedinfo[lumpoff].height);
+		const float gzt_p = FIXED_TO_FLOAT(interp.z + SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]));
+		const float gz_p = gzt_p - FIXED_TO_FLOAT(SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]));
 		const boolean aim = cv_glspritebillboarding.value && !R_ThingIsPaperSprite((mobj_t *)thing) && fabsf(gl_viewludcos) > 1.0e-6f;
 		const float basey = P_MobjFlip((mobj_t *)thing) == -1 ? FIXED_TO_FLOAT(interp.z + interp.height) : FIXED_TO_FLOAT(interp.z);
 
@@ -8462,8 +8546,8 @@ static void HWR_ProjectPrecipitationSprite(precipmobj_t *thing)
 	vis->colormap = NULL;
 
 	// set top/bottom coords
-	vis->gzt = FIXED_TO_FLOAT(interp.z + spritecachedinfo[lumpoff].topoffset);
-	vis->gz = vis->gzt - FIXED_TO_FLOAT(spritecachedinfo[lumpoff].height);
+	vis->gzt = FIXED_TO_FLOAT(interp.z + SPRCACHE_TOPOFFSET(spritecachedinfo[lumpoff]));
+	vis->gz = vis->gzt - FIXED_TO_FLOAT(SPRCACHE_HEIGHT(spritecachedinfo[lumpoff]));
 
 	vis->precip = true;
 	vis->bbox = false;

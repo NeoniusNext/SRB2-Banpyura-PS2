@@ -1,0 +1,619 @@
+{
+  "schema_version": 1,
+  "checked_utc_date": "2026-11-15",
+  "inspected_commit": "353cc94103aeb38cef87d26151c779302135d0e9",
+  "scope": "Three additional original developer papers, two pinned PS2SDK drawing implementations and targeted GS sprite rules; read-only research, no compiler/emulator/runtime invocation.",
+  "no_performance_or_memory_result_claimed": true,
+  "no_full_source_or_paper_bodies_embedded": true,
+  "old_catalog_unchanged": [
+    {
+      "path": "docs/PS2_ARCHITECTURE_AND_OPTIMIZATION_SOURCES_20261115.md",
+      "bytes": 31204,
+      "sha256": "9f7f6bfedd1f9351b2498c5fcf0abda60c82e8d6fa3c802e9277473d0bc4fc84",
+      "git_blob_sha1": "5625f5cab39d95bf660caadc7d035a9e5035efac",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "docs/ps2-research-20261115/README.md",
+      "bytes": 4919,
+      "sha256": "cb8579f9cf568d965b4e443cf6214df901710620df718a4402a044ff78157c57",
+      "git_blob_sha1": "ca3fb4cef28119a56cc217bdb884d7cd142ae0da",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "docs/ps2-research-20261115/evidence.json",
+      "bytes": 28954,
+      "sha256": "f10d8d07d948a58c58192c4556484855006eaeb0feec7b1a5929ee509a02eb58",
+      "git_blob_sha1": "0b4b98615e15c36f0cc4655e09a2807c22c73ce0",
+      "matches_inspected_commit": true
+    }
+  ],
+  "papers": [
+    {
+      "id": "N1",
+      "url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/ezswizzle/TextureSwizzling.pdf",
+      "status": 200,
+      "final_url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/ezswizzle/TextureSwizzling.pdf",
+      "content_type": "application/pdf",
+      "bytes": 122752,
+      "sha256": "306eb7e9ddcecc2a2de530f8d657fb27ad9e906719fc2140184289c263fae64e",
+      "inspected_pdf_pages": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "pdf_pages": 8,
+      "pdf_metadata_author": "llemarie",
+      "pdf_metadata_creation_date": "Sat Jun 28 01:04:43 2003 +11",
+      "inspection_method": "temporary direct GET; pdfinfo and pdftotext; original file deleted",
+      "author": "Lionel Lemarié",
+      "cover_date": "2003-06-20",
+      "title": "Texture Swizzling",
+      "edition": "Version 1.0, PS2Linux edition",
+      "additional_inspection": "complete body opened with Internet reader"
+    },
+    {
+      "id": "N2",
+      "url": "http://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+      "status": 200,
+      "final_url": "http://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+      "bytes": 605633,
+      "sha256": "16e8c9661975e1d9b6e4a34b06b378092fe391c5ed68d7f3799eef9ea4427680",
+      "inspected_pdf_pages": [
+        1,
+        3,
+        19,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34
+      ],
+      "pdf_pages": 34,
+      "pdf_metadata_author": "82979-040-0035517-16743",
+      "pdf_metadata_creation_date": "Mon Dec  8 21:51:08 2003 +10",
+      "inspection_method": "temporary direct GET; pdfinfo and pdftotext; original file deleted",
+      "author": "Lionel Lemarié, SCEE Developer Support / Technology Group",
+      "cover_date": "2003",
+      "title": "Reaching for the Limits of PS2 Performance: How Far Have We Got?",
+      "author_locator": "slide 3",
+      "key_locators": {
+        "19": "texture syncing",
+        "25-26": "cache costs",
+        "27": "narrow fullscreen primitives"
+      },
+      "additional_inspection": "34-slide archived HTML transcript"
+    },
+    {
+      "id": "N3",
+      "url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/p2lsd/32bit_colour_channel_shifting.pdf",
+      "status": 200,
+      "final_url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/p2lsd/32bit_colour_channel_shifting.pdf",
+      "content_type": "application/pdf",
+      "bytes": 172051,
+      "sha256": "39dac2a78ea7373a5c04d31fffe58495a4d3c3247e519e5063f5419935d03d20",
+      "inspected_pdf_pages": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "pdf_pages": 5,
+      "pdf_metadata_author": "Sarah Ewen",
+      "pdf_metadata_creation_date": "Sat Oct 23 02:52:44 2004 +11",
+      "inspection_method": "temporary direct GET; pdfinfo and pdftotext; original file deleted",
+      "author": "Mark Breugelmans, Sony Computer Entertainment Europe",
+      "cover_date": "26 October 2001 – October 2004",
+      "title": "32bit Colour Channel Shifting using 8bit and 16bit texture formats",
+      "authorship_note": "Cover attribution is used; discrepant PDF Author metadata is retained."
+    }
+  ],
+  "access_attempts": {
+    "N2_https_initial": {
+      "id": "N2",
+      "url": "https://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+      "error": "HTTPError: HTTP Error 503: Service Unavailable",
+      "requested_inspection_pdf_pages": [
+        1,
+        2,
+        3,
+        4,
+        8,
+        21,
+        22,
+        23,
+        24,
+        25,
+        26,
+        27,
+        28,
+        29,
+        30,
+        31,
+        32,
+        33,
+        34
+      ],
+      "inspected_pdf_pages": []
+    },
+    "N2_alternate_endpoints": [
+      {
+        "url": "https://gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+        "error": "HTTPError: HTTP Error 503: Service Unavailable"
+      },
+      {
+        "url": "http://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+        "status": 200,
+        "bytes": 605633,
+        "sha256": "16e8c9661975e1d9b6e4a34b06b378092fe391c5ed68d7f3799eef9ea4427680",
+        "final_url": "http://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+        "pdfinfo": {
+          "Title": "           ",
+          "Author": "          82979-040-0035517-16743",
+          "Creator": "         Acrobat PDFMaker 5.0 for PowerPoint",
+          "Producer": "        Acrobat Distiller 5.0.5 (Windows)",
+          "CreationDate": "    Mon Dec  8 21:51:08 2003 +10",
+          "ModDate": "         Mon Dec  8 21:51:24 2003 +10",
+          "Custom Metadata": " no",
+          "Metadata Stream": " yes",
+          "Tagged": "          yes",
+          "UserProperties": "  no",
+          "Suspects": "        no",
+          "Form": "            none",
+          "JavaScript": "      no",
+          "Pages": "           34",
+          "Encrypted": "       yes (print:no copy:no change:no addNotes:no algorithm:RC4)",
+          "Page size": "       537 x 718 pts",
+          "Page rot": "        90",
+          "File size": "       605633 bytes",
+          "Optimized": "       yes",
+          "PDF version": "     1.3"
+        },
+        "inspected_pages": [
+          1,
+          3,
+          19,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31,
+          32,
+          33,
+          34
+        ]
+      },
+      {
+        "url": "https://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf?download=1",
+        "error": "HTTPError: HTTP Error 503: Service Unavailable"
+      }
+    ],
+    "N2_transcript": {
+      "url": "https://www.slideserve.com/sldsrv/reaching-the-limits-of-ps2-performance-how-far-we-got-powerpoint-ppt-presentation",
+      "web_reader_body_opened": true,
+      "slide_count": 34
+    }
+  },
+  "maintainer_sources": [
+    {
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw.c",
+      "git_blob_sha1": "fba86612abc83b837cc4589bf4e4c1331d894fa8",
+      "encoding": "utf-8",
+      "id": "S18",
+      "function": "draw_clear",
+      "start_line": 149,
+      "following_function_line": 189
+    },
+    {
+      "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw2d.c",
+      "git_blob_sha1": "1ff6b42c2aa101fcb7567c9d7d3da26f5dbc6080",
+      "encoding": "utf-8",
+      "id": "S19",
+      "function": "draw_rect_filled_strips",
+      "start_line": 248,
+      "following_function_line": 303
+    }
+  ],
+  "targeted_manual_check": {
+    "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual.pdf",
+    "status": 200,
+    "bytes": 1265948,
+    "sha256": "daf72c776f6e27721149f28dc46ad47443e560b22a04f3d8ff4bcf74f254bf12",
+    "inspected_pdf_pages": [
+      36,
+      37,
+      38,
+      39,
+      40,
+      41,
+      46
+    ],
+    "inspection_scope": {
+      "36-41": "full extracted text",
+      "46": "targeted sprite drawing-rule text found by full-document text search"
+    }
+  },
+  "repository_source_map": [
+    {
+      "path": "src/ps2/hw/ps2_hw_gs.inc",
+      "bytes": 29782,
+      "sha256": "fdf12939e01ba31472ebad75a4418aeb1fada38784f0c4bc796a8b5bd2b71d1e",
+      "git_blob_sha1": "cb245a52ee3d3959a63d1ae012a0062e2e7deb38",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_priv.inc",
+      "bytes": 20852,
+      "sha256": "5593d046960f038160f031352f71dff140ecaeb8e086f27155e6062b79c0c792",
+      "git_blob_sha1": "d7c5859323c0b72c3981d86636e78a3774f45efd",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "bytes": 90840,
+      "sha256": "76de33ef5d73da9aae8f59b3e1bbdb34502e8c21319b31d765235344a252fe8a",
+      "git_blob_sha1": "dccacd2fd65b2f07a1c6bbe39509ff1a2ae5a233",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "bytes": 86905,
+      "sha256": "f117715b398b42b1084541d8ea6cb64c2422d5fab151227ad22ad8dc70c8c862",
+      "git_blob_sha1": "af498c965af97b85869ac40f5aa3103c7492b7bc",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_screen.inc",
+      "bytes": 16088,
+      "sha256": "ffce2fd191a5d2c18f311fe14b6f85672a8234f465e98c454a87974ef402fd27",
+      "git_blob_sha1": "e32bb448db5bf3fcb331e1a86ea9ee48fdce2ea9",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "bytes": 48838,
+      "sha256": "4705ff5b6edc5c3c121fa188c5eb1dae8a63adc89e6e0af48c89911f687788f1",
+      "git_blob_sha1": "66a6017da76e81f50996aea3d39407caeec24832",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "bytes": 70647,
+      "sha256": "445a610c63d3f5670e0e99f660ccc8d6e52ac59d86750a2894ab4d1211a6da8f",
+      "git_blob_sha1": "c7a75425d6b5eeb6b24ae45d52ec745be67059ec",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "docs/PS2_P4_NEXT12_20261115.md",
+      "bytes": 11640,
+      "sha256": "560a0ed8b958afe80caf8d313aa15e0f4430d2d30d43ce445933db269e6149e1",
+      "git_blob_sha1": "895cd7d5a7a685ab72bacfe714c9812b593f94b8",
+      "matches_inspected_commit": true
+    },
+    {
+      "path": "docs/PS2_VISIBILITY_NEXT12_20261115.md",
+      "bytes": 5275,
+      "sha256": "98648c979ec6a5bdee4bd09cca6493cee264709b9a974e26a480ae99231ecc09",
+      "git_blob_sha1": "63f45f8781416d78da0099cb5bb310ab5cd1b321",
+      "matches_inspected_commit": true
+    }
+  ],
+  "web_discovery": {
+    "checked_utc_date": "2026-11-15",
+    "tool": "mcp__codex_apps__search_service_web_run",
+    "query_groups": [
+      {
+        "id": "q1",
+        "queries": [
+          "PlayStation 2 memory optimization exact texture cache GS alpha PS2 original paper texture upload synchronization",
+          "site.ps2dev.org gsKit texture CLUT cache alignment PS2 TEXFLUSH",
+          "PlayStation 2 performance analysis cache DMA paper Sony optimization benchmark"
+        ],
+        "outcomes": [
+          "N2",
+          "N3"
+        ]
+      },
+      {
+        "id": "q2",
+        "queries": [
+          "\"Reaching for the Limits of PS2 Performance\" How Far Have We Got",
+          "\"32bit Colour Channel Shifting\" PS2 author",
+          "PS2 \"Performance\" \"Jon\" \"memory\" GDC 2003"
+        ],
+        "outcomes": [
+          "N2",
+          "N3"
+        ]
+      },
+      {
+        "id": "q3",
+        "queries": [
+          "PS2 \"High Performance\" \"cache\" Sony \"2003\" programming",
+          "site:lukasz.dk \"PS2\" \"Performance\"",
+          "site:ps2linux.no-ip.info \"cache\" \"Performance\""
+        ],
+        "outcomes": [
+          "N2"
+        ]
+      },
+      {
+        "id": "q4",
+        "queries": [
+          "PS2 faster PSMT8 texture upload swizzled PSMCT32 gsKit original",
+          "site:lukasz.dk PS2 swizzle texture upload PSMT8 PSMCT32",
+          "site:ps2linux.no-ip.info swizzle textures PSMCT32"
+        ],
+        "outcomes": [
+          "N1"
+        ]
+      },
+      {
+        "id": "q5",
+        "queries": [
+          "\"HowFarHaveWeGot.pdf\" author SCEE",
+          "\"Texture Swizzling\" \"Lionel\" \"2003\"",
+          "\"GS\" \"page breaks\" \"32\" \"sprite\" PS2 performance Sony"
+        ],
+        "outcomes": [
+          "N2",
+          "M5",
+          "M6"
+        ]
+      },
+      {
+        "id": "q6",
+        "queries": [
+          "site:github.com/ps2dev/ps2sdk \"draw_clear\" \"32\"",
+          "site:github.com/ps2dev/gsKit \"clear\" \"strip\""
+        ],
+        "outcomes": [
+          "S18",
+          "S19"
+        ]
+      },
+      {
+        "id": "q7",
+        "queries": [
+          "\"HardTuningPS2.pdf\"",
+          "\"Hard Tuning\" \"PS2\" SCEE",
+          "\"How Far Have We Got\" \"Playstation\" pdf Sony"
+        ],
+        "outcomes": [
+          "N2"
+        ],
+        "excluded": [
+          "Generic search hits and torrent collection indexes were not downloaded or treated as authorities."
+        ]
+      }
+    ],
+    "body_opened_urls": [
+      "https://ps2linux.no-ip.info/playstation2-linux.com/download/ezswizzle/TextureSwizzling.pdf",
+      "https://ps2linux.no-ip.info/playstation2-linux.com/projects/ezswizzle.html",
+      "https://ps2linux.no-ip.info/playstation2-linux.com/docs/howto/display_docef7c.html?docid=75",
+      "https://ps2linux.no-ip.info/playstation2-linux.com/download/p2lsd/32bit_colour_channel_shifting.pdf",
+      "https://www.slideserve.com/sldsrv/reaching-the-limits-of-ps2-performance-how-far-we-got-powerpoint-ppt-presentation"
+    ],
+    "github_source_records": [
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw.c",
+        "git_blob_sha1": "fba86612abc83b837cc4589bf4e4c1331d894fa8",
+        "encoding": "utf-8",
+        "id": "S18",
+        "function": "draw_clear",
+        "start_line": 149,
+        "following_function_line": 189
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw2d.c",
+        "git_blob_sha1": "1ff6b42c2aa101fcb7567c9d7d3da26f5dbc6080",
+        "encoding": "utf-8",
+        "id": "S19",
+        "function": "draw_rect_filled_strips",
+        "start_line": 248,
+        "following_function_line": 303
+      }
+    ],
+    "no_sources_bodies_embedded": true
+  },
+  "link_verification": {
+    "external_url_count": 9,
+    "results": [
+      {
+        "url": "http://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "http://www.gamepilgrimage.com/sites/default/files/SystemSpecs/PS2/HowFarHaveWeGot.pdf",
+        "content_type": "application/pdf"
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw.c",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw.c",
+        "content_type": "text/html; charset=utf-8"
+      },
+      {
+        "url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw2d.c",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "https://github.com/ps2dev/ps2sdk/blob/b04e8973c8a9839d0653d87a8d30cc67fd3c3f05/ee/draw/src/draw2d.c",
+        "content_type": "text/html; charset=utf-8"
+      },
+      {
+        "url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/ezswizzle/TextureSwizzling.pdf",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/ezswizzle/TextureSwizzling.pdf",
+        "content_type": "application/pdf"
+      },
+      {
+        "url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/p2lsd/32bit_colour_channel_shifting.pdf",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "https://ps2linux.no-ip.info/playstation2-linux.com/download/p2lsd/32bit_colour_channel_shifting.pdf",
+        "content_type": "application/pdf"
+      },
+      {
+        "url": "https://ps2linux.no-ip.info/playstation2-linux.com/projects/ezswizzle.html",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "https://ps2linux.no-ip.info/playstation2-linux.com/projects/ezswizzle.html",
+        "content_type": "text/html"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual.pdf",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual.pdf",
+        "content_type": "application/octet-stream"
+      },
+      {
+        "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual_Supplement.pdf",
+        "method": "HEAD",
+        "status": 200,
+        "final_url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual_Supplement.pdf",
+        "content_type": "application/octet-stream"
+      },
+      {
+        "url": "https://www.slideserve.com/sldsrv/reaching-the-limits-of-ps2-performance-how-far-we-got-powerpoint-ppt-presentation",
+        "method": "HEAD",
+        "status": 403,
+        "error": "HTTPError: HTTP Error 403: Forbidden"
+      }
+    ]
+  },
+  "interpretation_boundaries": [
+    "N1 historical throughput table is not an SRB2 speed result; compatibility must prove identical physical byte addresses and preserve logical resource policy.",
+    "N2 narrow-primitive guidance motivates a bounded constant clear partition; packet/EE cost, queue ownership and completed-GS timing remain separate verification.",
+    "N3 format reinterpretation does not establish spare bitplane ownership or permit changes to CT32 alpha or Z24 depth precision.",
+    "Prior P4 and invisible-draw counterexamples remain applicable; allocator/planner output cannot be inferred only from reduced occupancy."
+  ],
+  "application_status_revision": 2,
+  "application_status_reconciliation": {
+    "checked_utc_date": "2026-11-15",
+    "method": "Read existing executed host-witness and actual target-build/binding reports; no compiler, emulator, EE runtime or native GS invoked by this documentation reconciliation.",
+    "initial_publication_preserved": {
+      "archive_manifest": {
+        "path": "build/nov15-next13/research/public-doc-v1/manifest.json",
+        "bytes": 895,
+        "sha256": "b3bcf39b54fcade784bb7a0c2a1540e2160cfd8158bc9bcbd5cd22cc2364cf69"
+      },
+      "original_addendum_sha256": "e3edcf7049260680911054d4e9e3e7355a000b73950ce56b41178efaff217456",
+      "original_evidence_sha256": "55c5dce2b8ce9fd379e9125b3cd49ca5c9ed79569293ea866ab0f29f7a566dc1",
+      "original_proof": {
+        "path": "build/nov15-next13/research/publication-proof.json",
+        "bytes": 3893,
+        "sha256": "7ae1a72665612ab3d65d9ff12cb739e6b531887f431bf476a63fd83f587694b3"
+      }
+    },
+    "initial_research_metadata_retained": true
+  },
+  "application_statuses": [
+    {
+      "mechanism": "32-pixel compact clear strips",
+      "status": "REJECTED: executed literal-C source-cache counterexample",
+      "adopted": false,
+      "public_report_path": "docs/PS2_VRAM_NEXT13_20261115.md",
+      "local_result": "Host coverage/state checks and actual complete default-O3-hwd build/code-binding checks passed. This does not establish preservation of later source-cache history.",
+      "evidence_reports": [
+        {
+          "path": "build/nov15-next13/review/gs-cache-witness-v2/report.json",
+          "bytes": 17375,
+          "sha256": "72078838e498e29fb8dec215c4b2a5c174b11c2a1a31eda49352a9c146966f07"
+        },
+        {
+          "path": "build/nov15-next13/vram-clear/stages/context-v1/context-report.json",
+          "bytes": 487609,
+          "sha256": "32f745301f15fb468588479b452465bd18ebb236a34a45cfa40bbb39e56e5e49"
+        },
+        {
+          "path": "build/nov15-next13/vram-clear/stages/object-audit-v1/report.json",
+          "bytes": 1674161,
+          "sha256": "4a189ec409874260e2652eb35606c0c770fbf5dc41a3097c4715ad972fc8b6ee"
+        }
+      ],
+      "counterexample": {
+        "width": 320,
+        "initial_ring_write_qwords": 8178,
+        "ring_capacity_qwords": 8192,
+        "candidate_extra_gif_bytes": 128,
+        "control_ring_flushes": 0,
+        "candidate_ring_flushes": 1,
+        "mechanism": "Earlier candidate pk_flush releases a previously completed but unreleased DMA source. The next dc_slot can evict a different cached texture level, changing the finer/full source selected by non-associative dec_level.",
+        "new_dma_completion_during_clear": false,
+        "vif_modes_executed": [
+          0,
+          1
+        ],
+        "differing_output_texels": 4096,
+        "control_index": 100,
+        "candidate_index": 255,
+        "candidate_index_255_is_chroma_key_hole": true,
+        "executions": [
+          {
+            "role": "ordinary",
+            "returncode": 0
+          },
+          {
+            "role": "sanitize",
+            "returncode": 0
+          },
+          {
+            "role": "negative-no-release",
+            "returncode": 1
+          },
+          {
+            "role": "negative-ignore-busy",
+            "returncode": 1
+          },
+          {
+            "role": "negative-no-finer-source",
+            "returncode": 1
+          }
+        ],
+        "witness_scope_boundaries": "Authorized host GCC+ASan/UBSan only. Exact production pk_alloc/pk_flush/ad_alloc/frame_prepare/do_clear, DC slot/find/finer/drop, release/poll/add and dec_level bodies. Queue hardware start/completion, cache coherency, validator and zone deallocation are explicit boundaries. No new DMA completion occurs during clear; previously completed buffer1 ref remains unreleased until real candidate rollover. No native GS or timing claim."
+      },
+      "actual_link_cost": {
+        "text_bytes_delta": 160,
+        "linked_end_address_delta": 256,
+        "memory_saving_claimed": false
+      },
+      "native_fixture_executed": false,
+      "native_gs_timing_executed": false,
+      "speed_improvement_claimed": false,
+      "future_requirement": "Any retry needs a substantive exact lifecycle repair, not clear coverage or unchanged allocator/planner source alone."
+    },
+    {
+      "mechanism": "Exact T8 payload permutation through CT32 transfer",
+      "status": "UNIMPLEMENTED FUTURE CANDIDATE",
+      "adopted": false,
+      "port_implementation_executed": false,
+      "port_benchmark_executed": false,
+      "additional_obligation_from_clear_witness": "Preserve packet/flush/reference-release and complete reconstruction/source-cache behavior, as well as touched GS bytes and logical texture accounting."
+    },
+    {
+      "mechanism": "Format/bitplane reinterpretation",
+      "status": "DEFERRED: ownership and lifecycle proof required",
+      "adopted": false,
+      "constraint": "No CT32-alpha reduction, depth-precision reduction or overlapping ordinary ownership follows from the primary copying examples."
+    }
+  ]
+}

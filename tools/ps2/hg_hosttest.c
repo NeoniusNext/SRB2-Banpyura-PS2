@@ -171,8 +171,8 @@ static void host_init(void)
 	H.pool_base = H.clut_base + ((CLUT_SLOTS * CLUT_BLOCKS + PAGE_BLOCKS - 1) / PAGE_BLOCKS) * PAGE_BLOCKS;
 	H.pool_blocks = VRAM_BLOCKS - H.pool_base;
 	H.free_n = 1;
-	H.free_start[0] = H.pool_base;
-	H.free_len[0] = H.pool_blocks;
+	H.free_range[0].start = H.pool_base;
+	H.free_range[0].len = H.pool_blocks;
 	H.rec_free = NOREC;
 	H.lru_head = H.lru_tail = NOREC;
 	H.cur_tex = NOREC;

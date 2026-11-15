@@ -9,6 +9,7 @@
 #define NOTES 24
 #define MAX_EVENTS 1000000u
 #define MAX_US (86400ull * 1000000)
+#define NOTES_CHANGED (1u << 16)
 
 typedef struct
 {
@@ -26,13 +27,15 @@ typedef struct
 struct ps2_midi
 {
 	ps2_audio_input in;
-	midi_track tracks[TRACKS];
 	midi_channel channels[16];
 	midi_note notes[NOTES];
 	uint32_t steps[128];
 	int16_t sine[256];
 	unsigned count, division, tempo, failed, events;
 	uint64_t tick, us, remainder, frame, length_frames;
+	// The validated SMF track count is immutable. Keep its complete streaming
+	// tracks/caches in the same allocation, without reserving unused tracks.
+	midi_track tracks[];
 };
 
 static uint32_t BE(const uint8_t *p, unsigned n)
@@ -91,7 +94,7 @@ static uint32_t Step(ps2_midi *m, unsigned ch, unsigned key)
 	return (uint32_t)(m->steps[key] * powf(2.0f, bend));
 }
 
-static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
+static unsigned Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
 {
 	unsigned i, ch = status & 15, kind = status >> 4;
 	midi_channel *c = &m->channels[ch];
@@ -102,6 +105,7 @@ static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
 		if (!n) { n = &m->notes[0]; for (i = 1; i < NOTES; i++) if (m->notes[i].age > n->age) n = &m->notes[i]; }
 		memset(n, 0, sizeof *n); n->active = 1; n->channel = ch; n->key = a; n->velocity = b;
 		n->step = Step(m, ch, a); n->noise = 0x1234567u + a;
+		return NOTES_CHANGED;
 	}
 	else if (kind == 8 || (kind == 9 && !b))
 	{
@@ -129,16 +133,22 @@ static void Message(ps2_midi *m, unsigned status, unsigned a, unsigned b)
 			if (a == 123 || (!c->sustain && n->held)) { n->held = 0; n->released = 1; }
 			if (a == 121 && n->active) n->step = Step(m, ch, n->key);
 		}
+		if (a == 120) return NOTES_CHANGED;
+		if (a == 7 || a == 11 || a == 121) return 1u << ch;
 	}
+	return 0;
 }
 
-static void Event(ps2_midi *m, midi_track *t, int synth)
+// Changes to active-note membership or per-channel amplitude, for this read's
+// transient synthesis cache. Parsing, timing, and persistent state are shared
+// with the duration scan and seek, which do not need the returned mask.
+static unsigned Event(ps2_midi *m, midi_track *t, int synth)
 {
-	unsigned s = Byte(m, t), a, b = 0, n;
-	if (++m->events > MAX_EVENTS) { m->failed = 1; return; }
+	unsigned s = Byte(m, t), a, b = 0, n, changed = 0;
+	if (++m->events > MAX_EVENTS) { m->failed = 1; return 0; }
 	if (s < 128)
 	{
-		if (!t->running) { m->failed = 1; return; }
+		if (!t->running) { m->failed = 1; return 0; }
 		t->pos--; s = t->running;
 	}
 	if (s < 240)
@@ -146,8 +156,8 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
 		t->running = s;
 		a = Byte(m, t);
 		if ((s >> 4) != 12 && (s >> 4) != 13) b = Byte(m, t);
-		if (a > 127 || b > 127) { m->failed = 1; return; }
-		if (synth) Message(m, s, a, b);
+		if (a > 127 || b > 127) { m->failed = 1; return 0; }
+		if (synth) changed = Message(m, s, a, b);
 	}
 	else
 	{
@@ -155,15 +165,15 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
 		if (s == 255)
 		{
 			a = Byte(m, t); n = VLQ(m, t);
-			if (n > t->end - t->pos) { m->failed = 1; return; }
+			if (n > t->end - t->pos) { m->failed = 1; return 0; }
 			if (a == 47)
 			{
 				if (n) m->failed = 1;
-				t->ended = 1; return;
+				t->ended = 1; return 0;
 			}
 			if (a == 81)
 			{
-				if (n != 3) { m->failed = 1; return; }
+				if (n != 3) { m->failed = 1; return 0; }
 				m->tempo = (unsigned)Byte(m, t) << 16;
 				m->tempo |= (unsigned)Byte(m, t) << 8; m->tempo |= Byte(m, t);
 				if (!m->tempo) m->failed = 1;
@@ -173,12 +183,13 @@ static void Event(ps2_midi *m, midi_track *t, int synth)
 		else if (s == 240 || s == 247)
 		{
 			n = VLQ(m, t);
-			if (n > t->end - t->pos) { m->failed = 1; return; }
+			if (n > t->end - t->pos) { m->failed = 1; return 0; }
 			t->pos += n;
 		}
-		else { m->failed = 1; return; }
+		else { m->failed = 1; return 0; }
 	}
 	Next(m, t);
+	return changed;
 }
 
 static int Earliest(ps2_midi *m)
@@ -212,7 +223,7 @@ ps2_midi *PS2_MIDIOpen(const ps2_audio_input *in)
 	pos = BE(h+4,4);
 	if (pos > in->size - 8) return NULL;
 	pos += 8;
-	m = calloc(1, sizeof *m); if (!m) return NULL;
+	m = calloc(1, sizeof *m + count * sizeof m->tracks[0]); if (!m) return NULL;
 	m->in = *in; m->count = count; m->division = division;
 	for (i = 0; i < count; i++)
 	{
@@ -247,19 +258,52 @@ uint32_t PS2_MIDILength(const ps2_midi *m) { return (uint32_t)((m->length_frames
 size_t PS2_MIDIRead(ps2_midi *m, int16_t *out, size_t frames)
 {
 	size_t f;
+	struct { midi_note *note; unsigned amplitude; } active[NOTES];
+	unsigned count = 0, refresh = NOTES_CHANGED;
+	int t;
+	uint64_t due;
+	if (!frames || m->frame >= m->length_frames || m->failed) return 0;
+	t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
 	for (f = 0; f < frames && m->frame < m->length_frames && !m->failed; f++, m->frame++)
 	{
 		unsigned i, budget = 4096;
-		int t, l = 0, r = 0;
-		while ((t = Earliest(m)) >= 0 && Due(m, t, 0) <= m->frame && !m->failed)
+		int l = 0, r = 0;
+		// The next track/frame cannot change until an event runs. Keep the
+		// original merged-track tie order and integer timing, once per event.
+		while (t >= 0 && due <= m->frame && !m->failed)
 		{
 			if (!budget--) { m->failed = 1; break; }
-			Due(m, t, 1); Event(m, &m->tracks[t], 1);
+			Due(m, t, 1); refresh |= Event(m, &m->tracks[t], 1);
+			t = Earliest(m); due = t >= 0 ? Due(m, t, 0) : 0;
 		}
 		if (m->failed) break;
-		for (i = 0; i < NOTES; i++)
+		// Only events can create notes or change velocity/channel gain. Keep
+		// their original mixing order and exact normalization until the next
+		// event. Released notes still advance below until they become inactive.
+		if (refresh & NOTES_CHANGED)
 		{
-			midi_note *n = &m->notes[i];
+			count = 0;
+			for (i = 0; i < NOTES; i++) if (m->notes[i].active)
+			{
+				midi_note *n = &m->notes[i];
+				midi_channel *c = &m->channels[n->channel];
+				active[count].note = n;
+				active[count++].amplitude = n->velocity * c->volume * c->expression / (127 * 127);
+			}
+		}
+		else if (refresh) for (i = 0; i < count; i++)
+		{
+			midi_note *n = active[i].note;
+			if (refresh & (1u << n->channel))
+			{
+				midi_channel *c = &m->channels[n->channel];
+				active[i].amplitude = n->velocity * c->volume * c->expression / (127 * 127);
+			}
+		}
+		refresh = 0;
+		for (i = 0; i < count; i++)
+		{
+			midi_note *n = active[i].note;
 			midi_channel *c;
 			int v, amp;
 			unsigned p;
@@ -281,7 +325,7 @@ size_t PS2_MIDIRead(ps2_midi *m, int16_t *out, size_t frames)
 				case 2: v = p < 32768 ? 24000 : -24000; break;
 				default: v = (int)p - 32768; break;
 			}
-			amp = (int)(n->velocity * c->volume * c->expression / (127 * 127));
+			amp = (int)active[i].amplitude;
 			v = v * amp / (127 * 16); v = v * (int)n->env / 32768;
 			l += v * (int)(127 - c->pan) / 127; r += v * (int)c->pan / 127;
 			n->phase += n->step; n->age++;

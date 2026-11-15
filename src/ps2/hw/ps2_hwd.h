@@ -16,6 +16,14 @@ boolean PS2HWD_Init(void);
 // pfnInit is PS2HWD_Init itself, pfnShutdown is PS2HWD_Shutdown.
 void PS2HWD_FillDriver(struct hwdriver_s *drv);
 
+#if !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+// Engine colormaps need no persistent RGBA duplicate. The source palette is
+// still converted through the current reverse RGB lookup, including duplicates.
+UINT32 PS2HWD_CreateIndexedLightTable(const UINT8 *indices, const RGBA_t *palette);
+void PS2HWD_UpdateIndexedLightTable(UINT32 id, const UINT8 *indices, const RGBA_t *palette);
+
+#endif
+
 // Wait for the GS, drop textures, remove the vblank handler. Safe to call twice.
 void PS2HWD_Shutdown(void);
 

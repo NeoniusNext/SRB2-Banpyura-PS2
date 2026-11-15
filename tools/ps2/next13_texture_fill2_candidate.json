@@ -1,0 +1,19 @@
+{
+  "baseline_source_revision": "353cc94103aeb38cef87d26151c779302135d0e9",
+  "baseline_texture_sha256": "76de33ef5d73da9aae8f59b3e1bbdb34502e8c21319b31d765235344a252fe8a",
+  "candidate_texture_sha256": "03cad69496e29bfdd629d2e8b2ba2fee21e9ac867ca590401f2ea57b2afad0af",
+  "patch_sha256": "04a9a97ce73acd4c391089fcb7afe480f0440e8c08f74b3fbc260b3ff6b97a1b",
+  "changed_functions": [
+    "fill_idx",
+    "fill_ia88"
+  ],
+  "candidate_full_default_Hardware_ELF_sha256": "5042587289a475bc930c9c8739ff9bb231a79fa3984f783b8b31fa57df9935b0",
+  "executed_native_fixture_sha256": "4597332c015ffd6946819c6feec7bcc94a50f56af214d4c067b611f9efd45c58",
+  "full_native_rows": 384,
+  "repetitions_per_row": 9,
+  "faster": 272,
+  "ties": 112,
+  "slower": 0,
+  "_end_delta_bytes": 128,
+  "status": "Nativecomponentgatepassed;rootcontrolsfinalsourceadmission"
+}

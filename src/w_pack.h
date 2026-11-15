@@ -77,6 +77,13 @@ int WPack_VerifyNMUS(FILE *handle);
 // be aligned. Valid packs are sector-padded. Returns bytes delivered (== size unless damaged). Not reentrant.
 size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size, size_t offset);
 
+#ifndef PS2_NOOPT_TEXRETRY
+// Read-only readiness check for an optional reconstruction retry. The existing
+// stream window and codec buffers must remain resident until the read finishes.
+// True promises no buffer/index allocation in WPack_ReadLump[ N ], not I/O success.
+boolean WPack_CanReadWithoutAlloc(FILE *handle, const lumpinfo_t *l);
+#endif
+
 // OPT13 IZ (PS2-602, R2). The stored form of a lump as it lies in the file (l->disksize bytes into dest, which needs no alignment): returns the bytes read, 0 on error.
 size_t WPack_ReadRaw(FILE *handle, const lumpinfo_t *l, void *dest);
 // Decodes a lump from its stored form in memory (compression: CM_NOCOMPRESSION or CM_LZ4 as in lumpinfo_t; size: the decoded size), into dest (size bytes, no alignment needed). False on damage.

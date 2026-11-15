@@ -73,16 +73,90 @@ typedef enum
 //  a memory entry of the wad directory
 typedef struct
 {
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_LUMPLOCATION)
+	// A folder lump has a path and position zero; an archive lump has a
+	// position and no path. Keep both logical values through the accessors.
+	union
+	{
+		unsigned long filepos;
+		char *path;
+	} location;
+#else
 	unsigned long position; // filelump_t filepos
+#endif
 	unsigned long disksize; // filelump_t size
 	char name[9];           // filelump_t name[] e.g. "LongEntr"
+#ifdef PS2_PROFILE
+	// Internal metadata only: all compmethod values fit in the name's padding.
+	// Keep disk offsets, sizes and pointers at their natural alignment.
+	UINT8 compression;
+#if !defined(PS2_NOOPT_LUMPLOCATION)
+	UINT8 location_is_path;
+#endif
+#endif
 	UINT32 hash;
 	char *longname;         //                   e.g. "LongEntryName"
 	char *fullname;         //                   e.g. "Folder/Subfolder/LongEntryName.extension"
+#if !defined(PS2_PROFILE) || defined(PS2_NOOPT_LUMPLOCATION)
 	char *diskpath;         // path to the file  e.g. "/usr/games/srb2/Addon/Folder/Subfolder/LongEntryName.extension"
+#endif
 	size_t size;            // real (uncompressed) size
+#ifndef PS2_PROFILE
 	compmethod compression; // lump compression method
+#endif
 } lumpinfo_t;
+
+#define W_LUMPLOCATION_ACCESSORS 1
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_LUMPLOCATION)
+static inline unsigned long W_LumpPosition(const lumpinfo_t *lump)
+{
+	return lump->location_is_path ? 0 : lump->location.filepos;
+}
+
+static inline char *W_LumpDiskPath(const lumpinfo_t *lump)
+{
+	return lump->location_is_path ? lump->location.path : NULL;
+}
+
+// Constructors initialize the tag before any semantic update or read.
+static inline void W_InitLumpPosition(lumpinfo_t *lump, unsigned long position)
+{
+	lump->location.filepos = position;
+	lump->location_is_path = 0;
+}
+
+static inline void W_SetLumpPosition(lumpinfo_t *lump, unsigned long position)
+{
+	// A redundant zero-position store must retain an existing folder path.
+	if (position || !lump->location_is_path)
+		W_InitLumpPosition(lump, position);
+}
+
+static inline void W_SetLumpDiskPath(lumpinfo_t *lump, char *path)
+{
+	if (path)
+	{
+		lump->location.path = path;
+		lump->location_is_path = 1;
+	}
+	else if (lump->location_is_path)
+		W_InitLumpPosition(lump, 0);
+}
+#else
+#define W_LumpPosition(lump) ((lump)->position)
+#define W_LumpDiskPath(lump) ((lump)->diskpath)
+#define W_InitLumpPosition(lump, pos) ((lump)->position = (pos))
+#define W_SetLumpPosition(lump, pos) ((lump)->position = (pos))
+#define W_SetLumpDiskPath(lump, path) ((lump)->diskpath = (path))
+#endif
+
+#ifdef PS2_PROFILE
+#ifdef __cplusplus
+static_assert(CM_UNSUPPORTED <= UINT8_MAX, "lump compression method must fit in one byte");
+#else
+_Static_assert(CM_UNSUPPORTED <= UINT8_MAX, "lump compression method must fit in one byte");
+#endif
+#endif
 
 // =========================================================================
 //                         'VIRTUAL' RESOURCES

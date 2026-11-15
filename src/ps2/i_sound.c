@@ -157,7 +157,7 @@ static pack_reader *PackOpen(lumpnum_t lump, const lumpinfo_t *info)
 		free(r->buf); free(r); return NULL;
 	}
 	setvbuf(fp, NULL, _IONBF, 0); // whole aligned windows are read straight into r->buf
-	r->fp = fp; r->base = (size_t)info->position; r->size = info->size;
+	r->fp = fp; r->base = (size_t)W_LumpPosition(info); r->size = info->size;
 	if (strlen(wadfiles[WADFILENUM(lump)]->filename) < sizeof r->path) strcpy(r->path, wadfiles[WADFILENUM(lump)]->filename);
 	return r;
 }
@@ -752,7 +752,18 @@ void *I_GetSfx(sfxinfo_t *sfx)
 		{ CONS_Printf("PS2 audio: SFX %s invalid, unsupported or exceeds cache budget\n", sfx->name); return NULL; }
 		s->start_seq = 0;
 	}
-	else { s->sample.bytes = s->data; s->bytes = len; }
+	else
+	{
+		// Retain only the PCM and up to 15 leading bytes. Preserve its original
+		// alignment so every native/MMI mixer path stays available after compaction.
+		const size_t offset = s->sample.pcm.offset & 15;
+		const size_t pcmbytes = (size_t)s->sample.pcm.frames * s->sample.pcm.channels * (s->sample.pcm.bits / 8);
+		const size_t bytes = offset + pcmbytes;
+		memmove(s->data + offset, s->data + s->sample.pcm.offset, pcmbytes);
+		s->sample.pcm.offset = offset;
+		if (bytes < len) s = Z_ReallocAlign(s, sizeof *s + bytes, PU_SOUND, NULL, 6);
+		s->sample.bytes = s->data; s->bytes = bytes;
+	}
 	s->owner = sfx; s->used = ++sample_serial;
 	s->next = samples; samples = s; sample_bytes += s->bytes;
 	sfx->length = len; sfx->data = s; return s;

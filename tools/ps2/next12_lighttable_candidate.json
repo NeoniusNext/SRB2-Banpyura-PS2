@@ -1,0 +1,37 @@
+{
+  "status": "merged final bounded v2c source d4fbc7c3; complete canonical Hardware/source/SDK/optout/native two-seed pressure and19 final image-pair gates passed; publication is root-owned",
+  "source_revision": "85bd9716b1ed114d46f95831c64a87623038eeaa",
+  "source_files": 602,
+  "changed": {
+    "src/hardware/hw_cache.c": {
+      "baseline_sha256": "e6adbc9f55958402afad680fb23c8e480468a98cd3274ea5fd59b0cb4897b23b",
+      "candidate_sha256": "d3473bcfc2988c671a928204bac07c40c6247c752cc7fbaf5da2dccc224e7c80"
+    },
+    "src/ps2/hw/ps2_hw_pal.inc": {
+      "baseline_sha256": "861134746576924155a449e027b6df3bc5e1e66b2caa2d6197b7772a7274771e",
+      "candidate_sha256": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665"
+    },
+    "src/ps2/hw/ps2_hwd.c": {
+      "baseline_sha256": "cde48cf554d4b6ad65982e445a81911d1f6b2759cdea2b47d05eb08cdbeb4e25",
+      "candidate_sha256": "445a610c63d3f5670e0e99f660ccc8d6e52ac59d86750a2894ab4d1211a6da8f"
+    },
+    "src/ps2/hw/ps2_hwd.h": {
+      "baseline_sha256": "da56b39ce36d3381ab266872671d05c82ed94e620138ed9319be3f6c924bd244",
+      "candidate_sha256": "15509f6de5c97eb9c93123f678f3ae2ac514af400d7078d149790622a5508828"
+    },
+    "src/ps2/hw/ps2_hwd_null.c": {
+      "baseline_sha256": "34d5da00b1670821732cbe584e81dc1b22b42851112314d9382b591ac095bd5f",
+      "candidate_sha256": "b6c7bd6ed08b2a8f28f86d0222f5284969935713c97004d53a3ffcfc4fbb4c0b"
+    }
+  },
+  "unchanged_files": 597,
+  "patch_sha256": "da1d424c53ab503515921638aaaab827653ba94ff1145e997b1f7f818e4579b7",
+  "baseline_manifest_sha256": "0a868a5e4365ea5def41a133ed7c6cda27e247cdb24677ee8316a8a80cb9ecb3",
+  "scope": "PS2 indexed submission through one private packed-RGBA-or-indexed store; guaranteed-little-endian RGB word mask with portable fallback; complete original NOOPT body/adapters restored; generic public API signatures/layout and all consumers unchanged",
+  "historical_v1_public_tools": "build/nov15-next12/lighttable/v1-public-tools/manifest.json",
+  "historical_v2_public_tools": "build/nov15-next12/lighttable-v2/public-tools-before-v2b/manifest.json",
+  "tested_combined_source": "baseline85 +these five files +separately tested PB08e3 file only",
+  "claims": "Final actual canonical Hardware arena/libc/stack/spill/cache/VRAM capacities retained. Whole combined zone live/peak reductions74880 B MAP02 and71776 B fog repeat in both local seeds; component table incremental65600 B against PB-only is separately scoped.19 final complete PPM pairs and normal full saves exact. No CPU/GPU/VRAM/FPS/stability-rate gain claim.",
+  "shipping_source_revision": "d4fbc7c319f19edc70eda220c3323d0350504c98",
+  "shipping_Hardware_ELF_sha256": "efc963c7876a5f2a1c395baf5ba9982b68c6db1e56811d7a5e8a690ba840ab20"
+}

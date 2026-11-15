@@ -1643,6 +1643,25 @@ enum { TMS_THING, TMS_LINEDEF, TMS_SIDEDEF, TMS_VERTEX, TMS_SECTOR };
 
 static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
 {
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
+	const size_t maxcapacity = (size_t)0x7FFFFFF0u / sizeof (*blocks->pos);
+	size_t locCount;
+
+	if (*count >= maxcapacity)
+		I_Error("TextmapStorePos: too many blocks");
+	locCount = *count + 1;
+	if (!blocks->pos || locCount >= blocks->capacity)
+	{
+		size_t capacity = UINT16_MAX / 2;
+
+		// Keep the previous reservation/growth policy: a smaller initial table
+		// can require an extra old+new allocation peak before reaching this size.
+		if (blocks->pos)
+			capacity = blocks->capacity > maxcapacity - 1024 ? maxcapacity : blocks->capacity + 1024;
+		Z_Realloc(blocks->pos, sizeof (*blocks->pos) * capacity, PU_LEVEL, &blocks->pos);
+		blocks->capacity = capacity; // allocation can leave through an OOM guard
+	}
+#else
 	size_t locCount = (*count) + 1;
 
 	if (blocks->pos == NULL)
@@ -1659,10 +1678,24 @@ static void TextmapStorePos(textmap_block_t *blocks, size_t *count)
 
 		Z_Realloc(blocks->pos, sizeof(blocks->pos) * blocks->capacity, PU_LEVEL, &blocks->pos);
 	}
+#endif
 
 	blocks->pos[locCount - 1] = M_TokenizerGetEndPos();
 
 	(*count) = locCount;
+}
+
+static void TextmapReleasePos(textmap_block_t *blocks)
+{
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTMAPMEM)
+	// The positions have no consumers after their type's parse loop. Owner-backed
+	// PU_LEVEL storage still handles an interrupted load through Z_FreeTags.
+	Z_Free(blocks->pos);
+	blocks->pos = NULL;
+	blocks->capacity = 0;
+#else
+	(void)blocks;
+#endif
 }
 
 // Determine total amount of map data in TEXTMAP.
@@ -3174,6 +3207,7 @@ static void P_LoadTextmap(void)
 			I_Error("P_LoadTextmap: vertex %s has no y value set!\n", sizeu1(i));
 	}
 
+	TextmapReleasePos(&vertexBlocks);
 	LP_END(U_VERT, lpu);
 	LP_RESTART(lpu);
 	for (i = 0, sc = sectors; i < numsectors; i++, sc++)
@@ -3259,6 +3293,7 @@ static void P_LoadTextmap(void)
 		TextmapFixFlatOffsets(sc);
 	}
 
+	TextmapReleasePos(&sectorBlocks);
 	LP_END(U_SECT, lpu);
 	LP_RESTART(lpu);
 	for (i = 0, ld = lines; i < numlines; i++, ld++)
@@ -3288,6 +3323,7 @@ static void P_LoadTextmap(void)
 		P_InitializeLinedef(ld);
 	}
 
+	TextmapReleasePos(&linedefBlocks);
 	LP_END(U_LINE, lpu);
 	LP_RESTART(lpu);
 	for (i = 0, sd = sides; i < numsides; i++, sd++)
@@ -3319,6 +3355,7 @@ static void P_LoadTextmap(void)
 		P_InitializeSidedef(sd);
 	}
 
+	TextmapReleasePos(&sidedefBlocks);
 	LP_END(U_SIDE, lpu);
 	LP_RESTART(lpu);
 	for (i = 0, mt = mapthings; i < nummapthings; i++, mt++)
@@ -3339,6 +3376,7 @@ static void P_LoadTextmap(void)
 
 		TEXTMAP_PARSE(TMS_THING, mapthingBlocks, i, ParseTextmapThingParameter);
 	}
+	TextmapReleasePos(&mapthingBlocks);
 	LP_END(U_THING, lpu);
 }
 
@@ -7648,16 +7686,293 @@ static void P_MakeMapMD5(virtres_t *virt, void *dest)
 }
 
 #ifdef PS2_PROFILE
+// These fields have useful defaults on most maps. The immutable network
+// snapshot stores only the changed values, each in a full-width word. Dense
+// maps keep the preceding fixed array, in the same single allocation/order.
+#define SPAWNSECTOR_FIELDS(X) \
+	X(floorxoffset, 0) \
+	X(flooryoffset, 0) \
+	X(ceilingxoffset, 0) \
+	X(ceilingyoffset, 0) \
+	X(floorxscale, FRACUNIT) \
+	X(flooryscale, FRACUNIT) \
+	X(ceilingxscale, FRACUNIT) \
+	X(ceilingyscale, FRACUNIT) \
+	X(floorangle, 0) \
+	X(ceilingangle, 0) \
+	X(floorlightlevel, 0) \
+	X(ceilinglightlevel, 0) \
+	X(floorlightabsolute, false) \
+	X(ceilinglightabsolute, false) \
+	X(gravity, FRACUNIT) \
+	X(flags, MSF_FLIPSPECIAL_FLOOR) \
+	X(specialflags, 0) \
+	X(portal_floor, UINT32_MAX) \
+	X(portal_ceiling, UINT32_MAX) \
+	X(triggertag, 0) \
+	X(damagetype, SD_NONE) \
+	X(triggerer, TO_PLAYER)
+
+typedef struct
+{
+	fixed_t floorheight, ceilingheight;
+	INT32 floorpic, ceilingpic;
+	INT16 lightlevel, special;
+	taglist_t tags;
+	extracolormap_t *extra_colormap;
+	UINT32 fields;
+	const UINT32 *values;
+} compactspawnsector_t;
+
+static boolean compactspawnsectors;
+
+static UINT32 P_SpawnSectorMask(const sector_t *s)
+{
+	UINT32 fields = 0, bit = 1;
+#define FIELD_MASK(field, initial) if (s->field != (initial)) fields |= bit; bit <<= 1;
+	SPAWNSECTOR_FIELDS(FIELD_MASK)
+#undef FIELD_MASK
+	return fields;
+}
+
+static UINT32 *P_AllocSpawnSectors(void)
+{
+	size_t bytes;
+	boolean compact = false;
+	if (numsectors > SIZE_MAX / sizeof (*spawnsectors))
+		I_Error("P_AllocSpawnSectors: sector snapshot size overflow");
+	bytes = numsectors * sizeof (*spawnsectors);
+#ifndef PS2_NOOPT_SPAWNSECTORS
+	{
+		size_t i, count = 0, compactbytes;
+		for (i = 0; i < numsectors; i++)
+		{
+			UINT32 fields = P_SpawnSectorMask(&sectors[i]);
+			for (; fields; fields &= fields - 1)
+				count++;
+		}
+		if (numsectors <= SIZE_MAX / sizeof (compactspawnsector_t)
+			&& count <= (SIZE_MAX - numsectors * sizeof (compactspawnsector_t)) / sizeof (UINT32))
+		{
+			compactbytes = numsectors * sizeof (compactspawnsector_t) + count * sizeof (UINT32);
+			if (compactbytes < bytes)
+			{
+				bytes = compactbytes;
+				compact = true;
+			}
+		}
+	}
+#endif
+	spawnsectors = Z_Calloc(bytes, PU_LEVEL, NULL);
+	compactspawnsectors = compact;
+	return compactspawnsectors
+		? (UINT32 *)((compactspawnsector_t *)spawnsectors + numsectors) : NULL;
+}
+
+const spawnsector_t *P_GetSpawnSector(size_t sectornum, spawnsector_t *buffer)
+{
+	const compactspawnsector_t *s;
+	const UINT32 *values;
+	UINT32 bit = 1;
+	if (!compactspawnsectors)
+		return &spawnsectors[sectornum];
+	s = &((const compactspawnsector_t *)spawnsectors)[sectornum];
+	values = s->values;
+	memset(buffer, 0, sizeof (*buffer));
+	buffer->floorheight = s->floorheight;
+	buffer->ceilingheight = s->ceilingheight;
+	buffer->floorpic = s->floorpic;
+	buffer->ceilingpic = s->ceilingpic;
+	buffer->lightlevel = s->lightlevel;
+	buffer->special = s->special;
+	buffer->tags = s->tags;
+	buffer->extra_colormap = s->extra_colormap;
+#define FIELD_READ(field, initial) buffer->field = s->fields & bit ? *values++ : (UINT32)(initial); bit <<= 1;
+	SPAWNSECTOR_FIELDS(FIELD_READ)
+#undef FIELD_READ
+	return buffer;
+}
+
+// Most lines have ten zero arguments. Keep those vectors implicit in the
+// network/save diff snapshot, without sharing writable live line arguments.
+// Dense maps retain spawnline_t verbatim: the chosen single allocation never
+// exceeds the preceding fixed array and remains in its original load order.
+typedef struct
+{
+	const INT32 *args; // NULL means an immutable all-zero vector
+	char *stringargs[NUMLINESTRINGARGS];
+	INT32 executordelay;
+	UINT32 secportal;
+	INT16 special;
+} compactspawnline_t;
+
+static boolean compactspawnlines;
+
+static boolean P_LineArgsNonzero(const INT32 *args)
+{
+	size_t j;
+	for (j = 0; j < NUMLINEARGS; j++)
+		if (args[j])
+			return true;
+	return false;
+}
+
+static INT32 *P_AllocSpawnLines(void)
+{
+	size_t bytes;
+	boolean compact = false;
+	if (numlines > SIZE_MAX / sizeof (*spawnlines))
+		I_Error("P_AllocSpawnLines: line snapshot size overflow");
+	bytes = numlines * sizeof (*spawnlines);
+#ifndef PS2_NOOPT_SPAWNLINES
+	{
+		size_t i, count = 0, compactbytes;
+		for (i = 0; i < numlines; i++)
+			count += P_LineArgsNonzero(lines[i].args);
+		if (numlines <= SIZE_MAX / sizeof (compactspawnline_t)
+			&& count <= (SIZE_MAX - numlines * sizeof (compactspawnline_t))
+				/ (NUMLINEARGS * sizeof (INT32)))
+		{
+			compactbytes = numlines * sizeof (compactspawnline_t)
+				+ count * NUMLINEARGS * sizeof (INT32);
+			if (compactbytes < bytes)
+			{
+				bytes = compactbytes;
+				compact = true;
+			}
+		}
+	}
+#endif
+	spawnlines = Z_Calloc(bytes, PU_LEVEL, NULL);
+	compactspawnlines = compact;
+	return compactspawnlines
+		? (INT32 *)((compactspawnline_t *)spawnlines + numlines) : NULL;
+}
+
+const spawnline_t *P_GetSpawnLine(size_t linenum, spawnline_t *buffer)
+{
+	const compactspawnline_t *line;
+	size_t j;
+	if (!compactspawnlines)
+		return &spawnlines[linenum];
+	line = &((const compactspawnline_t *)spawnlines)[linenum];
+	if (line->args)
+		memcpy(buffer->args, line->args, sizeof (buffer->args));
+	else
+		memset(buffer->args, 0, sizeof (buffer->args));
+	for (j = 0; j < NUMLINESTRINGARGS; j++)
+		buffer->stringargs[j] = line->stringargs[j];
+	buffer->executordelay = line->executordelay;
+	buffer->secportal = line->secportal;
+	buffer->special = line->special;
+	return buffer;
+}
+
+// A side usually has only one or two textures and zero offsets/repeat count.
+// Keep nondefault scalar values verbatim. The low bits describe the fields;
+// the remaining bits index copied values in the same allocation. Maps that
+// exceed that index or do not save space retain the preceding fixed array.
+#ifdef SIDE_UDMF
+#define SPAWNSIDE_UDMF_FIELDS(X) \
+	X(offsetx_top, 0) X(offsetx_mid, 0) X(offsetx_bottom, 0) \
+	X(offsety_top, 0) X(offsety_mid, 0) X(offsety_bottom, 0) \
+	X(scalex_top, FRACUNIT) X(scalex_mid, FRACUNIT) X(scalex_bottom, FRACUNIT) \
+	X(scaley_top, FRACUNIT) X(scaley_mid, FRACUNIT) X(scaley_bottom, FRACUNIT) \
+	X(light, 0) X(light_top, 0) X(light_mid, 0) X(light_bottom, 0) \
+	X(lightabsolute, false) X(lightabsolute_top, false) \
+	X(lightabsolute_mid, false) X(lightabsolute_bottom, false)
+#define SPAWNSIDE_FIELD_BITS 26
+#else
+#define SPAWNSIDE_UDMF_FIELDS(X)
+#define SPAWNSIDE_FIELD_BITS 6
+#endif
+#define SPAWNSIDE_FIELDS(X) \
+	X(textureoffset, 0) X(rowoffset, 0) \
+	X(toptexture, 0) X(bottomtexture, 0) X(midtexture, 0) X(repeatcnt, 0) \
+	SPAWNSIDE_UDMF_FIELDS(X)
+
+typedef struct
+{
+	UINT32 fields;
+} compactspawnside_t;
+
+static boolean compactspawnsides;
+
+static UINT32 P_SpawnSideMask(const side_t *s)
+{
+	UINT32 fields = 0, bit = 1;
+#define FIELD_MASK(field, initial) if (s->field != (initial)) fields |= bit; bit <<= 1;
+	SPAWNSIDE_FIELDS(FIELD_MASK)
+#undef FIELD_MASK
+	return fields;
+}
+
+static UINT32 *P_AllocSpawnSides(void)
+{
+	size_t bytes;
+	boolean compact = false;
+	if (numsides > SIZE_MAX / sizeof (*spawnsides))
+		I_Error("P_AllocSpawnSides: side snapshot size overflow");
+	bytes = numsides * sizeof (*spawnsides);
+#ifndef PS2_NOOPT_SPAWNSIDES
+	{
+		size_t i, count = 0, compactbytes;
+		const UINT32 maxvalues = UINT32_MAX >> SPAWNSIDE_FIELD_BITS;
+		for (i = 0; i < numsides && count <= maxvalues; i++)
+		{
+			UINT32 fields = P_SpawnSideMask(&sides[i]);
+			for (; fields; fields &= fields - 1)
+				count++;
+		}
+		if (count <= maxvalues && numsides <= SIZE_MAX / sizeof (compactspawnside_t)
+			&& count <= (SIZE_MAX - numsides * sizeof (compactspawnside_t)) / sizeof (UINT32))
+		{
+			compactbytes = numsides * sizeof (compactspawnside_t) + count * sizeof (UINT32);
+			if (compactbytes < bytes)
+			{
+				bytes = compactbytes;
+				compact = true;
+			}
+		}
+	}
+#endif
+	spawnsides = Z_Calloc(bytes, PU_LEVEL, NULL);
+	compactspawnsides = compact;
+	return compactspawnsides
+		? (UINT32 *)((compactspawnside_t *)spawnsides + numsides) : NULL;
+}
+
+const spawnside_t *P_GetSpawnSide(size_t sidenum, spawnside_t *buffer)
+{
+	const compactspawnside_t *s;
+	const UINT32 *values;
+	UINT32 bit = 1;
+	if (!compactspawnsides)
+		return &spawnsides[sidenum];
+	s = &((const compactspawnside_t *)spawnsides)[sidenum];
+	values = (const UINT32 *)((const compactspawnside_t *)spawnsides + numsides)
+		+ (s->fields >> SPAWNSIDE_FIELD_BITS);
+	memset(buffer, 0, sizeof (*buffer));
+#define FIELD_READ(field, initial) buffer->field = s->fields & bit ? *values++ : (UINT32)(initial); bit <<= 1;
+	SPAWNSIDE_FIELDS(FIELD_READ)
+#undef FIELD_READ
+	return buffer;
+}
+
 // PS2-OPT-02: the spawn state for the save game diffs, reduced to the compared fields (see r_defs.h). The sector tag
 // arrays are copied into one block instead of one small block per sector.
 static void P_CopySpawnState(void)
 {
 	size_t i, ntags = 0;
 	mtag_t *pool;
+	INT32 *spawnargs;
+	UINT32 *sectorvalues;
+	UINT32 *sidevalues, *sidebase;
+	spawnsector_t sectorbuffer;
 
-	spawnsectors = Z_Calloc(numsectors * sizeof (*spawnsectors), PU_LEVEL, NULL);
-	spawnlines = Z_Calloc(numlines * sizeof (*spawnlines), PU_LEVEL, NULL);
-	spawnsides = Z_Calloc(numsides * sizeof (*spawnsides), PU_LEVEL, NULL);
+	sectorvalues = P_AllocSpawnSectors();
+	spawnargs = P_AllocSpawnLines();
+	sidebase = sidevalues = P_AllocSpawnSides();
 
 	for (i = 0; i < numsectors; i++)
 		ntags += sectors[i].tags.count;
@@ -7666,7 +7981,14 @@ static void P_CopySpawnState(void)
 	for (i = 0; i < numsectors; i++)
 	{
 		const sector_t *s = &sectors[i];
-		spawnsector_t *d = &spawnsectors[i];
+		spawnsector_t *d;
+		if (compactspawnsectors)
+		{
+			memset(&sectorbuffer, 0, sizeof (sectorbuffer));
+			d = &sectorbuffer;
+		}
+		else
+			d = &spawnsectors[i];
 
 		d->floorheight = s->floorheight;
 		d->ceilingheight = s->ceilingheight;
@@ -7703,27 +8025,73 @@ static void P_CopySpawnState(void)
 		d->triggertag = s->triggertag;
 		d->damagetype = s->damagetype;
 		d->triggerer = s->triggerer;
+		if (compactspawnsectors)
+		{
+			compactspawnsector_t *c = &((compactspawnsector_t *)spawnsectors)[i];
+			UINT32 bit = 1;
+			c->floorheight = d->floorheight;
+			c->ceilingheight = d->ceilingheight;
+			c->floorpic = d->floorpic;
+			c->ceilingpic = d->ceilingpic;
+			c->lightlevel = d->lightlevel;
+			c->special = d->special;
+			c->tags = d->tags;
+			c->extra_colormap = d->extra_colormap;
+			c->fields = P_SpawnSectorMask(s);
+			c->values = sectorvalues;
+#define FIELD_WRITE(field, initial) if (c->fields & bit) *sectorvalues++ = (UINT32)d->field; bit <<= 1;
+			SPAWNSECTOR_FIELDS(FIELD_WRITE)
+#undef FIELD_WRITE
+		}
 	}
 
 	for (i = 0; i < numlines; i++)
 	{
 		const line_t *s = &lines[i];
-		spawnline_t *d = &spawnlines[i];
 		size_t j;
 
-		for (j = 0; j < NUMLINEARGS; j++)
-			d->args[j] = s->args[j];
-		for (j = 0; j < NUMLINESTRINGARGS; j++)
-			d->stringargs[j] = s->stringargs[j]; // shared, like the vanilla copy of the whole structure
-		d->executordelay = s->executordelay;
-		d->secportal = s->secportal;
-		d->special = s->special;
+		if (compactspawnlines)
+		{
+			compactspawnline_t *d = &((compactspawnline_t *)spawnlines)[i];
+			if (P_LineArgsNonzero(s->args))
+			{
+				d->args = spawnargs;
+				memcpy(spawnargs, s->args, NUMLINEARGS * sizeof (INT32));
+				spawnargs += NUMLINEARGS;
+			}
+			for (j = 0; j < NUMLINESTRINGARGS; j++)
+				d->stringargs[j] = s->stringargs[j];
+			d->executordelay = s->executordelay;
+			d->secportal = s->secportal;
+			d->special = s->special;
+		}
+		else
+		{
+			spawnline_t *d = &spawnlines[i];
+			for (j = 0; j < NUMLINEARGS; j++)
+				d->args[j] = s->args[j];
+			for (j = 0; j < NUMLINESTRINGARGS; j++)
+				d->stringargs[j] = s->stringargs[j]; // shared, like the vanilla copy of the whole structure
+			d->executordelay = s->executordelay;
+			d->secportal = s->secportal;
+			d->special = s->special;
+		}
 	}
 
 	for (i = 0; i < numsides; i++)
 	{
 		const side_t *s = &sides[i];
-		spawnside_t *d = &spawnsides[i];
+		spawnside_t *d;
+		if (compactspawnsides)
+		{
+			compactspawnside_t *c = &((compactspawnside_t *)spawnsides)[i];
+			c->fields = P_SpawnSideMask(s) | ((UINT32)(sidevalues - sidebase) << SPAWNSIDE_FIELD_BITS);
+#define FIELD_WRITE(field, initial) if (s->field != (initial)) *sidevalues++ = (UINT32)s->field;
+			SPAWNSIDE_FIELDS(FIELD_WRITE)
+#undef FIELD_WRITE
+			continue;
+		}
+		d = &spawnsides[i];
 
 		d->textureoffset = s->textureoffset;
 		d->rowoffset = s->rowoffset;
@@ -7742,6 +8110,10 @@ static void P_CopySpawnState(void)
 #endif
 	}
 }
+#undef SPAWNSECTOR_FIELDS
+#undef SPAWNSIDE_FIELDS
+#undef SPAWNSIDE_UDMF_FIELDS
+#undef SPAWNSIDE_FIELD_BITS
 #endif
 
 #ifdef PS2_PROFILE

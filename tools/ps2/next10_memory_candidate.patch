@@ -1,0 +1,9 @@
+--- a/src/r_defs.h
++++ b/src/r_defs.h
+@@ -1066,0 +1067,4 @@
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_DRAWSEG_XY)
++	// Slope-wall intersections use only full-width XY, never vertex heights.
++	vector2_t leftpos, rightpos;
++#else
+@@ -1067,0 +1072 @@
++#endif

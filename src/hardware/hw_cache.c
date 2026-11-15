@@ -16,6 +16,9 @@
 #include "hw_glob.h"
 #include "hw_drv.h"
 #include "hw_batching.h"
+#if defined(PS2) && !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+#include "../ps2/hw/ps2_hwd.h"
+#endif
 
 #include "../doomstat.h"    //gamemode
 #include "../i_video.h"     //rendermode
@@ -1007,7 +1010,41 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 
 static size_t gl_numtextures = 0; // Texture count
 static GLMapTexture_t *gl_textures; // For all textures
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+// Flats only use their mipmap. Keep the full table allocated up front, but omit
+// wall-only scales on the default PB path. The legacy collector sorts by raw
+// texture pointers, so -hwgo 65536 must retain its original allocation/stride.
+static void *gl_flats;
+// Zero keeps the original stride, including after initialization/reset.
+static size_t gl_flats_cut;
+
+static boolean HWR_UseCompactFlatMetadata(void)
+{
+	INT32 i;
+
+	// GCacheParse runs after the table is allocated. Mirror its first -hwgo
+	// lookup without changing M_CheckParm's shared "found" cursor or parse time.
+	for (i = 1; i < myargc; i++)
+	{
+		if (!strcasecmp("-hwgo", myargv[i]))
+		{
+			if (i + 1 < myargc && myargv[i + 1][0] != '-' && myargv[i + 1][0] != '+')
+				return !((UINT32)atoi(myargv[i + 1]) & 0x10000u);
+			break;
+		}
+	}
+	return true;
+}
+
+static inline GLMipmap_t *HWR_FlatMipmap(size_t n)
+{
+	const size_t stride = sizeof(GLMapTexture_t) - gl_flats_cut;
+
+	return (GLMipmap_t *)((UINT8 *)gl_flats + n * stride);
+}
+#else
 static GLMapTexture_t *gl_flats; // For all (texture) flats, as normal flats don't need to be cached
+#endif
 boolean gl_maptexturesloaded = false;
 
 #ifdef PS2_PROFILE
@@ -1167,6 +1204,9 @@ void HWR_InitMapTextures(void)
 {
 	gl_textures = NULL;
 	gl_flats = NULL;
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+	gl_flats_cut = 0;
+#endif
 	gl_maptexturesloaded = false;
 }
 
@@ -1190,6 +1230,20 @@ static void FreeMapTexture(GLMapTexture_t *tex, boolean delete_chromakeys)
 	DeleteTextureMipmap(&tex->mipmap, true);
 }
 
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+static void FreeFlatMipmap(GLMipmap_t *mipmap)
+{
+	if (mipmap->nextcolormap)
+	{
+		DeleteTextureMipmap(mipmap->nextcolormap, false);
+		free(mipmap->nextcolormap);
+		mipmap->nextcolormap = NULL;
+	}
+
+	DeleteTextureMipmap(mipmap, true);
+}
+#endif
+
 void HWR_FreeMapTextures(void)
 {
 	size_t i;
@@ -1201,7 +1255,11 @@ void HWR_FreeMapTextures(void)
 	for (i = 0; i < gl_numtextures; i++)
 	{
 		FreeMapTexture(&gl_textures[i], true);
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+		FreeFlatMipmap(HWR_FlatMipmap(i));
+#else
 		FreeMapTexture(&gl_flats[i], false);
+#endif
 	}
 
 	// now the heap don't have any 'user' pointing to our
@@ -1212,6 +1270,9 @@ void HWR_FreeMapTextures(void)
 		free(gl_flats);
 	gl_textures = NULL;
 	gl_flats = NULL;
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+	gl_flats_cut = 0;
+#endif
 	gl_numtextures = 0;
 	gl_maptexturesloaded = false;
 }
@@ -1226,8 +1287,15 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 #endif
 
 	gl_numtextures = pnumtextures;
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+	gl_flats_cut = HWR_UseCompactFlatMetadata() ? sizeof(GLMapTexture_t) - sizeof(GLMipmap_t) : 0;
+#endif
 	gl_textures = calloc(gl_numtextures, sizeof(*gl_textures));
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+	gl_flats = calloc(gl_numtextures, sizeof(GLMapTexture_t) - gl_flats_cut);
+#else
 	gl_flats = calloc(gl_numtextures, sizeof(*gl_flats));
+#endif
 #ifdef PS2_PROFILE
 	{
 		// -hwfbtex N (test of the guard below): the N-th call (1 = the first) finds no memory for the tables
@@ -1239,6 +1307,9 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 		{
 			free(gl_flats);
 			gl_flats = NULL;
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+	gl_flats_cut = 0;
+#endif
 		}
 	}
 #endif
@@ -1251,6 +1322,9 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 		free(gl_textures);
 		free(gl_flats);
 		gl_textures = gl_flats = NULL;
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+		gl_flats_cut = 0;
+#endif
 		gl_numtextures = 0;
 		Z_GuardThrow("HWR_LoadMapTextures: ran out of memory for OpenGL textures"); // (no return when a guard is armed)
 #endif
@@ -1447,7 +1521,9 @@ static void MakeLevelFlatMipmap(GLMipmap_t *grMipmap, INT32 texturenum, UINT16 f
 void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 {
 	INT32 texturenum;
+#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	GLMapTexture_t *grtex;
+#endif
 	GLMipmap_t *grMipmap, *originalMipmap;
 
 	if (levelflat->type == LEVELFLAT_NONE || levelflat->texture_id < 0)
@@ -1457,8 +1533,12 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 	}
 
 	texturenum = texturetranslation[levelflat->texture_id];
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+	grMipmap = originalMipmap = HWR_FlatMipmap((size_t)texturenum);
+#else
 	grtex = &gl_flats[texturenum];
 	grMipmap = originalMipmap = &grtex->mipmap;
+#endif
 
 	if (!originalMipmap->downloaded)
 		MakeLevelFlatMipmap(originalMipmap, texturenum, TF_WRAPXY);
@@ -2243,6 +2323,14 @@ UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
 	else
 		colormap_pointer = colormap->colormap;
 
+#if defined(PS2) && !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+	// The GS keeps only canonical palette indices. Submit the same forward
+	// palette so the driver preserves the original RGB-to-lowest-index roundtrip.
+	if (!colormap->gl_lighttable.id)
+		colormap->gl_lighttable.id = PS2HWD_CreateIndexedLightTable(colormap_pointer, HWR_GetTexturePalette());
+	else if (colormap->gl_lighttable.needs_update)
+		PS2HWD_UpdateIndexedLightTable(colormap->gl_lighttable.id, colormap_pointer, HWR_GetTexturePalette());
+#else
 	// create hw lighttable if there isn't one
 	if (colormap->gl_lighttable.data == NULL)
 	{
@@ -2259,6 +2347,7 @@ UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
 	{
 		HWR_UpdateLightTable(colormap->gl_lighttable.id, colormap_pointer, colormap->gl_lighttable.data);
 	}
+#endif
 
 	colormap->gl_lighttable.needs_update = false;
 

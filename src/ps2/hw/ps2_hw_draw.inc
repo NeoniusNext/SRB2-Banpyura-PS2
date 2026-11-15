@@ -130,7 +130,7 @@ typedef struct
 static void state_flush(const gsstate_t *s)
 {
 	u64 vals[10];
-	u32 regs[10];
+	u8 regs[10];
 	int n = 0, i;
 	const u64 cld_mask = 7ull << 61;
 
@@ -392,8 +392,7 @@ static u32 ramp_clut(const rampspec_t *s)
 {
 	u64 key = (u64)CK_RAMP | ((u64)spec_hash(s) << 16) | ((u64)s->variant << 8);
 	int i, freeslot = -1, lru = -1, victim;
-	static u32 e[256] __attribute__((aligned(64)));
-	static u32 sw[256] __attribute__((aligned(64)));
+	u32 *e;
 
 	H.clut_tick++;
 	for (i = CLUT_FIXED; i < CLUT_SLOTS; i++)
@@ -418,10 +417,9 @@ static u32 ramp_clut(const rampspec_t *s)
 		ov_flush_pending(); // the queue may reference the image that is about to be replaced
 	H.clut_ent[victim].key = key;
 	H.clut_ent[victim].stamp = H.clut_tick;
+	e = clut_alloc(H.clut_base + (u32)victim * CLUT_BLOCKS);
 	ramp_entries(s, e);
-	for (i = 0; i < 256; i++)
-		sw[clut_slot((u32)i)] = e[i];
-	clut_write(H.clut_base + (u32)victim * CLUT_BLOCKS, sw);
+	clut_swizzle(e);
 	return H.clut_base + (u32)victim * CLUT_BLOCKS;
 }
 
@@ -1193,6 +1191,54 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 		o->w[3] = 0;
 	}
 	return o + 1;
+}
+
+// The three-register indexed formats as native ST/RGBAQ/XYZ(F) values. Keep the
+// arithmetic and conversions identical to put_vertex; only the GIF encoding differs.
+static inline u64 *put_vertex_reglist(u64 *o, const cv_t *s, const pack_t *pk)
+{
+	const float q = 1.0f / s->w;
+	float zf = P.zo + s->z * q * P.zk + P.zbias;
+	const int xi = (int)(P.ox + s->x * q * P.kx);
+	const int yi = (int)(P.oy + s->y * q * P.ky);
+	qw_t st;
+	u32 zi, col = pk->col;
+
+	zf = clampf(zf, 0.0f, P.zmax);
+	zi = (u32)(int)zf;
+	if (pk->ramp)
+	{
+		st.f[0] = P.ra + P.rb * q;
+		st.f[1] = 0.0f;
+	}
+	else
+	{
+		st.f[0] = (s->a[0] - pk->sb) * P.tsx * q;
+		st.f[1] = (s->a[1] - pk->tb) * P.tsy * q;
+	}
+	*o++ = st.d[0];
+	if (pk->fmt == 6)
+	{
+		const float lf = s->a[2];
+		const u32 r = (u32)((float)(col & 255) * lf + 0.5f);
+		const u32 g = (u32)((float)((col >> 8) & 255) * lf + 0.5f);
+		const u32 b = (u32)((float)((col >> 16) & 255) * lf + 0.5f);
+
+		col = (r & 255) | ((g & 255) << 8) | ((b & 255) << 16) | (col & 0xFF000000u);
+	}
+	else if (pk->fmt == 4)
+	{
+		col = (u32)col_lut[(int)clampf(s->a[2], 0.0f, 255.0f)]
+			| ((u32)col_lut[(int)clampf(s->a[3], 0.0f, 255.0f)] << 8)
+			| ((u32)col_lut[(int)clampf(s->a[4], 0.0f, 255.0f)] << 16)
+			| ((u32)col_lut[(int)clampf(s->a[5], 0.0f, 255.0f)] << 24);
+	}
+	st.f[0] = q;
+	*o++ = (u64)col | ((u64)st.w[0] << 32);
+	*o++ = (u64)(xi & 0xFFFF) | ((u64)(yi & 0xFFFF) << 16)
+		| ((u64)zi << 32) | ((pk->fmt == 1 || pk->fmt == 6) ? (u64)(pk->fog & 255) << 56 : 0);
+	H.gsr.valid &= ~(u32)RV_RGBAQ;
+	return o;
 }
 
 static inline int pack_regs(int fmt)
@@ -2397,8 +2443,20 @@ static void ls_close(void)
 {
 	if (!LS.open)
 		return;
-	LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
-	LS.tag->d[1] = pack_regdesc(LS.fmt);
+	if (LS.nreg == 3)
+	{
+		const u64 regs = pack_regdesc(LS.fmt);
+
+		// Three vertices and one ignored NOP: each triangle ends at a DMA
+		// quadword, so reservations can append without a live half-quadword.
+		LS.tag->d[0] = HWGIF_TAG(LS.n / 3, 1, 0, 0, 1, 10);
+		LS.tag->d[1] = regs | (regs << 12) | (regs << 24) | (0xFull << 36);
+	}
+	else
+	{
+		LS.tag->d[0] = HWGIF_TAG(LS.n, 1, 1, PRIM_TRI | pass_prim(&P.pass[0]), 0, LS.nreg);
+		LS.tag->d[1] = pack_regdesc(LS.fmt);
+	}
 	LS.open = 0;
 	H.st.verts_out += LS.n;
 }
@@ -2413,7 +2471,16 @@ static qw_t *ls_reserve(u32 nqw)
 			ls_close();
 			pk_flush();
 		}
-		LS.tag = pk_alloc(1 + nqw); // the tag, then the vertices of this reservation
+		LS.tag = pk_alloc((LS.nreg == 3 ? 3 : 1) + nqw);
+		if (LS.nreg == 3)
+		{
+			// REGLIST ignores PRE: commit PRIM explicitly before the vertex list.
+			LS.tag[0].d[0] = HWGIF_TAG(1, 0, 0, 0, 1, 1);
+			LS.tag[0].d[1] = GSR_PRIM;
+			LS.tag[1].d[0] = PRIM_TRI | pass_prim(&P.pass[0]);
+			LS.tag[1].d[1] = 0;
+			LS.tag += 2;
+		}
 		LS.n = 0;
 		LS.open = 1;
 		return LS.tag + 1;
@@ -2551,13 +2618,29 @@ static void emit_tris(const FOutVector *base, const u32 *idx, u32 nidx, const fl
 				pk.sb = (P.wrapx && fabsf(smin) > 4.0f) ? floorf(smin) : 0.0f;
 				pk.tb = (P.wrapy && fabsf(tmin) > 4.0f) ? floorf(tmin) : 0.0f;
 			}
-			o = ls_reserve((u32)((cnt - 2) * 3 * nreg));
-			for (k = 1; k + 1 < cnt; k++)
+			o = ls_reserve((u32)((cnt - 2) * (nreg == 3 ? 5 : 3 * nreg)));
+			if (nreg == 3)
 			{
-				o = put_vertex(o, &cl[0], &pk);
-				o = put_vertex(o, &cl[k], &pk);
-				o = put_vertex(o, &cl[k + 1], &pk);
-				LS.n += 3;
+				u64 *r = (u64 *)o;
+
+				for (k = 1; k + 1 < cnt; k++)
+				{
+					r = put_vertex_reglist(r, &cl[0], &pk);
+					r = put_vertex_reglist(r, &cl[k], &pk);
+					r = put_vertex_reglist(r, &cl[k + 1], &pk);
+					*r++ = 0; // descriptor 10 is NOP
+					LS.n += 3;
+				}
+			}
+			else
+			{
+				for (k = 1; k + 1 < cnt; k++)
+				{
+					o = put_vertex(o, &cl[0], &pk);
+					o = put_vertex(o, &cl[k], &pk);
+					o = put_vertex(o, &cl[k + 1], &pk);
+					LS.n += 3;
+				}
 			}
 			if (P.lmode == LM_RAMP)
 			{

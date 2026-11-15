@@ -1,0 +1,3378 @@
+{
+  "date": "2026-11-15",
+  "source_revision": "d4fbc7c319f19edc70eda220c3323d0350504c98",
+  "baseline_revision": "8729f3652629286c0f38b4c203018e3bdeaa68be",
+  "baseline_published_source_revision": "85bd9716b1ed114d46f95831c64a87623038eeaa",
+  "source_files": 602,
+  "changed_source_files": 6,
+  "production_source_sha256": {
+    "src/hardware/hw_cache.c": "d3473bcfc2988c671a928204bac07c40c6247c752cc7fbaf5da2dccc224e7c80",
+    "src/hardware/hw_pbatch.inc": "08e3ce0c810ba69f957ab8aaa0082e28bcdb1e3f7a3939f8d0da1e8133e2e350",
+    "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+    "src/ps2/hw/ps2_hwd.c": "445a610c63d3f5670e0e99f660ccc8d6e52ac59d86750a2894ab4d1211a6da8f",
+    "src/ps2/hw/ps2_hwd.h": "15509f6de5c97eb9c93123f678f3ae2ac514af400d7078d149790622a5508828",
+    "src/ps2/hw/ps2_hwd_null.c": "b6c7bd6ed08b2a8f28f86d0222f5284969935713c97004d53a3ffcfc4fbb4c0b"
+  },
+  "complete_source_manifest": {
+    "report": "build/nov15-next12/final/source/manifest.json",
+    "sha256": "3ef78e89f8a8c39d5b7ede49447264a9e6795bcc8320b9ee559d11b02e0701b4"
+  },
+  "branch": "codex/ps2-lossless-optimization-20261114",
+  "builds": {
+    "software": {
+      "elf_bytes": 10325044,
+      "elf_sha256": "6667b74800754b21d611a5533c21eafa7f8a3f5890bdc40782c1d5817dba2cca",
+      "hardware": false,
+      "compiler": "mips64r5900el-ps2-elf-gcc (GCC) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "flags": [
+        "-G8",
+        "-O2",
+        "-std=gnu23",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-MMD",
+        "-MP",
+        "-D_EE",
+        "-DPS2",
+        "-DPS2_PROFILE",
+        "-DNOHW",
+        "-DPS2_AUDIO_VORBIS",
+        "-DPS2_AUDIO_MP3",
+        "-DNOMUMBLE",
+        "-DNO_IPV6",
+        "-DNOUPNP",
+        "-DCMAKECONFIG",
+        "-D_LARGEFILE64_SOURCE",
+        "-DNOEXECINFO",
+        "-DUNIXCOMMON",
+        "-Wall",
+        "-Wextra",
+        "-Wno-trigraphs",
+        "-Wno-unused-parameter",
+        "-fwrapv",
+        "-DHAVE_ZLIB",
+        "-DHAVE_PNG",
+        "-DNDEBUG",
+        "-mno-abicalls",
+        "-flto",
+        "-I/workspace/SRB2-Banpyura-PS2/src",
+        "-I/workspace/SRB2-Banpyura-PS2/src/ps2",
+        "-I/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/software/gen",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ee/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/common/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/gsKit/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ports/include"
+      ],
+      "driver": "software",
+      "compile_diagnostics": 2,
+      "link_diagnostics": false,
+      "diagnostic_build": false,
+      "build_report": {
+        "report": "build/nov15-next12/final/software/build-report.json",
+        "sha256": "2f50ad6ff884d2d660c9eb450c6260494f0098fe495c22321c9d8bd3e47ea276"
+      },
+      "complete_artifact_manifest": {
+        "report": "build/nov15-next12/final/software-artifact-sha256.json",
+        "sha256": "06b1ed1be1625386558b943fe8673359be155e8d1aca7f0a6dce410a2beddecb"
+      },
+      "ordered_C_inputs": 189,
+      "VU_inputs": 0,
+      "actual_linked_capacity": {
+        "end": 7735260,
+        "gp": 6003568,
+        "end_and_gp_exact_original": true,
+        "original_allocated_sections": {
+          ".text": {
+            "type": 1,
+            "flags": 6,
+            "address": 1048576,
+            "bytes": 3702240,
+            "alignment": 16
+          },
+          ".ctors": {
+            "type": 1,
+            "flags": 3,
+            "address": 4750816,
+            "bytes": 20,
+            "alignment": 4
+          },
+          ".dtors": {
+            "type": 1,
+            "flags": 3,
+            "address": 4750848,
+            "bytes": 8,
+            "alignment": 4
+          },
+          ".data": {
+            "type": 1,
+            "flags": 3,
+            "address": 4750976,
+            "bytes": 618368,
+            "alignment": 64
+          },
+          ".rodata": {
+            "type": 1,
+            "flags": 2,
+            "address": 5369344,
+            "bytes": 601352,
+            "alignment": 16
+          },
+          ".MIPS.abiflags": {
+            "type": 1879048234,
+            "flags": 2,
+            "address": 5970696,
+            "bytes": 24,
+            "alignment": 8
+          },
+          ".sdata": {
+            "type": 1,
+            "flags": 268435459,
+            "address": 5970816,
+            "bytes": 2353,
+            "alignment": 8
+          },
+          ".sbss": {
+            "type": 8,
+            "flags": 268435459,
+            "address": 5973248,
+            "bytes": 7328,
+            "alignment": 8
+          },
+          ".bss": {
+            "type": 8,
+            "flags": 3,
+            "address": 5980672,
+            "bytes": 1754588,
+            "alignment": 64
+          }
+        },
+        "final_allocated_sections": {
+          ".text": {
+            "type": 1,
+            "flags": 6,
+            "address": 1048576,
+            "bytes": 3702240,
+            "alignment": 16
+          },
+          ".ctors": {
+            "type": 1,
+            "flags": 3,
+            "address": 4750816,
+            "bytes": 20,
+            "alignment": 4
+          },
+          ".dtors": {
+            "type": 1,
+            "flags": 3,
+            "address": 4750848,
+            "bytes": 8,
+            "alignment": 4
+          },
+          ".data": {
+            "type": 1,
+            "flags": 3,
+            "address": 4750976,
+            "bytes": 618368,
+            "alignment": 64
+          },
+          ".rodata": {
+            "type": 1,
+            "flags": 2,
+            "address": 5369344,
+            "bytes": 601336,
+            "alignment": 16
+          },
+          ".MIPS.abiflags": {
+            "type": 1879048234,
+            "flags": 2,
+            "address": 5970680,
+            "bytes": 24,
+            "alignment": 8
+          },
+          ".sdata": {
+            "type": 1,
+            "flags": 268435459,
+            "address": 5970816,
+            "bytes": 2353,
+            "alignment": 8
+          },
+          ".sbss": {
+            "type": 8,
+            "flags": 268435459,
+            "address": 5973248,
+            "bytes": 7328,
+            "alignment": 8
+          },
+          ".bss": {
+            "type": 8,
+            "flags": 3,
+            "address": 5980672,
+            "bytes": 1754588,
+            "alignment": 64
+          }
+        },
+        "literal_allocated_byte_deltas": {
+          ".text": 0,
+          ".ctors": 0,
+          ".dtors": 0,
+          ".data": 0,
+          ".rodata": -16,
+          ".MIPS.abiflags": 0,
+          ".sdata": 0,
+          ".sbss": 0,
+          ".bss": 0
+        }
+      },
+      "compiler_and_SDK_notice_provenance": {
+        "lto.log": [
+          "lto-wrapper: warning: using serial compilation of 59 LTRANS jobs"
+        ],
+        "link.log": [
+          "/workspace/.onboarding/ps2dev-v2/ps2dev/ee/bin/../lib/gcc/mips64r5900el-ps2-elf/15.2.0/../../../../mips64r5900el-ps2-elf/bin/ld: /workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/software/obj/engine_lto.o: warning: linking abicalls files with non-abicalls files"
+        ]
+      }
+    },
+    "hardware": {
+      "elf_bytes": 11261520,
+      "elf_sha256": "efc963c7876a5f2a1c395baf5ba9982b68c6db1e56811d7a5e8a690ba840ab20",
+      "hardware": true,
+      "compiler": "mips64r5900el-ps2-elf-gcc (GCC) 15.2.0\nCopyright (C) 2025 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.\n\n",
+      "flags": [
+        "-G8",
+        "-O2",
+        "-std=gnu23",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-MMD",
+        "-MP",
+        "-D_EE",
+        "-DPS2",
+        "-DPS2_PROFILE",
+        "-DPS2_AUDIO_VORBIS",
+        "-DPS2_AUDIO_MP3",
+        "-DNOMUMBLE",
+        "-DNO_IPV6",
+        "-DNOUPNP",
+        "-DCMAKECONFIG",
+        "-D_LARGEFILE64_SOURCE",
+        "-DNOEXECINFO",
+        "-DUNIXCOMMON",
+        "-Wall",
+        "-Wextra",
+        "-Wno-trigraphs",
+        "-Wno-unused-parameter",
+        "-fwrapv",
+        "-DHAVE_ZLIB",
+        "-DHAVE_PNG",
+        "-DNDEBUG",
+        "-mno-abicalls",
+        "-flto",
+        "-DHWRENDER",
+        "-Werror",
+        "-Wno-format-truncation",
+        "-I/workspace/SRB2-Banpyura-PS2/src",
+        "-I/workspace/SRB2-Banpyura-PS2/src/ps2",
+        "-I/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/hardware/gen",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ee/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/common/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/gsKit/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ports/include"
+      ],
+      "driver": "ps2_hwd",
+      "compile_diagnostics": 0,
+      "link_diagnostics": false,
+      "diagnostic_build": false,
+      "build_report": {
+        "report": "build/nov15-next12/final/hardware/build-report.json",
+        "sha256": "227b3d537f7f34cc7b93d597607aecf1957856dbcaa64cbdb730987b8824afa1"
+      },
+      "complete_artifact_manifest": {
+        "report": "build/nov15-next12/final/hardware-artifact-sha256.json",
+        "sha256": "0a404ee27881e0f14bbc32546ff8be9e7f87d3ddb6f2b467d9bf9bcc7f4cc976"
+      },
+      "ordered_C_inputs": 203,
+      "VU_inputs": 2,
+      "actual_linked_capacity": {
+        "end": 8934576,
+        "gp": 6763248,
+        "end_and_gp_exact_original": true,
+        "original_allocated_sections": {
+          ".text": {
+            "type": 1,
+            "flags": 6,
+            "address": 1048576,
+            "bytes": 4373952,
+            "alignment": 16
+          },
+          ".vutext": {
+            "type": 1,
+            "flags": 6,
+            "address": 5422528,
+            "bytes": 7936,
+            "alignment": 16
+          },
+          ".ctors": {
+            "type": 1,
+            "flags": 3,
+            "address": 5430464,
+            "bytes": 20,
+            "alignment": 4
+          },
+          ".dtors": {
+            "type": 1,
+            "flags": 3,
+            "address": 5430496,
+            "bytes": 8,
+            "alignment": 4
+          },
+          ".data": {
+            "type": 1,
+            "flags": 3,
+            "address": 5430528,
+            "bytes": 630448,
+            "alignment": 64
+          },
+          ".rodata": {
+            "type": 1,
+            "flags": 2,
+            "address": 6061056,
+            "bytes": 669392,
+            "alignment": 16
+          },
+          ".MIPS.abiflags": {
+            "type": 1879048234,
+            "flags": 2,
+            "address": 6730448,
+            "bytes": 24,
+            "alignment": 8
+          },
+          ".sdata": {
+            "type": 1,
+            "flags": 268435459,
+            "address": 6730496,
+            "bytes": 4316,
+            "alignment": 8
+          },
+          ".sbss": {
+            "type": 8,
+            "flags": 268435459,
+            "address": 6734848,
+            "bytes": 8972,
+            "alignment": 8
+          },
+          ".bss": {
+            "type": 8,
+            "flags": 3,
+            "address": 6743936,
+            "bytes": 2190640,
+            "alignment": 64
+          }
+        },
+        "final_allocated_sections": {
+          ".text": {
+            "type": 1,
+            "flags": 6,
+            "address": 1048576,
+            "bytes": 4373952,
+            "alignment": 16
+          },
+          ".vutext": {
+            "type": 1,
+            "flags": 6,
+            "address": 5422528,
+            "bytes": 7936,
+            "alignment": 16
+          },
+          ".ctors": {
+            "type": 1,
+            "flags": 3,
+            "address": 5430464,
+            "bytes": 20,
+            "alignment": 4
+          },
+          ".dtors": {
+            "type": 1,
+            "flags": 3,
+            "address": 5430496,
+            "bytes": 8,
+            "alignment": 4
+          },
+          ".data": {
+            "type": 1,
+            "flags": 3,
+            "address": 5430528,
+            "bytes": 630448,
+            "alignment": 64
+          },
+          ".rodata": {
+            "type": 1,
+            "flags": 2,
+            "address": 6061056,
+            "bytes": 669376,
+            "alignment": 16
+          },
+          ".MIPS.abiflags": {
+            "type": 1879048234,
+            "flags": 2,
+            "address": 6730432,
+            "bytes": 24,
+            "alignment": 8
+          },
+          ".sdata": {
+            "type": 1,
+            "flags": 268435459,
+            "address": 6730496,
+            "bytes": 4316,
+            "alignment": 8
+          },
+          ".sbss": {
+            "type": 8,
+            "flags": 268435459,
+            "address": 6734848,
+            "bytes": 8964,
+            "alignment": 8
+          },
+          ".bss": {
+            "type": 8,
+            "flags": 3,
+            "address": 6743936,
+            "bytes": 2190640,
+            "alignment": 64
+          }
+        },
+        "literal_allocated_byte_deltas": {
+          ".text": 0,
+          ".vutext": 0,
+          ".ctors": 0,
+          ".dtors": 0,
+          ".data": 0,
+          ".rodata": -16,
+          ".MIPS.abiflags": 0,
+          ".sdata": 0,
+          ".sbss": -8,
+          ".bss": 0
+        }
+      },
+      "compiler_and_SDK_notice_provenance": {
+        "lto.log": [
+          "lto-wrapper: warning: using serial compilation of 70 LTRANS jobs",
+          "/workspace/.onboarding/ps2dev-v2/ps2dev/ee/bin/../lib/gcc/mips64r5900el-ps2-elf/15.2.0/../../../../mips64r5900el-ps2-elf/bin/ld: /workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/hardware/obj/ps2_hw_vu1_vsm.o: warning: linking abicalls files with non-abicalls files"
+        ],
+        "link.log": []
+      }
+    }
+  },
+  "baseline_manifest_sha256": "0a868a5e4365ea5def41a133ed7c6cda27e247cdb24677ee8316a8a80cb9ecb3",
+  "physical_ps2_measured": false,
+  "new_VRAM_saving_claimed": false,
+  "FPS_gain_claimed": false,
+  "retained_PB_scratch": {
+    "report": "build/nov15-next12/final/pb-binding/final-codecheck/report.json",
+    "sha256": "2c1f88927d647fdb6bcd0eb6c100d798ed9b0c0bf808f172877928855cba43bf",
+    "selected_live_functions": {
+      "final": 65,
+      "control": 65
+    },
+    "actual_binary_and_routing_controls": 19,
+    "all_controls_rejected_inside_binding": true,
+    "all_frames_identical_with_matching_control": true,
+    "attribution": {
+      "changed_allocated_section_names_equal_original_component": true,
+      "changed_code_or_binding_names_equal_original_component": true,
+      "direct_actual_caller_names_equal_original_component": true,
+      "comparison_rule": "Exact complete allocated-section type/flags/size/alignment/entry-size/bytes signatures and ordered full target/type/location/addend records; no capacity or instruction normalization"
+    },
+    "scope": "Actual final shipping Hardware and final-source narrow PB opt-out with light table active. Each complete selected body/frame/data/literal is bound to its own actual game ELF. The earlier component proof is retained, and no component-to-final identity is inferred."
+  },
+  "retained_indexed_lighttable": {
+    "report": "build/nov15-next12/lighttable-final/finalbind-v4/final-binding-report.json",
+    "sha256": "dd77c5eb1ad21062889d49496a1eb79e5a4308e611acb547abf85a22952759a6",
+    "table_roots": 25,
+    "spill_roots": 4,
+    "all_complete_final_and_executed_component_code_RELA_targets_addends_frames_and_referenced_data_equal": true,
+    "actual_graph_controls": 22,
+    "all_controls_rejected_inside_binding": true,
+    "actual_final_packed_load": {
+      "palette_parameter_register": 5,
+      "preserved_palette_register": 21,
+      "formed_pointer_register": 2,
+      "loaded_color_register": 4,
+      "mask_register": 9,
+      "pointer_add_offset": 164,
+      "LWL_offset": 168,
+      "LWR_offset": 172,
+      "AND_offset": 176,
+      "complete_words_hex": [
+        "02a21021",
+        "88440003",
+        "98440000",
+        "00892024"
+      ],
+      "exact_RGB_mask": "0x00ffffff"
+    },
+    "both_diagnostic_graphs": {
+      "01b2d3f5": {
+        "ELF_sha256": "6766d019d20ef841ee12604011c466231c4cb9ba213e0467ed92f313bbdfb122",
+        "scope": "Final actual canonical helper/caller/SDK graph fully bound into this exact layout-preserving diagnostic ELF; staged-run admission is recorded separately"
+      },
+      "9e3779b9": {
+        "ELF_sha256": "6abf462952a14316408645966dd845f0178e568b24ff4179dd795fd4e5dde47d",
+        "scope": "Final actual canonical helper/caller/SDK graph fully bound into this exact layout-preserving diagnostic ELF; staged-run admission is recorded separately"
+      }
+    },
+    "actual_allocator": {
+      "report": "build/nov15-next12/lighttable-final/allocator-final-v1/allocator-report.json",
+      "sha256": "815cf851ccd518b35970efc15fb89791389c03a9596a9d6fbf536d7320d0e938",
+      "engine_roots": 4,
+      "SDK_members": 2,
+      "actual_binary_controls": 5,
+      "complete_authoritative_archive_metadata_bound": true,
+      "HI16_precision": "A low-bit-only HI16 addend change may preserve rounded emitted bits; its rejection is by independent complete authoritative ordered-RELA identity, not an instruction-difference claim."
+    },
+    "matching_current_generation_legacy_control": {
+      "report": "build/nov15-next12/lighttable-final/finalbind-v4/final-binding-report.json",
+      "sha256": "dd77c5eb1ad21062889d49496a1eb79e5a4308e611acb547abf85a22952759a6",
+      "complete_whole_engine_function_sections": 5869,
+      "complete_live_legacy_roots": 21,
+      "all_whole_engine_function_instructions_and_ordered_RELA_equal": true,
+      "all_complete_selected_legacy_code_data_frame_bindings_equal": true,
+      "historical_source85_CLUT_inlining_identity_claimed": false
+    },
+    "historical_roots_actual_current_disposition": {
+      "report": "build/nov15-next12/lighttable-final/historical-disposition-v1/disposition-report.json",
+      "sha256": "1c5d519f5042b711765f4155a6268e89883f9659bc88225572603fb2ae30a406"
+    }
+  },
+  "Hardware_native_pressure": {
+    "report": "build/nov15-next12/final-hardware-pressure/audit-v1/report.json",
+    "sha256": "311272e731058f24589563a4d0f5ca3c93e8fa44153bf7ab0ef99ab6ccb0254e",
+    "readiness": {
+      "report": "build/nov15-next12/final-hardware-pressure/readiness.json",
+      "sha256": "5c13b50e97971744f311be4891a40353dbcd73b0edb71ab81374c0c623380055"
+    },
+    "summary": {
+      "01b2d3f5-map02": {
+        "all_final_numeric_resource_deltas": {
+          "ram": 0,
+          "class": 0,
+          "map": 0,
+          "levelframes": 0,
+          "frames": 0,
+          "cycles": -2735206,
+          "arena": 0,
+          "used": -74880,
+          "peak": -74880,
+          "gpeak": -74880,
+          "free": 74880,
+          "largest": 74880,
+          "evicted": 0,
+          "evictedbytes": 0,
+          "failed": 0,
+          "libcfree": 0,
+          "flushes": 0,
+          "libcpeak": 0,
+          "stackused": 0,
+          "spillpeak": 0,
+          "spillnow": 0,
+          "t_ms": -10
+        },
+        "baseline_final_ZSTAT": {
+          "baseline": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 2,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 817734203,
+            "arena": 23547904,
+            "used": 22146048,
+            "peak": 22146048,
+            "gpeak": 22146048,
+            "free": 1401856,
+            "largest": 1387856,
+            "evicted": 31,
+            "evictedbytes": 110800,
+            "failed": 7,
+            "libcfree": 165048,
+            "flushes": 0,
+            "libcpeak": 434688,
+            "stackused": 132560,
+            "spillpeak": 2160928,
+            "spillnow": 2160928,
+            "t_ms": 29354
+          },
+          "final": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 2,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 814998997,
+            "arena": 23547904,
+            "used": 22071168,
+            "peak": 22071168,
+            "gpeak": 22071168,
+            "free": 1476736,
+            "largest": 1462736,
+            "evicted": 31,
+            "evictedbytes": 110800,
+            "failed": 7,
+            "libcfree": 165048,
+            "flushes": 0,
+            "libcpeak": 434688,
+            "stackused": 132560,
+            "spillpeak": 2160928,
+            "spillnow": 2160928,
+            "t_ms": 29344
+          }
+        },
+        "complete_stream_equality": {
+          "LHASH ": {
+            "rows_each": [
+              10,
+              10
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "9fca022dcf6e89f20ca3c7112c8bb5db9ee49340b44215355d075fa3d0e9b7af",
+            "final_sha256": "9fca022dcf6e89f20ca3c7112c8bb5db9ee49340b44215355d075fa3d0e9b7af"
+          },
+          "HWPH ": {
+            "rows_each": [
+              407,
+              407
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "f7d9ec2f0275344d93cb82831e487b34fce4674331a067192ce1099034e77eb7",
+            "final_sha256": "f7d9ec2f0275344d93cb82831e487b34fce4674331a067192ce1099034e77eb7"
+          },
+          "HWLT ": {
+            "rows_each": [
+              2,
+              2
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92",
+            "final_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92"
+          },
+          "HW mem ": {
+            "rows_each": [
+              11,
+              11
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "c6aba20cc867100ba6b3ea33cd8155ca14e193aa3c1a29ef3dcbc6aa4e6efc14",
+            "final_sha256": "c6aba20cc867100ba6b3ea33cd8155ca14e193aa3c1a29ef3dcbc6aa4e6efc14"
+          },
+          "HWWS ": {
+            "rows_each": [
+              49,
+              49
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "ed7e5290c4789db7e5012ee6e38e06cf61561f18b8b6ea894242cbfe43d95fa5",
+            "final_sha256": "ed7e5290c4789db7e5012ee6e38e06cf61561f18b8b6ea894242cbfe43d95fa5"
+          },
+          "[zreg]": {
+            "rows_each": [
+              1,
+              1
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "cf2a9d8f179c438b05a33e31e84049eebcb0d9d49f39e0697bd2ca7414922f52",
+            "final_sha256": "cf2a9d8f179c438b05a33e31e84049eebcb0d9d49f39e0697bd2ca7414922f52"
+          }
+        },
+        "actual_requested_PB_payload_removed": 9216,
+        "actual_tag24_allocated_removed": 65568,
+        "other_allocated_byte_residual": 96,
+        "residual_scope": "Literal whole-zone residual; no particular allocator alignment/header/address event is inferred"
+      },
+      "01b2d3f5-fog-stereo": {
+        "all_final_numeric_resource_deltas": {
+          "ram": 0,
+          "class": 0,
+          "map": 0,
+          "levelframes": 0,
+          "frames": 0,
+          "cycles": -321588,
+          "arena": 0,
+          "used": -71776,
+          "peak": -71776,
+          "gpeak": -71776,
+          "free": 71776,
+          "largest": 71872,
+          "evicted": 0,
+          "evictedbytes": 0,
+          "failed": -1,
+          "libcfree": 0,
+          "flushes": 0,
+          "libcpeak": 0,
+          "stackused": 0,
+          "spillpeak": 0,
+          "spillnow": 0,
+          "t_ms": 5
+        },
+        "baseline_final_ZSTAT": {
+          "baseline": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 1,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 201945112,
+            "arena": 23543808,
+            "used": 17899648,
+            "peak": 17899648,
+            "gpeak": 17899648,
+            "free": 5644160,
+            "largest": 5630352,
+            "evicted": 31,
+            "evictedbytes": 110784,
+            "failed": 9,
+            "libcfree": 465416,
+            "flushes": 0,
+            "libcpeak": 135424,
+            "stackused": 132560,
+            "spillpeak": 2390808,
+            "spillnow": 2325272,
+            "t_ms": 26895
+          },
+          "final": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 1,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 201623524,
+            "arena": 23543808,
+            "used": 17827872,
+            "peak": 17827872,
+            "gpeak": 17827872,
+            "free": 5715936,
+            "largest": 5702224,
+            "evicted": 31,
+            "evictedbytes": 110784,
+            "failed": 8,
+            "libcfree": 465416,
+            "flushes": 0,
+            "libcpeak": 135424,
+            "stackused": 132560,
+            "spillpeak": 2390808,
+            "spillnow": 2325272,
+            "t_ms": 26900
+          }
+        },
+        "complete_stream_equality": {
+          "LHASH ": {
+            "rows_each": [
+              10,
+              10
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "b339dd7152da46cbec14b3e69b8f57c36d99386dac6af8eac1b8f55b15c0a040",
+            "final_sha256": "b339dd7152da46cbec14b3e69b8f57c36d99386dac6af8eac1b8f55b15c0a040"
+          },
+          "HWPH ": {
+            "rows_each": [
+              407,
+              407
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "cc2996b3f05dbd6fae3f4f5f2e7cc63c81e15d5dcbd789baa1efc49de2ca4e28",
+            "final_sha256": "cc2996b3f05dbd6fae3f4f5f2e7cc63c81e15d5dcbd789baa1efc49de2ca4e28"
+          },
+          "HWLT ": {
+            "rows_each": [
+              2,
+              2
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92",
+            "final_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92"
+          },
+          "HW mem ": {
+            "rows_each": [
+              11,
+              11
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "3846a32bfae5400632d9815565c16a19649566ad8f2fe1f36f081e913e68258c",
+            "final_sha256": "3846a32bfae5400632d9815565c16a19649566ad8f2fe1f36f081e913e68258c"
+          },
+          "HWWS ": {
+            "rows_each": [
+              49,
+              49
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "f22d04ce3baf58e18ae3446b1397f6de1e6326397e34d88d98881232785c0f46",
+            "final_sha256": "f22d04ce3baf58e18ae3446b1397f6de1e6326397e34d88d98881232785c0f46"
+          },
+          "[zreg]": {
+            "rows_each": [
+              1,
+              1
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "9e41aaa7ac30bf22cc169f3bc631ddff2b78d100669e391c11c0928101a568bd",
+            "final_sha256": "9e41aaa7ac30bf22cc169f3bc631ddff2b78d100669e391c11c0928101a568bd"
+          }
+        },
+        "actual_requested_PB_payload_removed": 6144,
+        "actual_tag24_allocated_removed": 65568,
+        "other_allocated_byte_residual": 64,
+        "residual_scope": "Literal whole-zone residual; no particular allocator alignment/header/address event is inferred"
+      },
+      "9e3779b9-map02": {
+        "all_final_numeric_resource_deltas": {
+          "ram": 0,
+          "class": 0,
+          "map": 0,
+          "levelframes": 0,
+          "frames": 0,
+          "cycles": -2230505,
+          "arena": 0,
+          "used": -74880,
+          "peak": -74880,
+          "gpeak": -74880,
+          "free": 74880,
+          "largest": 74880,
+          "evicted": 0,
+          "evictedbytes": 0,
+          "failed": 0,
+          "libcfree": 0,
+          "flushes": 0,
+          "libcpeak": 0,
+          "stackused": 0,
+          "spillpeak": 0,
+          "spillnow": 0,
+          "t_ms": -8
+        },
+        "baseline_final_ZSTAT": {
+          "baseline": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 2,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 817772859,
+            "arena": 23547904,
+            "used": 22146048,
+            "peak": 22146048,
+            "gpeak": 22146048,
+            "free": 1401856,
+            "largest": 1387856,
+            "evicted": 31,
+            "evictedbytes": 110800,
+            "failed": 7,
+            "libcfree": 165048,
+            "flushes": 0,
+            "libcpeak": 434688,
+            "stackused": 132560,
+            "spillpeak": 2160928,
+            "spillnow": 2160928,
+            "t_ms": 29355
+          },
+          "final": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 2,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 815542354,
+            "arena": 23547904,
+            "used": 22071168,
+            "peak": 22071168,
+            "gpeak": 22071168,
+            "free": 1476736,
+            "largest": 1462736,
+            "evicted": 31,
+            "evictedbytes": 110800,
+            "failed": 7,
+            "libcfree": 165048,
+            "flushes": 0,
+            "libcpeak": 434688,
+            "stackused": 132560,
+            "spillpeak": 2160928,
+            "spillnow": 2160928,
+            "t_ms": 29347
+          }
+        },
+        "complete_stream_equality": {
+          "LHASH ": {
+            "rows_each": [
+              10,
+              10
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "9fca022dcf6e89f20ca3c7112c8bb5db9ee49340b44215355d075fa3d0e9b7af",
+            "final_sha256": "9fca022dcf6e89f20ca3c7112c8bb5db9ee49340b44215355d075fa3d0e9b7af"
+          },
+          "HWPH ": {
+            "rows_each": [
+              407,
+              407
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "f7d9ec2f0275344d93cb82831e487b34fce4674331a067192ce1099034e77eb7",
+            "final_sha256": "f7d9ec2f0275344d93cb82831e487b34fce4674331a067192ce1099034e77eb7"
+          },
+          "HWLT ": {
+            "rows_each": [
+              2,
+              2
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92",
+            "final_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92"
+          },
+          "HW mem ": {
+            "rows_each": [
+              11,
+              11
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "c6aba20cc867100ba6b3ea33cd8155ca14e193aa3c1a29ef3dcbc6aa4e6efc14",
+            "final_sha256": "c6aba20cc867100ba6b3ea33cd8155ca14e193aa3c1a29ef3dcbc6aa4e6efc14"
+          },
+          "HWWS ": {
+            "rows_each": [
+              49,
+              49
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "ed7e5290c4789db7e5012ee6e38e06cf61561f18b8b6ea894242cbfe43d95fa5",
+            "final_sha256": "ed7e5290c4789db7e5012ee6e38e06cf61561f18b8b6ea894242cbfe43d95fa5"
+          },
+          "[zreg]": {
+            "rows_each": [
+              1,
+              1
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "cf2a9d8f179c438b05a33e31e84049eebcb0d9d49f39e0697bd2ca7414922f52",
+            "final_sha256": "cf2a9d8f179c438b05a33e31e84049eebcb0d9d49f39e0697bd2ca7414922f52"
+          }
+        },
+        "actual_requested_PB_payload_removed": 9216,
+        "actual_tag24_allocated_removed": 65568,
+        "other_allocated_byte_residual": 96,
+        "residual_scope": "Literal whole-zone residual; no particular allocator alignment/header/address event is inferred"
+      },
+      "9e3779b9-fog-stereo": {
+        "all_final_numeric_resource_deltas": {
+          "ram": 0,
+          "class": 0,
+          "map": 0,
+          "levelframes": 0,
+          "frames": 0,
+          "cycles": 931068,
+          "arena": 0,
+          "used": -71776,
+          "peak": -71776,
+          "gpeak": -71776,
+          "free": 71776,
+          "largest": 71872,
+          "evicted": 0,
+          "evictedbytes": 0,
+          "failed": -1,
+          "libcfree": 0,
+          "flushes": 0,
+          "libcpeak": 0,
+          "stackused": 0,
+          "spillpeak": 0,
+          "spillnow": 0,
+          "t_ms": 3
+        },
+        "baseline_final_ZSTAT": {
+          "baseline": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 1,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 200692456,
+            "arena": 23543808,
+            "used": 17899648,
+            "peak": 17899648,
+            "gpeak": 17899648,
+            "free": 5644160,
+            "largest": 5630352,
+            "evicted": 31,
+            "evictedbytes": 110784,
+            "failed": 9,
+            "libcfree": 465416,
+            "flushes": 0,
+            "libcpeak": 135424,
+            "stackused": 132560,
+            "spillpeak": 2390808,
+            "spillnow": 2325272,
+            "t_ms": 26897
+          },
+          "final": {
+            "ram": 33554432,
+            "class": 32,
+            "map": 1,
+            "levelframes": 350,
+            "frames": 350,
+            "cycles": 201623524,
+            "arena": 23543808,
+            "used": 17827872,
+            "peak": 17827872,
+            "gpeak": 17827872,
+            "free": 5715936,
+            "largest": 5702224,
+            "evicted": 31,
+            "evictedbytes": 110784,
+            "failed": 8,
+            "libcfree": 465416,
+            "flushes": 0,
+            "libcpeak": 135424,
+            "stackused": 132560,
+            "spillpeak": 2390808,
+            "spillnow": 2325272,
+            "t_ms": 26900
+          }
+        },
+        "complete_stream_equality": {
+          "LHASH ": {
+            "rows_each": [
+              10,
+              10
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "b339dd7152da46cbec14b3e69b8f57c36d99386dac6af8eac1b8f55b15c0a040",
+            "final_sha256": "b339dd7152da46cbec14b3e69b8f57c36d99386dac6af8eac1b8f55b15c0a040"
+          },
+          "HWPH ": {
+            "rows_each": [
+              407,
+              407
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "cc2996b3f05dbd6fae3f4f5f2e7cc63c81e15d5dcbd789baa1efc49de2ca4e28",
+            "final_sha256": "cc2996b3f05dbd6fae3f4f5f2e7cc63c81e15d5dcbd789baa1efc49de2ca4e28"
+          },
+          "HWLT ": {
+            "rows_each": [
+              2,
+              2
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92",
+            "final_sha256": "91755415f1e09625357411fb7d6e2b4d56ae662d380b232bbc61fcaa2b653b92"
+          },
+          "HW mem ": {
+            "rows_each": [
+              11,
+              11
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "3846a32bfae5400632d9815565c16a19649566ad8f2fe1f36f081e913e68258c",
+            "final_sha256": "3846a32bfae5400632d9815565c16a19649566ad8f2fe1f36f081e913e68258c"
+          },
+          "HWWS ": {
+            "rows_each": [
+              49,
+              49
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "f22d04ce3baf58e18ae3446b1397f6de1e6326397e34d88d98881232785c0f46",
+            "final_sha256": "f22d04ce3baf58e18ae3446b1397f6de1e6326397e34d88d98881232785c0f46"
+          },
+          "[zreg]": {
+            "rows_each": [
+              1,
+              1
+            ],
+            "complete_ordered_lines_equal": true,
+            "baseline_sha256": "9e41aaa7ac30bf22cc169f3bc631ddff2b78d100669e391c11c0928101a568bd",
+            "final_sha256": "9e41aaa7ac30bf22cc169f3bc631ddff2b78d100669e391c11c0928101a568bd"
+          }
+        },
+        "actual_requested_PB_payload_removed": 6144,
+        "actual_tag24_allocated_removed": 65568,
+        "other_allocated_byte_residual": 64,
+        "residual_scope": "Literal whole-zone residual; no particular allocator alignment/header/address event is inferred"
+      }
+    },
+    "actual_full_game_final_graph_union": 91,
+    "failed_policy": "Only allocation failed attempts may decrease; an increase rejects. All other required capacity/cache/spill/policy fields exact.",
+    "RAM_scope": "Allocated/live/peak bytes inside unchanged reserved zone. No RSS or 32MiB physical reservation reduction claimed."
+  },
+  "primary_integration": {
+    "report": "build/nov15-next12/final-seed1/next12-integration-report.json",
+    "sha256": "2b516407059cbd8933ba3f587157e44b3473c0aa25ef435a232c85a4f78c5de0",
+    "runs": 12,
+    "fresh_final_runs": 6,
+    "reused_exact_preceding_runs": 6,
+    "baseline_reuse_origin": {
+      "report": "build/nov15-next12/final-seed1/baseline-reuse-origin.json",
+      "sha256": "66440173ff9d89a855a7385b0bc5db103e38f009d19efaa6763f87a38e16a5df"
+    },
+    "complete_PPM_pairs": 13,
+    "pairs": [
+      {
+        "scenario": "sw-fog-stereo",
+        "captures": 3,
+        "captures_equal": true,
+        "lhash_equal": true,
+        "loaded_used_delta": 0
+      },
+      {
+        "scenario": "sw-map11",
+        "captures": 3,
+        "captures_equal": true,
+        "lhash_equal": true,
+        "loaded_used_delta": 0
+      },
+      {
+        "scenario": "hw-fog-stereo",
+        "captures": 3,
+        "captures_equal": true,
+        "lhash_equal": true,
+        "loaded_used_delta": 0
+      },
+      {
+        "scenario": "hw-map02",
+        "captures": 3,
+        "captures_equal": true,
+        "lhash_equal": true,
+        "loaded_used_delta": 0
+      },
+      {
+        "scenario": "sw-map11-pressure-frame",
+        "captures": 1,
+        "captures_equal": true,
+        "lhash_equal": true,
+        "loaded_used_delta": 0
+      }
+    ],
+    "errors": [],
+    "all_run_results": {
+      "base-sw-fog-stereo": {
+        "rc": 0,
+        "elf_sha256": "a2f8d2a821eff1da10787dfd8466ba13d3fb35ba5d2ab7c1597927a30e594518",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "0345cde5bc152d76be9604e6dd0c542ccfb671601cb05451c42cd3f5daa52c35",
+          "vidshot-320x200-l20.ppm": "ff47c6b65885ed51b86726f0049e2b4b04e16e3a4bbd0c8aff7376cd5266a078",
+          "vidshot-320x200-l70.ppm": "da744137f694fa54d19def0a7747a726bb52c0d3c78a6265fce50d62924656fb"
+        },
+        "lhash": [
+          "LHASH tex.boot 87e90d593788986c",
+          "LHASH spr.all c3ce316522f5dcbc",
+          "LHASH map.vtx d2d8812d00ebe754",
+          "LHASH map.sec 79844583fa8bbfde",
+          "LHASH map.lin 563e77bbc22ab292",
+          "LHASH map.sid 96d57ddc7b2fcde9",
+          "LHASH map.bsp cde70322d3f733a7",
+          "LHASH map.lut ef0a7b445d67ed59",
+          "LHASH map.thg eab10543da06fc16",
+          "LHASH map.all eab10543da06fc16"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "new-sw-fog-stereo": {
+        "rc": 0,
+        "elf_sha256": "84bd1fc3d399139a72ca8f8c77909c064e46a52303cff201e892d3ae4cf5599f",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "0345cde5bc152d76be9604e6dd0c542ccfb671601cb05451c42cd3f5daa52c35",
+          "vidshot-320x200-l20.ppm": "ff47c6b65885ed51b86726f0049e2b4b04e16e3a4bbd0c8aff7376cd5266a078",
+          "vidshot-320x200-l70.ppm": "da744137f694fa54d19def0a7747a726bb52c0d3c78a6265fce50d62924656fb"
+        },
+        "lhash": [
+          "LHASH tex.boot 87e90d593788986c",
+          "LHASH spr.all c3ce316522f5dcbc",
+          "LHASH map.vtx d2d8812d00ebe754",
+          "LHASH map.sec 79844583fa8bbfde",
+          "LHASH map.lin 563e77bbc22ab292",
+          "LHASH map.sid 96d57ddc7b2fcde9",
+          "LHASH map.bsp cde70322d3f733a7",
+          "LHASH map.lut ef0a7b445d67ed59",
+          "LHASH map.thg eab10543da06fc16",
+          "LHASH map.all eab10543da06fc16"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "base-sw-map11": {
+        "rc": 0,
+        "elf_sha256": "a2f8d2a821eff1da10787dfd8466ba13d3fb35ba5d2ab7c1597927a30e594518",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "0df4f563a2ad2f4f3f346949ced2729264257cac95091bfde085e36c86fed893",
+          "vidshot-320x200-l20.ppm": "6b0f501d456ff781018ec7d5f126dd7f30ae39550a70d16654f66c8fd506774a",
+          "vidshot-320x200-l70.ppm": "6af407b71960eb6bca32b0728cdd73ce37cddbb1c21ae604dbbe94de6aa5f3e0"
+        },
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 8561a225980881c4",
+          "LHASH map.sec 972b3dcd714d61f8",
+          "LHASH map.lin 9d700cd487af1809",
+          "LHASH map.sid 1967ca1df81b7bf0",
+          "LHASH map.bsp 8a869a7f028b1eb2",
+          "LHASH map.lut 65f02ed7954927f6",
+          "LHASH map.thg 9acf54f4a8c93dd5",
+          "LHASH map.all 9acf54f4a8c93dd5"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "new-sw-map11": {
+        "rc": 0,
+        "elf_sha256": "84bd1fc3d399139a72ca8f8c77909c064e46a52303cff201e892d3ae4cf5599f",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "0df4f563a2ad2f4f3f346949ced2729264257cac95091bfde085e36c86fed893",
+          "vidshot-320x200-l20.ppm": "6b0f501d456ff781018ec7d5f126dd7f30ae39550a70d16654f66c8fd506774a",
+          "vidshot-320x200-l70.ppm": "6af407b71960eb6bca32b0728cdd73ce37cddbb1c21ae604dbbe94de6aa5f3e0"
+        },
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 8561a225980881c4",
+          "LHASH map.sec 972b3dcd714d61f8",
+          "LHASH map.lin 9d700cd487af1809",
+          "LHASH map.sid 1967ca1df81b7bf0",
+          "LHASH map.bsp 8a869a7f028b1eb2",
+          "LHASH map.lut 65f02ed7954927f6",
+          "LHASH map.thg 9acf54f4a8c93dd5",
+          "LHASH map.all 9acf54f4a8c93dd5"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "base-hw-fog-stereo": {
+        "rc": 0,
+        "elf_sha256": "7542c365e7ea0383d5055bf78e45316ad9bd8f58e6950e608a3b5e1c7a6ec5ad",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "de86c10e90c18674fc100ec3ca1ef5a6e1864de425404dc163251815c8e07426",
+          "vidshot-320x200-l20.ppm": "3da52774aaa763d4191ab47a17529156a77121d9d3ba905756c90d7f820d3c17",
+          "vidshot-320x200-l70.ppm": "284c927ce0aab6c12b3331bd1bb98ed0964815510fa112d30bb6585fffd7d134"
+        },
+        "lhash": [
+          "LHASH tex.boot 87e90d593788986c",
+          "LHASH spr.all c3ce316522f5dcbc",
+          "LHASH map.vtx d2d8812d00ebe754",
+          "LHASH map.sec 79844583fa8bbfde",
+          "LHASH map.lin 563e77bbc22ab292",
+          "LHASH map.sid 96d57ddc7b2fcde9",
+          "LHASH map.bsp cde70322d3f733a7",
+          "LHASH map.lut ef0a7b445d67ed59",
+          "LHASH map.thg eab10543da06fc16",
+          "LHASH map.all eab10543da06fc16"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "new-hw-fog-stereo": {
+        "rc": 0,
+        "elf_sha256": "6766d019d20ef841ee12604011c466231c4cb9ba213e0467ed92f313bbdfb122",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "de86c10e90c18674fc100ec3ca1ef5a6e1864de425404dc163251815c8e07426",
+          "vidshot-320x200-l20.ppm": "3da52774aaa763d4191ab47a17529156a77121d9d3ba905756c90d7f820d3c17",
+          "vidshot-320x200-l70.ppm": "284c927ce0aab6c12b3331bd1bb98ed0964815510fa112d30bb6585fffd7d134"
+        },
+        "lhash": [
+          "LHASH tex.boot 87e90d593788986c",
+          "LHASH spr.all c3ce316522f5dcbc",
+          "LHASH map.vtx d2d8812d00ebe754",
+          "LHASH map.sec 79844583fa8bbfde",
+          "LHASH map.lin 563e77bbc22ab292",
+          "LHASH map.sid 96d57ddc7b2fcde9",
+          "LHASH map.bsp cde70322d3f733a7",
+          "LHASH map.lut ef0a7b445d67ed59",
+          "LHASH map.thg eab10543da06fc16",
+          "LHASH map.all eab10543da06fc16"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "base-hw-map02": {
+        "rc": 0,
+        "elf_sha256": "7542c365e7ea0383d5055bf78e45316ad9bd8f58e6950e608a3b5e1c7a6ec5ad",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "976e7c65fe37d739f39cf42175e51ebff58394a5e35d8e5876ca5c3de306e71b",
+          "vidshot-320x200-l20.ppm": "c8bfeca98ad2ecfba58c71642f5e48299eba41afec18335309da54a58c4ed6f2",
+          "vidshot-320x200-l70.ppm": "714f19d4afd98b8d57f6a52c0a07f11dfb530dae571953b5f291bcf9d13fb13d"
+        },
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 50385f14c8ad0a59",
+          "LHASH map.sec ea135c152447daa4",
+          "LHASH map.lin d31ea0b71b228cb2",
+          "LHASH map.sid 44da8cb24e77b387",
+          "LHASH map.bsp 52d8b0931c52a64e",
+          "LHASH map.lut 24dddd6210ba70f7",
+          "LHASH map.thg a95f21b55d87d054",
+          "LHASH map.all a95f21b55d87d054"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "new-hw-map02": {
+        "rc": 0,
+        "elf_sha256": "6766d019d20ef841ee12604011c466231c4cb9ba213e0467ed92f313bbdfb122",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "976e7c65fe37d739f39cf42175e51ebff58394a5e35d8e5876ca5c3de306e71b",
+          "vidshot-320x200-l20.ppm": "c8bfeca98ad2ecfba58c71642f5e48299eba41afec18335309da54a58c4ed6f2",
+          "vidshot-320x200-l70.ppm": "714f19d4afd98b8d57f6a52c0a07f11dfb530dae571953b5f291bcf9d13fb13d"
+        },
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 50385f14c8ad0a59",
+          "LHASH map.sec ea135c152447daa4",
+          "LHASH map.lin d31ea0b71b228cb2",
+          "LHASH map.sid 44da8cb24e77b387",
+          "LHASH map.bsp 52d8b0931c52a64e",
+          "LHASH map.lut 24dddd6210ba70f7",
+          "LHASH map.thg a95f21b55d87d054",
+          "LHASH map.all a95f21b55d87d054"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "base-sw-map11-spawn-175": {
+        "rc": 0,
+        "elf_sha256": "a2f8d2a821eff1da10787dfd8466ba13d3fb35ba5d2ab7c1597927a30e594518",
+        "captures": {},
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 8561a225980881c4",
+          "LHASH map.sec 972b3dcd714d61f8",
+          "LHASH map.lin 9d700cd487af1809",
+          "LHASH map.sid 1967ca1df81b7bf0",
+          "LHASH map.bsp 8a869a7f028b1eb2",
+          "LHASH map.lut 65f02ed7954927f6",
+          "LHASH map.thg 9acf54f4a8c93dd5",
+          "LHASH map.all 9acf54f4a8c93dd5"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "new-sw-map11-spawn-175": {
+        "rc": 0,
+        "elf_sha256": "84bd1fc3d399139a72ca8f8c77909c064e46a52303cff201e892d3ae4cf5599f",
+        "captures": {},
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 8561a225980881c4",
+          "LHASH map.sec 972b3dcd714d61f8",
+          "LHASH map.lin 9d700cd487af1809",
+          "LHASH map.sid 1967ca1df81b7bf0",
+          "LHASH map.bsp 8a869a7f028b1eb2",
+          "LHASH map.lut 65f02ed7954927f6",
+          "LHASH map.thg 9acf54f4a8c93dd5",
+          "LHASH map.all 9acf54f4a8c93dd5"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "base-sw-map11-pressure-frame": {
+        "rc": 0,
+        "elf_sha256": "a2f8d2a821eff1da10787dfd8466ba13d3fb35ba5d2ab7c1597927a30e594518",
+        "captures": {
+          "vidshot-320x200-l175.ppm": "319e897e6b48473bbc08dc0654bb9ae9edc6425b7c0231b3a91c4baa2e197b62"
+        },
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 8561a225980881c4",
+          "LHASH map.sec 972b3dcd714d61f8",
+          "LHASH map.lin 9d700cd487af1809",
+          "LHASH map.sid 1967ca1df81b7bf0",
+          "LHASH map.bsp 8a869a7f028b1eb2",
+          "LHASH map.lut 65f02ed7954927f6",
+          "LHASH map.thg 9acf54f4a8c93dd5",
+          "LHASH map.all 9acf54f4a8c93dd5"
+        ],
+        "warnings": [],
+        "errors": []
+      },
+      "new-sw-map11-pressure-frame": {
+        "rc": 0,
+        "elf_sha256": "84bd1fc3d399139a72ca8f8c77909c064e46a52303cff201e892d3ae4cf5599f",
+        "captures": {
+          "vidshot-320x200-l175.ppm": "319e897e6b48473bbc08dc0654bb9ae9edc6425b7c0231b3a91c4baa2e197b62"
+        },
+        "lhash": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 8561a225980881c4",
+          "LHASH map.sec 972b3dcd714d61f8",
+          "LHASH map.lin 9d700cd487af1809",
+          "LHASH map.sid 1967ca1df81b7bf0",
+          "LHASH map.bsp 8a869a7f028b1eb2",
+          "LHASH map.lut 65f02ed7954927f6",
+          "LHASH map.thg 9acf54f4a8c93dd5",
+          "LHASH map.all 9acf54f4a8c93dd5"
+        ],
+        "warnings": [],
+        "errors": []
+      }
+    }
+  },
+  "unmodified_shipping_smokes": {
+    "report": "build/nov15-next12/final-unmodified-audit/report.json",
+    "sha256": "e5a9ffd8b255f4a24b8d7ba3ac55a323a44cc507e9dcd371798fbd03ddef8910",
+    "normal_local_rng": true,
+    "performance_comparison_claimed": false,
+    "fresh_matched_runs": 4,
+    "complete_PPM_pairs": 6,
+    "pairs": [
+      {
+        "scene": "sw-fog-stereo",
+        "complete_PPMs_literal_equal": true,
+        "captures": 3,
+        "LHASH_equal": true,
+        "complete_saved_configuration_literal_equal": true,
+        "normal_RNG_disallows_causal_timing_or_memory_claim": true
+      },
+      {
+        "scene": "hw-map02",
+        "complete_PPMs_literal_equal": true,
+        "captures": 3,
+        "LHASH_equal": true,
+        "complete_saved_configuration_literal_equal": true,
+        "normal_RNG_disallows_causal_timing_or_memory_claim": true
+      }
+    ],
+    "corrected_analysis": {
+      "original_report": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-unmodified/report.json",
+      "original_report_sha256": "1cf67ba3d4367a26796c9db13890668543211e24ec82b6e50f4e9c460f410e3a",
+      "original_checker_sha256": "0a64ef4ccc41f911cfd19b67e8db5aef008d6b2a8de9a5f62fcf90796a7a396f",
+      "removed_false_criterion": "Late post-save shutdown marker or ZQUIT DONE absent",
+      "actual_exit_trigger": "Impl_VidShot calls I_Quit after VIDSHOT COMPLETE3 at level frame140. The later zquit175 is not reached.",
+      "runtime_rerun_or_evidence_rewrite": false
+    },
+    "shutdown_observation_limit": "Late log marker follows config save and sound/graphics shutdown. W_Shutdown/PS2Boot_Exit after it are not proved.",
+    "runs": {
+      "base-normal-sw-fog-stereo": {
+        "rc": 0,
+        "elf_sha256": "778dde15e01077762a68941e7c32b3670559194cecca1e0d961f4a5b4f927be4",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "0345cde5bc152d76be9604e6dd0c542ccfb671601cb05451c42cd3f5daa52c35",
+          "vidshot-320x200-l20.ppm": "ff47c6b65885ed51b86726f0049e2b4b04e16e3a4bbd0c8aff7376cd5266a078",
+          "vidshot-320x200-l70.ppm": "da744137f694fa54d19def0a7747a726bb52c0d3c78a6265fce50d62924656fb"
+        },
+        "warnings": [],
+        "audio_underruns": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "saved_configuration_bytes": 8860,
+        "saved_configuration_sha256": "a230b116549abbe2bd87d88ab8721cde42002f592e6401c90d3f0dbb60e4ad3f",
+        "errors": [],
+        "post_save_and_sound_graphics_shutdown_marker_observed": true
+      },
+      "base-normal-hw-map02": {
+        "rc": 0,
+        "elf_sha256": "fc7a2919a519cc5b23be4ded8e295df41fda68c90350326cfa1113b63e46eff5",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "976e7c65fe37d739f39cf42175e51ebff58394a5e35d8e5876ca5c3de306e71b",
+          "vidshot-320x200-l20.ppm": "c8bfeca98ad2ecfba58c71642f5e48299eba41afec18335309da54a58c4ed6f2",
+          "vidshot-320x200-l70.ppm": "714f19d4afd98b8d57f6a52c0a07f11dfb530dae571953b5f291bcf9d13fb13d"
+        },
+        "warnings": [],
+        "audio_underruns": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "saved_configuration_bytes": 9203,
+        "saved_configuration_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+        "errors": [],
+        "post_save_and_sound_graphics_shutdown_marker_observed": true
+      },
+      "final-normal-sw-fog-stereo": {
+        "rc": 0,
+        "elf_sha256": "6667b74800754b21d611a5533c21eafa7f8a3f5890bdc40782c1d5817dba2cca",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "0345cde5bc152d76be9604e6dd0c542ccfb671601cb05451c42cd3f5daa52c35",
+          "vidshot-320x200-l20.ppm": "ff47c6b65885ed51b86726f0049e2b4b04e16e3a4bbd0c8aff7376cd5266a078",
+          "vidshot-320x200-l70.ppm": "da744137f694fa54d19def0a7747a726bb52c0d3c78a6265fce50d62924656fb"
+        },
+        "warnings": [],
+        "audio_underruns": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "saved_configuration_bytes": 8860,
+        "saved_configuration_sha256": "a230b116549abbe2bd87d88ab8721cde42002f592e6401c90d3f0dbb60e4ad3f",
+        "errors": [],
+        "post_save_and_sound_graphics_shutdown_marker_observed": true
+      },
+      "final-normal-hw-map02": {
+        "rc": 0,
+        "elf_sha256": "efc963c7876a5f2a1c395baf5ba9982b68c6db1e56811d7a5e8a690ba840ab20",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "976e7c65fe37d739f39cf42175e51ebff58394a5e35d8e5876ca5c3de306e71b",
+          "vidshot-320x200-l20.ppm": "c8bfeca98ad2ecfba58c71642f5e48299eba41afec18335309da54a58c4ed6f2",
+          "vidshot-320x200-l70.ppm": "714f19d4afd98b8d57f6a52c0a07f11dfb530dae571953b5f291bcf9d13fb13d"
+        },
+        "warnings": [],
+        "audio_underruns": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "saved_configuration_bytes": 9203,
+        "saved_configuration_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+        "errors": [],
+        "post_save_and_sound_graphics_shutdown_marker_observed": true
+      }
+    }
+  },
+  "standard_GS": {
+    "report": "build/nov15-next12/gs-integration-retry1/gs-integration-report.json",
+    "sha256": "46a0457aec0a2ab46d1e34c90ea82528c4b4e663dc80641ed1505891f5520fee",
+    "suite": {
+      "ct32": {
+        "rc": 1,
+        "complete": [
+          "H0 COMPLETE checks=56 failures=1"
+        ],
+        "fail": [
+          "H0 FAIL vu0_transform 49152 vertices, 24625 outcode differences, max dX 0 dY 0 dZ 0, max 1/w relative error 0"
+        ]
+      },
+      "ct16": {
+        "rc": 1,
+        "complete": [
+          "H0 COMPLETE checks=51 failures=1"
+        ],
+        "fail": [
+          "H0 FAIL vu0_transform 49152 vertices, 24625 outcode differences, max dX 0 dY 0 dZ 0, max 1/w relative error 0"
+        ]
+      }
+    },
+    "runtime": {
+      "ct32": {
+        "rc": 1,
+        "historical_failure_return_preserved": true,
+        "input_files": 139,
+        "all_input_bytes_archived": true,
+        "all_runtime_invariance_checks_pass": true,
+        "pre_sha256": "9341576f4f4f5d81bcbc86865e6e539a25fd33e30676c41c5d56c7857827ba6f",
+        "post_sha256": "64b779c83e8b610fa58c5abef5094a680b5b1449597fb4864def67e937f40bed"
+      },
+      "ct16": {
+        "rc": 1,
+        "historical_failure_return_preserved": true,
+        "input_files": 139,
+        "all_input_bytes_archived": true,
+        "all_runtime_invariance_checks_pass": true,
+        "pre_sha256": "e2128df0f8ad4ff18c02e4bbdcd79c23538a2fc130293851fd4841cce226df21",
+        "post_sha256": "ca1f8090555b2d42dd87bd0ffd266be1142daf62ad33f6db7f337fd4a5a156dd"
+      }
+    },
+    "errors": [],
+    "all_standard_checks_pass": false,
+    "readback_sha256": {
+      "hw-clear-32.ppm": "8284da12bd8d50df49cbf6643b988e76376821b79bb84cfef84f7ba2c3bbdab4",
+      "hw-clut_all_256-32.ppm": "17ea9fe11cc1bd17aa31125b9c977aea78b8dc59046fd365492c0069c986c6f6",
+      "hw-depth_order-32.ppm": "efb2c94d14591cf59fbedc515d4c981f8537f669f61ac9b03c3d01ff473bc0ac",
+      "hw-evict-32.ppm": "77c4e7ad3e88bada9112f1316fdb20e576c24f3d4b4e8dbcf903a71f447b3599",
+      "hw-flat-32.ppm": "e06f5003fb4495efee1a342dd9bd789a8458ffdf970222d9667199cea71a01d9",
+      "hw-gs-list-model-flat-32.ppm": "c2c70a8968f8d89fcd22fa426cd1f2226c6eaef4a5a0b6098a274393eca28d16",
+      "hw-gs-list-model-light-32.ppm": "31cfdfd23a52734e2e8629613dba10f3677a90a0568181bf13e8a8a45a78abbb",
+      "hw-indexed-32.ppm": "b3e7ea3b6146db470df429e4d4d3e176d7d9d5a6905a5b425d8f1fb56a24493e",
+      "hw-pool-32.ppm": "041e225072969f2173f7d31c6c911deae5c40715dc30445103d33cc039921071",
+      "hw-screen-32.ppm": "dbaf2ab7cd4cbe739fb06d4544124bf5ebafe5d17038a0284b2800782e195256",
+      "hw-sky-32.ppm": "9be85738408679ef77f9385272ef7fc2bacb7b1b9b8370a246ed4bec8508ac59",
+      "hw-tex_nearest_clamp-32.ppm": "50572651d814d7f591d39683b1ca1c8dabbeeacd5558f76b4b551c3526d79709",
+      "hw-tex_nearest_repeat-32.ppm": "50572651d814d7f591d39683b1ca1c8dabbeeacd5558f76b4b551c3526d79709",
+      "hw-transform_view0-32.ppm": "a276e988a01b9080cd3456b5f66a2c5e462d6347e0555d7c96ddaf827c12d8d5",
+      "hw-transform_view_yaw200-32.ppm": "15428e41dc15a5f0c2adbd364f3fd7d1c2f4e602dbde9afd9b956be22aa556d8",
+      "hw-transform_view_yaw40_pitch10-32.ppm": "c6de12aaf41fb3da2c06e5826a31c657a1d7689208ce6bc75c94aeae93ad74ca",
+      "hw-wipe-32.ppm": "54392d4e44cdb6f7b9492d2a6e599d9e737725a110f0f205588f81746f5594a9"
+    },
+    "readback_captures": 17,
+    "historical_failure_unchanged": true,
+    "known_VU0_failure": "49152 vertices;24625 outcode differences;max dX0 dY0 dZ0;max1/w relative error0",
+    "build": {
+      "elf_sha256": "7b90e6d692a3290607535363d33ab3233f032e7f046a328e20ec070962780d22",
+      "compile_diagnostics": 0,
+      "link_diagnostics_excluding_sdk_abi_warning": 0
+    }
+  },
+  "controlled_local_RNG": {
+    "seeds": [
+      "0x01b2d3f5",
+      "0x9e3779b9"
+    ],
+    "shipping_RNG_unchanged": true,
+    "copies": {
+      "baseline-software": {
+        "report": "build/nov15-next12/local-rng/baseline-software/patch-report.json",
+        "sha256": "f48a69a100801f0d71eeaa697e48a93af6db488b9bc608fcf8fc526283047014",
+        "original_inputs": {
+          "engine": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/software/obj/engine_lto.o",
+            "sha256": "4199d34e306fbad9efd4686d9d5ccd90df937e0bef4ccf900be0df8e5764540f"
+          },
+          "elf": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/software/SRB2.ELF",
+            "sha256": "778dde15e01077762a68941e7c32b3670559194cecca1e0d961f4a5b4f927be4"
+          },
+          "map": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/software/SRB2.map",
+            "sha256": "b7f0e3e5cd98042bc26622a220c2a5350fc94655b1403a310ba450db37b1dc12"
+          }
+        },
+        "variants": {
+          "01b2d3f5": {
+            "seed_hex": "0x01b2d3f5",
+            "ELF_sha256": "a2f8d2a821eff1da10787dfd8466ba13d3fb35ba5d2ab7c1597927a30e594518",
+            "patched_file_offset": 1480640,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          },
+          "9e3779b9": {
+            "seed_hex": "0x9e3779b9",
+            "ELF_sha256": "45b3ef506d398a0d354039039b056453de95b18b2468e98094df039491c7e766",
+            "patched_file_offset": 1480640,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          }
+        },
+        "diagnostic_only": true,
+        "production_inputs_unchanged": true
+      },
+      "baseline-hardware": {
+        "report": "build/nov15-next12/local-rng/baseline-hardware/patch-report.json",
+        "sha256": "01a1a13689cc9f113c68ed71741bb338c8febdef6c3765f3d000815f27656b2d",
+        "original_inputs": {
+          "engine": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/hardware/obj/engine_lto.o",
+            "sha256": "ccea24398d592d050358163fcc5e81df11ac12ccc3714dbcb0a0bee9f42ffbe6"
+          },
+          "elf": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/hardware/SRB2.ELF",
+            "sha256": "fc7a2919a519cc5b23be4ded8e295df41fda68c90350326cfa1113b63e46eff5"
+          },
+          "map": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/hardware/SRB2.map",
+            "sha256": "b4914b9c0fa8f84aa4facb5ec9780c38811c203150488020aa1ab1aa61918187"
+          }
+        },
+        "variants": {
+          "01b2d3f5": {
+            "seed_hex": "0x01b2d3f5",
+            "ELF_sha256": "7542c365e7ea0383d5055bf78e45316ad9bd8f58e6950e608a3b5e1c7a6ec5ad",
+            "patched_file_offset": 1502144,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          },
+          "9e3779b9": {
+            "seed_hex": "0x9e3779b9",
+            "ELF_sha256": "a5be0d1d5dd736cd0a0006cdeaff41303b289051f418a763cb70d952cc0d9995",
+            "patched_file_offset": 1502144,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          }
+        },
+        "diagnostic_only": true,
+        "production_inputs_unchanged": true
+      },
+      "final-software": {
+        "report": "build/nov15-next12/local-rng/final-software/patch-report.json",
+        "sha256": "c8806bcf164976b8f2666c56bc7f2d7ec45862e3c5cdf2421593142a5b10c5f5",
+        "original_inputs": {
+          "engine": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/software/obj/engine_lto.o",
+            "sha256": "e1dec2f84b716d426e1b915147c1eae0177338690545972c9052877e10445931"
+          },
+          "elf": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/software/SRB2.ELF",
+            "sha256": "6667b74800754b21d611a5533c21eafa7f8a3f5890bdc40782c1d5817dba2cca"
+          },
+          "map": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/software/SRB2.map",
+            "sha256": "3d62c0b3c44ad17023d0e8f8f438b73d6c54b151ba8bf228a524323c1c168d12"
+          }
+        },
+        "variants": {
+          "01b2d3f5": {
+            "seed_hex": "0x01b2d3f5",
+            "ELF_sha256": "84bd1fc3d399139a72ca8f8c77909c064e46a52303cff201e892d3ae4cf5599f",
+            "patched_file_offset": 1480640,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          },
+          "9e3779b9": {
+            "seed_hex": "0x9e3779b9",
+            "ELF_sha256": "db90961c4f9f5226cd83d7c61ac4604f7150226be008f94ccd6e2499ad7c44d9",
+            "patched_file_offset": 1480640,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          }
+        },
+        "diagnostic_only": true,
+        "production_inputs_unchanged": true
+      },
+      "final-hardware": {
+        "report": "build/nov15-next12/local-rng/final-hardware/patch-report.json",
+        "sha256": "02c2abeafef60f5465065a8ccb61aaff1dc550cb67d0c46b657a968d94eb2b4b",
+        "original_inputs": {
+          "engine": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/hardware/obj/engine_lto.o",
+            "sha256": "5d9b446073de0b821d16e5a9adff02cf93e08e5de3f77aa1c15ffe0eabb68a80"
+          },
+          "elf": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/hardware/SRB2.ELF",
+            "sha256": "efc963c7876a5f2a1c395baf5ba9982b68c6db1e56811d7a5e8a690ba840ab20"
+          },
+          "map": {
+            "path": "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/hardware/SRB2.map",
+            "sha256": "2b2d15f0130ca9c7b2926e4d72fc92efed65eb2484552af81ee9753871ab68d2"
+          }
+        },
+        "variants": {
+          "01b2d3f5": {
+            "seed_hex": "0x01b2d3f5",
+            "ELF_sha256": "6766d019d20ef841ee12604011c466231c4cb9ba213e0467ed92f313bbdfb122",
+            "patched_file_offset": 1502144,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          },
+          "9e3779b9": {
+            "seed_hex": "0x9e3779b9",
+            "ELF_sha256": "6abf462952a14316408645966dd845f0178e568b24ff4179dd795fd4e5dde47d",
+            "patched_file_offset": 1502144,
+            "owned_symbol_bytes": 212,
+            "all_other_ELF_bytes_identical": true,
+            "all_symbol_sizes_addresses_identical": true,
+            "all_actual_SFC32_graph_bytes_unchanged": true,
+            "negative_controls_detected": 10
+          }
+        },
+        "diagnostic_only": true,
+        "production_inputs_unchanged": true
+      }
+    }
+  },
+  "retention": {
+    "audio": {
+      "report": "build/nov15-next12/review/final-audio-resolved/report.json",
+      "sha256": "9c1bf148824d895b740b80989d37111ac51262873caa28f0600e6947b262155f"
+    },
+    "build": {
+      "report": "build/nov15-next12/review/final-builds-audit.json",
+      "sha256": "cb897f2c0cff32b9fafb2be5a2d3a0f5046f357de7bb96cbd68a6b150757e9c5"
+    },
+    "GS": {
+      "report": "build/nov15-next12/gs-retained-final-binding/pass11-to-final-retention-report.json",
+      "sha256": "bb773253ca593ed2e4121b8a1d7811f596a430313dd9d680a406fcf3c4106b13"
+    },
+    "GS_retry_provenance": {
+      "report": "build/nov15-next12/gs-integration-relocation-manifest.json",
+      "sha256": "0f2ac46bb68957a3cb21c52cb6bd93a64e6aed46f08b2959971332de9fed5d46"
+    }
+  },
+  "rejected_or_deferred": {
+    "late_wall_cull": {
+      "status": "rejected before EE/GS compilation: hidden-draw removal changes sort/classification/working-set feedback and future visible budgets",
+      "decision": {
+        "report": "build/nov15-next12/cull/rejection-decision.json",
+        "sha256": "0979bd9449b39f6f7a830fbe5a38e99aba1c74b83fc3898b51c7f9d727273b53"
+      },
+      "review": {
+        "report": "build/nov15-next12/review/cull-rejection-audit.json",
+        "sha256": "b3929a196f91e42f6de11df5c9300020f555ac172a370c6defe40a740be16d79"
+      }
+    },
+    "direct_P4_upload": {
+      "status": "rejected before EE/GS compilation: same exact texels/CLUT but actual nonmonotonic planner can select coarser visible textures",
+      "immutable_complete_corpus": {
+        "report": "build/nov15-next12/p4/stages/corpus-v1/stage-manifest.json",
+        "sha256": "033e84049336cd71a50bbbca949afa0af5bafa2291c1225ac863712bfd9756a6"
+      },
+      "independent_replay": {
+        "report": "build/nov15-next12/review/p4-corpus-v1-audit.json",
+        "sha256": "a314e49fd657b798014bb5c55a9e3720f51dbf1b6a84766a06d7207174625c05"
+      },
+      "actual_planner_counterexample_review": {
+        "report": "build/nov15-next12/review/p4-policy-blocker-audit.json",
+        "sha256": "8f63a9bbf5968061df8c799811aa2f42616a07f35676b82cf500c0c3a5275eba"
+      },
+      "provenance_limit": "Early843-upload development binaries/reports were overwritten before archival. Later corpus-v1 has its own manifest/review and is not called the original artifact."
+    },
+    "logical_physical_P4_compaction": {
+      "status": "deferred unimplemented design; fit/move proofs do not close source-cache/fence/address/owner-ID/ABI/cost obligations",
+      "design": {
+        "report": "build/nov15-next12/p4/logical-physical-design.json",
+        "sha256": "964ff06d841fa652737b0e9051deb3702ffa284c3f2150eeabcf09cde76cddd3"
+      },
+      "review": {
+        "report": "build/nov15-next12/review/p4-logical-physical-design-review.json",
+        "sha256": "66e298d4315dedcd8b24dd33bb9cea7883f682719d9a7ef8880e8765b367249d"
+      },
+      "no_new_capacity_or_saving_claimed": true,
+      "duplicate_64KiB_allocator_is_not_a_required_lower_bound": true
+    },
+    "lighttable_previous_versions": {
+      "status": "v1 arena capacity reduction rejected; shared v2 target layout repaired, v2b null-guard error repaired to exact tested v2c",
+      "v1_native_rejection": {
+        "report": "build/nov15-next12/review/lighttable-v1-native-rejection-audit.json",
+        "sha256": "2739146bb1983c035541c84b5515295df34aa1835394bc19bd1ff70dc8edbfe4"
+      },
+      "v2c_host": {
+        "report": "build/nov15-next12/lighttable-v2c/host-v1/host-report.json",
+        "sha256": "131d1ba3117558a5def811cd484531cafc68c1c83af99417a3f623d992f385ac"
+      },
+      "v2c_policy": {
+        "report": "build/nov15-next12/lighttable-v2c/policy-v1/policy-report.json",
+        "sha256": "b2499852b2557e67fa919d5e5d7916dae101f46c23905e402eec3a6f58632a27"
+      }
+    }
+  },
+  "research": {
+    "catalog": {
+      "report": "docs/PS2_ARCHITECTURE_AND_OPTIMIZATION_SOURCES_20261115.md",
+      "sha256": "9f7f6bfedd1f9351b2498c5fcf0abda60c82e8d6fa3c802e9277473d0bc4fc84"
+    },
+    "public_evidence": {
+      "report": "docs/ps2-research-20261115/evidence.json",
+      "sha256": "f10d8d07d948a58c58192c4556484855006eaeb0feec7b1a5929ee509a02eb58"
+    },
+    "public_readme": {
+      "report": "docs/ps2-research-20261115/README.md",
+      "sha256": "cb8579f9cf568d965b4e443cf6214df901710620df718a4402a044ff78157c57"
+    },
+    "primary_entries": 47,
+    "external_URLs_checked": 55,
+    "all_Internet_documentation_or_all_possible_optimizations_claimed": false
+  },
+  "verified_per_run_provenance": {
+    "build/nov15-next12/final-seed1/runtime/base-hw-fog-stereo": {
+      "pre_sha256": "eca4b4842e435d174932879fb117be68d0fd8960f3c304204fba92aac29aab72",
+      "post_sha256": "9518a92407fae8e20a5c84881d9e75d6e8738ebeabfebbf5225a1fcfd214c98e",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-hw-fog-stereo",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/local-rng/release-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/release-seed1/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-nodigmusic",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 15,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/base-hw-map02": {
+      "pre_sha256": "248ac9468750f29877aac66852bdba0b60abec4725aafbd9a6730eb508bd6b91",
+      "post_sha256": "13e3767ce83d250a32dbefecde684c3ff30dd82f2f3dc75ea302b4cb7ac914f2",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-hw-map02",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/local-rng/release-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/release-seed1/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/base-sw-fog-stereo": {
+      "pre_sha256": "4cecb425274bcc76c580c65d3a53e947967fa5e51355d0172337e3ed4d383d81",
+      "post_sha256": "6c4302ce42361c0c0ea08fcf03144a79e904182722da2f8210c4cbe60cc4df3a",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-fog-stereo",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/local-rng/release-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/release-seed1/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-nodigmusic",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua",
+        "-vidshot",
+        "l20,l70,l140"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 15,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/base-sw-map11": {
+      "pre_sha256": "62bc9f838e97a9820e023301403387670cf352dd9bea0867343355673f824501",
+      "post_sha256": "bb968da383ae4c8ffdbaa559ba7768d40d531702c249ec2a32b25fdab4b53fa2",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-map11",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/local-rng/release-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/release-seed1/runs",
+        "--map",
+        "MAP11",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-vidshot",
+        "l20,l70,l140"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/base-sw-map11-pressure-frame": {
+      "pre_sha256": "e8b700efd00ac32c23962b19bb875073a9edc10933c76f22c6978de57cdc475f",
+      "post_sha256": "2183d475108bee9e72a5ae315d1a147591c4f238e71f897f931c883fe7373f6a",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-map11-pressure-frame",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/local-rng/release-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/release-seed1/runs",
+        "--map",
+        "MAP11",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 1",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-astat",
+        "-vidshot",
+        "l175"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/base-sw-map11-spawn-175": {
+      "pre_sha256": "71dba35de0cd0f5c886ca4812c14e8b76ff2d16f0c91d5c4e01b534e5d6b6290",
+      "post_sha256": "6ba5536bc1eec989615ab3f915d49c1412519b82d903463f8caf97fa018c896c",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-map11-spawn-175",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/local-rng/release-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next11/release-seed1/runs",
+        "--map",
+        "MAP11",
+        "--timeout",
+        "180",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "175",
+        "-astat"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/new-hw-fog-stereo": {
+      "pre_sha256": "f2ff89966660ff4e2439d2202aface5d430f28c426a3370f2ecb551c292c40fd",
+      "post_sha256": "e9e6199f08129bf15cd3d8dadda0362debe335b9673fbc5dcf6393a3205db790",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-hw-fog-stereo",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-seed1/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-nodigmusic",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 15,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/new-hw-map02": {
+      "pre_sha256": "3bf2ca1a21de8a30e6a2c3bf66f2cb4fd797f837fdbcf451d1ebb72efa01d71a",
+      "post_sha256": "b113b26fab8a0e5d7deae18785c40b0c8be1fa20bb0b718e050f984b52c338e7",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-hw-map02",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-seed1/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/new-sw-fog-stereo": {
+      "pre_sha256": "659130d8bad0180741dad07e4451f11e9215ed3ff447b08494b136744b3b4081",
+      "post_sha256": "d90fe187acb7efd33ade711765bd456d5e81190de66657cdac34b4ee22f56895",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-fog-stereo",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-seed1/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-nodigmusic",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua",
+        "-vidshot",
+        "l20,l70,l140"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 15,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/new-sw-map11": {
+      "pre_sha256": "5e77522d1ce41a6745c4f635311c5ce3670ea5c496b83759dee6236a114b865e",
+      "post_sha256": "2d538efbff2f065a62e8df7ec54bdb78f319fd6f2ecf4af70bc36decd064dce0",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-map11",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-seed1/runs",
+        "--map",
+        "MAP11",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 3",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-vidshot",
+        "l20,l70,l140"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/new-sw-map11-pressure-frame": {
+      "pre_sha256": "7a929be3367101e4b7c3549115dca240b5d72e579670c209ec96be7d3230fb54",
+      "post_sha256": "058c45debc4c8d4ec0d6b3991b1613ab565a6ab0f86b797bbb729bc6e0966241",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-map11-pressure-frame",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-seed1/runs",
+        "--map",
+        "MAP11",
+        "--timeout",
+        "180",
+        "--until",
+        "VIDSHOT COMPLETE 1",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-astat",
+        "-vidshot",
+        "l175"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-seed1/runtime/new-sw-map11-spawn-175": {
+      "pre_sha256": "1cdf12f292fd2f1f0ac03b7050643e60b39e05ee3e123b58c01897035ea1a628",
+      "post_sha256": "bae544915ed89ed4cb5ae128c2dfa6ac5ee76fe1bdce21a464735388fcfed9d2",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "new-sw-map11-spawn-175",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-software/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-seed1/runs",
+        "--map",
+        "MAP11",
+        "--timeout",
+        "180",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "175",
+        "-astat"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/hardware-profile-seed1/runtime/base-hw-fog-stereo-spawn-350": {
+      "pre_sha256": "98468fb167f5f4fa06ce0370f714d66d2c26c8e42740a57f24fd1d78651c9796",
+      "post_sha256": "ae4878d8118d4ed3683dc040bba5cf59a7e6964b8e611eef36a27e083a4ac3a5",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "base-hw-fog-stereo-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/baseline-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/hardware-profile-seed1/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "300",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash",
+        "-nodigmusic",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 15,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/hardware-profile-seed1/runtime/base-hw-map02-spawn-350": {
+      "pre_sha256": "164e235ec6449d03891822f5939fdc9f860b8d1488af8f54bff7ff7404df816f",
+      "post_sha256": "92347e116018b1a017691da7bca4c00d361066d8dad33fba6f41cf8ffe045cb8",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "base-hw-map02-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/baseline-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/hardware-profile-seed1/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "300",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 12,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-hardware-pressure/runtime/baseline-hw-fog-stereo-9e3779b9-spawn-350": {
+      "pre_sha256": "02f007fa177e6b7605d6a2d1dd0b151c3e21a32015ebbd249c110b07ca6d2f98",
+      "post_sha256": "67c039fef8937d7d38fc71cc6c870fbb8e58d79b7b2e8ad0eee253eda9a05838",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "baseline-hw-fog-stereo-9e3779b9-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/baseline-hardware/DIAGNOSTIC-LOCAL-RNG-9e3779b9.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-hardware-pressure/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "300",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash",
+        "-nodigmusic",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 1832,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-hardware-pressure/runtime/baseline-hw-map02-9e3779b9-spawn-350": {
+      "pre_sha256": "9cc27a8268913e17227dd62e8c5150e1136d9a0be7686eb7557c3ed4b762e965",
+      "post_sha256": "4b498177dc472a9054f5ca5173b792df9ac9570d50b8ce72838c86677db35627",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "baseline-hw-map02-9e3779b9-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/baseline-hardware/DIAGNOSTIC-LOCAL-RNG-9e3779b9.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-hardware-pressure/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "300",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 1832,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-hardware-pressure/runtime/final-hw-fog-stereo-01b2d3f5-spawn-350": {
+      "pre_sha256": "b174dc91fdee535dfdac7de8d0460e44f0135e66080187a73fee898f030da5e2",
+      "post_sha256": "1cce9ce834752ee248ae083222fa99106703d9b8cb8efa263737c5d74ea7c2a4",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "final-hw-fog-stereo-01b2d3f5-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-hardware-pressure/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "300",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash",
+        "-nodigmusic",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 1832,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "6485aafec9ce846680cc3485cff14b4dc8f6093bfaa67adbd9a20a8b2d089d98"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-hardware-pressure/runtime/final-hw-fog-stereo-9e3779b9-spawn-350": {
+      "pre_sha256": "b124edeca61b89ff151f31a458eb2e701b02cf92efe7d84f593192f42b805b42",
+      "post_sha256": "d55e9469b80590ef9e31143d241c04299f26ca020e2a58f4c1c4e12fd25f4b0f",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "final-hw-fog-stereo-9e3779b9-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-hardware/DIAGNOSTIC-LOCAL-RNG-9e3779b9.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-hardware-pressure/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "300",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash",
+        "-nodigmusic",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 1832,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-hardware-pressure/runtime/final-hw-map02-01b2d3f5-spawn-350": {
+      "pre_sha256": "1196e00036b41919bf75cb8cdf7cce7a75414745520eaeefe0332565a735d8f7",
+      "post_sha256": "3be90fe81aa070669d00954d513ab4a667951ca73e4d6fca69aa9198b421153b",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "final-hw-map02-01b2d3f5-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-hardware/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-hardware-pressure/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "300",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 1832,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "6485aafec9ce846680cc3485cff14b4dc8f6093bfaa67adbd9a20a8b2d089d98"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-hardware-pressure/runtime/final-hw-map02-9e3779b9-spawn-350": {
+      "pre_sha256": "b2b5e8c868b6a86c0df156e48a703146252230f4242c8c336aa3ec246e4cee0c",
+      "post_sha256": "198ca51a0004016348fd8ba91645e66a68c0200deebee50d56af12e17c9b16f9",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "final-hw-map02-9e3779b9-spawn-350",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/local-rng/final-hardware/DIAGNOSTIC-LOCAL-RNG-9e3779b9.ELF",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-hardware-pressure/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "300",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "1",
+        "-zstack",
+        "-zquit",
+        "350",
+        "-astat",
+        "-renderer",
+        "Hardware",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35",
+        "-hwpolyhash"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 1832,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-unmodified/runtime/base-normal-hw-map02": {
+      "pre_sha256": "062c445a9fcfc758e3dc0873ccc740df7736786d74c83bfaacfbe1b3974de57d",
+      "post_sha256": "8211e37e4ada454f824cc6d3b20ddb2041e3d15460e9a1738858788d8e04bdcd",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "base-normal-hw-map02",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/hardware/SRB2.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-unmodified/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "180",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-vidshot",
+        "l20,l70,l140",
+        "-zquit",
+        "175",
+        "-renderer",
+        "Hardware"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 42,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-unmodified/runtime/base-normal-sw-fog-stereo": {
+      "pre_sha256": "01762a3966226eced226f2734d9d7f481f5a8c25c45ff7e77511eb66d375e664",
+      "post_sha256": "87354f36d2c98b0614d725b75aad358d68ef6a864b97bf50192e0908905d71cb",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "base-normal-sw-fog-stereo",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/baseline/software/SRB2.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-unmodified/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "180",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-nodigmusic",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua",
+        "-vidshot",
+        "l20,l70,l140",
+        "-zquit",
+        "175"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 42,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-unmodified/runtime/final-normal-hw-map02": {
+      "pre_sha256": "721c111f79876a9069b2ed8b544fd700d0df7e497bbbd83b855627c3887efe58",
+      "post_sha256": "82b3a0cb8ba7d036f0d0778e17d547fc11f921ee75d74740d555ec422624c16b",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "final-normal-hw-map02",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/hardware/SRB2.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-unmodified/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "180",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-vidshot",
+        "l20,l70,l140",
+        "-zquit",
+        "175",
+        "-renderer",
+        "Hardware"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 42,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/final-unmodified/runtime/final-normal-sw-fog-stereo": {
+      "pre_sha256": "99ab780f23fa402f05a29e4647e46969c8f8884bf183ceca2d57cdc5ff972ca5",
+      "post_sha256": "ef26dc4eae2dcc16ebdc4c009df50892fed96590a16aad7c2ed71fe5b29392f3",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "final-normal-sw-fog-stereo",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final/software/SRB2.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov15-next12/final-unmodified/runs",
+        "--map",
+        "MAP01",
+        "--timeout",
+        "180",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next5/npot-addons/NX5_FLOOR.pk3=NX5_FLOOR.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/build/nov14-next7/fog-addons/NX7_FOG.pk3=NX7_FOG.pk3",
+        "--home-file",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next5_audio_integration.lua=NX5_AUDIO.lua",
+        "--",
+        "-singletics",
+        "-keepspawn",
+        "-nodigmusic",
+        "-loadprof",
+        "-loadhash",
+        "-zck",
+        "-zheap",
+        "35",
+        "-astat",
+        "-file",
+        "host:/.srb2/NX5_FLOOR.pk3",
+        "host:/.srb2/NX7_FOG.pk3",
+        "host:/.srb2/NX5_AUDIO.lua",
+        "-vidshot",
+        "l20,l70,l140",
+        "-zquit",
+        "175"
+      ],
+      "wrapper_rc": 0,
+      "frozen_input_files": 42,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "5cbc8973f98dbbc6aa1bee9389beb38ca060134d5a81679e3e97f0587d0c5a40"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/gs-integration-retry1/runtime/ct16": {
+      "pre_sha256": "e2128df0f8ad4ff18c02e4bbdcd79c23538a2fc130293851fd4841cce226df21",
+      "post_sha256": "ca1f8090555b2d42dd87bd0ffd266be1142daf62ad33f6db7f337fd4a5a156dd",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/run_hw_test.py",
+        "--no-build",
+        "--tag",
+        "next12-ct16",
+        "--timeout",
+        "180",
+        "--",
+        "fb16",
+        "quick"
+      ],
+      "wrapper_rc": 1,
+      "frozen_input_files": 139,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    },
+    "build/nov15-next12/gs-integration-retry1/runtime/ct32": {
+      "pre_sha256": "9341576f4f4f5d81bcbc86865e6e539a25fd33e30676c41c5d56c7857827ba6f",
+      "post_sha256": "64b779c83e8b610fa58c5abef5094a680b5b1449597fb4864def67e937f40bed",
+      "actual_command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/run_hw_test.py",
+        "--no-build",
+        "--tag",
+        "next12-ct32",
+        "--timeout",
+        "180",
+        "--",
+        "quick",
+        "dump"
+      ],
+      "wrapper_rc": 1,
+      "frozen_input_files": 139,
+      "all_non_UI_settings_unchanged": true,
+      "full_INI_before_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "ce7be4e29d9064e912ad3483eeb72dde698e9ebb3fb41717f9246893e7140c4c"
+      },
+      "full_INI_after_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "144d98aa15ae5594ce229340bba4292a49b88bfc2af1668803ed4d2796b05db0"
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      },
+      "all_non_UI_fields_sha256": "a4dcf1ce049776006a278e88cad65cd208c9a1b0957497c44a482bf787f0c3fd"
+    }
+  },
+  "independent_final_review": {
+    "report": "build/nov15-next12/review/release-final-review.json",
+    "sha256": "38fe74556c0022063c6466808f0e76e085a24fd514441095b791bd9a7c7a27d1",
+    "pending": [],
+    "status": "PASS verified final release gates; ready for separate publication metadata and INDEX audit"
+  },
+  "limits": [
+    "No physical-console FPS, frame-time variance, GPU load, energy use or weighted gameplay performance measurement.",
+    "Existing renderer visibility and texture policies retained; the new late cull and direct P4 upload were rejected.",
+    "Logical/physical P4 compaction is documented, unimplemented deferred research with synchronization/source-cache/cost questions.",
+    "Hardware MAP11 intentionally falls back to Software at its existing14000-subsector limit; not native-Hardware savings evidence.",
+    "The fixed-local-seed ELFs are diagnostic copies; the published ELFs retain the original OS initializer.",
+    "Three preexisting Software unused warnings in two unchanged units, SDK abicalls and serial-LTO notices remain explicit.",
+    "The standard VU0 failure remains visible with underlying rc1;17 CT32 full-image hashes are unchanged.",
+    "Early P4 development artifacts were overwritten before archiving; later immutable corpus-v1 is separately audited.",
+    "Original normal-smoke false-ZQUIT analysis and two analysis-development failures remain archived; no runtime evidence was rewritten."
+  ],
+  "artifact_sha256": {
+    "README.md": "a078ed5ae5ac641dc8152869296d8e23434c9097726e4f8c4f119d504037ea94",
+    "SHA256SUMS": "073d47fcc105b207298276970bec3906ce2c428a139e5c4001fccdeaa7355e20",
+    "SRB2-PS2-Hardware.ELF": "efc963c7876a5f2a1c395baf5ba9982b68c6db1e56811d7a5e8a690ba840ab20",
+    "SRB2-PS2-Software.ELF": "6667b74800754b21d611a5533c21eafa7f8a3f5890bdc40782c1d5817dba2cca"
+  },
+  "documentation_sha256": {
+    "docs/PS2_LIGHTTABLE_NEXT12_20261115.md": "c563264168b19b4d4d487fab19f5b97298ee8c6854f480dd862becaa0510d165",
+    "docs/PS2_OPTIMIZATION_NEXT12_20261115.md": "94009e4dc33aef994d024b534d09f1dee9904f35f585d9b71f508c7778561438",
+    "docs/PS2_P4_NEXT12_20261115.md": "560a0ed8b958afe80caf8d313aa15e0f4430d2d30d43ce445933db269e6149e1",
+    "docs/PS2_PB_SCRATCH_NEXT12_20261115.md": "b132644d6120e26e145f9350fe376084696f78f43f29b07241e0c6d08cc0f52b",
+    "docs/PS2_VISIBILITY_NEXT12_20261115.md": "98648c979ec6a5bdee4bd09cca6493cee264709b9a974e26a480ae99231ecc09"
+  },
+  "proof_tools_sha256": {
+    "tools/ps2/next12_baseline.json": "0a868a5e4365ea5def41a133ed7c6cda27e247cdb24677ee8316a8a80cb9ecb3",
+    "tools/ps2/next12_baseline.patch": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tools/ps2/next12_cull_check.py": "c0fc36ef8e9a78d1c1678cc11706332e47796e32ee0509c7d10be4a74b64a84a",
+    "tools/ps2/next12_cull_feedback.py": "5db6ee02eae4646c0b601909a3f63461b08caaa1c9f8b1b52666dbb3a5e0ee5a",
+    "tools/ps2/next12_cull_hosttest.c": "93cec2cc3f3dabc31a7a91c59c043b32cc1996c7dd4ace0883136e054cc927f0",
+    "tools/ps2/next12_cull_hosttest.py": "1c761d4e8ff18c287b5b4a46b9b1ef00cf61ae5ad2e5c088c8b349e751e03fa1",
+    "tools/ps2/next12_cull_variant.py": "bb0e5fce29ffe94a07d10932e33177d1f55430e0d86add058ed3fe94a62fdde2",
+    "tools/ps2/next12_final_hardware_pressure.py": "56e233be19cb53787a737311a6cf28752c0fbcceb72766a8d0cf9c0f43539f17",
+    "tools/ps2/next12_final_hardware_pressure_check.py": "946d6bfd25e29cf54c45880ac5b3f009893da78af730af02266b7ec3f21f51fd",
+    "tools/ps2/next12_gs_integration.py": "46d82a085dbac767625ea36f226f7523e2d90b39d7b746ce46501d08794486ab",
+    "tools/ps2/next12_integration_check.py": "f685b700bed1a31526065c0402f0b0ade91bb84a34b4955979f792c95eddce7f",
+    "tools/ps2/next12_lighttable_allocator.py": "5f8bbfd65c8b0cd63f909632d7c44365ba312224ef7e406fcdaee02147d8bb3b",
+    "tools/ps2/next12_lighttable_build.py": "f60feb6fcf73b38c201d5390fb239f5c79c3cf8b21ab125369c94eb5f4b9dada",
+    "tools/ps2/next12_lighttable_candidate.json": "04de5693affe88b60c5e3a422fe56352c4568f3857be2bde4db60e9bee4295f1",
+    "tools/ps2/next12_lighttable_candidate.patch": "da1d424c53ab503515921638aaaab827653ba94ff1145e997b1f7f818e4579b7",
+    "tools/ps2/next12_lighttable_codecheck.py": "7f83d9c6744e58ff949663dc6bd273dbb6c8bf85c56a8bda628609fc97f8c164",
+    "tools/ps2/next12_lighttable_context.py": "1a44a6d7e057d2e8be1abe83e68f55d70a618209a81ee9fe1b0e95f0aac2c2ad",
+    "tools/ps2/next12_lighttable_context_finish.py": "6599db36b9f3242792ba62d4cc5c9e2c61d334541a8a2dff7e2a520493b3f7fe",
+    "tools/ps2/next12_lighttable_disposition.py": "d28592febd9c5c5a696277f417b3a813b882c8431b053f83c68fa17996159a50",
+    "tools/ps2/next12_lighttable_finalbind.py": "8f206a3667a3d8fe5329549f77f53ccf8a35ddeedd05c8f5c2fe405dd87a8402",
+    "tools/ps2/next12_lighttable_game.py": "2f86d6f842974ed31ca0cc999f5d90540ea0db140bfa4d62d99d2d46a9f653de",
+    "tools/ps2/next12_lighttable_game_v2.py": "6da527116e81db1dd897de56e1af2451555f0212bf6f36036dbadf2c2f84ae85",
+    "tools/ps2/next12_lighttable_gamecheck.py": "caf6c8d0ac933a2ad6107ba07a6498ef7258efaff5756ddc6ca69c36344ae470",
+    "tools/ps2/next12_lighttable_gamecheck_v2.py": "674a45197fada554d482f078796cf1d5e174636ce1655982249119f8586c86a5",
+    "tools/ps2/next12_lighttable_hosttest.c": "56a74cddaeeca5a25c33b11415e37ce5401a35d59d9765f759ffaf1448fe3c45",
+    "tools/ps2/next12_lighttable_hosttest.py": "1328624e8ddaf1c09d78d2cdb415d8df0620e4db76a568988b32d960ee3e9bed",
+    "tools/ps2/next12_lighttable_images.py": "5ce0350d761f95ae6f0bb926013929d38a46e753f349de8fb79f4a85f169027f",
+    "tools/ps2/next12_lighttable_ownership.py": "5965b15785567038767a3557f31111e876edf58739966dca7d70d04def465e9f",
+    "tools/ps2/next12_lighttable_packed.py": "525337fbed3aeb70e9e0771531ec045fac475a3404fba5be711adb3772c8a720",
+    "tools/ps2/next12_lighttable_policy.py": "0f147b6a8640ecc9fa312ac1a6528bb759f65c8fdae2b2e5b0ea423255c5bd96",
+    "tools/ps2/next12_lighttable_replay.py": "1270ed0319188c304d15274b8a0314eac9c7b978a7d60f4b6809c27345b266f2",
+    "tools/ps2/next12_local_rng.py": "2b9d2b1921fc03adf60b96df263a17426675e3ea6cd1735fefabcdf35e6e0aa0",
+    "tools/ps2/next12_p4_candidate.json": "2737d28de0635fa4361bb8a8ec6c6db04704a9b6fef6749688c351d2d2774eba",
+    "tools/ps2/next12_p4_candidate.patch": "6ecc54c3bfd7f6a29aadab23ab49fc623fc80fc7956e486179f74eaa8e7b4d7c",
+    "tools/ps2/next12_p4_corpus.py": "6896a6614404397574fed29646a10054c7b1627c377161098513b06d46c2b5cf",
+    "tools/ps2/next12_p4_hosttest.c": "b0a056e96b2d60b8a89506a4597dd2cc1893b62a751e12fe5d203f871e4074fa",
+    "tools/ps2/next12_p4_hosttest.py": "661d2fe018b61214bd993efda1ea5ddfa81e3bd7a818fcf08fbcb6484def9acb",
+    "tools/ps2/next12_p4_replay.py": "292f05d9af3c835a6ef1c81f3542cba61dc00f6dede75d085c29c8a75c345f49",
+    "tools/ps2/next12_pb_scratch_candidate.patch": "e8776c3e424fadaf9ed15479b2c99ab443ebf4d8a07aa109358ba40c0ab7a8be",
+    "tools/ps2/next12_pb_scratch_codecheck.py": "d1d4fd6d3565ead4987b6ce1a7ab03751bede72bdfd2a0ba6300233347607df4",
+    "tools/ps2/next12_pb_scratch_context.py": "0877de6d741eb5207a0f156b354ae6d1e8d089b1ad9053e6e782bee26e7d2a74",
+    "tools/ps2/next12_pb_scratch_finalbind.py": "956d6a8ce563258b4026e7b6d9b20a2a805c72c1bfeab7b6f621287f77e449ad",
+    "tools/ps2/next12_pb_scratch_finalcontext.py": "73b61f74c03191fccb6104a70594b887aeca4800aa32349a84a1d0a0b12086c8",
+    "tools/ps2/next12_pb_scratch_hosttest.c": "c9ba0f6e41a49a1f982fa61c70f4866c8050a8d6164136d953270097e9a0cb59",
+    "tools/ps2/next12_pb_scratch_hosttest.py": "b92ec8609e2a8466417cb55a2b2e687710932ae1d438c7578e8fae7c122c6869",
+    "tools/ps2/next12_pb_scratch_images.py": "16a8be838b219441b546a14f348bb39cdcbe273836717abe6158a59d4e92a4fb",
+    "tools/ps2/next12_pb_scratch_lifetime.py": "52da65c19a91630927c5c2179f24db5d5f93f2695ce6e6d1eed38f78c140c08e",
+    "tools/ps2/next12_pb_scratch_objectcheck.py": "22ae85ab5307ae42f6a5c2cc37fe0a85bca2c7685136d441f7cb894dcdfa3a03",
+    "tools/ps2/next12_pb_scratch_replay.py": "106476c2bea87cb09b3d94efbc8442c620c537d50e8d956ec4031b1623170b1f",
+    "tools/ps2/next12_pb_scratch_report.py": "d0ed4fcff4d73b96c3b441b9711d08e70e3a05f5544cd66f4670327ae6c8dc19",
+    "tools/ps2/next12_pb_scratch_run.py": "e7cd1375f012eefb28a3d6c1c2215f75c0b82cd98183b190c64fcb95bcabfaf6",
+    "tools/ps2/next12_pressure_check.py": "60f33fb7b751154bc33d2a2ee0c1ebf5d4c2257144217a4369c91b8dce3f3fa0",
+    "tools/ps2/next12_runtime.py": "1981626e8ecc90a0ac88a80b79498ebde0b461f7bc5a3ac52a697e210d5275ff",
+    "tools/ps2/next12_smoke_check.py": "0a64ef4ccc41f911cfd19b67e8db5aef008d6b2a8de9a5f62fcf90796a7a396f",
+    "tools/ps2/next12_smoke_report.py": "066b0930b4bfee42fd737fc05026e35853cbb8bee3c989787b00d8302185e572",
+    "tools/ps2/prepare_next12_baseline.py": "283e37cc68c395a4360150b1c043f0ee6bf6f9b891838bc1ca916565f972c084"
+  },
+  "detailed_review_sha256": {
+    "build/nov15-next12/review/combined-fog-stereo-native350-audit.json": "61c07c39cfe7a20ce95c59856eaf5a0737272a90a12e1392a096cfba23327eb6",
+    "build/nov15-next12/review/combined-images-audit.json": "9a62db6ab0df5c06521307d8b2880d35d7808b6428d8ab83100b335759b8448a",
+    "build/nov15-next12/review/combined-map02-native350-audit.json": "39fcba43a2edbc5c67b59705dcd62f2d0b2062fb08665e55312b5cc2af03dcaf",
+    "build/nov15-next12/review/cull-rejection-audit.json": "b3929a196f91e42f6de11df5c9300020f555ac172a370c6defe40a740be16d79",
+    "build/nov15-next12/review/early-plan-review.json": "70a8e73eda12fc149e8f7635a248811596119a7db96a0a1bf28f7a7678d20fb8",
+    "build/nov15-next12/review/final-audio-hardware-retention.json": "de151b5bccbd9f7bc3d01993ecf8080833843f0fe631a1a74270d40070f0234e",
+    "build/nov15-next12/review/final-audio-software-retention.json": "0ca5f1b2efee6d9ca0520a7bb1047770806f205c276933f3cb7f04b55032e80d",
+    "build/nov15-next12/review/final-builds-audit.json": "cb897f2c0cff32b9fafb2be5a2d3a0f5046f357de7bb96cbd68a6b150757e9c5",
+    "build/nov15-next12/review/final-docs-and-scope-audit.json": "82daac920042868edb0020c6589a207513941b0cc146c615e2e645a106a5a886",
+    "build/nov15-next12/review/final-gs-binding-audit.json": "4866d5a6277f4de176dc0be244ae1ea2f2cc529233abdce5bf9a0cbafd37065e",
+    "build/nov15-next12/review/final-gs-runtime-audit.json": "34372fd3f6e920eb5008ca971241d8855c9f05282c207a874c626ac7fb5e2af9",
+    "build/nov15-next12/review/final-lighttable-default-audit.json": "000dfce8ca31d43c5413fdbb4bbea90acfec43548853cbac1e4c223787891fd9",
+    "build/nov15-next12/review/final-lighttable-disposition-audit.json": "cc310fece74ff70e8d9c72439a0723504df5182e9e5f805b176fe3e7733d2901",
+    "build/nov15-next12/review/final-lighttable-v4-audit.json": "d883239d538ecc3946de90bef74b7abae546434b63cf874a9cf1b51a5144cedd",
+    "build/nov15-next12/review/final-main-integration-audit.json": "527bf723235a8724246ea365c8672e854f21e795ab79480da3ac64908fccc15a",
+    "build/nov15-next12/review/final-normal-smokes-audit.json": "c4c533384184b98accab9ac656d5073d7b15e6e35cf346704baee373427a2bb5",
+    "build/nov15-next12/review/final-pb-resolved-audit.json": "83ad2aa27cbf70e3f643bbe4abecfc4ee6c8a2a3b255781ba9e312709182b14f",
+    "build/nov15-next12/review/final-pressure-audit.json": "84810e43f5453cbb03c72177fdbcf475bf6f6e8b6638427593262a6849fa378b",
+    "build/nov15-next12/review/final-pressure-plan-audit.json": "588cef746f00251e43ba15196cd54300f2b811030d418459bb662dc3b0d15319",
+    "build/nov15-next12/review/final-software-scan-retention.json": "2b7754288f9cc3cde4c9e80e618c4eb37ce86c77d91759131406b36644cfe5ad",
+    "build/nov15-next12/review/lighttable-combined-v2-static-audit.json": "2a5801e3fa082252974ea4fe5bc80a8fa2f55fcd6f89d60b87535493fd6b66a0",
+    "build/nov15-next12/review/lighttable-first-build-audit.json": "5ae51d2ab0c85963f97b39234bf9291e20561ec42a13f15227339f7d609bf3f6",
+    "build/nov15-next12/review/lighttable-v1-native-rejection-audit.json": "2739146bb1983c035541c84b5515295df34aa1835394bc19bd1ff70dc8edbfe4",
+    "build/nov15-next12/review/lighttable-v2-ownership-source-audit.json": "559bb338c2504abb258498ed76205057ee7a86c2efaa4f02c268337b85d23f61",
+    "build/nov15-next12/review/lighttable-v2c-policy-audit.json": "26efb6fd601e52a3787aee5682fdfafa58ff23a7dd0a2dbb946a4082dfacef7e",
+    "build/nov15-next12/review/normal-smoke-evidence-after.json": "24845f50bb4e60e4103120300e48af4f4f5881415f2bbcda9678f8c7786b8f21",
+    "build/nov15-next12/review/normal-smoke-evidence-before.json": "a5ae56982366f75d48935641b9e717ed96adac7600fd8a0df85bea952461c718",
+    "build/nov15-next12/review/p4-corpus-v1-audit.json": "a314e49fd657b798014bb5c55a9e3720f51dbf1b6a84766a06d7207174625c05",
+    "build/nov15-next12/review/p4-logical-physical-design-review.json": "66e298d4315dedcd8b24dd33bb9cea7883f682719d9a7ef8880e8765b367249d",
+    "build/nov15-next12/review/p4-policy-blocker-audit.json": "8f63a9bbf5968061df8c799811aa2f42616a07f35676b82cf500c0c3a5275eba",
+    "build/nov15-next12/review/pb-host-audit.json": "24adf0ca92763f201569cfb72345225a3a3da84d393692ad9e52b53c7ce6989b",
+    "build/nov15-next12/review/pb-lifetime-audit.json": "18e101a81293218867f7ed405b587b400e0be0edb75e5dee5bbbd1da17edcfd6",
+    "build/nov15-next12/review/pb-native-runtime-audit.json": "30be2331b6c73b6a79b0f695afbfc2538a2cdcf19aea7abebae9d3ee7ff39269",
+    "build/nov15-next12/review/pb-profile-object-audit.json": "cc864f9783fb63d49fc770af37b5abadf9fb7e45cc93c9beb1ef2ab5d9557b15",
+    "build/nov15-next12/review/pb-resolved-audit.json": "0be7feadcf336fa5c34ad53da307a2f901b37b52591c70a07f5fd3eb5c3911d2",
+    "build/nov15-next12/review/release-final-review.json": "38fe74556c0022063c6466808f0e76e085a24fd514441095b791bd9a7c7a27d1"
+  },
+  "publication_selection": {
+    "report": "build/nov15-next12/publication-inputs.json",
+    "sha256": "66b6de0877d997e0f9f4842408179e63e727df5f6a868c0b0606af65b225dbd1"
+  }
+}

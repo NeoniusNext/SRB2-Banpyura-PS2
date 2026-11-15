@@ -29,11 +29,32 @@
 // needed for pre rendering (fracs)
 typedef struct
 {
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_SPRCACHE)
+	// Sprite headers supply signed 16-bit pixels. All cached fixed-point
+	// values have zero fractional bits, including the adjusted top offset.
+	INT16 width_pixels;
+	INT16 offset_pixels;
+	INT16 topoffset_pixels;
+	INT16 height_pixels;
+#else
 	fixed_t width;
 	fixed_t offset;
 	fixed_t topoffset;
 	fixed_t height;
+#endif
 } sprcache_t;
+
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_SPRCACHE)
+#define SPRCACHE_WIDTH(c) ((fixed_t)(c).width_pixels * FRACUNIT)
+#define SPRCACHE_OFFSET(c) ((fixed_t)(c).offset_pixels * FRACUNIT)
+#define SPRCACHE_TOPOFFSET(c) ((fixed_t)(c).topoffset_pixels * FRACUNIT)
+#define SPRCACHE_HEIGHT(c) ((fixed_t)(c).height_pixels * FRACUNIT)
+#else
+#define SPRCACHE_WIDTH(c) ((c).width)
+#define SPRCACHE_OFFSET(c) ((c).offset)
+#define SPRCACHE_TOPOFFSET(c) ((c).topoffset)
+#define SPRCACHE_HEIGHT(c) ((c).height)
+#endif
 
 extern sprcache_t *spritecachedinfo;
 

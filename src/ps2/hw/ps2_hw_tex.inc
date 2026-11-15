@@ -24,7 +24,7 @@ static u32 vram_alloc(u32 n, u32 align)
 
 	for (i = 0; i < H.free_n; i++)
 	{
-		u32 fs = H.free_start[i], fe = fs + H.free_len[i];
+		u32 fs = H.free_range[i].start, fe = fs + H.free_range[i].len;
 		u32 s = (fs + align - 1) & ~(align - 1);
 
 		if (s + n <= fe)
@@ -41,22 +41,21 @@ static u32 vram_alloc(u32 n, u32 align)
 
 				for (j = H.free_n; j > i + 1; j--)
 				{
-					H.free_start[j] = H.free_start[j - 1];
-					H.free_len[j] = H.free_len[j - 1];
+					H.free_range[j] = H.free_range[j - 1];
 				}
 				H.free_n++;
-				H.free_len[i] = s - fs;
-				H.free_start[i + 1] = s + n;
-				H.free_len[i + 1] = tail;
+				H.free_range[i].len = s - fs;
+				H.free_range[i + 1].start = s + n;
+				H.free_range[i + 1].len = tail;
 			}
 			else if (s > fs)
 			{
-				H.free_len[i] = s - fs;
+				H.free_range[i].len = s - fs;
 			}
 			else if (tail)
 			{
-				H.free_start[i] = s + n;
-				H.free_len[i] = tail;
+				H.free_range[i].start = s + n;
+				H.free_range[i].len = tail;
 			}
 			else
 			{
@@ -64,8 +63,7 @@ static u32 vram_alloc(u32 n, u32 align)
 
 				for (j = i; j < H.free_n - 1; j++)
 				{
-					H.free_start[j] = H.free_start[j + 1];
-					H.free_len[j] = H.free_len[j + 1];
+					H.free_range[j] = H.free_range[j + 1];
 				}
 				H.free_n--;
 			}
@@ -83,7 +81,7 @@ static u32 vram_alloc_hi(u32 n, u32 align)
 
 	for (i = H.free_n - 1; i >= 0; i--)
 	{
-		u32 fs = H.free_start[i], fe = fs + H.free_len[i];
+		u32 fs = H.free_range[i].start, fe = fs + H.free_range[i].len;
 
 		if (fe >= n && fe - n >= fs)
 		{
@@ -101,22 +99,21 @@ static u32 vram_alloc_hi(u32 n, u32 align)
 
 					for (j = H.free_n; j > i + 1; j--)
 					{
-						H.free_start[j] = H.free_start[j - 1];
-						H.free_len[j] = H.free_len[j - 1];
+						H.free_range[j] = H.free_range[j - 1];
 					}
 					H.free_n++;
-					H.free_len[i] = s - fs;
-					H.free_start[i + 1] = s + n;
-					H.free_len[i + 1] = tail;
+					H.free_range[i].len = s - fs;
+					H.free_range[i + 1].start = s + n;
+					H.free_range[i + 1].len = tail;
 				}
 				else if (s > fs)
 				{
-					H.free_len[i] = s - fs;
+					H.free_range[i].len = s - fs;
 				}
 				else if (tail)
 				{
-					H.free_start[i] = s + n;
-					H.free_len[i] = tail;
+					H.free_range[i].start = s + n;
+					H.free_range[i].len = tail;
 				}
 				else
 				{
@@ -124,8 +121,7 @@ static u32 vram_alloc_hi(u32 n, u32 align)
 
 					for (j = i; j < H.free_n - 1; j++)
 					{
-						H.free_start[j] = H.free_start[j + 1];
-						H.free_len[j] = H.free_len[j + 1];
+						H.free_range[j] = H.free_range[j + 1];
 					}
 					H.free_n--;
 				}
@@ -142,28 +138,27 @@ static void vram_free(u32 s, u32 n)
 	int i, j;
 
 	H.used_blocks -= n;
-	for (i = 0; i < H.free_n && H.free_start[i] < s; i++)
+	for (i = 0; i < H.free_n && H.free_range[i].start < s; i++)
 		;
 	// merge with the previous range
-	if (i > 0 && H.free_start[i - 1] + H.free_len[i - 1] == s)
+	if (i > 0 && H.free_range[i - 1].start + H.free_range[i - 1].len == s)
 	{
-		H.free_len[i - 1] += n;
-		if (i < H.free_n && H.free_start[i - 1] + H.free_len[i - 1] == H.free_start[i])
+		H.free_range[i - 1].len += n;
+		if (i < H.free_n && H.free_range[i - 1].start + H.free_range[i - 1].len == H.free_range[i].start)
 		{
-			H.free_len[i - 1] += H.free_len[i];
+			H.free_range[i - 1].len += H.free_range[i].len;
 			for (j = i; j < H.free_n - 1; j++)
 			{
-				H.free_start[j] = H.free_start[j + 1];
-				H.free_len[j] = H.free_len[j + 1];
+				H.free_range[j] = H.free_range[j + 1];
 			}
 			H.free_n--;
 		}
 		return;
 	}
-	if (i < H.free_n && s + n == H.free_start[i])
+	if (i < H.free_n && s + n == H.free_range[i].start)
 	{
-		H.free_start[i] = s;
-		H.free_len[i] += n;
+		H.free_range[i].start = s;
+		H.free_range[i].len += n;
 		return;
 	}
 	if (H.free_n >= VRAM_RANGES)
@@ -173,11 +168,10 @@ static void vram_free(u32 s, u32 n)
 	}
 	for (j = H.free_n; j > i; j--)
 	{
-		H.free_start[j] = H.free_start[j - 1];
-		H.free_len[j] = H.free_len[j - 1];
+		H.free_range[j] = H.free_range[j - 1];
 	}
-	H.free_start[i] = s;
-	H.free_len[i] = n;
+	H.free_range[i].start = s;
+	H.free_range[i].len = n;
 	H.free_n++;
 }
 
@@ -189,36 +183,33 @@ static const u8 blk_16s[8][4] = {{0, 2, 16, 18}, {1, 3, 17, 19}, {8, 10, 24, 26}
 
 static u32 tex_footprint(int psm, u32 w, u32 h, u32 tbw)
 {
-	u32 pw, ph, bw, bh, ppr, pcols, prows, lastpage, lw, lh, nbx, nby, bx, by, maxblk = 0;
+	u32 lastpage, bx, by, maxblk;
 
+	// Positive dimensions: zero-based texels give the last page and block directly.
+	// The CT32/T8 and CT16 block tables increase in each axis, so their rectangular
+	// prefix maximum is its last entry. CT16S swaps row groups 2/3 and 4/5: its
+	// prefix maximum stays in row 3 until row 6 is reached.
+	w--;
+	h--;
 	switch (psm)
 	{
 		case PSM_T8:
-			pw = 128; ph = 64; bw = 16; bh = 16;
+			lastpage = (h >> 6) * ((tbw + 1) >> 1) + (w >> 7);
+			maxblk = blk_32_8[(h >> 4) & 3][(w >> 4) & 7];
 			break;
 		case PSM_CT32:
-			pw = 64; ph = 32; bw = 8; bh = 8;
+			lastpage = (h >> 5) * tbw + (w >> 6);
+			maxblk = blk_32_8[(h >> 3) & 3][(w >> 3) & 7];
 			break;
 		default: // CT16, CT16S
-			pw = 64; ph = 64; bw = 16; bh = 8;
+			lastpage = (h >> 6) * tbw + (w >> 6);
+			bx = (w >> 4) & 3;
+			by = (h >> 3) & 7;
+			if (psm == PSM_CT16S && (by == 4 || by == 5))
+				by = 3;
+			maxblk = psm == PSM_CT16 ? blk_16[by][bx] : psm == PSM_CT16S ? blk_16s[by][bx] : blk_32_8[by][bx];
 			break;
 	}
-	ppr = (tbw * 64 + pw - 1) / pw;
-	pcols = (w + pw - 1) / pw;
-	prows = (h + ph - 1) / ph;
-	lastpage = (prows - 1) * ppr + (pcols - 1);
-	lw = w - (pcols - 1) * pw;
-	lh = h - (prows - 1) * ph;
-	nbx = (lw + bw - 1) / bw;
-	nby = (lh + bh - 1) / bh;
-	for (by = 0; by < nby; by++)
-		for (bx = 0; bx < nbx; bx++)
-		{
-			u32 b = (psm == PSM_CT16) ? blk_16[by][bx] : (psm == PSM_CT16S) ? blk_16s[by][bx] : blk_32_8[by][bx];
-
-			if (b > maxblk)
-				maxblk = b;
-		}
 	return lastpage * PAGE_BLOCKS + maxblk + 1;
 }
 
@@ -627,7 +618,8 @@ static u8 pal_val[1024];
 // engine alpha 0..255 -> GS alpha 0..0x80 (0x80 = 1.0), rounded
 static inline u32 a8_to_gs(u32 a)
 {
-	return (a * 128u + 127u) / 255u;
+	// For a byte a = 2*k or 2*k+1, the rounded 128/255 scale is k or k+1, respectively.
+	return (a + 1u) >> 1;
 }
 
 static inline u32 pal_hash(u32 k)
@@ -679,12 +671,12 @@ static inline u32 clut_slot(u32 i) // CT32 CLUT in CSM1: bits 3 and 4 of the ind
 	return (i & ~0x18u) | ((i & 0x08u) << 1) | ((i & 0x10u) >> 1);
 }
 
-// 16x16 CT32 image into VRAM (the CLUT format of a PSMT8 CSM1 CLUT)
-static void clut_write(u32 blk, const u32 *entries)
+// Reserve a complete 16x16 CT32 CLUT transfer. Its image payload stays in the open ring buffer until the caller has filled it.
+// pk_alloc closes any VU chunk and obtains ring ownership before the caller reads palette state or writes the image.
+static u32 *clut_alloc(u32 blk)
 {
 	qw_t *h = pk_alloc(1 + 4 + 1 + 64 + 2);
 	qw_t *d;
-	int i;
 
 	H.serial++;
 
@@ -697,13 +689,6 @@ static void clut_write(u32 blk, const u32 *entries)
 	h[5].d[0] = HWGIF_TAG(64, 1, 0, 0, 2, 0);
 	h[5].d[1] = 0;
 	d = &h[6];
-	for (i = 0; i < 64; i++)
-	{
-		d[i].w[0] = entries[i * 4];
-		d[i].w[1] = entries[i * 4 + 1];
-		d[i].w[2] = entries[i * 4 + 2];
-		d[i].w[3] = entries[i * 4 + 3];
-	}
 	// PS2-HW-102 (real GS, not PCSX2): a CLUT image written over a slot that was loaded before (the row of a light table, a palette change) must not come out of
 	// the texture cache of the GS: TEXFLUSH behind the transfer (the program of the VU1 path reloads CLUTs of the cache with TEX2 / CLD all the time)
 	d[64].d[0] = HWGIF_TAG(1, 1, 0, 0, 0, 1);
@@ -712,6 +697,29 @@ static void clut_write(u32 blk, const u32 *entries)
 	if (blk == H.clut_loaded)
 		H.clut_loaded = 0; // the GS holds a copy of the old contents
 	H.st.clut_uploads++;
+	return d[0].w;
+}
+
+// CSM1 swaps index bits 3 and 4: an involution with 64 pairs and 128 fixed points. Build entries in the packet, then swap each pair once.
+// This avoids two temporary 1 KiB images and the final copy into the DMA ring. The debug identity ordering remains available.
+static void clut_swizzle(u32 *entries)
+{
+	u32 i;
+
+	if (ps2hwd_dbg_flags & 16)
+		return;
+	for (i = 0; i < 256; i += 32)
+	{
+		u32 j;
+
+		for (j = 8; j < 16; j++)
+		{
+			u32 t = entries[i + j];
+
+			entries[i + j] = entries[i + j + 8];
+			entries[i + j + 8] = t;
+		}
+	}
 }
 
 enum
@@ -816,15 +824,12 @@ static int clut_palette_dependent(u32 kind)
 
 static void clut_build_into(u32 blk, u32 kind, u32 param, u32 keyed)
 {
-	static u32 e[256] __attribute__((aligned(64)));
-	static u32 sw[256] __attribute__((aligned(64)));
-	int i;
+	u32 *e;
 
 	H.clut_epoch++; // PS2-HW-101
+	e = clut_alloc(blk);
 	clut_entries(kind, param, keyed, e);
-	for (i = 0; i < 256; i++)
-		sw[clut_slot((u32)i)] = e[i];
-	clut_write(blk, sw);
+	clut_swizzle(e);
 }
 
 static inline u32 clut_fixed_blk(u32 kind) // kind 1..4
@@ -1356,45 +1361,71 @@ static inline u32 src_col(const fillctx_t *c, u32 x)
 // 8-bit index data (P_8 or indices from scratch)
 static void fill_idx(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw;
-	u32 x;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw;
+	u32 remaining;
 
-	if (!c->dx)
+	if (!c.dx)
 	{
-		memcpy(dst, s, c->W2);
+		memcpy(dst, s, c.W2);
 		return;
 	}
-	for (x = 0; x < c->W2; x++)
-		dst[x] = s[src_col(c, x)];
+	remaining = c.W2;
+	if (!remaining)
+		return;
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	// One sample body; the final unused unsigned/cursor advances perform no access.
+	do
+	{
+		*dst++ = s[sx];
+		sx += step;
+	} while (--remaining);
+}
+
+// Gather the low byte of each of four 16-bit texels into a 32-bit word, preserving their order.
+static inline u32 ap88_gather(u64 v)
+{
+#ifdef __mips__
+	u64 packed;
+
+	// The low four output bytes come only from the four halfwords in v's low 64 bits.
+	// PPACB's other output bytes may depend on the unused high 64 bits of its input register.
+	__asm__("ppacb %0,$zero,%1" : "=r"(packed) : "r"(v));
+	return (u32)packed;
+#else
+	return (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
+#endif
 }
 
 // AP_88 -> index with alpha 0 = index 255 (mode 0), or the chroma keyed variant: the index is kept, the alpha ignored (mode 1)
 static void fill_ap88(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 x;
 
-	if (!c->dx && !((uintptr_t)s & 7) && ((ps2hwd_fx2 & FX3_NOFILL) ? (!(c->W2 & 3) && !((uintptr_t)dst & 3)) : c->W2 >= 4))
+	if (!c.dx && !((uintptr_t)s & 7) && ((ps2hwd_fx2 & FX3_NOFILL) ? (!(c.W2 & 3) && !((uintptr_t)dst & 3)) : c.W2 >= 4))
 	{
 		// four texels (index, alpha pairs) in one 64-bit load: the index bytes are gathered, the alpha bytes that are zero become 0xFF (mode 0: a hole is index 255)
 		// PS2-HW-252 (FX3): any width and any alignment of the row (a patch is stored at the size of its picture: 3 of 4 rows of the patches were made texel by texel): four bytes
 		// at a time (an unaligned store is the swl / swr pair), the last 1..3 texels by the byte loop below
 		const u64 *s8 = (const u64 *)(const void *)s;
-		const int keyed = c->mode != 0;
-		const u32 x4 = c->W2 & ~3u;
+		const int keyed = c.mode != 0;
+		const u32 x4 = c.W2 & ~3u;
 		u8 *dp = dst;
 
 		for (x = 0; x < x4; x += 4)
 		{
 			const u64 v = *s8++;
-			u32 idx = (u32)(v & 0xFFu) | (u32)((v >> 8) & 0xFF00u) | (u32)((v >> 16) & 0xFF0000u) | (u32)((v >> 24) & 0xFF000000u);
+			u32 idx = ap88_gather(v);
 
 			if (!keyed)
 			{
 				const u64 av = v >> 8;
-				const u32 a = (u32)(av & 0xFFu) | (u32)((av >> 8) & 0xFF00u) | (u32)((av >> 16) & 0xFF0000u) | (u32)((av >> 24) & 0xFF000000u);
+				const u32 a = ap88_gather(av);
 				const u32 nz = (((a & 0x7F7F7F7Fu) + 0x7F7F7F7Fu) | a) & 0x80808080u; // bit 7 of every byte that is not zero
 				const u32 zero = ~nz & 0x80808080u;
 
@@ -1406,7 +1437,7 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 				*(u32 *)(void *)dp = idx;
 			dp += 4;
 		}
-		for (; x < c->W2; x++) // the last texels of the row (W2 not a multiple of 4)
+		for (; x < c.W2; x++) // the last texels of the row (W2 not a multiple of 4)
 		{
 			const u8 *t = s + (size_t)x * 2;
 
@@ -1416,39 +1447,43 @@ static void fill_ap88(void *ctx, u32 row, u8 *dst)
 		{
 			static unsigned fchecked, fbad;
 
-			for (x = 0; x < c->W2; x++)
+			for (x = 0; x < c.W2; x++)
 			{
 				const u8 *t = s + (size_t)x * 2;
 
-				if (dst[x] != ((c->mode == 0 && t[1] == 0) ? 255 : t[0]))
+				if (dst[x] != ((c.mode == 0 && t[1] == 0) ? 255 : t[0]))
 				{
 					fbad++;
 					break;
 				}
 			}
-			if (!(++fchecked & 1023) || (x < c->W2 && fbad < 5))
+			if (!(++fchecked & 1023) || (x < c.W2 && fbad < 5))
 				CONS_Printf("HWC fill check: %u rows, %u differ\n", fchecked, fbad);
 		}
 		return;
 	}
-	for (x = 0; x < c->W2; x++)
+	for (x = 0; x < c.W2; x++)
 	{
-		const u8 *t = s + (size_t)src_col(c, x) * 2;
+		const u8 *t = s + (size_t)src_col(&c, x) * 2;
 
-		dst[x] = (c->mode == 0 && t[1] == 0) ? 255 : t[0];
+		dst[x] = (c.mode == 0 && t[1] == 0) ? 255 : t[0];
 	}
 }
 
 // AP_88 with partial alpha (or opaque index 255 next to holes) needs direct colour: palette colour, GS alpha.
 static void fill_ap88_ct32(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 *d = (u32 *)(void *)dst, x;
 
-	for (x = 0; x < c->W2; x++)
+	// Advance the unsigned source column once per texel; the centre sample is unchanged.
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	for (x = 0; x < c.W2; x++, sx += step)
 	{
-		const u8 *p = s + (size_t)src_col(c, x) * 2;
+		const u8 *p = s + (size_t)sx * 2;
 
 		d[x] = H.pal[p[0]] | (a8_to_gs(p[1]) << 24);
 	}
@@ -1457,14 +1492,18 @@ static void fill_ap88_ct32(void *ctx, u32 row, u8 *dst)
 // RGBA -> CT32 with the GS alpha scale (0x80 = opaque)
 static void fill_ct32(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u32 *s = (const u32 *)(const void *)(c->src + (size_t)src_row(c, row) * c->sw * 4);
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u32 *s = (const u32 *)(const void *)(c.src + (size_t)src_row(&c, row) * c.sw * 4);
 	u32 *d = (u32 *)(void *)dst;
 	u32 x;
 
-	for (x = 0; x < c->W2; x++)
+	// Advance the unsigned source column once per texel; the centre sample is unchanged.
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	for (x = 0; x < c.W2; x++, sx += step)
 	{
-		u32 t = s[src_col(c, x)];
+		u32 t = s[sx];
 
 		d[x] = (t & 0xFFFFFF) | (a8_to_gs(t >> 24) << 24);
 	}
@@ -1473,17 +1512,25 @@ static void fill_ct32(void *ctx, u32 row, u8 *dst)
 // ALPHA_INTENSITY_88 -> CT32 grey with alpha
 static void fill_ia88(void *ctx, u32 row, u8 *dst)
 {
-	fillctx_t *c = ctx;
-	const u8 *s = c->src + (size_t)src_row(c, row) * c->sw * 2;
+	// tex_upload owns this immutable context on its stack; output is in the DMA ring.
+	const fillctx_t c = *(const fillctx_t *)ctx;
+	const u8 *s = c.src + (size_t)src_row(&c, row) * c.sw * 2;
 	u32 *d = (u32 *)(void *)dst;
-	u32 x;
+	u32 remaining;
 
-	for (x = 0; x < c->W2; x++)
+	remaining = c.W2;
+	if (!remaining)
+		return;
+	const u32 step = 1u << c.dx;
+	u32 sx = step >> 1;
+	// One sample body; wrap in u32 before scaling the source column to bytes.
+	do
 	{
-		const u8 *t = s + (size_t)src_col(c, x) * 2;
+		const u8 *t = s + (size_t)sx * 2;
 
-		d[x] = (u32)t[0] * 0x010101u | (a8_to_gs(t[1]) << 24);
-	}
+		*d++ = (u32)t[0] * 0x010101u | (a8_to_gs(t[1]) << 24);
+		sx += step;
+	} while (--remaining);
 }
 
 // why the last tex_upload failed (diagnostics of hw_SetTexture)

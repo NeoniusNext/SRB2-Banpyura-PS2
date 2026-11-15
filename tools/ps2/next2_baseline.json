@@ -1,0 +1,14 @@
+{
+  "revision": "fc7b98fe657b986d6e24972410828f09b91182b4",
+  "patch_sha256": "0b0c0ee562603f41e23cad5631ab7181fb96cafdb26a0d3cb4581a685a500722",
+  "source_sha256": {
+    "src/m_tokenizer.c": "ae8c3da78764e4e38bfe1cdeb32d5b2c716741c21031af516ec958a41c347390",
+    "src/m_tokenizer.h": "9bc9f4c030e3ce45c1a741ddc88bdaefbb9c46f838ffa51256a15406d0cf0a03",
+    "src/p_setup.c": "ff89b3d218ec1d4b3e7eda9b55660f2316dcdb70e6117d3ca8ad7b5381e64896",
+    "src/ps2/hw/ps2_hw_draw.inc": "66114c53e1da767f5cbde2f86005e372abce232a5f499338ecd3a5505a99d811",
+    "src/ps2/hw/ps2_hw_model.inc": "6e01b53b5d440be20f8bb94d2275dda96e82dd26d32ba9d222dc244e1db15064",
+    "src/ps2/ps2_midi.c": "eee1942fe3fd5e3aa37059249f8c9f0ce90af7ef600010823cbfcaadede1218f",
+    "src/ps2/ps2_music.c": "3f1a29df3518e6a79072b25f950e10fba087aa52af21c951b243c18dcaac2392",
+    "src/r_draw8_npo2.c": "fd742989d9ea3da30acadc60b8eb2b2e2c8e434e201522e01d5fd12fcbd8086a"
+  }
+}

@@ -66,6 +66,7 @@ static inline int pal_row_of(int cls)
 // CLUT parameter: light table id (10 bits), its generation (8 bits), row (5 bits)
 #define pal_param(row) ((u32)P.pal_tbl | ((u32)lt_gen[P.pal_tbl] << 10) | ((u32)(row) << 18))
 
+#if defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
 static u32 lt_store(u32 id, const RGBA_t *t)
 {
 	u32 i;
@@ -106,6 +107,60 @@ static u32 lt_store(u32 id, const RGBA_t *t)
 	lt_gen[id]++;
 	return id;
 }
+#else
+// Optional indices preserve the generic RGBA path and the indexed palette
+// roundtrip in one private store. Keep a single body in the whole-engine LTO.
+__attribute__((noinline,noclone))
+static u32 lt_store(u32 id, const RGBA_t *t, const u8 *indices)
+{
+	u32 i;
+	u8 *ix;
+
+	if (!H.pal_set)
+		return 0; // the colours of the table cannot be turned into indices before the palette is known: the engine asks again
+	if (!id)
+	{
+		for (id = 1; id < LT_MAX && lt_idx[id]; id++)
+			;
+		if (id >= LT_MAX)
+		{
+			hw_limit(HW_LIGHT_TABLE, "more than 1023 colormap light tables: the polygon is lit by the GLSL equations");
+			return 0;
+		}
+	}
+	ix = lt_idx[id] ? lt_idx[id] : (u8 *)malloc(256 * 32);
+	if (!ix)
+	{
+		hw_limit(HW_LIGHT_TABLE, "no memory for a colormap light table: the polygon is lit by the GLSL equations");
+		return 0;
+	}
+	{
+		u32 miss = 0;
+
+		for (i = 0; i < 256 * 32; i++)
+		{
+			const RGBA_t c = t[indices ? indices[i] : i];
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+			_Static_assert(sizeof(RGBA_t) == 4 && offsetof(RGBA_t, s.red) == 0 && offsetof(RGBA_t, s.green) == 1 && offsetof(RGBA_t, s.blue) == 2, "GS RGBA byte layout");
+			// RGBA_t is packed: typed member access preserves byte alignment.
+			int k = pal_lookup(c.rgba & 0x00FFFFFFu);
+#else
+			int k = pal_lookup((u32)c.s.red | ((u32)c.s.green << 8) | ((u32)c.s.blue << 16));
+#endif
+
+			miss += k < 0;
+			ix[i] = (u8)(k < 0 ? 0 : k);
+		}
+		const RGBA_t c0 = t[indices ? indices[0] : 0], c1 = t[indices ? indices[1] : 1], c31 = t[indices ? indices[31 * 256 + 128] : 31 * 256 + 128];
+
+		I_OutputMsg("HWLT table %u stored: %u of 8192 colours not in the palette; row 0 [0,1,2]=%02x%02x%02x %02x%02x%02x row 31 [128]=%02x%02x%02x\n", (unsigned)id, (unsigned)miss,
+			c0.s.red, c0.s.green, c0.s.blue, c1.s.red, c1.s.green, c1.s.blue, c31.s.red, c31.s.green, c31.s.blue);
+	}
+	lt_idx[id] = ix;
+	lt_gen[id]++;
+	return id;
+}
+#endif
 
 static void lt_clear(void)
 {

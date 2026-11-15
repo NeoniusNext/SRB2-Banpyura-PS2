@@ -1,0 +1,21 @@
+{
+  "revision": "fc7b98fe657b986d6e24972410828f09b91182b4",
+  "patch_sha256": "e39dee13cf164bafe96ea85f36bc17f702f05e86db2cc046fbc52b83e05fc421",
+  "source_sha256": {
+    "src/m_tokenizer.c": "ae8c3da78764e4e38bfe1cdeb32d5b2c716741c21031af516ec958a41c347390",
+    "src/m_tokenizer.h": "9bc9f4c030e3ce45c1a741ddc88bdaefbb9c46f838ffa51256a15406d0cf0a03",
+    "src/p_setup.c": "ff89b3d218ec1d4b3e7eda9b55660f2316dcdb70e6117d3ca8ad7b5381e64896",
+    "src/ps2/hw/ps2_hw_draw.inc": "d21ee48277df827abfc08b90efe2ea896b4cab9f3b5cc6659d5a70739c952d05",
+    "src/ps2/hw/ps2_hw_model.inc": "6e01b53b5d440be20f8bb94d2275dda96e82dd26d32ba9d222dc244e1db15064",
+    "src/ps2/hw/ps2_hw_priv.inc": "4c3cd05d38b6da85e18901ed25c859dc07db92ce1f516c6e2e6dc76f0993c404",
+    "src/ps2/hw/ps2_hw_tex.inc": "638d11af33fe402772b1228ecbe7948410158401e7270ffdbbcb96f722b00d7a",
+    "src/ps2/ps2_midi.c": "15b44555b6290a1b0a9519a4b09e06f5c7e2d48b19a042e748b9913f47e3ec11",
+    "src/ps2/ps2_music.c": "3f1a29df3518e6a79072b25f950e10fba087aa52af21c951b243c18dcaac2392",
+    "src/r_draw8.c": "e55b5227991ed64316d8c9ef45234f91844aeaf63b27716ce2eb7b084dd5bc25",
+    "src/r_draw8_npo2.c": "fd742989d9ea3da30acadc60b8eb2b2e2c8e434e201522e01d5fd12fcbd8086a",
+    "src/r_patch.c": "db0dcea9521c8c41f95b8ccac4b3f2e57563e63e3d6e5e3d82a6fb151614942a",
+    "src/r_textures.c": "0598d02168d9099ff5647286700fc2e189e0ab493191d0b0655dc124ebe2c03b",
+    "src/v_video.c": "821a47ba9af7ee6db7ae31801b691599da234352f62b4b1587913300eaf59968",
+    "src/w_wad.c": "57574e962173a1b119d43e0fb431a99a30f7ce84cb6d839546dc861b05b93033"
+  }
+}

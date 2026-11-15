@@ -1,0 +1,41 @@
+--- a/src/w_pack.c
++++ b/src/w_pack.c
+@@ -136,0 +137,15 @@
++#ifndef PS2_NOOPT_PACKHEADER
++	// hdrok selects the lifetime: the raw probe is needed until validation
++	// succeeds; later reads use only the parsed header and extension. Failed
++	// parses leave the raw probe intact for the next attempt.
++	union
++	{
++		UINT8 first[SRP2_HEADER_SIZE + sizeof (srp2_ext_t)];
++		struct
++		{
++			srp2_header_t h;
++			srp2_ext_t ext;
++		};
++	};
++	boolean hdrok;
++#else
+@@ -140,0 +156 @@
++#endif
+@@ -787,0 +804,15 @@
++#ifndef PS2_NOOPT_PACKHEADER
++// ReadHeader can validate an unprobed stream (for example after slot turnover).
++// A later signature probe must keep that already cached parsed header, even
++// when the file changed. Isolate its temporary from the ordinary probe frame.
++static boolean FUNCNOINLINE PeekCheckedMagic(pkstream_t *s)
++{
++	UINT8 first[SRP2_HEADER_SIZE + sizeof (srp2_ext_t)];
++
++	memset(first, 0, sizeof first);
++	s->magic = ReadBulk(s, 0, first, sizeof first) && memcmp(first, "SRP2", 4) == 0 ? 1 : -1;
++	lseek(s->fd, 0, SEEK_SET);
++	return s->magic > 0;
++}
++#endif
++
+@@ -792,0 +824,4 @@
++#ifndef PS2_NOOPT_PACKHEADER
++		if (s->hdrok)
++			return PeekCheckedMagic(s);
++#endif

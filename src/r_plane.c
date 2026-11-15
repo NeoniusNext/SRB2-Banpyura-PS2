@@ -686,9 +686,32 @@ visplane_t *R_CheckPlane(visplane_t *pl, INT32 start, INT32 stop)
 	}
 
 	// 0xff is not equal to -1 with shorts...
+#if defined(PS2_OPT_REND) && defined(NOHW) && !defined(PS2_NOOPT_CHECKPLANE_CURSOR)
+	x = intrl;
+	if (x <= intrh)
+	{
+		const UINT16 *top = pl->top + x;
+		if (*top == 0xffff)
+		{
+			// Read the bottom address only after the first top accepts it.
+			// Both strips stay live and retain the original top/bottom order.
+			const UINT16 *bottom = pl->bottom + x;
+			do
+			{
+				if (*bottom != 0x0000)
+					break;
+				if (++x > intrh)
+					break;
+				top++;
+				bottom++;
+			} while (*top == 0xffff);
+		}
+	}
+#else
 	for (x = intrl; x <= intrh; x++)
 		if (pl->top[x] != 0xffff || pl->bottom[x] != 0x0000)
 			break;
+#endif
 
 	if (x > intrh) /* Can use existing plane; extend range */
 	{
@@ -1426,10 +1449,18 @@ void R_PlaneBounds(visplane_t *plane)
 
 	for (i = plane->minx + 1; i <= plane->maxx; i++)
 	{
+#if defined(PS2_OPT_REND) && defined(__mips__) && !defined(PS2_NOOPT_PLANEBOUNDS_MMI)
+		// Both bounds are zero-extended UINT16 values, so signed word min/max
+		// is exact. Preserve the original helper's compiler clobber set.
+		const INT32 top = plane->top[i], bottom = plane->bottom[i];
+		__asm__("pminw %0,%0,%2\n\tpmaxw %1,%1,%3"
+			: "+&r"(hi), "+&r"(low) : "r"(top), "r"(bottom) : "$12", "$13");
+#else
 		if (plane->top[i] < hi)
 		hi = plane->top[i];
 		if (plane->bottom[i] > low)
 		low = plane->bottom[i];
+#endif
 	}
 	plane->high = hi;
 	plane->low = low;

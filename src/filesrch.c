@@ -857,12 +857,12 @@ lumpinfo_t *getdirectoryfiles(const char *path, UINT16 *nlmp, UINT16 *nfolders)
 			continue;
 		}
 
-		lump_p->diskpath = Z_StrDup(dirpath); // Path in the filesystem to the file
+		W_SetLumpDiskPath(lump_p, Z_StrDup(dirpath)); // Path in the filesystem to the file
 		lump_p->compression = CM_NOCOMPRESSION; // Lump is uncompressed
 		lump_p->size = lump_p->disksize = fsstat.st_size;
 
 		// Remove the directory's path.
-		fullname = lump_p->diskpath;
+		fullname = W_LumpDiskPath(lump_p);
 		if (strstr(fullname, path))
 			fullname += strlen(path) + 1;
 

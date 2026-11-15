@@ -179,7 +179,20 @@ static void NullSetShaderInfo(hwdshaderinfo_t info, INT32 value) { (void)info; (
 static void NullSetPaletteLookup(UINT8 *lut) { (void)lut; HIT(SetPaletteLookup); }
 static UINT32 NullCreateLightTable(RGBA_t *hw_lighttable) { (void)hw_lighttable; HIT(CreateLightTable); return 0; }
 static void NullUpdateLightTable(UINT32 id, RGBA_t *hw_lighttable) { (void)id; (void)hw_lighttable; HIT(UpdateLightTable); }
+#if !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+UINT32 PS2HWD_CreateIndexedLightTable(const UINT8 *indices, const RGBA_t *palette)
+{
+	(void)indices; (void)palette;
+	return NullCreateLightTable(NULL);
+}
+void PS2HWD_UpdateIndexedLightTable(UINT32 id, const UINT8 *indices, const RGBA_t *palette)
+{
+	(void)indices; (void)palette;
+	NullUpdateLightTable(id, NULL);
+}
+#endif
 static void NullClearLightTables(void) { HIT(ClearLightTables); }
+
 static void NullSetScreenPalette(RGBA_t *palette) { (void)palette; HIT(SetScreenPalette); }
 
 boolean PS2HWD_Init(void)

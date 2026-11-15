@@ -729,10 +729,17 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 
 			// store sprite info in lookup tables
 			//FIXME : numspritelumps do not duplicate sprite replacements
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_SPRCACHE)
+			spritecachedinfo[numspritelumps].width_pixels = width;
+			spritecachedinfo[numspritelumps].offset_pixels = leftoffset;
+			spritecachedinfo[numspritelumps].topoffset_pixels = topoffset;
+			spritecachedinfo[numspritelumps].height_pixels = height;
+#else
 			spritecachedinfo[numspritelumps].width = width<<FRACBITS;
 			spritecachedinfo[numspritelumps].offset = leftoffset<<FRACBITS;
 			spritecachedinfo[numspritelumps].topoffset = topoffset<<FRACBITS;
 			spritecachedinfo[numspritelumps].height = height<<FRACBITS;
+#endif
 
 			// BP: we cannot use special tric in hardware mode because feet in ground caused by z-buffer
 			// Monster Iestyn (21 Sep 2023): the above comment no longer makes sense in context!!! So I give an explanation here!
@@ -740,7 +747,14 @@ boolean R_AddSingleSpriteDef(const char *sprname, spritedef_t *spritedef, UINT16
 			// a result of rendering partially under the ground, but sometime before SRB2 2.1's release this was changed to apply
 			// to the software renderer as well.
 			// TODO: kill FEETADJUST altogether somehow and somehow fix OpenGL not to clip sprites that are partially underground (if possible)?
+#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_SPRCACHE)
+			// Keep the preceding 32-bit wrap at the top four signed-pixel values.
+			// The compact word contains exactly the fixed-point value's high bits.
+			spritecachedinfo[numspritelumps].topoffset_pixels = (INT16)(UINT16)
+				((UINT32)(UINT16)topoffset + (UINT32)(FEETADJUST / FRACUNIT));
+#else
 			spritecachedinfo[numspritelumps].topoffset += FEETADJUST;
+#endif
 
 			//----------------------------------------------------
 
@@ -1011,11 +1025,11 @@ static void R_SpritesHash(void)
 	for (i = 0; i < numspritelumps; i++)
 	{
 		if (M_CheckParm("-loadhash-detail"))
-			I_OutputMsg("LHSLUMP %u %d %d %d %d\n", (unsigned)i, (int)spritecachedinfo[i].width, (int)spritecachedinfo[i].offset, (int)spritecachedinfo[i].topoffset, (int)spritecachedinfo[i].height);
-		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].width);
-		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].offset);
-		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].topoffset);
-		PS2LP_H32(&hs, (UINT32)spritecachedinfo[i].height);
+			I_OutputMsg("LHSLUMP %u %d %d %d %d\n", (unsigned)i, (int)SPRCACHE_WIDTH(spritecachedinfo[i]), (int)SPRCACHE_OFFSET(spritecachedinfo[i]), (int)SPRCACHE_TOPOFFSET(spritecachedinfo[i]), (int)SPRCACHE_HEIGHT(spritecachedinfo[i]));
+		PS2LP_H32(&hs, (UINT32)SPRCACHE_WIDTH(spritecachedinfo[i]));
+		PS2LP_H32(&hs, (UINT32)SPRCACHE_OFFSET(spritecachedinfo[i]));
+		PS2LP_H32(&hs, (UINT32)SPRCACHE_TOPOFFSET(spritecachedinfo[i]));
+		PS2LP_H32(&hs, (UINT32)SPRCACHE_HEIGHT(spritecachedinfo[i]));
 	}
 	PS2LP_HashPrint("spr.all", &hs);
 }
@@ -2442,10 +2456,10 @@ static void R_ProjectSprite(mobj_t *thing)
 
 	I_Assert(lump < max_spritelumps);
 
-	spr_width = spritecachedinfo[lump].width;
-	spr_height = spritecachedinfo[lump].height;
-	spr_offset = spritecachedinfo[lump].offset;
-	spr_topoffset = spritecachedinfo[lump].topoffset;
+	spr_width = SPRCACHE_WIDTH(spritecachedinfo[lump]);
+	spr_height = SPRCACHE_HEIGHT(spritecachedinfo[lump]);
+	spr_offset = SPRCACHE_OFFSET(spritecachedinfo[lump]);
+	spr_topoffset = SPRCACHE_TOPOFFSET(spritecachedinfo[lump]);
 
 	//Fab: lumppat is the lump number of the patch to use, this is different
 	//     than lumpid for sprites-in-pwad : the graphics are patched
@@ -3091,14 +3105,14 @@ static void R_ProjectPrecipitationSprite(precipmobj_t *thing)
 	lump = sprframe->lumpid[0];     //Fab: see note above
 
 	// calculate edges of the shape
-	tx -= spritecachedinfo[lump].offset;
+	tx -= SPRCACHE_OFFSET(spritecachedinfo[lump]);
 	x1 = (centerxfrac + FixedMul (tx,xscale)) >>FRACBITS;
 
 	// off the right side?
 	if (x1 > viewwidth)
 		return;
 
-	tx += spritecachedinfo[lump].width;
+	tx += SPRCACHE_WIDTH(spritecachedinfo[lump]);
 	x2 = ((centerxfrac + FixedMul (tx,xscale)) >>FRACBITS) - 1;
 
 	// off the left side
@@ -3117,8 +3131,8 @@ static void R_ProjectPrecipitationSprite(precipmobj_t *thing)
 
 
 	//SoM: 3/17/2000: Disregard sprites that are out of view..
-	gzt = interp.z + spritecachedinfo[lump].topoffset;
-	gz = gzt - spritecachedinfo[lump].height;
+	gzt = interp.z + SPRCACHE_TOPOFFSET(spritecachedinfo[lump]);
+	gz = gzt - SPRCACHE_HEIGHT(spritecachedinfo[lump]);
 
 	if (thing->subsector->sector->cullheight)
 	{

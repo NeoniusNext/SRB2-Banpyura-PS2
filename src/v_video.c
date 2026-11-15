@@ -1149,6 +1149,68 @@ void V_DrawCroppedPatch(fixed_t x, fixed_t y, fixed_t pscale, fixed_t vscale, IN
 		}
 	}
 
+#ifdef PS2_OPT_DRAW
+	// As in the uncropped drawer, select the exact pixel lookup once per post
+	// and keep its addresses out of the framebuffer's char-alias store loop.
+	{
+		const UINT8 *const scrbase = screens[scrn&V_PARAMMASK];
+		const INT32 vwidth = vid.width;
+		const UINT8 *const cmap = v_colormap;
+		const UINT8 *const tlev = v_translevel;
+		const INT32 kind = (patchdrawfunc == standardpdraw) ? 0 : (patchdrawfunc == mappedpdraw) ? 1 : (patchdrawfunc == translucentpdraw) ? 2 : 3;
+
+		for (col = sx; (col>>FRACBITS) < patch->width && (col - sx) < w; col += colfrac, ++x, desttop++)
+		{
+			if (x < 0)
+				continue;
+			if (x >= vwidth)
+				break;
+
+			column = &patch->columns[col>>FRACBITS];
+			for (unsigned i = 0; i < column->num_posts; i++)
+			{
+				const post_t *post = &column->posts[i];
+				const size_t plen = post->length;
+				const fixed_t topdelta = post->topdelta << FRACBITS;
+				source = column->pixels + post->data_offset;
+				dest = desttop;
+				if (topdelta - sy > 0)
+				{
+					dest += FixedInt(FixedMul(topdelta-sy,vdup))*vwidth;
+					ofs = 0;
+				}
+				else
+					ofs = sy - topdelta;
+
+#define PS2_V_CROPPED_POSTLOOP(PIXEL) \
+				for (; dest < deststop && (size_t)(ofs>>FRACBITS) < plen && ((ofs - sy) + topdelta) < h; ofs += rowfrac) \
+				{ \
+					if (dest >= scrbase) \
+						*dest = (PIXEL); \
+					dest += vwidth; \
+				}
+				switch (kind)
+				{
+				case 0:
+					PS2_V_CROPPED_POSTLOOP(source[ofs>>FRACBITS])
+					break;
+				case 1:
+					PS2_V_CROPPED_POSTLOOP(*(cmap + source[ofs>>FRACBITS]))
+					break;
+				case 2:
+					PS2_V_CROPPED_POSTLOOP(*(tlev + ((source[ofs>>FRACBITS]<<8)&0xff00) + (*dest&0xff)))
+					break;
+				default:
+					PS2_V_CROPPED_POSTLOOP(*(tlev + (((*(cmap + source[ofs>>FRACBITS]))<<8)&0xff00) + (*dest&0xff)))
+					break;
+				}
+#undef PS2_V_CROPPED_POSTLOOP
+			}
+		}
+		return;
+	}
+#endif
+
 	for (col = sx; (col>>FRACBITS) < patch->width && (col - sx) < w; col += colfrac, ++x, desttop++)
 	{
 		if (x < 0) // don't draw off the left of the screen (WRAP PREVENTION)

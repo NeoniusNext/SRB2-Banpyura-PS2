@@ -146,7 +146,9 @@ static pkstream_t pkst[PK_STREAMS];
 static unsigned pkst_next;
 
 // All reads below bounce through 64-byte aligned buffers and whole-sector requests. Caller buffers may be unaligned.
-static UINT8 *iobuf, *cbuf, *sbuf; // iobuf: bounce of the bulk reads (indexes, big spans)
+// iobuf also holds a decoded middle-block read: its device read has finished before
+// LZ4 starts, and the requested bytes are copied out before any further I/O.
+static UINT8 *iobuf, *cbuf;
 
 static struct { UINT32 cmds, hits, misses, bulk, retries, failures, injected; UINT64 bytes; } pks;
 static char pk_err[320];
@@ -581,7 +583,7 @@ void WPack_PrefetchDrop(void)
 
 void WPack_PrefetchAdd(FILE *fp, const lumpinfo_t *l)
 {
-	if (!fp || !l || !l->disksize || l->disksize > 98304 || l->position > LONG_MAX)
+	if (!fp || !l || !l->disksize || l->disksize > 98304 || W_LumpPosition(l) > LONG_MAX)
 		return;
 	if (l->compression != CM_NOCOMPRESSION && l->compression != CM_LZ4)
 		return;
@@ -596,7 +598,7 @@ void WPack_PrefetchAdd(FILE *fp, const lumpinfo_t *l)
 		pf.cap = cap;
 	}
 	pf.items[pf.n].fp = fp;
-	pf.items[pf.n].pos = (UINT32)l->position;
+	pf.items[pf.n].pos = (UINT32)W_LumpPosition(l);
 	pf.items[pf.n].disk = (UINT32)l->disksize;
 	pf.items[pf.n].blobofs = 0;
 	pf.n++;
@@ -994,9 +996,9 @@ static boolean AllocBuffers(void)
 {
 	if (!cbuf)
 		cbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
-	if (!sbuf)
-		sbuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
-	return cbuf && sbuf;
+	if (!iobuf)
+		iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+	return cbuf && iobuf;
 }
 
 lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, void **poolp, boolean *nonmusic, wpack_t **packp)
@@ -1087,9 +1089,9 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
 			if (size && h.version < 2)
 				prevend = position + disksize; // v1: payloads follow each other without overlap (v2 stores identical lumps once)
 
-			lump_p->position = position; // final position of the lump data
+			W_InitLumpPosition(lump_p, position); // final position of the lump data
 			lump_p->disksize = disksize;
-			lump_p->diskpath = NULL;
+			W_SetLumpDiskPath(lump_p, NULL);
 			lump_p->size = size;
 
 			full = pool + fullname;
@@ -1193,9 +1195,7 @@ lumpinfo_t *WPack_GetLumps(FILE *handle, const char *filename, UINT16 *nlmp, voi
 
 		if (!s->buf)
 			s->buf = WPACK_ALIGNED_ALLOC(s->pol->cap);
-		AllocBuffers(); // the decode buffers and the bounce buffer too (a failure shows at the first read that needs them)
-		if (!iobuf)
-			iobuf = WPACK_ALIGNED_ALLOC(WPACK_BLOCK);
+		AllocBuffers(); // the decode and bounce buffers too (a failure shows at the first read that needs them)
 	}
 	*nlmp = (UINT16)n;
 	*poolp = pool;
@@ -1217,8 +1217,7 @@ void WPack_Shutdown(void)
 	}
 	free(iobuf);
 	free(cbuf);
-	free(sbuf);
-	iobuf = cbuf = sbuf = NULL;
+	iobuf = cbuf = NULL;
 }
 
 // Delivers decoded bytes [lo, hi) of one block (decoded size bsize, stored in csize bytes at file offset *pos; *pos moves past the block)
@@ -1256,11 +1255,13 @@ static boolean ReadBlock(pkstream_t *s, long *pos, boolean raw, UINT32 csize, UI
 			ok = LZ4_decompress_safe((const char *)src, (char *)dst, (int)csize, (int)bsize) == (int)bsize;
 		else if (lo == 0) // head of the block (patch headers etc): stop as soon as enough is decoded
 			ok = LZ4_decompress_safe_partial((const char *)src, (char *)dst, (int)csize, (int)want, (int)want) == (int)want;
-		else if (LZ4_decompress_safe((const char *)src, (char *)sbuf, (int)csize, (int)bsize) != (int)bsize)
+		// src belongs to the stream window, the prefetch cache or cbuf, never
+		// iobuf. LZ4 and this copy perform no I/O, allocation or engine callbacks.
+		else if (LZ4_decompress_safe((const char *)src, (char *)iobuf, (int)csize, (int)bsize) != (int)bsize)
 			ok = false;
 		else
 		{
-			memcpy(dst, sbuf + lo, want);
+			memcpy(dst, iobuf + lo, want);
 			ok = true;
 		}
 		LP_END(PK_LZ4, lpz);
@@ -1277,6 +1278,21 @@ static boolean ReadBlock(pkstream_t *s, long *pos, boolean raw, UINT32 csize, UI
 	return false;
 }
 
+#ifndef PS2_NOOPT_TEXRETRY
+boolean WPack_CanReadWithoutAlloc(FILE *handle, const lumpinfo_t *l)
+{
+	const pkstream_t *s;
+
+	if (!handle || !l || !iobuf || !cbuf)
+		return false;
+	s = StreamFind(handle); // never create, replace or allocate a stream slot
+	if (!s || !s->buf)
+		return false;
+	return l->compression == CM_NOCOMPRESSION
+		|| (l->compression == CM_LZ4 && l->size <= 64u * WPACK_BLOCK);
+}
+#endif
+
 size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size, size_t offset)
 {
 	UINT8 *out = dest;
@@ -1288,7 +1304,7 @@ size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size
 	size_t done = 0, ahead = 0;
 	pkstream_t *s;
 
-	if (l->size > UINT32_MAX || l->position > LONG_MAX || l->disksize > (unsigned long)LONG_MAX - l->position
+	if (l->size > UINT32_MAX || W_LumpPosition(l) > LONG_MAX || l->disksize > (unsigned long)LONG_MAX - W_LumpPosition(l)
 		|| !dest || !size || offset >= usize || size > usize - offset)
 		return 0;
 	s = StreamFor(handle);
@@ -1297,14 +1313,14 @@ size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size
 	{
 		if (l->disksize != usize)
 			return 0;
-		return ReadAt(s, (long)(l->position + offset), dest, size) ? size : 0;
+		return ReadAt(s, (long)(W_LumpPosition(l) + offset), dest, size) ? size : 0;
 	}
 	if (l->compression != CM_LZ4 || !AllocBuffers())
 		return 0;
 
 	if (usize <= WPACK_BLOCK) // one LZ4 block, no index
 	{
-		long p1 = (long)l->position;
+		long p1 = (long)W_LumpPosition(l);
 
 		return ReadBlock(s, &p1, false, (UINT32)l->disksize, usize, (UINT32)offset, (UINT32)(offset + size), out, 0) ? size : 0;
 	}
@@ -1322,10 +1338,10 @@ size_t WPack_ReadLump(FILE *handle, const lumpinfo_t *l, void *dest, size_t size
 			return 0;
 	}
 
-	if (!ReadAt(s, (long)l->position, idx, nb * sizeof *idx))
+	if (!ReadAt(s, (long)W_LumpPosition(l), idx, nb * sizeof *idx))
 		goto end;
 
-	pos = (long)(l->position + nb * sizeof *idx);
+	pos = (long)(W_LumpPosition(l) + nb * sizeof *idx);
 	remaining = (UINT32)(l->disksize - nb * sizeof *idx);
 	for (b = 0; b < nb; b++) // validate the entire index before delivering even a partial read
 	{
@@ -1368,10 +1384,10 @@ end:
 
 size_t WPack_ReadRaw(FILE *handle, const lumpinfo_t *l, void *dest)
 {
-	if (!l->disksize || !dest || l->position > LONG_MAX || l->disksize > (unsigned long)LONG_MAX - l->position)
+	if (!l->disksize || !dest || W_LumpPosition(l) > LONG_MAX || l->disksize > (unsigned long)LONG_MAX - W_LumpPosition(l))
 		return 0;
 	pk_err[0] = '\0';
-	return ReadAt(StreamFor(handle), (long)l->position, dest, l->disksize) ? l->disksize : 0; // through the window and the retry of the reader (OPT13-IO)
+	return ReadAt(StreamFor(handle), (long)W_LumpPosition(l), dest, l->disksize) ? l->disksize : 0; // through the window and the retry of the reader (OPT13-IO)
 }
 
 boolean WPack_DecodeMem(int compression, const void *src, UINT32 disksize, void *dest, UINT32 size)
