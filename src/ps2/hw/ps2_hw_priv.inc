@@ -198,8 +198,8 @@ static const u32 CAPS[NCAPS] = {0u, 4096u, 1024u, 512u, 256u, 128u, 64u, 32u};
 typedef struct
 {
 	GLMipmap_t *owner;
-	u32 blk; // first 256-byte block in VRAM
-	u32 nblk;
+	u16 blk; // first 256-byte block in VRAM: 0..VRAM_BLOCKS-1, fits the checked u16 range above
+	u16 nblk; // an admitted image occupies at most VRAM_BLOCKS (including GS page/block holes)
 	u16 w, h; // exact engine texel dimensions; unsupported sizes fail without resampling
 	u8 tw, th; // log2 of the power of two >= w, h (TEX0 TW/TH)
 	u8 tbw;
@@ -220,7 +220,7 @@ typedef struct
 	u32 ws; // frame_no + 1 of the last frame that counted the texture into the working set statistics
 	u32 wgt; // eviction weight per block, set by best_window()
 	int prev, next; // LRU list, indices into the table (-1 = none)
-	u32 uw, vh; // the used part of a screen texture in texels
+	u16 uw, vh; // used dimensions: <=16384 with AP88 crop, <=1024 for other images, split pieces and captures
 	float sxs, sys; // engine texture coordinate -> GS ST scale: w / 2^tw, h / 2^th (1 for power of two sizes)
 	u16 sw, sh; // OPT8: the engine's size of the texture (the stored size is w x h = sw >> dx, sh >> dy)
 	u8 dx, dy; // decimation shifts of the stored texture
