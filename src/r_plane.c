@@ -686,9 +686,32 @@ visplane_t *R_CheckPlane(visplane_t *pl, INT32 start, INT32 stop)
 	}
 
 	// 0xff is not equal to -1 with shorts...
+#if defined(PS2_OPT_REND) && !defined(PS2_NOOPT_CHECKPLANE_CURSOR)
+	x = intrl;
+	if (x <= intrh)
+	{
+		const UINT16 *top = pl->top + x;
+		if (*top == 0xffff)
+		{
+			// Read the bottom address only after the first top accepts it.
+			// Both strips stay live and retain the original top/bottom order.
+			const UINT16 *bottom = pl->bottom + x;
+			do
+			{
+				if (*bottom != 0x0000)
+					break;
+				if (++x > intrh)
+					break;
+				top++;
+				bottom++;
+			} while (*top == 0xffff);
+		}
+	}
+#else
 	for (x = intrl; x <= intrh; x++)
 		if (pl->top[x] != 0xffff || pl->bottom[x] != 0x0000)
 			break;
+#endif
 
 	if (x > intrh) /* Can use existing plane; extend range */
 	{
