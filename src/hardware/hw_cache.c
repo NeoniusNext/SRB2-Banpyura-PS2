@@ -16,6 +16,9 @@
 #include "hw_glob.h"
 #include "hw_drv.h"
 #include "hw_batching.h"
+#if defined(PS2) && !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+#include "../ps2/hw/ps2_hwd.h"
+#endif
 
 #include "../doomstat.h"    //gamemode
 #include "../i_video.h"     //rendermode
@@ -2243,6 +2246,14 @@ UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
 	else
 		colormap_pointer = colormap->colormap;
 
+#if defined(PS2) && !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+	// The GS keeps only canonical palette indices. Submit the same forward
+	// palette so the driver preserves the original RGB-to-lowest-index roundtrip.
+	if (!colormap->gl_lighttable.id)
+		colormap->gl_lighttable.id = PS2HWD_CreateIndexedLightTable(colormap_pointer, HWR_GetTexturePalette());
+	else if (colormap->gl_lighttable.needs_update)
+		PS2HWD_UpdateIndexedLightTable(colormap->gl_lighttable.id, colormap_pointer, HWR_GetTexturePalette());
+#else
 	// create hw lighttable if there isn't one
 	if (colormap->gl_lighttable.data == NULL)
 	{
@@ -2259,6 +2270,7 @@ UINT32 HWR_GetLightTableID(extracolormap_t *colormap)
 	{
 		HWR_UpdateLightTable(colormap->gl_lighttable.id, colormap_pointer, colormap->gl_lighttable.data);
 	}
+#endif
 
 	colormap->gl_lighttable.needs_update = false;
 

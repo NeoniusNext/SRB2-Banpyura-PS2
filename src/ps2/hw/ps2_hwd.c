@@ -2064,7 +2064,11 @@ static UINT32 hw_CreateLightTable(RGBA_t *hw_lighttable)
 {
 	if (!H.up)
 		return 0;
+#if defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
 	return lt_store(0, hw_lighttable);
+#else
+	return lt_store(0, hw_lighttable, NULL);
+#endif
 }
 
 static void hw_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
@@ -2072,7 +2076,11 @@ static void hw_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
 	if (H.up && id && id < LT_MAX && lt_idx[id])
 	{
 		ov_flush_all(); // queued draws use the old rows
+#if defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
 		lt_store(id, hw_lighttable);
+#else
+		lt_store(id, hw_lighttable, NULL);
+#endif
 	}
 }
 
@@ -2082,6 +2090,24 @@ static void hw_ClearLightTables(void)
 		ov_flush_all();
 	lt_clear();
 }
+
+#if !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+UINT32 PS2HWD_CreateIndexedLightTable(const UINT8 *indices, const RGBA_t *palette)
+{
+	if (!H.up)
+		return 0;
+	return lt_store(0, palette, indices);
+}
+
+void PS2HWD_UpdateIndexedLightTable(UINT32 id, const UINT8 *indices, const RGBA_t *palette)
+{
+	if (H.up && id && id < LT_MAX && lt_idx[id])
+	{
+		ov_flush_all();
+		lt_store(id, palette, indices);
+	}
+}
+#endif
 
 static void hw_SetScreenPalette(RGBA_t *palette)
 {
