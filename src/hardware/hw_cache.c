@@ -1008,16 +1008,31 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 //             CACHING HANDLING
 // =================================================
 
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTURE_PAGES)
+#define HWR_TEXTURE_PAGES
+#define HWR_TEXTURE_PAGE_SIZE 16u
+#endif
+
 static size_t gl_numtextures = 0; // Texture count
+#ifdef HWR_TEXTURE_PAGES
+// Allocate stable records only for pages that are actually selected. Every
+// texture number remains addressable, and live pages never move or shrink.
+static GLMapTexture_t **gl_textures;
+static void **gl_flats;
+#else
 static GLMapTexture_t *gl_textures; // For all textures
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
-// Flats only use their mipmap. Keep the full table allocated up front, but omit
-// wall-only scales on the default PB path. The legacy collector sorts by raw
-// texture pointers, so -hwgo 65536 must retain its original allocation/stride.
 static void *gl_flats;
+#else
+static GLMapTexture_t *gl_flats;
+#endif
+#endif
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 // Zero keeps the original stride, including after initialization/reset.
 static size_t gl_flats_cut;
+#endif
 
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 static boolean HWR_UseCompactFlatMetadata(void)
 {
 	INT32 i;
@@ -1035,15 +1050,76 @@ static boolean HWR_UseCompactFlatMetadata(void)
 	}
 	return true;
 }
+#endif
 
+#ifdef HWR_TEXTURE_PAGES
+static size_t HWR_TexturePageCount(void)
+{
+	return gl_numtextures / HWR_TEXTURE_PAGE_SIZE + (gl_numtextures % HWR_TEXTURE_PAGE_SIZE != 0);
+}
+
+static void *HWR_AllocateTexturePage(size_t page, size_t stride)
+{
+	size_t count = gl_numtextures - page * HWR_TEXTURE_PAGE_SIZE;
+	void *records;
+
+	if (count > HWR_TEXTURE_PAGE_SIZE)
+		count = HWR_TEXTURE_PAGE_SIZE;
+	records = calloc(count, stride);
+	if (!records)
+	{
+		Z_GuardThrow("HWR_AllocateTexturePage: ran out of memory for texture metadata");
+		I_Error("HWR_AllocateTexturePage: ran out of memory for texture metadata");
+	}
+	return records;
+}
+
+static inline GLMapTexture_t *HWR_MapTexture(size_t n, boolean create)
+{
+	const size_t page = n / HWR_TEXTURE_PAGE_SIZE;
+	GLMapTexture_t *records = gl_textures[page];
+
+	if (!records && create)
+	{
+		records = HWR_AllocateTexturePage(page, sizeof(*records));
+		gl_textures[page] = records;
+	}
+	return records ? &records[n % HWR_TEXTURE_PAGE_SIZE] : NULL;
+}
+
+static inline GLMipmap_t *HWR_FindFlatMipmap(size_t n, boolean create)
+{
+	const size_t page = n / HWR_TEXTURE_PAGE_SIZE;
+	const size_t stride = sizeof(GLMapTexture_t) - gl_flats_cut;
+	void *records = gl_flats[page];
+
+	if (!records && create)
+	{
+		records = HWR_AllocateTexturePage(page, stride);
+		gl_flats[page] = records;
+	}
+	return records ? (GLMipmap_t *)((UINT8 *)records + (n % HWR_TEXTURE_PAGE_SIZE) * stride) : NULL;
+}
+
+static inline GLMipmap_t *HWR_FlatMipmap(size_t n)
+{
+	return HWR_FindFlatMipmap(n, true);
+}
+#else
+static inline GLMapTexture_t *HWR_MapTexture(size_t n, boolean create)
+{
+	(void)create;
+	return &gl_textures[n];
+}
+
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 static inline GLMipmap_t *HWR_FlatMipmap(size_t n)
 {
 	const size_t stride = sizeof(GLMapTexture_t) - gl_flats_cut;
 
 	return (GLMipmap_t *)((UINT8 *)gl_flats + n * stride);
 }
-#else
-static GLMapTexture_t *gl_flats; // For all (texture) flats, as normal flats don't need to be cached
+#endif
 #endif
 boolean gl_maptexturesloaded = false;
 
@@ -1054,9 +1130,12 @@ UINT32 hwr_texsig = 1; // OPT13 IR: a number that changes whenever a word of HWR
 // an input of the geometry cache key. tex is a translated texture number (R_GetTextureNum).
 UINT32 HWR_PS2_TexTransparent(INT32 tex)
 {
+	const GLMapTexture_t *grtex;
+
 	if (!gl_textures || tex < 0 || tex >= (signed)gl_numtextures)
 		return 0;
-	return (gl_textures[tex].mipmap.flags & TF_TRANSPARENT) ? 1u : 0u;
+	grtex = HWR_MapTexture((size_t)tex, false);
+	return (grtex && (grtex->mipmap.flags & TF_TRANSPARENT)) ? 1u : 0u;
 }
 
 // The word of a side texture in the key of the cache: the translated number (texture animation) and the TF_TRANSPARENT bit of its mipmap; 0 for no texture. One call for
@@ -1064,13 +1143,16 @@ UINT32 HWR_PS2_TexTransparent(INT32 tex)
 UINT32 HWR_PS2_SideTexWord(INT32 raw)
 {
 	INT32 t;
+	const GLMapTexture_t *grtex = NULL;
 
 	if (raw < 0 || raw >= numtextures)
 		return 0;
 	t = texturetranslation[raw];
 	if (!t)
 		return 0;
-	return (UINT32)t | ((gl_textures && t > 0 && t < (signed)gl_numtextures && (gl_textures[t].mipmap.flags & TF_TRANSPARENT)) ? 0x80000000u : 0u);
+	if (gl_textures && t > 0 && t < (signed)gl_numtextures)
+		grtex = HWR_MapTexture((size_t)t, false);
+	return (UINT32)t | ((grtex && (grtex->mipmap.flags & TF_TRANSPARENT)) ? 0x80000000u : 0u);
 }
 #endif
 
@@ -1204,7 +1286,7 @@ void HWR_InitMapTextures(void)
 {
 	gl_textures = NULL;
 	gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	gl_flats_cut = 0;
 #endif
 	gl_maptexturesloaded = false;
@@ -1230,7 +1312,7 @@ static void FreeMapTexture(GLMapTexture_t *tex, boolean delete_chromakeys)
 	DeleteTextureMipmap(&tex->mipmap, true);
 }
 
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 static void FreeFlatMipmap(GLMipmap_t *mipmap)
 {
 	if (mipmap->nextcolormap)
@@ -1254,23 +1336,45 @@ void HWR_FreeMapTextures(void)
 
 	for (i = 0; i < gl_numtextures; i++)
 	{
+#ifdef HWR_TEXTURE_PAGES
+		GLMapTexture_t *wall = HWR_MapTexture(i, false);
+		GLMipmap_t *flat = HWR_FindFlatMipmap(i, false);
+
+		// Untouched pages never gave the driver a texture or a zone owner.
+		// Existing pages retain the original delete-before-data-free order,
+		// including the driver's DMA fence and child/primary ordering.
+		if (wall)
+			FreeMapTexture(wall, true);
+		if (flat)
+			FreeFlatMipmap(flat);
+#else
 		FreeMapTexture(&gl_textures[i], true);
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 		FreeFlatMipmap(HWR_FlatMipmap(i));
 #else
 		FreeMapTexture(&gl_flats[i], false);
 #endif
+#endif
 	}
 
 	// now the heap don't have any 'user' pointing to our
 	// texturecache info, we can free it
+#ifdef HWR_TEXTURE_PAGES
+	for (i = 0; i < HWR_TexturePageCount(); i++)
+	{
+		if (gl_textures)
+			free(gl_textures[i]);
+		if (gl_flats)
+			free(gl_flats[i]);
+	}
+#endif
 	if (gl_textures)
 		free(gl_textures);
 	if (gl_flats)
 		free(gl_flats);
 	gl_textures = NULL;
 	gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	gl_flats_cut = 0;
 #endif
 	gl_numtextures = 0;
@@ -1290,11 +1394,16 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 	gl_flats_cut = HWR_UseCompactFlatMetadata() ? sizeof(GLMapTexture_t) - sizeof(GLMipmap_t) : 0;
 #endif
+#ifdef HWR_TEXTURE_PAGES
+	gl_textures = calloc(HWR_TexturePageCount(), sizeof(*gl_textures));
+	gl_flats = calloc(HWR_TexturePageCount(), sizeof(*gl_flats));
+#else
 	gl_textures = calloc(gl_numtextures, sizeof(*gl_textures));
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 	gl_flats = calloc(gl_numtextures, sizeof(GLMapTexture_t) - gl_flats_cut);
 #else
 	gl_flats = calloc(gl_numtextures, sizeof(*gl_flats));
+#endif
 #endif
 #ifdef PS2_PROFILE
 	{
@@ -1307,7 +1416,7 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 		{
 			free(gl_flats);
 			gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	gl_flats_cut = 0;
 #endif
 		}
@@ -1321,8 +1430,9 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 		// tables are given back and the level goes on in software (the stab_run.sh hwfb chain ended here, at map 23, with the start before this change as well)
 		free(gl_textures);
 		free(gl_flats);
-		gl_textures = gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+		gl_textures = NULL;
+		gl_flats = NULL;
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 		gl_flats_cut = 0;
 #endif
 		gl_numtextures = 0;
@@ -1350,7 +1460,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 	if (tex < 0 || tex >= (signed)gl_numtextures)
 		tex = 0;
 
-	grtex = &gl_textures[tex];
+	grtex = HWR_MapTexture((size_t)tex, true);
 	grMipmap = originalMipmap = &grtex->mipmap;
 
 	if (!originalMipmap->downloaded)
@@ -1521,7 +1631,7 @@ static void MakeLevelFlatMipmap(GLMipmap_t *grMipmap, INT32 texturenum, UINT16 f
 void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 {
 	INT32 texturenum;
-#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
+#if !defined(HWR_TEXTURE_PAGES) && !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	GLMapTexture_t *grtex;
 #endif
 	GLMipmap_t *grMipmap, *originalMipmap;
@@ -1533,7 +1643,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 	}
 
 	texturenum = texturetranslation[levelflat->texture_id];
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	grMipmap = originalMipmap = HWR_FlatMipmap((size_t)texturenum);
 #else
 	grtex = &gl_flats[texturenum];
@@ -1575,7 +1685,7 @@ void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 	if (m->regen_kind == 1)
 	{
 		if (m->regen_id >= 0 && (size_t)m->regen_id < gl_numtextures && gl_textures)
-			HWR_GenerateTexture(m->regen_id, &gl_textures[m->regen_id], m);
+			HWR_GenerateTexture(m->regen_id, HWR_MapTexture((size_t)m->regen_id, true), m);
 	}
 	else if (m->regen_kind == 2)
 	{
@@ -1642,7 +1752,7 @@ static void HWR_WarmTexture(INT32 tex)
 
 	if (!gl_textures || tex < 0 || (size_t)tex >= gl_numtextures || !textures[tex])
 		return;
-	grtex = &gl_textures[tex];
+	grtex = HWR_MapTexture((size_t)tex, true);
 	m = &grtex->mipmap;
 	if (m->data || m->downloaded)
 		return;

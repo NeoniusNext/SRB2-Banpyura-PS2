@@ -53,6 +53,33 @@ typedef struct GLColormap_s GLColormap_t;
 // NULL if the texture is not in SRB2's heap cache.
 struct GLMipmap_s
 {
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_MIPMAP_LAYOUT) && !defined(PS2_NOOPT_MIPMAP_STORAGE)
+	// The format and flag sets fit in bytes. Keep handles, indices, dimensions,
+	// pointers and frame counters full width; only the bounded status fields
+	// share a byte. On EE this takes 68 bytes instead of 76.
+	UINT32                downloaded;
+	void                 *data;
+	struct GLMipmap_s    *nextcolormap;
+	struct GLColormap_s  *colormap;
+	INT32                 regen_id;
+	struct GLMipmap_s    *ps2_twin;
+	UINT32                ps2_planfr;
+	UINT32                ps2_ihfr, ps2_imfr;
+	UINT32                ps2_full_fr;
+	UINT32                ps2_gcv;
+	UINT32                ps2_spv;
+	UINT16                height, width;
+	UINT16                ps2_pi;
+	UINT16                ps2_uw, ps2_uh;
+	UINT8                 format; // GLTextureFormat_t: 0 or 0x01..0x22.
+	UINT8                 flags; // ETextureFlags: wrap, chroma key, transparency.
+	UINT8                 ps2_want, ps2_ihint;
+	UINT8                 ps2_nup, ps2_cost;
+	UINT8                 regen_kind : 2; // 0 patch, 1 map texture, 2 flat.
+	UINT8                 ps2_h255 : 2; // 0 unknown, 1 absent, 2 present.
+	UINT8                 ps2_vis : 1; // At least one visible polygon.
+	UINT8                 ps2_drop : 3; // 0 none; reasons 1..5.
+#else
 	// for UpdateTexture
 	GLTextureFormat_t     format;
 	void                 *data;
@@ -108,6 +135,7 @@ struct GLMipmap_s
 	UINT32                ps2_spv; // OPT13 IS (PS2-HW-700): the sprite view (hw_main.c hwr_fx_view) whose fused sprite draw last made this texture current (touch and tag change once per view)
 	UINT8                 ps2_nup, ps2_drop; // OPT12 HWDRV (PS2-HW-441): uploads of this texture so far (saturating) / why its VRAM image was dropped last (1 evicted, 2 upgrade, 3 downgrade, 4 cap, 5 other)
 	UINT8                 ps2_cost; // OPT12 HWDRV (PS2-HW-442): what the last make-again of its data cost, in units of 2^18 cycles (0 = never made again, 255 = more)
+#endif
 #endif
 #endif
 };
