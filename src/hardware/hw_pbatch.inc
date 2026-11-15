@@ -63,8 +63,19 @@ typedef struct
 static hwr_qw_t *pb_pool;
 static UINT32 pb_wr, pb_cap; // quadwords
 static hwr_pbe_t *pb_ent;
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PB_SCRATCH)
+// The planner consumes every (block, bucket) pair before the draw walk writes its
+// offsets. One UINT32 allocation holds both phases, with two words per planner
+// entry and one word per walk entry. No planner entry survives the plan pass.
+static UINT32 *pb_plan;
+#define HWR_PB_PLAN_BLK(i) pb_plan[2u * (i)]
+#define HWR_PB_PLAN_BUCKET(i) pb_plan[2u * (i) + 1u]
+#else
 static hwr_pbp_t *pb_plan;
 static UINT32 *pb_walk;
+#define HWR_PB_PLAN_BLK(i) pb_plan[(i)].blk
+#define HWR_PB_PLAN_BUCKET(i) pb_plan[(i)].bucket
+#endif
 static UINT32 pb_n, pb_ecap, pb_nplan;
 static hwr_pbk_t *pb_bk;
 static unsigned long long *pb_sk;
@@ -140,7 +151,9 @@ static void HWR_PBAlloc(void)
 	pb_pool = HWR_BatchAlloc((size_t)pb_cap * sizeof(hwr_qw_t));
 	pb_ent = HWR_BatchAlloc((size_t)pb_ecap * sizeof(hwr_pbe_t));
 	pb_plan = HWR_BatchAlloc((size_t)pb_ecap * sizeof(hwr_pbp_t));
+#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
 	pb_walk = HWR_BatchAlloc((size_t)pb_ecap * sizeof(UINT32));
+#endif
 	pb_bk = HWR_BatchAlloc((size_t)pb_bcap * sizeof(hwr_pbk_t));
 	pb_sk = HWR_BatchAlloc((size_t)pb_bcap * sizeof(unsigned long long));
 	pb_wr = pb_n = pb_nplan = pb_nb = 0;
@@ -160,13 +173,17 @@ static void HWR_PBFree(void)
 	Z_Free(pb_pool);
 	Z_Free(pb_ent);
 	Z_Free(pb_plan);
+#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
 	Z_Free(pb_walk);
+#endif
 	Z_Free(pb_bk);
 	Z_Free(pb_sk);
 	pb_pool = NULL;
 	pb_ent = NULL;
 	pb_plan = NULL;
+#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
 	pb_walk = NULL;
+#endif
 	pb_bk = NULL;
 	pb_sk = NULL;
 	pb_wr = pb_cap = pb_n = pb_ecap = pb_nplan = pb_nb = pb_bcap = 0;
@@ -218,7 +235,9 @@ static int __attribute__((noinline)) HWR_PBGrow(UINT32 need, int soft)
 			pb_pool = HWR_BatchResize(pb_pool, (size_t)c * sizeof(hwr_qw_t));
 		pb_ent = HWR_BatchResize(pb_ent, (size_t)e * sizeof(hwr_pbe_t));
 		pb_plan = HWR_BatchResize(pb_plan, (size_t)e * sizeof(hwr_pbp_t));
+#if !defined(PS2) || !defined(PS2_PROFILE) || defined(PS2_NOOPT_PB_SCRATCH)
 		pb_walk = HWR_BatchResize(pb_walk, (size_t)e * sizeof(UINT32));
+#endif
 		pb_cap = c;
 		pb_ecap = e;
 	}
@@ -450,8 +469,8 @@ static inline __attribute__((always_inline)) void HWR_PBPut(hwr_pbk_t *b, UINT32
 	b->cnt++;
 	if (b->planwant)
 	{
-		pb_plan[pb_nplan].blk = blk;
-		pb_plan[pb_nplan].bucket = bi;
+		HWR_PB_PLAN_BLK(pb_nplan) = blk;
+		HWR_PB_PLAN_BUCKET(pb_nplan) = bi;
 		pb_nplan++;
 	}
 	pb_n = pidx + 1;
@@ -534,7 +553,7 @@ static void HWR_PBPlanPass(void)
 #endif
 	PS2HWD_PlanBegin();
 	for (k = 0; k < pb_nplan; k++)
-		PS2HWD_PlanBlock(pb_bk[pb_plan[k].bucket].texture, pb_pool + pb_plan[k].blk);
+		PS2HWD_PlanBlock(pb_bk[HWR_PB_PLAN_BUCKET(k)].texture, pb_pool + HWR_PB_PLAN_BLK(k));
 	PS2HWD_PlanEnd();
 #ifdef PS2_PROFILE
 	HWP_SPAN_END2(tb_plan, HWP_B_PLAN, HWP_KB_PLAN);
@@ -670,6 +689,9 @@ static int HWR_PBRender(void)
 	ps_hw_numshaders.value.i = ps_hw_numtextures.value.i = ps_hw_numpolyflags.value.i = ps_hw_numcolors.value.i = 1;
 	HWR_PBPlanPass();
 	{
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PB_SCRATCH)
+		UINT32 *const pb_walk = pb_plan;
+#endif
 		HWP_SPAN_BEGIN(tb_draw);
 		PS_START_TIMING(ps_hw_batchdrawtime);
 
@@ -1195,8 +1217,8 @@ const UINT8 *HWR_GCReplayRun(const UINT8 *p, const UINT8 *end, UINT32 view, GLMi
 			b->cnt++;
 			if (b->planwant)
 			{
-				pb_plan[pb_nplan].blk = blk;
-				pb_plan[pb_nplan].bucket = bi;
+				HWR_PB_PLAN_BLK(pb_nplan) = blk;
+				HWR_PB_PLAN_BUCKET(pb_nplan) = bi;
 				pb_nplan++;
 			}
 			pb_n = pidx + 1;
