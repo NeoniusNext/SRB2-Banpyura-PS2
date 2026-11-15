@@ -686,7 +686,7 @@ visplane_t *R_CheckPlane(visplane_t *pl, INT32 start, INT32 stop)
 	}
 
 	// 0xff is not equal to -1 with shorts...
-#if defined(PS2_OPT_REND) && !defined(PS2_NOOPT_CHECKPLANE_CURSOR)
+#if defined(PS2_OPT_REND) && defined(NOHW) && !defined(PS2_NOOPT_CHECKPLANE_CURSOR)
 	x = intrl;
 	if (x <= intrh)
 	{
