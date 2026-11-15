@@ -42,6 +42,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
+#include "../ps2_activity.h"
 #include "../ps2_sys.h" // PS2_SleepUs (OPT12 NET-3)
 #include "../ps2_models.h" // PS2Models_TryAlloc (the model work areas)
 
@@ -508,6 +509,8 @@ void PS2HWD_Shutdown(void)
 	scratch_cap = 0;
 	if (H.gs)
 		gsKit_deinit_global(H.gs);
+	if (PS2_ACTIVITY_ON)
+		PS2Activity_RendererReset(cyc());
 	memset(&H, 0, sizeof H);
 	hwbig_free();
 }

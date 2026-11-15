@@ -21,6 +21,7 @@
 #include <rom0_info.h>
 
 #include "ps2_gs.h"
+#include "ps2_activity.h"
 
 #define CLUT_BYTES 8192 // 1 KB used, a whole page so nothing else shares it
 
@@ -195,6 +196,8 @@ static void dma_start(const u64 *start)
 	*D2_QWC = 0;
 	*D2_TADR = phys(start);
 	__asm__ volatile("sync.l");
+	if (PS2_ACTIVITY_ON)
+		PS2Activity_GpuSubmit(count());
 	*D2_CHCR = CHCR_START_CHAIN;
 	__asm__ volatile("sync.p");
 }
@@ -203,27 +206,46 @@ static void dma_start(const u64 *start)
 static int dma_wait(void)
 {
 	u32 t0 = count();
+	const unsigned activity = PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), t0);
 	while (*D2_CHCR & CHCR_STR)
 	{
 		if ((u32)(count() - t0) > SPIN_LIMIT)
 		{
+			PS2_ACTIVITY_IDLE_END(activity, count());
 			g.st.timeouts++;
 			return 0;
 		}
 	}
+	PS2_ACTIVITY_IDLE_END(activity, count());
 	return 1;
 }
 
 static int finish_wait(void)
 {
 	u32 t0 = count();
+	const unsigned activity = PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), t0);
+	unsigned gpu_token = 0;
+	if (PS2_ACTIVITY_ON)
+	{
+		u32 irq = DIntr();
+		gpu_token = PS2Activity_GpuToken();
+		if (irq) EIntr();
+	}
 	while (!(*GS_CSR & 2))
 	{
 		if ((u32)(count() - t0) > SPIN_LIMIT)
 		{
+			PS2_ACTIVITY_IDLE_END(activity, count());
 			g.st.timeouts++;
 			return 0;
 		}
+	}
+	PS2_ACTIVITY_IDLE_END(activity, count());
+	if (PS2_ACTIVITY_ON)
+	{
+		u32 irq = DIntr();
+		PS2Activity_GpuFinish(gpu_token, count());
+		if (irq) EIntr();
 	}
 	return 1;
 }
@@ -265,6 +287,8 @@ static int vblank_handler(int cause)
 	if (g.pend && (*GS_CSR & 2)) // the frame is completely drawn: show it
 	{
 		int b = g.pend_buf;
+		if (PS2_ACTIVITY_ON)
+			PS2Activity_GpuFinish(PS2Activity_GpuToken(), count());
 		GS_SET_DISPFB2(g.fb[b] / 8192, g.stride / 64, GS_PSM_CT32, 0, 0);
 		g.disp = b;
 		g.pend = 0;
@@ -457,6 +481,8 @@ void ps2gs_shutdown(void)
 		staging = NULL;
 		staging_bytes = 0;
 	}
+	if (PS2_ACTIVITY_ON)
+		PS2Activity_RendererReset(count());
 	packet.valid = 0;
 }
 
@@ -553,14 +579,17 @@ void ps2gs_set_filter(int linear)
 
 void ps2gs_wait_vblank(int n)
 {
+	unsigned activity;
 	if (!g.up)
 		return;
+	activity = n > 0 ? PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), count()) : 0;
 	while (n-- > 0)
 	{
 		while (PollSema(g.sema) == g.sema)
 			; // drop vblanks that passed already
 		WaitSema(g.sema);
 	}
+	PS2_ACTIVITY_IDLE_END(activity, count());
 }
 
 // Everything the GS needs for one frame, in one chain:

@@ -1470,7 +1470,7 @@ static menuitem_t OP_VideoOptionsMenu[] =
 	{IT_HEADER, NULL, "Diagnostic", NULL, VOFS(184)},
 	{IT_STRING | IT_CVAR, NULL, "Show FPS",                  &cv_ticrate,         VOFS(190)},
 #ifdef PS2
-	{IT_STRING | IT_CVAR, NULL, "Show RAM/VRAM",             &cv_showmem,         VOFS(195)}, // OPT11-MEM (PS2-HW-300): the items below move down by VOFM
+	{IT_STRING | IT_CVAR, NULL, "Show RAM/VRAM/CPU/GPU",             &cv_showmem,         VOFS(195)}, // OPT11-MEM (PS2-HW-300): the items below move down by VOFM
 #endif
 	{IT_STRING | IT_CVAR, NULL, "Clear Before Redraw",       &cv_homremoval,      VOFM(195)},
 	{IT_STRING | IT_CVAR, NULL, "Show \"FOCUS LOST\"",       &cv_showfocuslost,   VOFM(200)},

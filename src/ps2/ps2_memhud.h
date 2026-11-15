@@ -1,6 +1,6 @@
 // SRB2 PS2 port: showmem, the RAM / VRAM counter drawn like the FPS counter (OPT11-MEM, PS2-HW-300..).
 //
-// cv_showmem Off / On (RAM and VRAM) / RAM / VRAM. Off costs one compare in I_FinishUpdate: nothing is sampled, formatted or drawn.
+// cv_showmem keeps Off=0 / On=1 / RAM=2 / VRAM=3; each enabled mode also shows CPU/GPU~. Off gates activity hooks before clock reads; nothing is sampled, formatted or drawn each frame.
 // The numbers are read from counters the engine keeps anyway (zone arena totals, the C heap break, the GS texture pool block count), a few
 // times a second; the text is built with integer arithmetic into static buffers (no allocation, no float printf) and drawn every frame with
 // the small font in the lower right corner above the FPS counter (and above the ping display when that is shown).
@@ -19,6 +19,8 @@ typedef struct
 	unsigned vram_total, vram_used; // KiB: the GS memory (4 MiB) and what is taken
 	unsigned vram_fb, vram_z, vram_clut; // KiB: frame buffers (both), Z buffer (hardware renderer), CLUT area (hardware) / CLUT page (software)
 	unsigned vram_tex_total, vram_tex_used, vram_ws; // KiB: hardware renderer: the texture pool, its allocation, the last frame's working set; software: the source texture (used = total)
+	unsigned cpu_percent, gpu_percent; // 0..100: foreground EE activity / observed GS queue span (GPU~)
+	int cpu_valid, gpu_valid;
 	int hw; // the hardware renderer's driver is up (vram_tex_* describe its pool)
 	int ram_level, vram_level; // 0 fine, 1 getting tight (yellow), 2 critical (red)
 } ps2memhud_t;

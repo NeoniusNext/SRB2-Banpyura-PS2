@@ -5,8 +5,9 @@
 // See the 'LICENSE' file for more details.
 //-----------------------------------------------------------------------------
 /// \file  ps2_memhud.c
-/// \brief OPT11-MEM: showmem, the RAM / VRAM counter drawn like the FPS counter. See ps2_memhud.h.
+/// \brief showmem: RAM/VRAM and foreground CPU / observed GPU~ queue activity. See ps2_memhud.h.
 
+#include <kernel.h>
 #include "../doomdef.h"
 #include "../doomstat.h"
 #include "../command.h"
@@ -26,6 +27,7 @@
 #include "ps2_mem.h"
 #include "ps2_gs.h"
 #include "ps2_memhud.h"
+#include "ps2_activity.h"
 #ifdef HWRENDER
 #include "hw/ps2_hwd_dbg.h"
 #endif
@@ -83,6 +85,16 @@ void PS2MemHud_Sample(ps2memhud_t *o)
 	o->libc_free = (unsigned)(libc >> 10);
 	o->ram_level = o->zone_free < RAM_RED_KIB ? 2 : o->zone_free < RAM_YELLOW_KIB ? 1 : 0; // the zone is what runs out: the C heap's room does not help a zone allocation
 
+	{
+		ps2activity_sample_t activity;
+		const unsigned irq = DIntr();
+		PS2Activity_Sample(PS2Mem_Cycles(), &activity);
+		if (irq) EIntr();
+		o->cpu_percent = activity.cpu_percent;
+		o->gpu_percent = activity.gpu_percent;
+		o->cpu_valid = (int)activity.cpu_valid;
+		o->gpu_valid = (int)activity.gpu_valid;
+	}
 	o->vram_total = 4096;
 #ifdef HWRENDER
 	if (rendermode == render_opengl)
@@ -170,7 +182,7 @@ static char *put_mb(char *p, unsigned kib)
 
 typedef struct
 {
-	char label[8], main[28], detail[40];
+	char label[8], main[28], detail[64];
 	int lw, mw, dw; // widths in base units
 	int level;
 } memline_t;
@@ -291,6 +303,29 @@ static void line_vram2(memline_t *l, const ps2memhud_t *m)
 	l->level = m->vram_level;
 }
 
+// The GS has no hardware utilization counter. GPU~ is observed queue-span time.
+static void line_activity(memline_t *l, const ps2memhud_t *m)
+{
+	char *p;
+	strcpy(l->label, "CPU");
+	p = l->main;
+	*p++ = ' ';
+	p = put_u(p, m->cpu_percent);
+	*p++ = '%';
+	*p = 0;
+	p = l->detail;
+	p = put_s(p, "  GPU~ ");
+	if (m->gpu_valid)
+	{
+		p = put_u(p, m->gpu_percent);
+		*p++ = '%';
+	}
+	else
+		p = put_s(p, "N/A");
+	*p = 0;
+	l->level = 0;
+}
+
 // the width of a string in the thin font, as V_DrawFontStringAtFixed advances (base units)
 static int str_w(const char *s)
 {
@@ -315,7 +350,7 @@ static void measure(memline_t *l)
 	l->dw = l->detail[0] ? str_w(l->detail) : 0;
 }
 
-static memline_t mem_lines[2], prev_lines[2];
+static memline_t mem_lines[3], prev_lines[3];
 static int nlines, shown_mode = -1;
 static tic_t last_sample;
 
@@ -333,10 +368,21 @@ static unsigned long tot_draw_cyc, tot_draw_n, tot_compose_cyc, tot_compose_n, t
 
 #define BMP_W 288 // pixels (base units) of the widest line
 #define BMP_H (2 * MEM_LINEH)
-static UINT8 bmp[BMP_H * BMP_W], cov[BMP_H * BMP_W]; // palette indices of the picture / is the pixel drawn
-static UINT8 doc[8 + 4 * BMP_W + 41 * BMP_W] __attribute__((aligned(16))); // the picture as a Doom patch (the worst column: 8 posts of 1 pixel and the end mark = 41 bytes)
+// Reused for the two-line memory patch and the one-line activity patch.
+// Allocated only while shown; failure keeps the direct-text path available.
+typedef struct
+{
+	UINT8 bmp[BMP_H * BMP_W], cov[BMP_H * BMP_W];
+	UINT8 doc[8 + 4 * BMP_W + 41 * BMP_W] __attribute__((aligned(16)));
+} memworkspace_t;
+static memworkspace_t *work;
+#define bmp (work->bmp)
+#define cov (work->cov)
+#define doc (work->doc)
 static patch_t *tpatch;
 static int tpatch_w;
+static patch_t *apatch;
+static int apatch_w;
 static tic_t compose_retry;
 
 static void blit_glyph(const patch_t *g, int x0, int y0, const UINT8 *cmap)
@@ -403,27 +449,34 @@ static int line_w(const memline_t *l)
 }
 
 // the lines into the bitmap, the bitmap into a patch. 1: tpatch is ready
-static int compose(void)
+static int compose(int first, int count, patch_t **target, int *target_width)
 {
 	int i, x, pw = 0, y;
 	UINT8 *p;
-	softwarepatch_t *dp = (softwarepatch_t *)doc;
-	INT32 *colofs = (INT32 *)(void *)(doc + 8);
+	softwarepatch_t *dp;
+	INT32 *colofs;
+	const int ph = count * MEM_LINEH;
 	unsigned c0 = prof_on ? PS2Mem_Cycles() : 0;
 	patch_t *np;
 
-	for (i = 0; i < nlines; i++)
-		if (line_w(&mem_lines[i]) > pw)
-			pw = line_w(&mem_lines[i]);
+	if (!work && ZA_Ready())
+		work = Z_TryMallocAlign(sizeof *work, PU_STATIC, (void **)&work, 4);
+	if (!work)
+		return 0;
+	dp = (softwarepatch_t *)doc;
+	colofs = (INT32 *)(void *)(doc + 8);
+	for (i = 0; i < count; i++)
+		if (line_w(&mem_lines[first + i]) > pw)
+			pw = line_w(&mem_lines[first + i]);
 	if (pw > BMP_W)
 		pw = BMP_W;
 	if (pw < 1)
 		return 0;
 	memset(bmp, 0, sizeof bmp);
 	memset(cov, 0, sizeof cov);
-	for (i = 0; i < nlines; i++)
+	for (i = 0; i < count; i++)
 	{
-		const memline_t *l = &mem_lines[i];
+		const memline_t *l = &mem_lines[first + i];
 
 		x = pw - line_w(l); // the lines end at the same column
 		if (l->lw)
@@ -435,7 +488,7 @@ static int compose(void)
 	}
 	// the Doom patch: width, height, offsets, the column offsets, then per column the posts (top, length, pad, pixels, pad) and 0xFF
 	dp->width = (INT16)pw;
-	dp->height = BMP_H;
+	dp->height = (INT16)ph;
 	dp->leftoffset = 0;
 	dp->topoffset = 0;
 	p = doc + 8 + 4 * pw;
@@ -443,7 +496,7 @@ static int compose(void)
 	{
 		colofs[x] = (INT32)(p - doc);
 		y = 0;
-		while (y < BMP_H)
+		while (y < ph)
 		{
 			int start, k;
 
@@ -453,7 +506,7 @@ static int compose(void)
 				continue;
 			}
 			start = y;
-			while (y < BMP_H && cov[y * BMP_W + x])
+			while (y < ph && cov[y * BMP_W + x])
 				y++;
 			*p++ = (UINT8)start;
 			*p++ = (UINT8)(y - start);
@@ -464,8 +517,8 @@ static int compose(void)
 		}
 		*p++ = 0xFF;
 	}
-	if (tpatch)
-		Patch_Free(tpatch); // the zone clears tpatch (its owner pointer)
+	if (*target)
+		Patch_Free(*target); // the zone clears tpatch (its owner pointer)
 	np = Patch_TryCreateFromDoomPatch(dp);
 	if (prof_on)
 	{
@@ -476,8 +529,8 @@ static int compose(void)
 	}
 	if (!np)
 		return 0;
-	Z_SetUser(np, (void **)&tpatch);
-	tpatch_w = pw;
+	Z_SetUser(np, (void **)target);
+	*target_width = pw;
 	return 1;
 }
 
@@ -508,8 +561,11 @@ static void refresh(int mode)
 			nlines = 2;
 			break;
 	}
+	line_activity(&mem_lines[2], &m);
+	nlines = 3;
 	measure(&mem_lines[0]);
 	measure(&mem_lines[1]);
+	measure(&mem_lines[2]);
 	if (prof_on)
 	{
 		prof_sample_cyc += PS2Mem_Cycles() - c0;
@@ -539,8 +595,18 @@ static int bottom_edge(void)
 
 static void showmem_onchange(void)
 {
-	if (!cv_showmem.value && tpatch)
-		Patch_Free(tpatch); // Off: nothing stays allocated
+	const int thread = GetThreadId();
+	const unsigned now = PS2Mem_Cycles();
+	const unsigned irq = DIntr();
+	PS2Activity_Configure(cv_showmem.value != 0, thread, now);
+	if (irq) EIntr();
+	if (!cv_showmem.value)
+	{
+		if (tpatch) Patch_Free(tpatch);
+		if (apatch) Patch_Free(apatch);
+		Z_Free(work); // optional composition workspace also leaves RAM when Off
+		work = NULL;
+	}
 	shown_mode = -1;
 }
 
@@ -558,15 +624,17 @@ void PS2MemHud_Draw(void)
 		prof_on = M_CheckParm("-ps2prof") != 0;
 	if (prof_on)
 		c0 = PS2Mem_Cycles();
-	if (shown_mode != mode || now - last_sample >= SAMPLE_TICS || (!tpatch && now >= compose_retry))
+	if (shown_mode != mode || now - last_sample >= SAMPLE_TICS || ((!tpatch || !apatch) && now >= compose_retry))
 	{
 		last_sample = now;
 		shown_mode = mode;
 		refresh(mode);
-		if (!tpatch || memcmp(mem_lines, prev_lines, sizeof mem_lines)) // the text changed (or the zone dropped the picture)
+		if (!tpatch || !apatch || memcmp(mem_lines, prev_lines, sizeof mem_lines)) // the text changed (or the zone dropped the picture)
 		{
 			memcpy(prev_lines, mem_lines, sizeof mem_lines);
-			if (!compose())
+			const int memory_ok = compose(0, 2, &tpatch, &tpatch_w);
+			const int activity_ok = compose(2, 1, &apatch, &apatch_w);
+			if (!memory_ok || !activity_ok)
 				compose_retry = now + SAMPLE_TICS; // no room: glyph by glyph meanwhile
 		}
 	}
@@ -583,32 +651,37 @@ void PS2MemHud_Draw(void)
 		if (prof_on)
 			prof_plate_cyc += PS2Mem_Cycles() - p0;
 	}
-	if (tpatch && tpatch_w == pw)
-		V_DrawScaledPatch(BASEVIDWIDTH - 2 - pw, py, base & ~MEM_CASE, tpatch); // (V_ALLOWLOWERCASE is V_FLIP for a patch)
-	else
+	for (i = 0; i < nlines; i++)
 	{
-		if (prof_on)
-			prof_fallback_n++;
-		for (i = 0; i < nlines; i++)
+		const memline_t *l = &mem_lines[i];
+		const int y = py + (i == 2 ? 0 : i + 1) * MEM_LINEH;
+		int x = BASEVIDWIDTH - 2 - line_w(l);
+		if (i == 0 && tpatch)
 		{
-			const memline_t *l = &mem_lines[i];
-			const int y = py + i * MEM_LINEH;
-			int x = BASEVIDWIDTH - 2 - line_w(l);
-
-			if (l->lw)
-			{
-				V_DrawThinString(x, y, base | MENUCOLOR, l->label);
-				x += l->lw;
-			}
-			if (l->mw)
-			{
-				V_DrawThinString(x, y, base | level_color(l->level), l->main);
-				x += l->mw;
-			}
-			if (l->dw)
-				V_DrawThinString(x, y, base | detail_color(l), l->detail);
+			V_DrawScaledPatch(BASEVIDWIDTH - 2 - tpatch_w, y, base & ~MEM_CASE, tpatch);
+			i++; // cached memory patch contains both preserved memory lines
+			continue;
 		}
+		if (i == 2 && apatch)
+		{
+			V_DrawScaledPatch(BASEVIDWIDTH - 2 - apatch_w, y, base & ~MEM_CASE, apatch);
+			continue;
+		}
+		if (prof_on) prof_fallback_n++;
+		if (l->lw)
+		{
+			V_DrawThinString(x, y, base | MENUCOLOR, l->label);
+			x += l->lw;
+		}
+		if (l->mw)
+		{
+			V_DrawThinString(x, y, base | level_color(l->level), l->main);
+			x += l->mw;
+		}
+		if (l->dw)
+			V_DrawThinString(x, y, base | detail_color(l), l->detail);
 	}
+
 	if (prof_on)
 	{
 		prof_draw_cyc += PS2Mem_Cycles() - c0;
@@ -641,6 +714,8 @@ void PS2MemHud_Check(void)
 	I_OutputMsg("SHOWMEM now (KiB): ram total=%u used=%u free=%u | zone free=%u big=%u peak=%u | libc free=%u | vram total=%u used=%u fb=%u z=%u clut=%u tex=%u/%u ws=%u hw=%d levels=%d/%d\n",
 		m.ram_total, m.ram_used, m.ram_free, m.zone_free, m.zone_big, m.zone_peak, m.libc_free, m.vram_total, m.vram_used, m.vram_fb, m.vram_z, m.vram_clut,
 		m.vram_tex_used, m.vram_tex_total, m.vram_ws, m.hw, m.ram_level, m.vram_level);
+	I_OutputMsg("SHOWMEM activity: CPU=%u%% GPU~=%u%% gpu_valid=%d (foreground EE active / observed submit-to-FINISH queue span)\n",
+		m.cpu_percent, m.gpu_percent, m.gpu_valid);
 	if (tot_draw_n)
 		I_OutputMsg("SHOWMEM cost (-ps2prof, whole run): drawn %lu frames, %lu cycles a frame on average (the readings and the pictures made inside it included); readings %lu, %lu cycles each; pictures %lu, %lu cycles each\n",
 			tot_draw_n, tot_draw_cyc / tot_draw_n, tot_sample_n, tot_sample_n ? tot_sample_cyc / tot_sample_n : 0, tot_compose_n, tot_compose_n ? tot_compose_cyc / tot_compose_n : 0);
