@@ -1,0 +1,26 @@
+diff --git a/src/r_defs.h b/src/r_defs.h
+--- a/src/r_defs.h
++++ b/src/r_defs.h
+@@ -346,0 +347,5 @@
++#if defined(PS2_PROFILE) && !defined(PS2_NOOPT_SLOPE_LAYOUT)
++	// Fill the id alignment bytes; geometry and pointer fields keep their offsets.
++	boolean moved;
++	UINT8 flags; // Slope options
++#endif
+@@ -364,0 +370 @@
++#if !defined(PS2_PROFILE) || defined(PS2_NOOPT_SLOPE_LAYOUT)
+@@ -367,0 +374 @@
++#endif
+diff --git a/src/p_slopes.c b/src/p_slopes.c
+--- a/src/p_slopes.c
++++ b/src/p_slopes.c
+@@ -325 +325,8 @@
+-	pslope_t *ret = Z_LevelPoolAlloc(&ps2_slopepool, sizeof(pslope_t), 64);
++#ifndef PS2_NOOPT_SLOPE_POOL_BYTES
++	// Keep the existing 8 KiB chunk budget while fitting complete aligned slots.
++	const size_t stride = (sizeof(pslope_t) + 15) & ~(size_t)15;
++	const unsigned perchunk = 8192 / stride ? (unsigned)(8192 / stride) : 1;
++#else
++	const unsigned perchunk = 64;
++#endif
++	pslope_t *ret = Z_LevelPoolAlloc(&ps2_slopepool, sizeof(pslope_t), perchunk);
