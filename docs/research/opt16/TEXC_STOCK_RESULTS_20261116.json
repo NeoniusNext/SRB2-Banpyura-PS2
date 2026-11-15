@@ -1,0 +1,337 @@
+{
+  "source_identity": "ORIGINAL fixed stock PAKs; regenerate TEXC if source pack table/pool/CRC identities change",
+  "stock_inputs": {
+    "SRB2.PAK": {
+      "bytes": 62382080,
+      "sha256": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+      "md5": "d83abedecbf0cda4b94e78bfb171f492",
+      "hardlinked_to_original": true,
+      "unchanged_from_before_export": true,
+      "content_identity": [
+        623141302,
+        1201307024,
+        2420901713
+      ]
+    },
+    "ZONES.PAK": {
+      "bytes": 24442880,
+      "sha256": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+      "md5": "cd3a52602769fea6db1a34a884f236ef",
+      "hardlinked_to_original": true,
+      "unchanged_from_before_export": true,
+      "content_identity": [
+        4227848282,
+        1893684916,
+        2848207508
+      ]
+    },
+    "CHARS.PAK": {
+      "bytes": 2682880,
+      "sha256": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+      "md5": "953486c879d56d51dcb6ca2c82d69586",
+      "hardlinked_to_original": true,
+      "unchanged_from_before_export": true,
+      "content_identity": [
+        2894704804,
+        3342099573,
+        187973157
+      ]
+    },
+    "MUSIC.PAK": {
+      "bytes": 100595712,
+      "sha256": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0",
+      "md5": "163ad81b1ff4ff57fc3b9d4328926cf3",
+      "hardlinked_to_original": true,
+      "unchanged_from_before_export": true,
+      "content_identity": [
+        1544818541,
+        882176875,
+        4114132455
+      ]
+    },
+    "FINEACON.DAT": {
+      "bytes": 524288,
+      "sha256": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792",
+      "md5": "c60388c74f041c61d2126445b1d21c70",
+      "hardlinked_to_original": true,
+      "unchanged_from_before_export": true
+    },
+    "SRB2.PAK.pics.json": {
+      "bytes": 6685,
+      "sha256": "956ada608c039005d5856c0441116541bcdfbef0038a6a2e446da5f48cf4930e",
+      "md5": "1b2b650db67b1fb99410365d0194159e",
+      "hardlinked_to_original": true,
+      "unchanged_from_before_export": true
+    }
+  },
+  "verification": {
+    "source_sha256": {
+      "src/ps2/ps2_texc.c": "5ba74bbe84e0e2f7f48e23f0b66c8b3913705903757e53dd93a69cf2a2811da0",
+      "src/r_textures.c": "437f6a3c61c61ebda12ff8581aa5122093cc5431af1260409b9229288d337925",
+      "src/w_pack.c": "6f840faaa32fae908edda13ecb9bc93e31580596aecd6bf3b83f2b1f2fdceec0",
+      "src/w_pack.h": "e76426bb03e6a0798661f2ecbe6f76b01c7143170b20336ce4fe794e9a1085da",
+      "src/w_wad.h": "2d75decb9545f85a7b76d9364f332c6cff7252cd1911239e445c8b24df4e9d18",
+      "tools/ps2/cook.py": "0e232e09282e5800ee526b257a01d7fd4e42e39d68493a80dbef0c134fcc8967",
+      "tools/ps2/cook_texc.sh": "3980a3eea09157afa414572f5afff1a6fecb13ad864d04bccd3ce73201087424",
+      "tools/ps2/texc_stock_hosttest.c": "46404eba33c88ba5eb4a521303e3e7fcafd873501c8c7f0975371eccbf12aab6",
+      "tools/ps2/resource_stream_opt17_hosttest.c": "3a701fa2c3bad3fc5816ef823d44ddbe3265a166e09e4dfe130ddb1a72c27596",
+      "tools/ps2/resource_stream_opt17_hosttest.py": "6b27778d4bee601947511ed5c3aa396324939b83bda2cdced2c02aad09d312cf",
+      "tools/ps2/texc_stock_verify.py": "b8715173740a884beaf3c69f3badf77c719afa04ee7fbb3e78d050aae16cc0b2"
+    },
+    "pack_sha256": "6f408ef03180291f098e26dd1049e09018e71c44ffcfbd1231779a9fbef3b485",
+    "dump_sha256": "6b1bf6ae485328cbdba56473f6ae44fb3b378caf7517ec5896beab6ea7e84a7b",
+    "repeat_export_identical": true,
+    "compositor": {
+      "records": 3318,
+      "unique_keys": 3309,
+      "pixel_bytes_all_records": 129989949,
+      "literal_bytes_unique_plus_info": 129686189,
+      "literal_sha256": "376bc5a921dbe2ab453118047873e080ef01727c399730bd9e36e72f384e804b",
+      "python_all_bytes_equal": true
+    },
+    "readers": {
+      "plain-heads": {
+        "seconds": 1.865,
+        "decoded_bytes": 129686189,
+        "partial_reads": 66200,
+        "io": {
+          "open": {
+            "cmds": 16,
+            "bytes": 192512
+          },
+          "iostat": {
+            "cmds": 1199,
+            "hits": 73683,
+            "misses": 1182,
+            "bulk": 17,
+            "retries": 0,
+            "failures": 0,
+            "injected": 0,
+            "bytes": 77531136
+          }
+        }
+      },
+      "plain-nohead": {
+        "seconds": 1.7524,
+        "decoded_bytes": 129686189,
+        "partial_reads": 66200,
+        "io": {
+          "open": {
+            "cmds": 16,
+            "bytes": 192512
+          },
+          "iostat": {
+            "cmds": 1199,
+            "hits": 80327,
+            "misses": 1182,
+            "bulk": 17,
+            "retries": 0,
+            "failures": 0,
+            "injected": 0,
+            "bytes": 77531136
+          }
+        }
+      },
+      "asan-heads": {
+        "seconds": 4.0417,
+        "decoded_bytes": 129686189,
+        "partial_reads": 66200,
+        "io": {
+          "open": {
+            "cmds": 16,
+            "bytes": 192512
+          },
+          "iostat": {
+            "cmds": 1199,
+            "hits": 73683,
+            "misses": 1182,
+            "bulk": 17,
+            "retries": 0,
+            "failures": 0,
+            "injected": 0,
+            "bytes": 77531136
+          }
+        }
+      },
+      "asan-nohead": {
+        "seconds": 3.9721,
+        "decoded_bytes": 129686189,
+        "partial_reads": 66200,
+        "io": {
+          "open": {
+            "cmds": 16,
+            "bytes": 192512
+          },
+          "iostat": {
+            "cmds": 1199,
+            "hits": 80327,
+            "misses": 1182,
+            "bulk": 17,
+            "retries": 0,
+            "failures": 0,
+            "injected": 0,
+            "bytes": 77531136
+          }
+        }
+      }
+    },
+    "fetch-plain": {
+      "rc": 0,
+      "stdout": "TEXC_BUDGET budget=0 resident=0 peak_extra=0 temporary=0 composites=0\nTEXC prefetch: 35 stored composites, 255 KiB, 0 cycles\nTEXC_BUDGET budget=262144 resident=262112 peak_extra=615604 temporary=353492 composites=35\nTEXC prefetch: 31 stored composites, 512 KiB, 0 cycles\nTEXC_BUDGET budget=524288 resident=524288 peak_extra=914644 temporary=390356 composites=31\nTEXC prefetch: 132 stored composites, 1024 KiB, 0 cycles\nTEXC_BUDGET budget=1048576 resident=1048576 peak_extra=1438932 temporary=390356 composites=132\nTEXC prefetch: 234 stored composites, 2040 KiB, 0 cycles\nTEXC_BUDGET budget=2097152 resident=2089360 peak_extra=2479716 temporary=390356 composites=234\nSTOCK TEXC PASS records=3318 literal_bytes_each_path=129989949 max_old_temporary=287661 new_fetch_extra=0 checks=905753 live=0",
+      "stderr": ""
+    },
+    "fetch-asan": {
+      "rc": 0,
+      "stdout": "TEXC_BUDGET budget=0 resident=0 peak_extra=0 temporary=0 composites=0\nTEXC prefetch: 35 stored composites, 255 KiB, 0 cycles\nTEXC_BUDGET budget=262144 resident=262112 peak_extra=615604 temporary=353492 composites=35\nTEXC prefetch: 31 stored composites, 512 KiB, 0 cycles\nTEXC_BUDGET budget=524288 resident=524288 peak_extra=914644 temporary=390356 composites=31\nTEXC prefetch: 132 stored composites, 1024 KiB, 0 cycles\nTEXC_BUDGET budget=1048576 resident=1048576 peak_extra=1438932 temporary=390356 composites=132\nTEXC prefetch: 234 stored composites, 2040 KiB, 0 cycles\nTEXC_BUDGET budget=2097152 resident=2089360 peak_extra=2479716 temporary=390356 composites=234\nSTOCK TEXC PASS records=3318 literal_bytes_each_path=129989949 max_old_temporary=287661 new_fetch_extra=0 checks=905753 live=0",
+      "stderr": ""
+    },
+    "budget_stress": [
+      {
+        "budget": 0,
+        "resident": 0,
+        "peak_extra": 0,
+        "temporary": 0,
+        "composites": 0
+      },
+      {
+        "budget": 262144,
+        "resident": 262112,
+        "peak_extra": 615604,
+        "temporary": 353492,
+        "composites": 35
+      },
+      {
+        "budget": 524288,
+        "resident": 524288,
+        "peak_extra": 914644,
+        "temporary": 390356,
+        "composites": 31
+      },
+      {
+        "budget": 1048576,
+        "resident": 1048576,
+        "peak_extra": 1438932,
+        "temporary": 390356,
+        "composites": 132
+      },
+      {
+        "budget": 2097152,
+        "resident": 2089360,
+        "peak_extra": 2479716,
+        "temporary": 390356,
+        "composites": 234
+      }
+    ],
+    "negative-compositor-byte": {
+      "rc": 1,
+      "stdout": "",
+      "stderr": "FAIL line 116: !memcmp(storage+63, expected, size) && attempts == before && live == opened"
+    },
+    "negative-fetch-allocation": {
+      "rc": 1,
+      "stdout": "",
+      "stderr": "FAIL line 115: PS2TexC_Fetch(0, storage+63, size)"
+    },
+    "storage": {
+      "file_bytes": 15738880,
+      "name_pool_bytes": 56262,
+      "lumps": 3310,
+      "largest_decoded": 1048576,
+      "largest_stored": 287661,
+      "largest_prefetch_single_run_rounded": 290816,
+      "unique_stored_bytes": 14778164
+    }
+  },
+  "native": {
+    "old_ps2_preprocessed_sha256": "b76fab33c4e03a1580d449446ab4bd62f369ecc47b4d866d9228846c38880290",
+    "current_ps2_preprocessed_sha256": "b76fab33c4e03a1580d449446ab4bd62f369ecc47b4d866d9228846c38880290",
+    "r_textures_native": {
+      "command": [
+        "/workspace/.onboarding/ps2dev-v2/ps2dev/ee/bin/mips64r5900el-ps2-elf-gcc",
+        "-G8",
+        "-O2",
+        "-std=gnu23",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-MMD",
+        "-MP",
+        "-D_EE",
+        "-DPS2",
+        "-DPS2_PROFILE",
+        "-DPS2_AUDIO_VORBIS",
+        "-DPS2_AUDIO_MP3",
+        "-DNOMUMBLE",
+        "-DNO_IPV6",
+        "-DNOUPNP",
+        "-DCMAKECONFIG",
+        "-D_LARGEFILE64_SOURCE",
+        "-DNOEXECINFO",
+        "-DUNIXCOMMON",
+        "-Wall",
+        "-Wextra",
+        "-Wno-trigraphs",
+        "-Wno-unused-parameter",
+        "-fwrapv",
+        "-DHAVE_ZLIB",
+        "-DHAVE_PNG",
+        "-DNDEBUG",
+        "-mno-abicalls",
+        "-DHWRENDER",
+        "-Werror",
+        "-Wno-format-truncation",
+        "-I/workspace/SRB2-Banpyura-PS2/src",
+        "-I/workspace/SRB2-Banpyura-PS2/src/ps2",
+        "-Ibuild/nov17-resource/texc-target/gen",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ee/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/common/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/gsKit/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ports/include",
+        "-c",
+        "/workspace/SRB2-Banpyura-PS2/src/r_textures.c",
+        "-o",
+        "build/nov17-resource/texc-target/obj/src__r_textures.o"
+      ],
+      "source_sha256": "437f6a3c61c61ebda12ff8581aa5122093cc5431af1260409b9229288d337925",
+      "object_sha256": "5998e6f21c17e4eb6bd31bd81699fee7a13efb4250399f8dc5ecf571c4c211a7"
+    },
+    "native_sizes": {
+      "native_tc_item": 20,
+      "native_tc_key": 16,
+      "native_tc_state": 92
+    }
+  },
+  "host_dependency_packages": {
+    "cmake-data_3.31.6-2_all.deb": "d9060145be892f43cd1888024114ceab019c81479d4b0a3383fe14cebe2295cb",
+    "cmake_3.31.6-2_amd64.deb": "dee2fc94973325240604ffbca677a3f16b462fb6520946bd81be1ecbac770a02",
+    "libpng-dev_1.6.48-1+deb13u5_amd64.deb": "9027d5ace59ce266124c87054302805f49f9cb1ec4a6c8264a64596c7916fbff",
+    "libpng16-16t64_1.6.48-1+deb13u5_amd64.deb": "2465b4e9fa85cff54dc10a6da3e64074d8d9292c86e4a8f989b809d6b158e97e",
+    "librhash1_1.4.5-1_amd64.deb": "9bf56d7d8ce3e7680a0dd8e3cfe8acdf50e0aa3b98b0a907cf744a4d1711af72",
+    "libsdl2-2.0-0_2.32.4+dfsg-1_amd64.deb": "c61af1033d79fa6a393c49fac987165876de8ff27ebbd6a36cf19f5fc84d7a7a",
+    "libsdl2-dev_2.32.4+dfsg-1_amd64.deb": "277dc6373473df2079ed44ac8661575b97b39fa263bfa424b0324c1501d21413",
+    "libuv1t64_1.50.0-2_amd64.deb": "5fec8035002e0c745b64d1c5b3e1dc42790d1a77574315b976cf3e4aab9ddc0a",
+    "ninja-build_1.12.1-1_amd64.deb": "bc172ce9270bd6fcd6d5335a83ff9d3c7ba0d13ec624cfdfa1b5aa06901dc453"
+  },
+  "host_exporter": {
+    "path": "build/nov17-resource/host-texc/b/bin/texc-exporter",
+    "sha256": "12ecf60b4427aa1549751ea14c107670a054e9e6c2523f534a864939389b72fc",
+    "bytes": 3747768,
+    "profile": "PS2_PROFILE export tool; lua/udmf/addons/limits/zippng disabled for this tool only; not a full host game build",
+    "forced_header_flags": false,
+    "log": "build/nov17-resource/host-texc/work.SbO5EXHn/stdout.log"
+  },
+  "native_fixed_payload": {
+    "texture_count": 4740,
+    "lump_count": 3310,
+    "lumpinfo": 119160,
+    "string_pool": 56262,
+    "key_allocation": 52960,
+    "texture_lump_lookup": 9480,
+    "texture_prefetch_offset": 18960,
+    "dvd_window": 65536,
+    "total": 322358,
+    "shared_codec_scratch_unchanged": 131072,
+    "head_table_resident": 0,
+    "excludes": "allocator overhead, pre-existing texture/level structures, and optional prefetch arena"
+  },
+  "prefetch_fixture_boundary": "Actual unmodified PrefetchLevel, marking every eligible stock texture with largest stored composite as sky; allocation/key mapping and animation/level selection are test boundaries. Native headroom guard and real map working sets await root runtime validation."
+}

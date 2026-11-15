@@ -1,0 +1,252 @@
+{
+  "host": {
+    "sources": {
+      "src/w_pack.c": "6f840faaa32fae908edda13ecb9bc93e31580596aecd6bf3b83f2b1f2fdceec0",
+      "src/w_pack.h": "e76426bb03e6a0798661f2ecbe6f76b01c7143170b20336ce4fe794e9a1085da",
+      "src/w_wad.h": "2d75decb9545f85a7b76d9364f332c6cff7252cd1911239e445c8b24df4e9d18",
+      "src/ps2/ps2_texc.c": "5ba74bbe84e0e2f7f48e23f0b66c8b3913705903757e53dd93a69cf2a2811da0",
+      "tools/ps2/resource_stream_opt17_hosttest.c": "3a701fa2c3bad3fc5816ef823d44ddbe3265a166e09e4dfe130ddb1a72c27596",
+      "tools/ps2/resource_stream_opt17_hosttest.py": "6b27778d4bee601947511ed5c3aa396324939b83bda2cdced2c02aad09d312cf"
+    },
+    "baseline_revision": "85e35eef5",
+    "baseline_sources": {
+      "src/w_pack.c": "94532c49e6a1886677099849ce96ecd5e804eb2facd6a05c1732660443ab2664",
+      "src/ps2/ps2_texc.c": "ba4f99616d0e87d0223945c5e3bea350949828cb5251003cdc96efee2223f697"
+    },
+    "baseline": {
+      "rc": 0,
+      "stdout": "fetch max_stored=1048576 noheap_success=0\nverify max_request=4194305 peak_extra=4194613 cmds=235 hits=35 misses=66 bulk=66 bytes=12474368\nPASS checks=34928334 live=0",
+      "stderr": ""
+    },
+    "current": {
+      "rc": 0,
+      "stdout": "fetch max_stored=1048576 noheap_success=36\nverify max_request=262144 peak_extra=262452 cmds=235 hits=35 misses=66 bulk=66 bytes=12474368\nprefetch max_items=65536 shutdown_live=0\nPASS checks=46266999 live=0",
+      "stderr": ""
+    },
+    "sanitize": {
+      "rc": 0,
+      "stdout": "fetch max_stored=1048576 noheap_success=36\nverify max_request=262144 peak_extra=262452 cmds=235 hits=35 misses=66 bulk=66 bytes=12474368\nprefetch max_items=65536 shutdown_live=0\nPASS checks=46266999 live=0",
+      "stderr": ""
+    },
+    "negative-reset-chunk-crc": {
+      "rc": 1,
+      "stdout": "fetch max_stored=1048576 noheap_success=36",
+      "stderr": "FAIL line 256: WPack_Verify(&pk, fp, lumps, fixture_count, verify_report) == 0 && reports == 0"
+    },
+    "negative-unbounded-verify": {
+      "rc": 1,
+      "stdout": "fetch max_stored=1048576 noheap_success=36",
+      "stderr": "FAIL line 260: request <= 262144 && verify_peak <= 262144 + fixture_count * 4 + 65 * 4"
+    },
+    "negative-prefetch-cap-after-realloc": {
+      "rc": 1,
+      "stdout": "fetch max_stored=1048576 noheap_success=36\nverify max_request=262144 peak_extra=262452 cmds=235 hits=35 misses=66 bulk=66 bytes=12474368",
+      "stderr": "FAIL line 350: reallocs == oldreallocs && pf.items == old && pf.n == 65536 && pf.cap == 65536"
+    },
+    "negative-retain-prefetch-index": {
+      "rc": 1,
+      "stdout": "fetch max_stored=1048576 noheap_success=36\nverify max_request=262144 peak_extra=262452 cmds=235 hits=35 misses=66 bulk=66 bytes=12474368",
+      "stderr": "FAIL line 353: !pf.items && !pf.cap && !pf.n && !pf.blob && live == 0"
+    },
+    "negative-fetch-allocation": {
+      "rc": 1,
+      "stdout": "",
+      "stderr": "FAIL line 211: attempts == oldattempts"
+    },
+    "negative-fetch-size-guard": {
+      "rc": 1,
+      "stdout": "",
+      "stderr": "FAIL line 217: !PS2TexC_Fetch(0, storage + 63, l->size - 1)"
+    },
+    "negative-resident-decode": {
+      "rc": 1,
+      "stdout": "",
+      "stderr": "FAIL line 175: storage[i] == (i >= 63 && i < size + 63 ? source_byte(pattern, i - 63) : 0xA5)"
+    }
+  },
+  "target": {
+    "src/w_pack.c": {
+      "command": [
+        "/workspace/.onboarding/ps2dev-v2/ps2dev/ee/bin/mips64r5900el-ps2-elf-gcc",
+        "-G8",
+        "-O2",
+        "-std=gnu23",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-MMD",
+        "-MP",
+        "-D_EE",
+        "-DPS2",
+        "-DPS2_PROFILE",
+        "-DPS2_AUDIO_VORBIS",
+        "-DPS2_AUDIO_MP3",
+        "-DNOMUMBLE",
+        "-DNO_IPV6",
+        "-DNOUPNP",
+        "-DCMAKECONFIG",
+        "-D_LARGEFILE64_SOURCE",
+        "-DNOEXECINFO",
+        "-DUNIXCOMMON",
+        "-Wall",
+        "-Wextra",
+        "-Wno-trigraphs",
+        "-Wno-unused-parameter",
+        "-fwrapv",
+        "-DHAVE_ZLIB",
+        "-DHAVE_PNG",
+        "-DNDEBUG",
+        "-mno-abicalls",
+        "-DHWRENDER",
+        "-Werror",
+        "-Wno-format-truncation",
+        "-I/workspace/SRB2-Banpyura-PS2/src",
+        "-I/workspace/SRB2-Banpyura-PS2/src/ps2",
+        "-Ibuild/nov17-resource/target/gen",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ee/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/common/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/gsKit/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ports/include",
+        "-fstack-usage",
+        "-c",
+        "/workspace/SRB2-Banpyura-PS2/src/w_pack.c",
+        "-o",
+        "build/nov17-resource/target/obj/src__w_pack.o"
+      ],
+      "source_sha256": "6f840faaa32fae908edda13ecb9bc93e31580596aecd6bf3b83f2b1f2fdceec0",
+      "object_sha256": "16595fba9c3ba38199dad5210f9546ce01dda012251f1f2cf7377e45e72d35fe"
+    },
+    "src/ps2/ps2_texc.c": {
+      "command": [
+        "/workspace/.onboarding/ps2dev-v2/ps2dev/ee/bin/mips64r5900el-ps2-elf-gcc",
+        "-G8",
+        "-O2",
+        "-std=gnu23",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-MMD",
+        "-MP",
+        "-D_EE",
+        "-DPS2",
+        "-DPS2_PROFILE",
+        "-DPS2_AUDIO_VORBIS",
+        "-DPS2_AUDIO_MP3",
+        "-DNOMUMBLE",
+        "-DNO_IPV6",
+        "-DNOUPNP",
+        "-DCMAKECONFIG",
+        "-D_LARGEFILE64_SOURCE",
+        "-DNOEXECINFO",
+        "-DUNIXCOMMON",
+        "-Wall",
+        "-Wextra",
+        "-Wno-trigraphs",
+        "-Wno-unused-parameter",
+        "-fwrapv",
+        "-DHAVE_ZLIB",
+        "-DHAVE_PNG",
+        "-DNDEBUG",
+        "-mno-abicalls",
+        "-DHWRENDER",
+        "-Werror",
+        "-Wno-format-truncation",
+        "-I/workspace/SRB2-Banpyura-PS2/src",
+        "-I/workspace/SRB2-Banpyura-PS2/src/ps2",
+        "-Ibuild/nov17-resource/target/gen",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ee/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/common/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/gsKit/include",
+        "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ports/include",
+        "-fstack-usage",
+        "-c",
+        "/workspace/SRB2-Banpyura-PS2/src/ps2/ps2_texc.c",
+        "-o",
+        "build/nov17-resource/target/obj/src__ps2__ps2_texc.o"
+      ],
+      "source_sha256": "5ba74bbe84e0e2f7f48e23f0b66c8b3913705903757e53dd93a69cf2a2811da0",
+      "object_sha256": "1bf829531c986c2b75e7d097cc20f66a2ed9025c2fd52f45f764d6394c311b59"
+    },
+    "native_sizes": {
+      "native_lumpinfo": 36,
+      "native_pf_item": 16,
+      "native_pkstream": 492
+    }
+  },
+  "stock": [
+    {
+      "pack": "CHARS.PAK",
+      "sha256": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+      "lumps": 2054,
+      "name_pool_bytes": 55196,
+      "lumpinfo_payload_bytes_ps2": 73944,
+      "cache_pointer_tables_bytes_ps2": 16432,
+      "startup_head_payload_bytes": 32864,
+      "largest_lump_bytes": 9618,
+      "old_verify_buffer_bytes": 9618,
+      "new_verify_buffer_bytes": 9618,
+      "verify_peak_reduction_bytes": 0,
+      "largest_lz4_blocks": 1
+    },
+    {
+      "pack": "MUSIC.PAK",
+      "sha256": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0",
+      "lumps": 215,
+      "name_pool_bytes": 3067,
+      "lumpinfo_payload_bytes_ps2": 7740,
+      "cache_pointer_tables_bytes_ps2": 1720,
+      "startup_head_payload_bytes": 0,
+      "largest_lump_bytes": 4122587,
+      "old_verify_buffer_bytes": 4122587,
+      "new_verify_buffer_bytes": 262144,
+      "verify_peak_reduction_bytes": 3860443,
+      "largest_lz4_blocks": 6
+    },
+    {
+      "pack": "SRB2.PAK",
+      "sha256": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+      "lumps": 12614,
+      "name_pool_bytes": 442939,
+      "lumpinfo_payload_bytes_ps2": 454104,
+      "cache_pointer_tables_bytes_ps2": 100912,
+      "startup_head_payload_bytes": 201824,
+      "largest_lump_bytes": 1090568,
+      "old_verify_buffer_bytes": 1090568,
+      "new_verify_buffer_bytes": 262144,
+      "verify_peak_reduction_bytes": 828424,
+      "largest_lz4_blocks": 17
+    },
+    {
+      "pack": "ZONES.PAK",
+      "sha256": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+      "lumps": 169,
+      "name_pool_bytes": 7858,
+      "lumpinfo_payload_bytes_ps2": 6084,
+      "cache_pointer_tables_bytes_ps2": 1352,
+      "startup_head_payload_bytes": 0,
+      "largest_lump_bytes": 3313934,
+      "old_verify_buffer_bytes": 3313934,
+      "new_verify_buffer_bytes": 262144,
+      "verify_peak_reduction_bytes": 3051790,
+      "largest_lz4_blocks": 51
+    }
+  ],
+  "current_io_payload_bytes": {
+    "codec_scratch": 131072,
+    "four_dvd_windows": 262144,
+    "four_usb_sd_windows": 131072,
+    "six_dvd_windows": 393216,
+    "six_usb_sd_windows": 196608,
+    "prefetch_index_max_native": 1048576
+  },
+  "full_reader": {
+    "log": "build/nov17-resource/full-reader/test.log",
+    "log_sha256": "fcd579ea005a35f7bf8c1fffdbcb3ee347a6d0a625b67cb9df8d111e55a8a9e8",
+    "lumps": 15052,
+    "partial_reads": 300940,
+    "stock_differences": 0,
+    "reject_cases": 21,
+    "v1_v2_fixture_lumps": 311,
+    "input_files_unchanged": 9,
+    "failures": 0
+  },
+  "scope": "No archive format/version/layout, picture bytes, physics, capability, pool limit, network MD5 or w_wad.c changes. TEXC savings require the optional TEXC.PAK; Verify savings require -verifypack; prefetch is opt-in."
+}

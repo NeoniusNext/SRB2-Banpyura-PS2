@@ -354,9 +354,7 @@ boolean PS2TexC_Fetch(INT32 texnum, UINT8 *dest, size_t bytes)
 {
 	const int li = TC_Lump(texnum);
 	const lumpinfo_t *l;
-	const UINT8 *blob;
-	UINT8 *tmp = NULL;
-	UINT32 t0 = TC_Cyc(), t1;
+	UINT32 t0 = TC_Cyc();
 	boolean ok;
 
 	if (li < 0)
@@ -373,31 +371,27 @@ boolean PS2TexC_Fetch(INT32 texnum, UINT8 *dest, size_t bytes)
 	if (TC.arena && TC.toff && TC.toff[texnum])
 	{
 		Z_Touch(TC.arena); // (in use: the zone takes the stored forms back only when nothing has asked for them for a frame)
-		blob = TC.arena + TC.toff[texnum] - 1;
+		ok = WPack_DecodeMem(l->compression, TC.arena + TC.toff[texnum] - 1, l->disksize, dest, l->size);
 		TC.s_resident++;
 	}
 	else
 	{
-		tmp = Z_TryMallocAlign(l->disksize, PU_RENDERWORK, NULL, 0);
-		if (!tmp || WPack_ReadRaw(TC.handle, l, tmp) != l->disksize)
+		// The reader decodes each block into dest with its resident codec buffers;
+		// a nonresident composite needs no second allocation for the stored bytes.
+		ok = WPack_ReadLump(TC.handle, l, dest, l->size, 0) == l->size;
+		if (!ok)
 		{
-			Z_Free(tmp);
 			TC.s_fail++;
 			return false;
 		}
-		blob = tmp;
 		TC.s_read++;
 		TC.s_readcyc += TC_Cyc() - t0;
 	}
-	t1 = TC_Cyc();
-	ok = WPack_DecodeMem(l->compression, blob, l->disksize, dest, l->size);
-	Z_Free(tmp);
 	if (ok)
 		TC.s_hit++;
 	else
 		TC.s_fail++;
 	TC.s_cyc += TC_Cyc() - t0;
-	(void)t1;
 	return ok;
 }
 
