@@ -272,17 +272,31 @@ static inline int HWR_FrPrismHidden(const polyvertex_t *pts, int n, float lo, fl
 {
 	int k;
 
+	if (n <= 0)
+		return 1;
 	for (k = 0; k < 5; k++)
 	{
 		const fr_plane_t *pl = &frv.p[k];
 		const float dl = pl->b * lo + pl->d, dh = pl->b * hi + pl->d;
+		const float q0 = pl->a * pts[0].x + pl->c * pts[0].y;
+		float dm;
 		int i;
 
-		for (i = 0; i < n; i++)
+		// The caller has at least three points. Keep the original endpoint
+		// test for the common first-point witness, avoiding loop setup and
+		// the endpoint selection when this side already contains the prism.
+		if (q0 + dl <= FR_MARGIN || q0 + dh <= FR_MARGIN)
+			continue;
+		// Addition is monotone: the smaller addend supplies the most inside
+		// endpoint of every vertex. Ignore a NaN endpoint as the old <= test
+		// does; with two NaNs neither endpoint can be inside.
+		dm = dl < dh || dh != dh ? dl : dh;
+
+		for (i = 1; i < n; i++)
 		{
 			const float q = pl->a * pts[i].x + pl->c * pts[i].y;
 
-			if (q + dl <= FR_MARGIN || q + dh <= FR_MARGIN)
+			if (q + dm <= FR_MARGIN)
 				goto inside;
 		}
 		return 1;

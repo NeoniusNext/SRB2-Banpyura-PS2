@@ -1,0 +1,723 @@
+{
+  "baseline_revision": "e10593b0dbd2ce970a0e56fc66452aedcd746891",
+  "accepted_source": "src/hardware/hw_front.inc",
+  "accepted_source_sha256": "1fd7ac4e5a8dcdc6bdf993e52786936091ed0894f6a537862160e768995c433a",
+  "host_and_ee": {
+    "baseline": "e10593b0dbd2ce970a0e56fc66452aedcd746891",
+    "source_sha256": "1fd7ac4e5a8dcdc6bdf993e52786936091ed0894f6a537862160e768995c433a",
+    "runs": [
+      {
+        "name": "normal",
+        "passed": true,
+        "exit": 0,
+        "stdout": "PASS queries=264472\n",
+        "stderr": ""
+      },
+      {
+        "name": "wrong-endpoint",
+        "passed": true,
+        "exit": 1,
+        "stdout": "FAIL query=2333 n=64 lo=-0x1.d2145cp+10 hi=0x1.4bf3a8p+14 returns=0/1/1\n",
+        "stderr": ""
+      },
+      {
+        "name": "lost-nan-endpoint",
+        "passed": true,
+        "exit": 1,
+        "stdout": "FAIL query=3 n=4 lo=0x0p+0 hi=nan returns=0/1/1\n",
+        "stderr": ""
+      },
+      {
+        "name": "sanitized",
+        "passed": true,
+        "exit": 0,
+        "stdout": "PASS queries=264472\n",
+        "stderr": ""
+      }
+    ],
+    "ee": {
+      "elf_sha256": "39b7c7a5ce85dbcfd734a874f2377e192911d7387741be0a2d736c8d83ab3fe0",
+      "passed": true
+    },
+    "passed": true
+  },
+  "native_benchmark": {
+    "queries_per_row": 8192,
+    "repetitions": 5,
+    "statistic": "minimum COP0 Count",
+    "scope": "source-extracted isolated helper; no game FPS, whole-frame timing or physical PS2 claim",
+    "rows": [
+      {
+        "pattern": 0,
+        "vertices": 4,
+        "reference_count": 1695764,
+        "candidate_count": 1261591,
+        "change_percent": -25.6034
+      },
+      {
+        "pattern": 0,
+        "vertices": 16,
+        "reference_count": 1695764,
+        "candidate_count": 1261591,
+        "change_percent": -25.6034
+      },
+      {
+        "pattern": 0,
+        "vertices": 64,
+        "reference_count": 1695764,
+        "candidate_count": 1261591,
+        "change_percent": -25.6034
+      },
+      {
+        "pattern": 1,
+        "vertices": 4,
+        "reference_count": 1777684,
+        "candidate_count": 1425431,
+        "change_percent": -19.8153
+      },
+      {
+        "pattern": 1,
+        "vertices": 16,
+        "reference_count": 9969684,
+        "candidate_count": 8486935,
+        "change_percent": -14.8726
+      },
+      {
+        "pattern": 1,
+        "vertices": 64,
+        "reference_count": 59122843,
+        "candidate_count": 47811084,
+        "change_percent": -19.1326
+      },
+      {
+        "pattern": 2,
+        "vertices": 4,
+        "reference_count": 1032214,
+        "candidate_count": 925719,
+        "change_percent": -10.3171
+      },
+      {
+        "pattern": 2,
+        "vertices": 16,
+        "reference_count": 3489814,
+        "candidate_count": 2891799,
+        "change_percent": -17.136
+      },
+      {
+        "pattern": 2,
+        "vertices": 64,
+        "reference_count": 13320214,
+        "candidate_count": 10756119,
+        "change_percent": -19.2497
+      },
+      {
+        "pattern": 3,
+        "vertices": 4,
+        "reference_count": 2342934,
+        "candidate_count": 1875991,
+        "change_percent": -19.9298
+      },
+      {
+        "pattern": 3,
+        "vertices": 16,
+        "reference_count": 4800534,
+        "candidate_count": 3842071,
+        "change_percent": -19.9658
+      },
+      {
+        "pattern": 3,
+        "vertices": 64,
+        "reference_count": 14630934,
+        "candidate_count": 11706391,
+        "change_percent": -19.9888
+      },
+      {
+        "pattern": 4,
+        "vertices": 4,
+        "reference_count": 1777684,
+        "candidate_count": 1425431,
+        "change_percent": -19.8153
+      },
+      {
+        "pattern": 4,
+        "vertices": 16,
+        "reference_count": 1777684,
+        "candidate_count": 1425431,
+        "change_percent": -19.8153
+      },
+      {
+        "pattern": 4,
+        "vertices": 64,
+        "reference_count": 1777684,
+        "candidate_count": 1425431,
+        "change_percent": -19.8153
+      },
+      {
+        "pattern": 5,
+        "vertices": 4,
+        "reference_count": 1695764,
+        "candidate_count": 1261591,
+        "change_percent": -25.6034
+      },
+      {
+        "pattern": 5,
+        "vertices": 16,
+        "reference_count": 1695764,
+        "candidate_count": 1261591,
+        "change_percent": -25.6034
+      },
+      {
+        "pattern": 5,
+        "vertices": 64,
+        "reference_count": 1695764,
+        "candidate_count": 1261591,
+        "change_percent": -25.6034
+      }
+    ]
+  },
+  "rejected_cache": {
+    "patch": "docs/research/opt15/patches/rejected-front-height-cache.patch",
+    "patch_sha256": "4e016f187baca5dfe8af6384b16d18a868ea1ed1051b6af8255f12340317c17f",
+    "host": {
+      "baseline": "e10593b0dbd2ce970a0e56fc66452aedcd746891",
+      "rejected_experiment": true,
+      "sources": {
+        "src/hardware/hw_front.inc": "1acc1ddab3eafeccee824452faeab7156533a99acfd1a4a6a598a08e63ef7c65",
+        "src/hardware/hw_main.c": "df29665fd662dd48ddcc1fea57acc7d68443c16488d52b93b37b9369b3f8b078"
+      },
+      "runs": [
+        {
+          "name": "normal",
+          "exit": 0,
+          "expected_failure": false,
+          "passed": true,
+          "stdout": "dense FOF vertex tests: reference=21184 candidate=204\nPASS queries=4213479 vertex-tests=122374684/11791699 cache-bytes=48\n",
+          "stderr": ""
+        },
+        {
+          "name": "outside-direction",
+          "exit": 1,
+          "expected_failure": true,
+          "passed": true,
+          "stdout": "FAIL height-boundary query=7 n=4 h=0x1.fffffep+127 reference=0 candidate=1 masks=1f/1\n",
+          "stderr": ""
+        },
+        {
+          "name": "inside-direction",
+          "exit": 1,
+          "expected_failure": true,
+          "passed": true,
+          "stdout": "FAIL height-boundary query=6 n=4 h=-0x1p+1 reference=1 candidate=0 masks=1f/0\n",
+          "stderr": ""
+        },
+        {
+          "name": "stale-scope",
+          "exit": 1,
+          "expected_failure": true,
+          "passed": true,
+          "stdout": "FAIL subsector/view-reset query=423 n=4 h=0x0p+0 reference=0 candidate=1 masks=1f/1f\n",
+          "stderr": ""
+        },
+        {
+          "name": "sanitized",
+          "exit": 0,
+          "expected_failure": false,
+          "passed": true,
+          "stdout": "dense FOF vertex tests: reference=21184 candidate=204\nPASS queries=4213479 vertex-tests=122374684/11791699 cache-bytes=48\n",
+          "stderr": ""
+        }
+      ],
+      "passed": true
+    },
+    "ee_parity_queries": 281319,
+    "ee_elf_sha256": "fe78d5eb20e95297146b5f6eb3b103609640958c043a4c2272a3044f57d4fa4f",
+    "native_rows": [
+      {
+        "pattern": 0,
+        "vertices": 4,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 1556509,
+        "candidate_count": 2482220,
+        "change_percent": 59.4735
+      },
+      {
+        "pattern": 0,
+        "vertices": 4,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 1531933,
+        "candidate_count": 2076716,
+        "change_percent": 35.5618
+      },
+      {
+        "pattern": 0,
+        "vertices": 4,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 1519645,
+        "candidate_count": 1878060,
+        "change_percent": 23.5854
+      },
+      {
+        "pattern": 0,
+        "vertices": 4,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 1513501,
+        "candidate_count": 1563692,
+        "change_percent": 3.3162
+      },
+      {
+        "pattern": 0,
+        "vertices": 4,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 1508893,
+        "candidate_count": 1446188,
+        "change_percent": -4.1557
+      },
+      {
+        "pattern": 0,
+        "vertices": 4,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 1507453,
+        "candidate_count": 1365116,
+        "change_percent": -9.4422
+      },
+      {
+        "pattern": 0,
+        "vertices": 16,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 1556509,
+        "candidate_count": 2474028,
+        "change_percent": 58.9472
+      },
+      {
+        "pattern": 0,
+        "vertices": 16,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 1531933,
+        "candidate_count": 2076716,
+        "change_percent": 35.5618
+      },
+      {
+        "pattern": 0,
+        "vertices": 16,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 1519645,
+        "candidate_count": 1878060,
+        "change_percent": 23.5854
+      },
+      {
+        "pattern": 0,
+        "vertices": 16,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 1513501,
+        "candidate_count": 1563692,
+        "change_percent": 3.3162
+      },
+      {
+        "pattern": 0,
+        "vertices": 16,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 1508893,
+        "candidate_count": 1446188,
+        "change_percent": -4.1557
+      },
+      {
+        "pattern": 0,
+        "vertices": 16,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 1507453,
+        "candidate_count": 1365116,
+        "change_percent": -9.4422
+      },
+      {
+        "pattern": 0,
+        "vertices": 64,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 1556509,
+        "candidate_count": 2474028,
+        "change_percent": 58.9472
+      },
+      {
+        "pattern": 0,
+        "vertices": 64,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 1531933,
+        "candidate_count": 2076716,
+        "change_percent": 35.5618
+      },
+      {
+        "pattern": 0,
+        "vertices": 64,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 1519645,
+        "candidate_count": 1878060,
+        "change_percent": 23.5854
+      },
+      {
+        "pattern": 0,
+        "vertices": 64,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 1513501,
+        "candidate_count": 1563692,
+        "change_percent": 3.3162
+      },
+      {
+        "pattern": 0,
+        "vertices": 64,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 1508893,
+        "candidate_count": 1446188,
+        "change_percent": -4.1557
+      },
+      {
+        "pattern": 0,
+        "vertices": 64,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 1507453,
+        "candidate_count": 1365116,
+        "change_percent": -9.4422
+      },
+      {
+        "pattern": 1,
+        "vertices": 4,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 909341,
+        "candidate_count": 1073196,
+        "change_percent": 18.0191
+      },
+      {
+        "pattern": 1,
+        "vertices": 4,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 884765,
+        "candidate_count": 651308,
+        "change_percent": -26.3863
+      },
+      {
+        "pattern": 1,
+        "vertices": 4,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 872477,
+        "candidate_count": 440364,
+        "change_percent": -49.5272
+      },
+      {
+        "pattern": 1,
+        "vertices": 4,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 866333,
+        "candidate_count": 334892,
+        "change_percent": -61.3437
+      },
+      {
+        "pattern": 1,
+        "vertices": 4,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 861725,
+        "candidate_count": 255788,
+        "change_percent": -70.3167
+      },
+      {
+        "pattern": 1,
+        "vertices": 4,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 860285,
+        "candidate_count": 231068,
+        "change_percent": -73.1405
+      },
+      {
+        "pattern": 1,
+        "vertices": 16,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 2875421,
+        "candidate_count": 3039276,
+        "change_percent": 5.6985
+      },
+      {
+        "pattern": 1,
+        "vertices": 16,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 2850845,
+        "candidate_count": 1634348,
+        "change_percent": -42.6715
+      },
+      {
+        "pattern": 1,
+        "vertices": 16,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 2838557,
+        "candidate_count": 931884,
+        "change_percent": -67.1705
+      },
+      {
+        "pattern": 1,
+        "vertices": 16,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 2832413,
+        "candidate_count": 580652,
+        "change_percent": -79.4997
+      },
+      {
+        "pattern": 1,
+        "vertices": 16,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 2827805,
+        "candidate_count": 317228,
+        "change_percent": -88.7818
+      },
+      {
+        "pattern": 1,
+        "vertices": 16,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 2826365,
+        "candidate_count": 234908,
+        "change_percent": -91.6887
+      },
+      {
+        "pattern": 1,
+        "vertices": 64,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 10739741,
+        "candidate_count": 10903596,
+        "change_percent": 1.5257
+      },
+      {
+        "pattern": 1,
+        "vertices": 64,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 10715165,
+        "candidate_count": 5566508,
+        "change_percent": -48.0502
+      },
+      {
+        "pattern": 1,
+        "vertices": 64,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 10702877,
+        "candidate_count": 2897964,
+        "change_percent": -72.9235
+      },
+      {
+        "pattern": 1,
+        "vertices": 64,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 10696733,
+        "candidate_count": 1563692,
+        "change_percent": -85.3816
+      },
+      {
+        "pattern": 1,
+        "vertices": 64,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 10692125,
+        "candidate_count": 562988,
+        "change_percent": -94.7346
+      },
+      {
+        "pattern": 1,
+        "vertices": 64,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 10690685,
+        "candidate_count": 250268,
+        "change_percent": -97.659
+      },
+      {
+        "pattern": 2,
+        "vertices": 4,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 1769501,
+        "candidate_count": 2474028,
+        "change_percent": 39.815
+      },
+      {
+        "pattern": 2,
+        "vertices": 4,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 1638429,
+        "candidate_count": 2314284,
+        "change_percent": 41.2502
+      },
+      {
+        "pattern": 2,
+        "vertices": 4,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 1626141,
+        "candidate_count": 2148396,
+        "change_percent": 32.1162
+      },
+      {
+        "pattern": 2,
+        "vertices": 4,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 1613853,
+        "candidate_count": 1881132,
+        "change_percent": 16.5615
+      },
+      {
+        "pattern": 2,
+        "vertices": 4,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 1602589,
+        "candidate_count": 1550124,
+        "change_percent": -3.2738
+      },
+      {
+        "pattern": 2,
+        "vertices": 4,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 1597629,
+        "candidate_count": 1329020,
+        "change_percent": -16.813
+      },
+      {
+        "pattern": 2,
+        "vertices": 16,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 3735581,
+        "candidate_count": 4440108,
+        "change_percent": 18.8599
+      },
+      {
+        "pattern": 2,
+        "vertices": 16,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 2621469,
+        "candidate_count": 3297324,
+        "change_percent": 25.7815
+      },
+      {
+        "pattern": 2,
+        "vertices": 16,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 2609181,
+        "candidate_count": 3131436,
+        "change_percent": 20.0161
+      },
+      {
+        "pattern": 2,
+        "vertices": 16,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 2351133,
+        "candidate_count": 2372652,
+        "change_percent": 0.9153
+      },
+      {
+        "pattern": 2,
+        "vertices": 16,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 2288669,
+        "candidate_count": 1867564,
+        "change_percent": -18.3996
+      },
+      {
+        "pattern": 2,
+        "vertices": 16,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 2246397,
+        "candidate_count": 1395452,
+        "change_percent": -37.8804
+      },
+      {
+        "pattern": 2,
+        "vertices": 64,
+        "heights": 1,
+        "queries": 8192,
+        "reference_count": 11599901,
+        "candidate_count": 12304428,
+        "change_percent": 6.0736
+      },
+      {
+        "pattern": 2,
+        "vertices": 64,
+        "heights": 2,
+        "queries": 8192,
+        "reference_count": 6553629,
+        "candidate_count": 7229484,
+        "change_percent": 10.3127
+      },
+      {
+        "pattern": 2,
+        "vertices": 64,
+        "heights": 4,
+        "queries": 8192,
+        "reference_count": 6541341,
+        "candidate_count": 7063596,
+        "change_percent": 7.9839
+      },
+      {
+        "pattern": 2,
+        "vertices": 64,
+        "heights": 8,
+        "queries": 8192,
+        "reference_count": 5320733,
+        "candidate_count": 4359212,
+        "change_percent": -18.0712
+      },
+      {
+        "pattern": 2,
+        "vertices": 64,
+        "heights": 32,
+        "queries": 8192,
+        "reference_count": 5048349,
+        "candidate_count": 3147564,
+        "change_percent": -37.6516
+      },
+      {
+        "pattern": 2,
+        "vertices": 64,
+        "heights": 512,
+        "queries": 8192,
+        "reference_count": 4853437,
+        "candidate_count": 1655292,
+        "change_percent": -65.8944
+      }
+    ]
+  }
+}

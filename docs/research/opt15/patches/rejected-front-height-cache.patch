@@ -1,0 +1,162 @@
+diff --git a/src/hardware/hw_front.inc b/src/hardware/hw_front.inc
+index a07243331..7f621542c 100644
+--- a/src/hardware/hw_front.inc
++++ b/src/hardware/hw_front.inc
+@@ -11,6 +11,8 @@
+ 
+ #ifdef PS2_PROFILE
+ 
++#include <float.h>
++
+ // -hwfr N: a set bit switches one OPT12 front path OFF (A/B on one ELF)
+ #define HWFR_NOCULL 0x1 // PS2-HW-400: every cull before building (walls, planes, translucent planes) off
+ #define HWFR_NOSEGCULL 0x2 // PS2-HW-402: walls not culled (the azimuth arc of the seg against the arc of the view)
+@@ -19,6 +21,7 @@
+ #define HWFR_NOSPRBATCH 0x40 // PS2-HW-403: the sprite polygons of the sprite batch go through the general HWR_ProcessPolygon (hw_batching.c) again
+ #define HWFR_NOINLINEZ 0x80 // PS2-HW-404: the four P_GetSector*ZAt calls of HWR_Subsector for a sector without slopes again
+ #define HWFR_NOSPRUNSORT 0x800 // PS2-HW-408: the opaque sprites are sorted far to near again (HWR_SortVisSprites)
++#define HWFR_NOHEIGHTCACHE 0x1000 // repeat every flat-plane vertex test, including the 3D floors of the same subsector
+ 
+ unsigned int hwr_fr_off; // -hwfr: OPT12 front paths switched off (see the HWFR_NO* bits)
+ static UINT32 hwr_fr_dbg_lo = 1, hwr_fr_dbg_hi; // -hwfrdbg LO HI: the segs and planes the culls leave out in the frames LO..HI (the numbers of the HWPH lines) are printed (HWFRC lines)
+@@ -267,6 +270,57 @@ inside:;
+ 	return 0;
+ }
+ 
++// A subsector's flat planes have the same points and view planes; only d0 = b*h+d
++// changes. Cache answers to each side test for this one HWR_Subsector call:
++// all q[i]+d0 > margin stays true as d0 increases, and an inside witness stays
++// inside as d0 decreases. Keep the original arithmetic and margin. This does
++// not reject any additional plane or alter texture/planner/draw-node traffic.
++// The caller clears the two masks for every subsector, including every view.
++typedef struct
++{
++	float in[5], out[5];
++	unsigned int inside, outside;
++} fr_heightcache_t;
++
++static inline int HWR_FrPlaneHiddenCached(const polyvertex_t *pts, int n, float h, fr_heightcache_t *cache)
++{
++	int k;
++
++	for (k = 0; k < 5; k++)
++	{
++		const fr_plane_t *pl = &frv.p[k];
++		const float d0 = pl->b * h + pl->d;
++		const unsigned int bit = 1u << k;
++		const int finite = d0 >= -FLT_MAX && d0 <= FLT_MAX;
++		int i;
++
++		// Nonfinite thresholds never enter the cache: in particular, an
++		// infinite addend can turn a vertex's opposite infinity into NaN.
++		if (finite && (cache->outside & bit) && d0 >= cache->out[k])
++			return 1;
++		if (finite && (cache->inside & bit) && d0 <= cache->in[k])
++			continue;
++		for (i = 0; i < n; i++)
++			if (pl->a * pts[i].x + pl->c * pts[i].y + d0 <= FR_MARGIN)
++			{
++				if (finite && (!(cache->inside & bit) || d0 > cache->in[k]))
++				{
++					cache->in[k] = d0;
++					cache->inside |= bit;
++				}
++				goto inside;
++			}
++		if (finite && (!(cache->outside & bit) || d0 < cache->out[k]))
++		{
++			cache->out[k] = d0;
++			cache->outside |= bit;
++		}
++		return 1;
++inside:;
++	}
++	return 0;
++}
++
+ // The prism over the points pts[0..n) between the heights lo and hi (all the planes of a subsector lie in it) is outside one side of the volume
+ static inline int HWR_FrPrismHidden(const polyvertex_t *pts, int n, float lo, float hi)
+ {
+diff --git a/src/hardware/hw_main.c b/src/hardware/hw_main.c
+index 4bed2b2f2..9c9eb46dd 100644
+--- a/src/hardware/hw_main.c
++++ b/src/hardware/hw_main.c
+@@ -3159,7 +3159,7 @@ static boolean HWR_DoCulling(line_t *cullheight, line_t *viewcullheight, float v
+ #ifdef PS2_PROFILE
+ // OPT12 PS2-HW-400 (hw_front.inc): the plane of the subsector at this height has no pixel on the screen: it is not built (nothing else about it changes). A sloped plane, a subsector with a horizon line and a view the driver
+ // has no volume for are built as before.
+-static inline boolean HWR_FrPlaneCulled(subsector_t *sub, size_t num, fixed_t height, boolean sloped)
++static inline boolean HWR_FrPlaneCulled(subsector_t *sub, size_t num, fixed_t height, boolean sloped, fr_heightcache_t *cache)
+ {
+ 	const extrasubsector_t *xs;
+ 
+@@ -3169,7 +3169,9 @@ static inline boolean HWR_FrPlaneCulled(subsector_t *sub, size_t num, fixed_t he
+ 	if (!xs->planepoly || xs->planepoly->numpts < 3)
+ 		return false;
+ 	frs.ptest++;
+-	if (!HWR_FrPlaneHidden(xs->planepoly->pts, xs->planepoly->numpts, FixedToFloat(height)))
++	if (!(cache
++		? HWR_FrPlaneHiddenCached(xs->planepoly->pts, xs->planepoly->numpts, FixedToFloat(height), cache)
++		: HWR_FrPlaneHidden(xs->planepoly->pts, xs->planepoly->numpts, FixedToFloat(height))))
+ 		return false;
+ 	if (HWR_PlaneHasHorizon(sub))
+ 		return false;
+@@ -3218,6 +3220,10 @@ static void HWR_Subsector(size_t num)
+ 	extracolormap_t *ceilingcolormap;
+ 	ffloor_t *rover;
+ 	boolean fr_planes_out = false; // OPT12 PS2-HW-401
++#ifdef PS2_PROFILE
++	fr_heightcache_t fr_heightcache;
++	fr_heightcache_t *fr_cache = NULL;
++#endif
+ 
+ #ifdef PARANOIA //no risk while developing, enough debugging nights!
+ 	if (num >= addsubsector)
+@@ -3280,6 +3286,11 @@ static void HWR_Subsector(size_t num)
+ 
+ #ifdef PS2_PROFILE
+ 	fr_planes_out = sub->validcount != validcount && HWR_FrLeafPlanesCulled(sub, num); // OPT12 PS2-HW-401
++	if (!fr_planes_out && gl_frontsector->ffloors && !(hwr_fr_off & HWFR_NOHEIGHTCACHE))
++	{
++		fr_heightcache.inside = fr_heightcache.outside = 0;
++		fr_cache = &fr_heightcache;
++	}
+ #endif
+ 	// render floor ?
+ 	// yeah, easy backface cull! :)
+@@ -3289,7 +3300,7 @@ static void HWR_Subsector(size_t num)
+ 		{
+ 			if (sub->validcount != validcount
+ #ifdef PS2_PROFILE
+-				&& !HWR_FrPlaneCulled(sub, num, locFloorHeight == cullFloorHeight ? locFloorHeight : gl_frontsector->floorheight, gl_frontsector->f_slope != NULL) // OPT12 PS2-HW-400
++				&& !HWR_FrPlaneCulled(sub, num, locFloorHeight == cullFloorHeight ? locFloorHeight : gl_frontsector->floorheight, gl_frontsector->f_slope != NULL, fr_cache) // OPT12 PS2-HW-400
+ #endif
+ 				)
+ 			{
+@@ -3309,7 +3320,7 @@ static void HWR_Subsector(size_t num)
+ 		{
+ 			if (sub->validcount != validcount
+ #ifdef PS2_PROFILE
+-				&& !HWR_FrPlaneCulled(sub, num, locCeilingHeight == cullCeilingHeight ? locCeilingHeight : gl_frontsector->ceilingheight, gl_frontsector->c_slope != NULL) // OPT12 PS2-HW-400
++				&& !HWR_FrPlaneCulled(sub, num, locCeilingHeight == cullCeilingHeight ? locCeilingHeight : gl_frontsector->ceilingheight, gl_frontsector->c_slope != NULL, fr_cache) // OPT12 PS2-HW-400
+ #endif
+ 				)
+ 			{
+@@ -3358,7 +3369,7 @@ static void HWR_Subsector(size_t num)
+ 			    ((viewz < bottomCullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
+ 			     (viewz > bottomCullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES)))
+ #ifdef PS2_PROFILE
+-			    && !HWR_FrPlaneCulled(sub, num, *rover->bottomheight, rover->master->frontsector->f_slope != NULL) // OPT12 PS2-HW-400
++			    && !HWR_FrPlaneCulled(sub, num, *rover->bottomheight, rover->master->frontsector->f_slope != NULL, fr_cache) // OPT12 PS2-HW-400
+ #endif
+ 			    )
+ 			{
+@@ -3408,7 +3419,7 @@ static void HWR_Subsector(size_t num)
+ 			    ((viewz > topCullHeight && (rover->fofflags & FOF_BOTHPLANES || !(rover->fofflags & FOF_INVERTPLANES))) ||
+ 			     (viewz < topCullHeight && (rover->fofflags & FOF_BOTHPLANES || rover->fofflags & FOF_INVERTPLANES)))
+ #ifdef PS2_PROFILE
+-			    && !HWR_FrPlaneCulled(sub, num, *rover->topheight, rover->master->frontsector->c_slope != NULL) // OPT12 PS2-HW-400
++			    && !HWR_FrPlaneCulled(sub, num, *rover->topheight, rover->master->frontsector->c_slope != NULL, fr_cache) // OPT12 PS2-HW-400
+ #endif
+ 			    )
+ 			{
