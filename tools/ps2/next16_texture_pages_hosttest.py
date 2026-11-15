@@ -83,7 +83,7 @@ def main():
     roots = {role: out / role for role in ("baseline", "candidate")}
     for role, root in roots.items():
         materialize(root, args.reference if role == "baseline" else None, args.candidate)
-    flags = ["gcc", "-std=gnu17", "-O2", "-g", "-fwrapv", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-Wno-unused-variable", "-Wno-unused-parameter", "-Wno-misleading-indentation", "-Wno-clobbered", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer", "-fno-pie", "-no-pie"]
+    flags = ["gcc", "-DPS2_NOOPT_PATCH_RESCUE", "-std=gnu17", "-O2", "-g", "-fwrapv", "-Wall", "-Wextra", "-Werror", "-Wno-unused-function", "-Wno-unused-variable", "-Wno-unused-parameter", "-Wno-misleading-indentation", "-Wno-clobbered", "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-fno-omit-frame-pointer", "-fno-pie", "-no-pie"]
     frozen = out / "frozen-tools"
     frozen.mkdir()
     dependencies = {}
@@ -91,7 +91,7 @@ def main():
         path = ROOT / "tools/ps2" / name
         shutil.copy2(path, frozen / name)
         dependencies[name] = sha(path)
-    report = {"reference": run(["git", "rev-parse", args.reference]).stdout.strip(), "runner_sha256": sha(Path(__file__)), "fixture_sha256": sha(ROOT / "tools/ps2/next16_texture_pages_hosttest.c"), "frozen_tools_sha256": dependencies, "sources": {}, "actual_EE_layout": {}, "cases": [], "negative_controls": {}}
+    report = {"patch_rescue": "disabled for independent storage/page scope; patch_rescue_hosttest.py proves rescue separately", "reference": run(["git", "rev-parse", args.reference]).stdout.strip(), "runner_sha256": sha(Path(__file__)), "fixture_sha256": sha(ROOT / "tools/ps2/next16_texture_pages_hosttest.c"), "frozen_tools_sha256": dependencies, "sources": {}, "actual_EE_layout": {}, "cases": [], "negative_controls": {}}
     bodies = {role: extract(root) for role, root in roots.items()}
     configs = {"ps2": ["-DPS2", "-DPS2_PROFILE"], "eager-optout": ["-DPS2", "-DPS2_PROFILE", "-DPS2_NOOPT_TEXTURE_PAGES"], "baseline-storage": ["-DPS2", "-DPS2_PROFILE", "-DPS2_NOOPT_MIPMAP_STORAGE"], "both-optouts": ["-DPS2", "-DPS2_PROFILE", "-DPS2_NOOPT_TEXTURE_PAGES", "-DPS2_NOOPT_MIPMAP_STORAGE"], "old-layout": ["-DPS2", "-DPS2_PROFILE", "-DPS2_NOOPT_MIPMAP_LAYOUT"], "full-flat-records": ["-DPS2", "-DPS2_PROFILE", "-DPS2_NOOPT_FLAT_METADATA"], "nonps2-profile": ["-DPS2_PROFILE"]}
     compiler = shutil.which("mips64r5900el-ps2-elf-gcc")

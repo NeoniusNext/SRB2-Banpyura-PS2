@@ -1678,10 +1678,74 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
 }
 
+#if defined(PS2) && !defined(PS2_NOOPT_PATCH_RESCUE)
+// Only used after a patch's upload source was purged. The converted patch
+// stays pinned while its hardware metadata exists, including generated and
+// translated patches. Keep no additional per-texture source pointer.
+static struct
+{
+	GLMipmap_t *mipmap;
+	const patch_t *patch;
+} ps2_patch_source;
+
+static boolean HWR_PS2_FindPatchSource(void *mem)
+{
+	const patch_t *patch = mem;
+	const GLPatch_t *grPatch;
+	const GLMipmap_t *mipmap;
+
+	if (ps2_patch_source.patch || patch->width <= 0 || patch->height <= 0 || !patch->columns)
+		return false;
+	grPatch = patch->hardware;
+	if (!grPatch)
+		return false;
+	for (mipmap = grPatch->mipmap; mipmap; mipmap = mipmap->nextcolormap)
+		if (mipmap == ps2_patch_source.mipmap)
+		{
+			ps2_patch_source.patch = patch;
+			break;
+		}
+	return false;
+}
+
+static void HWR_PS2_RegeneratePatch(GLMipmap_t *m)
+{
+	const patch_t *patch;
+
+	// Try allocation still rejects requests above this allocator limit with a
+	// fatal error. Check first; the byte bound also keeps MakeBlockEx's signed
+	// width*height product representable. Failure retains the existing skip.
+	if (m->data || m->format != GL_TEXFMT_AP_88 || !m->width || !m->height
+		|| (size_t)m->width * m->height > (size_t)0x7FFFFFF0u / 2u)
+		return;
+	ps2_patch_source.mipmap = m;
+	ps2_patch_source.patch = NULL;
+	// PU_PATCH_DATA lies between these ranges and is not a patch_t.
+	Z_IterateTags(PU_PATCH, PU_PATCH_ROTATED, HWR_PS2_FindPatchSource);
+	if (!ps2_patch_source.patch)
+		Z_IterateTags(PU_SPRITE, PU_HUDGFX, HWR_PS2_FindPatchSource);
+	patch = ps2_patch_source.patch;
+	ps2_patch_source.mipmap = NULL;
+	ps2_patch_source.patch = NULL;
+	// No allocation or callback can invalidate an iterator's next-block
+	// pointer: the read-only search has finished before any pixels are made.
+	if (!patch || patch->width > m->width || patch->height > m->height)
+		return;
+	if (!MakeBlockEx(m, true))
+		return;
+	HWR_DrawPatchInCache(m, m->width, m->height, patch->width, patch->height, patch);
+}
+#endif
+
 void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 {
 	if (m->data)
 		return;
+#if defined(PS2) && !defined(PS2_NOOPT_PATCH_RESCUE)
+	if (!m->regen_kind)
+		HWR_PS2_RegeneratePatch(m);
+	else
+#endif
 	if (m->regen_kind == 1)
 	{
 		if (m->regen_id >= 0 && (size_t)m->regen_id < gl_numtextures && gl_textures)

@@ -12,7 +12,7 @@ are frozen at:
 
 | File | SHA256 |
 | --- | --- |
-| `src/hardware/hw_cache.c` | `bf0b2d3c28f5006699134d270be3bf040e3b6eb6db44f503e4ef9a2b4bf86525` |
+| `src/hardware/hw_cache.c` | `2ff513529707134b55d2fc6e048ecbe9177d77c96e9e4cec22da5bc69fe9e542` |
 | `src/hardware/hw_data.h` | `ae19d9a3ce26bda9a11acb9fe52906712edb5b711b759cf9d070e63077c190a7` |
 
 ## Storage and lifetime
@@ -97,7 +97,7 @@ spill threshold or texture budget was adjusted.
 
 ## Component execution
 
-The final page suite is
+The original final page suite is
 `build/nov15-next16/ram-pages-host-v6/report.json`, produced by
 [`next16_texture_pages_hosttest.py`](../tools/ps2/next16_texture_pages_hosttest.py)
 and its [service fixture](../tools/ps2/next16_texture_pages_hosttest.c).
@@ -130,6 +130,16 @@ detected. The complete pinned texture manager runs independently with each
 header: 93394955 checks, 19905000 compared texels, 794 uploads and 1603 complete
 normalized packet/cache/owner snapshots per role agree. Source bytes and
 executed tool dependencies are retained in each output's `frozen-tools/`.
+
+The final full cache source above also includes the independent
+[try-only AP88 patch rescue](research/opt16/PATCH_RESCUE_20261116.md).
+`build/nov16-hwopt/pages-after-rescue/report.json` reruns all 851 page cases
+and five controls against that final source, retaining the actual EE ABI probe.
+The focused page and isolated-layout runners explicitly define
+`PS2_NOOPT_PATCH_RESCUE`, so their service fixtures continue to test storage
+independently. The rescue has its own complete production-drawer, source-lifetime,
+allocation-failure and PNG/rotation/mapping byte proof; it is not silently
+replaced by a stand-in in the page tests.
 
 Default and double-opt-out `hw_cache.c` pass actual EE build syntax checks.
 Preprocessed mipmap declarations are exact to baseline for generic,
