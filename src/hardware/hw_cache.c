@@ -1497,7 +1497,9 @@ static void FreeFlatMipmap(GLMipmap_t *mipmap)
 {
 	if (mipmap->nextcolormap)
 	{
-		DeleteTextureMipmap(mipmap->nextcolormap, false);
+		// PS2_PROFILE flat variants own a separate zone allocation. Release its
+		// user before freeing the metadata that contains that user pointer.
+		DeleteTextureMipmap(mipmap->nextcolormap, true);
 		free(mipmap->nextcolormap);
 		mipmap->nextcolormap = NULL;
 	}
@@ -1532,7 +1534,11 @@ void HWR_FreeMapTextures(void)
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 		FreeFlatMipmap(HWR_FlatMipmap(i));
 #else
-		FreeMapTexture(&gl_flats[i], false);
+#ifdef PS2_PROFILE
+		FreeMapTexture(&gl_flats[i], true); // the profile flat path owns each variant's pixels
+#else
+		FreeMapTexture(&gl_flats[i], false); // the legacy path aliases the canonical pixels
+#endif
 #endif
 #endif
 	}
