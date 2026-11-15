@@ -1,0 +1,197 @@
+--- a/src/hardware/hw_cache.c
++++ b/src/hardware/hw_cache.c
+@@ -16,6 +16,9 @@
+ #include "hw_glob.h"
+ #include "hw_drv.h"
+ #include "hw_batching.h"
++#if defined(PS2) && !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
++#include "../ps2/hw/ps2_hwd.h"
++#endif
+ 
+ #include "../doomstat.h"    //gamemode
+ #include "../i_video.h"     //rendermode
+@@ -2243,6 +2246,14 @@
+ 	else
+ 		colormap_pointer = colormap->colormap;
+ 
++#if defined(PS2) && !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
++	// The GS keeps only canonical palette indices. Submit the same forward
++	// palette so the driver preserves the original RGB-to-lowest-index roundtrip.
++	if (!colormap->gl_lighttable.id)
++		colormap->gl_lighttable.id = PS2HWD_CreateIndexedLightTable(colormap_pointer, HWR_GetTexturePalette());
++	else if (colormap->gl_lighttable.needs_update)
++		PS2HWD_UpdateIndexedLightTable(colormap->gl_lighttable.id, colormap_pointer, HWR_GetTexturePalette());
++#else
+ 	// create hw lighttable if there isn't one
+ 	if (colormap->gl_lighttable.data == NULL)
+ 	{
+@@ -2259,6 +2270,7 @@
+ 	{
+ 		HWR_UpdateLightTable(colormap->gl_lighttable.id, colormap_pointer, colormap->gl_lighttable.data);
+ 	}
++#endif
+ 
+ 	colormap->gl_lighttable.needs_update = false;
+ 
+--- a/src/ps2/hw/ps2_hw_pal.inc
++++ b/src/ps2/hw/ps2_hw_pal.inc
+@@ -66,6 +66,7 @@
+ // CLUT parameter: light table id (10 bits), its generation (8 bits), row (5 bits)
+ #define pal_param(row) ((u32)P.pal_tbl | ((u32)lt_gen[P.pal_tbl] << 10) | ((u32)(row) << 18))
+ 
++#if defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+ static u32 lt_store(u32 id, const RGBA_t *t)
+ {
+ 	u32 i;
+@@ -106,6 +107,60 @@
+ 	lt_gen[id]++;
+ 	return id;
+ }
++#else
++// Optional indices preserve the generic RGBA path and the indexed palette
++// roundtrip in one private store. Keep a single body in the whole-engine LTO.
++__attribute__((noinline,noclone))
++static u32 lt_store(u32 id, const RGBA_t *t, const u8 *indices)
++{
++	u32 i;
++	u8 *ix;
++
++	if (!H.pal_set)
++		return 0; // the colours of the table cannot be turned into indices before the palette is known: the engine asks again
++	if (!id)
++	{
++		for (id = 1; id < LT_MAX && lt_idx[id]; id++)
++			;
++		if (id >= LT_MAX)
++		{
++			hw_limit(HW_LIGHT_TABLE, "more than 1023 colormap light tables: the polygon is lit by the GLSL equations");
++			return 0;
++		}
++	}
++	ix = lt_idx[id] ? lt_idx[id] : (u8 *)malloc(256 * 32);
++	if (!ix)
++	{
++		hw_limit(HW_LIGHT_TABLE, "no memory for a colormap light table: the polygon is lit by the GLSL equations");
++		return 0;
++	}
++	{
++		u32 miss = 0;
++
++		for (i = 0; i < 256 * 32; i++)
++		{
++			const RGBA_t c = t[indices ? indices[i] : i];
++#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__) && __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++			_Static_assert(sizeof(RGBA_t) == 4 && offsetof(RGBA_t, s.red) == 0 && offsetof(RGBA_t, s.green) == 1 && offsetof(RGBA_t, s.blue) == 2, "GS RGBA byte layout");
++			// RGBA_t is packed: typed member access preserves byte alignment.
++			int k = pal_lookup(c.rgba & 0x00FFFFFFu);
++#else
++			int k = pal_lookup((u32)c.s.red | ((u32)c.s.green << 8) | ((u32)c.s.blue << 16));
++#endif
++
++			miss += k < 0;
++			ix[i] = (u8)(k < 0 ? 0 : k);
++		}
++		const RGBA_t c0 = t[indices ? indices[0] : 0], c1 = t[indices ? indices[1] : 1], c31 = t[indices ? indices[31 * 256 + 128] : 31 * 256 + 128];
++
++		I_OutputMsg("HWLT table %u stored: %u of 8192 colours not in the palette; row 0 [0,1,2]=%02x%02x%02x %02x%02x%02x row 31 [128]=%02x%02x%02x\n", (unsigned)id, (unsigned)miss,
++			c0.s.red, c0.s.green, c0.s.blue, c1.s.red, c1.s.green, c1.s.blue, c31.s.red, c31.s.green, c31.s.blue);
++	}
++	lt_idx[id] = ix;
++	lt_gen[id]++;
++	return id;
++}
++#endif
+ 
+ static void lt_clear(void)
+ {
+--- a/src/ps2/hw/ps2_hwd.c
++++ b/src/ps2/hw/ps2_hwd.c
+@@ -2064,7 +2064,11 @@
+ {
+ 	if (!H.up)
+ 		return 0;
++#if defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+ 	return lt_store(0, hw_lighttable);
++#else
++	return lt_store(0, hw_lighttable, NULL);
++#endif
+ }
+ 
+ static void hw_UpdateLightTable(UINT32 id, RGBA_t *hw_lighttable)
+@@ -2072,7 +2076,11 @@
+ 	if (H.up && id && id < LT_MAX && lt_idx[id])
+ 	{
+ 		ov_flush_all(); // queued draws use the old rows
++#if defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
+ 		lt_store(id, hw_lighttable);
++#else
++		lt_store(id, hw_lighttable, NULL);
++#endif
+ 	}
+ }
+ 
+@@ -2082,6 +2090,24 @@
+ 		ov_flush_all();
+ 	lt_clear();
+ }
++
++#if !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
++UINT32 PS2HWD_CreateIndexedLightTable(const UINT8 *indices, const RGBA_t *palette)
++{
++	if (!H.up)
++		return 0;
++	return lt_store(0, palette, indices);
++}
++
++void PS2HWD_UpdateIndexedLightTable(UINT32 id, const UINT8 *indices, const RGBA_t *palette)
++{
++	if (H.up && id && id < LT_MAX && lt_idx[id])
++	{
++		ov_flush_all();
++		lt_store(id, palette, indices);
++	}
++}
++#endif
+ 
+ static void hw_SetScreenPalette(RGBA_t *palette)
+ {
+--- a/src/ps2/hw/ps2_hwd.h
++++ b/src/ps2/hw/ps2_hwd.h
+@@ -15,6 +15,14 @@
+ // Fill every pointer of *drv; unsupported shader features report their limitations, never NULL.
+ // pfnInit is PS2HWD_Init itself, pfnShutdown is PS2HWD_Shutdown.
+ void PS2HWD_FillDriver(struct hwdriver_s *drv);
++
++#if !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
++// Engine colormaps need no persistent RGBA duplicate. The source palette is
++// still converted through the current reverse RGB lookup, including duplicates.
++UINT32 PS2HWD_CreateIndexedLightTable(const UINT8 *indices, const RGBA_t *palette);
++void PS2HWD_UpdateIndexedLightTable(UINT32 id, const UINT8 *indices, const RGBA_t *palette);
++
++#endif
+ 
+ // Wait for the GS, drop textures, remove the vblank handler. Safe to call twice.
+ void PS2HWD_Shutdown(void);
+--- a/src/ps2/hw/ps2_hwd_null.c
++++ b/src/ps2/hw/ps2_hwd_null.c
+@@ -179,7 +179,20 @@
+ static void NullSetPaletteLookup(UINT8 *lut) { (void)lut; HIT(SetPaletteLookup); }
+ static UINT32 NullCreateLightTable(RGBA_t *hw_lighttable) { (void)hw_lighttable; HIT(CreateLightTable); return 0; }
+ static void NullUpdateLightTable(UINT32 id, RGBA_t *hw_lighttable) { (void)id; (void)hw_lighttable; HIT(UpdateLightTable); }
++#if !defined(PS2_NOOPT_LIGHTTABLE_INDEXED)
++UINT32 PS2HWD_CreateIndexedLightTable(const UINT8 *indices, const RGBA_t *palette)
++{
++	(void)indices; (void)palette;
++	return NullCreateLightTable(NULL);
++}
++void PS2HWD_UpdateIndexedLightTable(UINT32 id, const UINT8 *indices, const RGBA_t *palette)
++{
++	(void)indices; (void)palette;
++	NullUpdateLightTable(id, NULL);
++}
++#endif
+ static void NullClearLightTables(void) { HIT(ClearLightTables); }
++
+ static void NullSetScreenPalette(RGBA_t *palette) { (void)palette; HIT(SetScreenPalette); }
+ 
+ boolean PS2HWD_Init(void)

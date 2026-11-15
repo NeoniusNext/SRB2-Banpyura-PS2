@@ -1,0 +1,284 @@
+--- a/src/ps2/hw/ps2_hw_draw.inc
++++ b/src/ps2/hw/ps2_hw_draw.inc
+@@ -238 +238 @@
+-	if (r->psm == PSM_T8)
++	if (psm_indexed(r->psm))
+@@ -240,0 +241,16 @@
++#ifndef PS2_NOOPT_P4_BAND
++		if (r->psm == PSM_T4)
++		{
++			// CSA chooses the internal CLUT bank, not its source. Load all
++			// 256 original entries as T8 before selecting the unchanged band.
++			if (H.clut_loaded != cbp)
++			{
++				qw_t *p = ad_alloc(1);
++				ad_set(p, ((u64)PSM_T8 << 20) | ((u64)cbp << 37) | (1ull << 61), GSR_TEX2_1);
++				H.clut_loaded = cbp;
++				H.gsr.valid &= ~RV_TEX0;
++			}
++			t0 |= (u64)r->csa << 56;
++		}
++		else
++#endif
+@@ -507 +523 @@
+-			if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
++			if (!(im->owner && im->owner->regen_kind && psm_indexed(im->psm) && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+@@ -643 +659 @@
+-		if (surf->LightTableId && lt_ok(surf->LightTableId) && textured && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2)
++		if (surf->LightTableId && lt_ok(surf->LightTableId) && textured && psm_indexed(r->psm) && (r->clut == 1 || r->clut == 2)
+@@ -945 +961 @@
+-			&& (!textured || (r->psm == PSM_T8 && r->clut == 1)) && !P.water && !(flags & PF_Ripple);
++			&& (!textured || (psm_indexed(r->psm) && r->clut == 1)) && !P.water && !(flags & PF_Ripple);
+@@ -1340 +1356 @@
+-		if (r->psm == PSM_T8)
++		if (psm_indexed(r->psm))
+@@ -2725 +2741 @@
+-	if (r->psm == PSM_T8 && !cbp)
++	if (psm_indexed(r->psm) && !cbp)
+--- a/src/ps2/hw/ps2_hw_plan.inc
++++ b/src/ps2/hw/ps2_hw_plan.inc
+@@ -1026 +1026 @@
+-	u32 saved;
++	u32 saved, have;
+@@ -1030,2 +1030,8 @@
+-	saved = rec_blocks(r) - tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want);
+-	if (rec_blocks(r) < tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want) || saved < PLAN_DOWN_BLOCKS)
++#ifndef PS2_NOOPT_P4_BAND
++	have = r->psm == PSM_T4 ? tex_plan_blocks(PSM_T8, r->sw, r->sh, r->dx, r->dy) : rec_blocks(r);
++#else
++	have = rec_blocks(r);
++#endif
++	// Format packing does not change the pre-existing level-change decision.
++	saved = have - tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want);
++	if (have < tex_plan_blocks(PSM_T8, r->sw, r->sh, want, want) || saved < PLAN_DOWN_BLOCKS)
+--- a/src/ps2/hw/ps2_hw_priv.inc
++++ b/src/ps2/hw/ps2_hw_priv.inc
+@@ -43,0 +44 @@
++#define PSM_T4 0x14
+@@ -49,0 +51,9 @@
++
++static inline int psm_indexed(int psm)
++{
++	return psm == PSM_T8
++#ifndef PS2_NOOPT_P4_BAND
++		|| psm == PSM_T4
++#endif
++		;
++}
+@@ -228 +238 @@
+-	u8 pad2;
++	u8 csa; // PSMT4: original aligned 16-entry palette band; zero for other formats
+@@ -362 +372 @@
+-	u32 clut_loaded; // block of the CLUT in the GS CLUT buffer, 0 = unknown
++	u32 clut_loaded; // all 256 CT32 CSM1 entries of this block are in the single GS CLUT buffer; 0 = unknown
+--- a/src/ps2/hw/ps2_hw_tex.inc
++++ b/src/ps2/hw/ps2_hw_tex.inc
+@@ -195,0 +196,6 @@
++#ifndef PS2_NOOPT_P4_BAND
++		case PSM_T4:
++			lastpage = (h >> 7) * ((tbw + 1) >> 1) + (w >> 7);
++			maxblk = blk_16[(h >> 4) & 7][(w >> 5) & 3];
++			break;
++#endif
+@@ -1001,0 +1008,18 @@
++#ifndef PS2_NOOPT_P4_BAND
++// Exact P8 eligibility: the low nibble plus one unchanged aligned CLUT band
++// represents every source index. A partial scan never publishes a band.
++static int p4_band(const u8 *src, u32 n, u32 *band)
++{
++	u32 i, high;
++
++	if (!n)
++		return 0;
++	high = src[0] & 0xF0u;
++	for (i = 1; i < n; i++)
++		if ((src[i] & 0xF0u) != high)
++			return 0;
++	*band = high >> 4;
++	return 1;
++}
++#endif
++
+@@ -1015,0 +1040,4 @@
++#ifndef PS2_NOOPT_P4_BAND
++	if (psm == PSM_T4)
++		rowbytes = W2 >> 1; // eligibility requires legal RRW: a multiple of eight texels
++#endif
+@@ -1377,0 +1406,14 @@
++#ifndef PS2_NOOPT_P4_BAND
++// Packed directly into the existing DMA ring. No second persistent image and
++// no new scratch allocation; legal even transfer rows start a fresh byte.
++static void fill_p4(void *ctx, u32 row, u8 *dst)
++{
++	const fillctx_t *c = ctx;
++	const u8 *src = c->src + (size_t)src_row(c, row) * c->sw;
++	u32 x;
++
++	for (x = 0; x < c->W2; x += 2)
++		dst[x >> 1] = (u8)((src[src_col(c, x)] & 15u) | ((src[src_col(c, x + 1)] & 15u) << 4));
++}
++#endif
++
+@@ -1645 +1687 @@
+-	u32 k = psm != PSM_T8 ? 3u : m->regen_kind == 1 ? 0u : m->regen_kind == 2 ? 1u : 2u;
++	u32 k = !psm_indexed(psm) ? 3u : m->regen_kind == 1 ? 0u : m->regen_kind == 2 ? 1u : 2u;
+@@ -1964,0 +2007,5 @@
++	int store_psm;
++#ifndef PS2_NOOPT_P4_BAND
++	u32 csa = 0;
++	int can_p4 = 0;
++#endif
+@@ -2147,0 +2195,12 @@
++#ifndef PS2_NOOPT_P4_BAND
++	// Only immutable P8 map/flat sources with the ordinary wrap policy. Other
++	// formats, debug/cap/budget modes, split/oversized and illegal RRW widths
++	// keep the complete preceding T8 path. The selected level is still planned
++	// as T8, so packing does not introduce a new LOD or fidelity policy.
++	if (m->format == GL_TEXFMT_P_8 && shareable && H.pal_set && !has255
++		&& (m->flags & TF_WRAPXY) == TF_WRAPXY && n >= 2048u
++		&& sw <= 1024u && sh <= 1024u && !(sw & 7u)
++		&& !H.cap_adapt && !H.tex_cap_blocks && !cfg.tex_max_bytes && !ps2hwd_dbg_flags)
++		can_p4 = p4_band(data, lvdec ? (sw >> lv) * (sh >> lv) : dsrc ? ssw * ssh : n, &csa);
++#endif
++
+@@ -2184 +2243,7 @@
+-		nblkA = tex_footprint(psm, W2, H2, tbw);
++		store_psm = psm;
++#ifndef PS2_NOOPT_P4_BAND
++		if (can_p4 && !split && !(W2 & 7u)
++			&& tex_footprint(PSM_T4, W2, H2, tbw) < tex_footprint(psm, W2, H2, tbw))
++			store_psm = PSM_T4;
++#endif
++		nblkA = tex_footprint(store_psm, W2, H2, tbw);
+@@ -2201,0 +2267,8 @@
++#ifndef PS2_NOOPT_P4_BAND
++		if (store_psm == PSM_T4)
++		{
++			// Retry the complete original T8 allocation and failure policy.
++			can_p4 = 0;
++			continue;
++		}
++#endif
+@@ -2346 +2419 @@
+-	if (dce && fill == fill_idx && psm == PSM_T8 && !c->dx && !c->dy && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15))
++	if (dce && fill == fill_idx && psm == PSM_T8 && store_psm == PSM_T8 && !c->dx && !c->dy && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15))
+@@ -2363 +2436,16 @@
+-		upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
++#ifndef PS2_NOOPT_P4_BAND
++		if (store_psm == PSM_T4)
++		{
++			// The source remains the existing P8 cache block. Packet construction
++			// consumes it synchronously; queued DMA sees only the packed ring.
++			if (dce && dce->busy == 255)
++				dma_fence(); // leave one reference count for this synchronous read
++			if (dce && !dce->busy++)
++				HWR_PS2_LockData(dce->p);
++			upload_bands(blk, tbw, store_psm, W2, H2, 0, fill_p4, c);
++			if (dce && !--dce->busy)
++				HWR_PS2_UnlockData(dce->p);
++		}
++		else
++#endif
++			upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
+@@ -2393 +2481,4 @@
+-		r->psm = (u8)psm;
++		r->psm = (u8)store_psm;
++#ifndef PS2_NOOPT_P4_BAND
++		r->csa = store_psm == PSM_T4 ? (u8)csa : 0;
++#endif
+@@ -2463 +2554 @@
+-	H.st.upload_bytes += W2 * (H2 + hb) * bpp;
++	H.st.upload_bytes += store_psm == PSM_T4 ? (W2 * H2) >> 1 : W2 * (H2 + hb) * bpp;
+@@ -2465 +2556 @@
+-	tx_note_upload(m, psm, nblk);
++	tx_note_upload(m, store_psm, nblk);
+--- a/src/ps2/hw/ps2_hw_val.inc
++++ b/src/ps2/hw/ps2_hw_val.inc
+@@ -644,0 +645,6 @@
++#ifndef PS2_NOOPT_P4_BAND
++			if ((dir == 0 || dir == 2) && dpsm == PSM_T4 && ((dsax & 3u) || (rrw & 7u)))
++				val_err(VE_TRX, "PSMT4 transfer needs start X multiple of 4 and width multiple of 8 (X=%u W=%u)", dsax, rrw);
++			if (dir == 1 && dpsm == PSM_T4)
++				val_err(VE_TRX, "PSMT4 local-to-host transfer is unsupported by the GS");
++#endif
+--- a/src/ps2/hw/ps2_hw_vu1.inc
++++ b/src/ps2/hw/ps2_hw_vu1.inc
+@@ -33,0 +34 @@
++#define VU_P4_TEX2 28 // unused quadword between the plane bits and row table: P4 selection after a full T8 CLUT load
+@@ -422,0 +424,4 @@
++#ifndef PS2_NOOPT_P4_BAND
++	if (vl && P.r && P.r->psm == PSM_T4)
++		w[3] = 1;
++#endif
+@@ -436,2 +441,7 @@
+-
+-	vu_room(1 + nc + 1 + nrow + 2);
++#ifndef PS2_NOOPT_P4_BAND
++	const int p4 = VU.rowmode && P.r && P.r->psm == PSM_T4;
++#else
++	const int p4 = 0;
++#endif
++
++	vu_room(1 + nc + 1 + nrow + 2 + (p4 ? 2u : 0u));
+@@ -451,0 +462,11 @@
++#ifndef PS2_NOOPT_P4_BAND
++	if (p4)
++	{
++		const u64 select = ((u64)PSM_T4 << 20) | ((u64)P.r->csa << 56);
++
++		t = b + H.wr++;
++		t->d[0] = dma_tag(1, DMAT_CNT, 0);
++		t->d[1] = (u64)VIF_NOP | ((u64)VIF_UNPACK_V4_32(VU_P4_TEX2, 1, 0) << 32);
++		ad_set(b + H.wr++, select, GSR_TEX2_1); // CLD0: select an internal band, never a partial load
++	}
++#endif
+@@ -471 +492 @@
+-	if (r->psm == PSM_T8)
++	if (psm_indexed(r->psm))
+@@ -530 +551 @@
+-		if (tbl >= PR_TBL || !r || r->psm != PSM_T8)
++		if (tbl >= PR_TBL || !r || !psm_indexed(r->psm))
+@@ -597,0 +619,3 @@
++#ifndef PS2_NOOPT_P4_BAND
++			((u32 *)(void *)VU.cn[16])[3] = r && r->psm == PSM_T4;
++#endif
+@@ -700,0 +725,4 @@
++#ifndef PS2_NOOPT_P4_BAND
++	if (r && r->psm == PSM_T4)
++		w[17] = r->csa; // a band change retargets the restore constant, even with the same PSM and image address
++#endif
+@@ -759,0 +788,4 @@
++#ifndef PS2_NOOPT_P4_BAND
++	if (r->psm == PSM_T4)
++		return 0; // a full CLUT preload must precede the new TEX0 through the ordered PATH2 setup
++#endif
+--- a/src/ps2/hw/ps2_hwd.c
++++ b/src/ps2/hw/ps2_hwd.c
+@@ -1142 +1142 @@
+-		return r->used && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2) && !r->screen;
++		return r->used && psm_indexed(r->psm) && (r->clut == 1 || r->clut == 2) && !r->screen;
+--- a/src/ps2/hw/vu1/ps2_hw_vu1.vsm
++++ b/src/ps2/hw/vu1/ps2_hw_vu1.vsm
+@@ -32 +32 @@
+-;    16     integers: x = palette rows on, y = textured, z = row whose CLUT the GS holds now (kept between runs), w = 0
++;    16     integers: x = palette rows on, y = textured, z = row whose CLUT the GS holds now (kept between runs), w = PSMT4 selection follows each full CLUT load
+@@ -36 +36,2 @@
+-;    32..63 TEX0 of every row: (lo, hi, 6, 0), the A+D packet data
++;    28     TEX2 PSMT4/CLD0/CSA selector; 20..27 remain the plane vectors and bits
++;    32..63 TEX2 PSMT8/CLD1/CSA0 of every row: (lo, hi, 0x16, 0), the full 256-entry CLUT load
+@@ -46,0 +48 @@
++		.equ	P4_TEX2,	28
+@@ -493 +495,2 @@
+-; the CLUT of the row: TEX0 with CLD, behind its own GIF tag
++; Load all 256 entries of the row using PSMT8/CLD1/CSA0. PSMT4/CLD1 would
++; always read the first 16 source entries, regardless of its CSA destination.
+@@ -497,0 +501,9 @@
++		NOP					sq			VF11,1(VI12)
++		NOP					iaddiu		VI12,VI12,2
++		NOP					ilw.w		VI01,K_INT(VI00)
++		IDLE	4
++		NOP					ibeq		VI01,VI00,PackTag
++		NOP					NOP
++		NOP					lq			VF11,P4_TEX2(VI00)
++		NOP					sq			VF28,0(VI12)
++		IDLE	2

@@ -1,0 +1,49 @@
+{
+  "status": "research prototype; rejected for current adoption because exact policy accounting is not preserved",
+  "source_revision": "85bd9716b1ed114d46f95831c64a87623038eeaa",
+  "source_files": 602,
+  "changed": {
+    "src/ps2/hw/ps2_hw_draw.inc": {
+      "baseline_sha256": "f117715b398b42b1084541d8ea6cb64c2422d5fab151227ad22ad8dc70c8c862",
+      "candidate_sha256": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+    },
+    "src/ps2/hw/ps2_hw_plan.inc": {
+      "baseline_sha256": "4705ff5b6edc5c3c121fa188c5eb1dae8a63adc89e6e0af48c89911f687788f1",
+      "candidate_sha256": "860f5ce82b3694894d87a4b577b141b4bf7c7ccfc870c70b428ab5d75a428d72"
+    },
+    "src/ps2/hw/ps2_hw_priv.inc": {
+      "baseline_sha256": "5593d046960f038160f031352f71dff140ecaeb8e086f27155e6062b79c0c792",
+      "candidate_sha256": "36c9190ea72c157de5941c5fa262daaaa2fa3e0379c2e29e5a37eabfec9f98d8"
+    },
+    "src/ps2/hw/ps2_hw_tex.inc": {
+      "baseline_sha256": "76de33ef5d73da9aae8f59b3e1bbdb34502e8c21319b31d765235344a252fe8a",
+      "candidate_sha256": "7111c1e773072de336054ae6eaf2bac3f1d57980cbdd73c5a618befb6a3e960e"
+    },
+    "src/ps2/hw/ps2_hw_val.inc": {
+      "baseline_sha256": "7327b6cbd8c760f767809306312b7b9ce2ae90114a75ba6e22ab295d70b6198e",
+      "candidate_sha256": "df958312ebe4becda71a502ea4a7eadfd06d5789c0336e929e475bbe8c81ac6a"
+    },
+    "src/ps2/hw/ps2_hw_vu1.inc": {
+      "baseline_sha256": "d2ab6312210f3b3d649ae8c09e38706720551076908a9a88b211c8aac89cc122",
+      "candidate_sha256": "254fd78f6c88bd70b5a96ea2994d0b6dbc8cd4e83af2c90fdf62933b69ab82c2"
+    },
+    "src/ps2/hw/ps2_hwd.c": {
+      "baseline_sha256": "cde48cf554d4b6ad65982e445a81911d1f6b2759cdea2b47d05eb08cdbeb4e25",
+      "candidate_sha256": "316333db13aec227f9db708ccf0abcc43241c016459fe43de1b7f5ff7a136692"
+    },
+    "src/ps2/hw/vu1/ps2_hw_vu1.vsm": {
+      "baseline_sha256": "842d512a474f04df6c5b1dbaf1b9162494d73d95679aed1add27487606651ec7",
+      "candidate_sha256": "c953a47b08bcbdea3ea64b97cb4ef48bba85a7b39ee6fe960eb953add2817d29"
+    }
+  },
+  "unchanged_files": 594,
+  "patch_sha256": "6ecc54c3bfd7f6a29aadab23ab49fc623fc80fc7956e486179f74eaa8e7b4d7c",
+  "frozen_configuration_sha256": {
+    "software": "6f8cf211d11fb68038d5293237295525380dc70c86b83a96a189db4226a9c43d",
+    "hardware": "6f8cf211d11fb68038d5293237295525380dc70c86b83a96a189db4226a9c43d"
+  },
+  "EE_compiler_invoked": false,
+  "emulator_invoked": false,
+  "production_src_edited": false,
+  "saving_claim": "No adopted or whole-workload saving. P4 texel/storage opportunity only; host proof includes a whole-policy counterexample."
+}
