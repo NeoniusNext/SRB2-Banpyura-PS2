@@ -1,6 +1,6 @@
 """Cook the SRB2 pk3 archives into SRP2 packs (format: docs/PACK_FORMAT.md).
 
-usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...] [--tool-dir DIR] [--keep-png] [--from-pak DIR] [--order FILE | --no-order] [--version 1|2] [--no-dedup]
+usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...] [--tool-dir DIR] [--keep-png] [--from-pak DIR] [--order FILE | --no-order] [--version 1|2] [--no-dedup] [--fill-gaps]
        cook.py --texc DUMP [--out DIR]      (OPT13 IZ, PS2-602: TEXC.PAK, the composite textures prebuilt by the host engine; docs/PACK_FORMAT.md)
   --src       directory with srb2.pk3 zones.pk3 characters.pk3 music.pk3 (default srb2-assets)
   --out       output directory (default build/pak): SRB2.PAK ZONES.PAK CHARS.PAK MUSIC.PAK (+ <PACK>.pics.json)
@@ -11,6 +11,7 @@ usage: cook.py [--src DIR] [--out DIR] [--jobs N] [--only NAME ...] [--tool-dir 
   --order     PS2-LOAD-11: text file, one lump full name per line (first use order of a boot, tools/ps2/lump_order.py): these lumps are stored first, in this order,
               so that the start-up reads them as a few long sequential runs; all other lumps follow in directory order. Lump NUMBERS never change.
   --version   2 (default): head table, per-lump CRC32, index checksums, identical lumps stored once; 1: the old layout (comparison)
+  --fill-gaps  v2: reuse alignment gaps for later small lumps outside the startup order list (smaller packs, potentially more seeks; opt-in)
 
 One pack per pk3, same entry order as the zip central directory (this is the order the engine's
 ResGetLumpsZip walks, so wadnum / lumpnum / folder logic stay as they were). Lump data is stored raw or as
@@ -25,6 +26,7 @@ test_pack_reader.py and strip_pics_test.py use. ZIP/zlib are used here on the ho
 Verify with tools/ps2/verify_pack.py.
 """
 import argparse
+import bisect
 import hashlib
 import os
 import struct
@@ -296,7 +298,7 @@ def convert_pngs(srcdir, tooldir, only, log):
     return out
 
 
-def cook(src, dst, jobs, pics=None, order=None, version=VERSION, dedup=True):
+def cook(src, dst, jobs, pics=None, order=None, version=VERSION, dedup=True, gap_fill=False):
     pics = pics or {}
     from_pack = str(src).endswith('.PAK')
     if from_pack:
@@ -363,12 +365,12 @@ def cook(src, dst, jobs, pics=None, order=None, version=VERSION, dedup=True):
 
     # storage order: the lumps of the order list first (in that order), then the rest in directory order
     storage = list(range(n))
+    taken = set()
     if order:
         index = {}
         for i, nm in enumerate(names):
             index.setdefault(nm.decode('ascii'), i)
         first = []
-        taken = set()
         for nm in order:
             i = index.get(nm)
             if i is not None and i not in taken:
@@ -381,6 +383,8 @@ def cook(src, dst, jobs, pics=None, order=None, version=VERSION, dedup=True):
     blobs = []          # (position, payload)
     stored = {}         # (codec, size, sha256 of the stored bytes) -> position   (identical lumps are stored once)
     dedup_saved = 0
+    gaps = []           # sorted (capacity, start): 64-byte-aligned free ranges before a sector-aligned payload
+    gap_bytes = gap_lumps = 0
     for i in storage:
         (ri, codec, payload, size, sha, crc, head) = results[i]
         fo, lo = offs[i]
@@ -392,11 +396,30 @@ def cook(src, dst, jobs, pics=None, order=None, version=VERSION, dedup=True):
             entries[i] = ENTRY.pack(stored[key], len(payload), size, fo, lo, codec)
             dedup_saved += len(payload)
             continue
-        pos = align(pos, SECTOR if size >= BLOCK else ALIGN_SMALL)
-        entries[i] = ENTRY.pack(pos, len(payload), size, fo, lo, codec)
-        stored[key] = pos
-        blobs.append((pos, payload))
-        pos += len(payload)
+        place = None
+        # Preserve every first-use payload position: only later, small lumps may
+        # occupy a hole. Large lumps retain the reader's sector alignment. No
+        # codec or stored bytes change, and v1 keeps its monotonic layout.
+        if v2 and gap_fill and i not in taken and size < BLOCK:
+            slot = bisect.bisect_left(gaps, (len(payload), -1))
+            if slot < len(gaps):
+                capacity, place = gaps.pop(slot)
+                next_start = align(place + len(payload), ALIGN_SMALL)
+                left = place + capacity - next_start
+                if left:
+                    bisect.insort(gaps, (left, next_start))
+                gap_bytes += len(payload)
+                gap_lumps += 1
+        if place is None:
+            next_pos = align(pos, SECTOR if size >= BLOCK else ALIGN_SMALL)
+            gap_start = align(pos, ALIGN_SMALL)
+            if v2 and gap_fill and gap_start < next_pos:
+                bisect.insort(gaps, (next_pos - gap_start, gap_start))
+            place = next_pos
+            pos = place + len(payload)
+        entries[i] = ENTRY.pack(place, len(payload), size, fo, lo, codec)
+        stored[key] = place
+        blobs.append((place, payload))
     file_size = align(pos, SECTOR)
     flags = (0 if music_only(names) else FLAG_NONMUSIC) | (FLAG_HEAD if v2 else 0)
 
@@ -441,7 +464,7 @@ def cook(src, dst, jobs, pics=None, order=None, version=VERSION, dedup=True):
         s_[2] += len(payload)
     return dict(n=n, stats=st, file_size=file_size, pool=pool_size, flags=flags, t=t_enc, srcsize=src_size,
                 png=sum(1 for r in results if r[2][:4] == b'\x89PNG'), cooked=len(pics), folders=folders, dedup_saved=dedup_saved,
-                index_bytes=data_off)
+                index_bytes=data_off, gap_bytes=gap_bytes, gap_lumps=gap_lumps, total_t=time.time() - t0)
 
 
 # ---- TEXC.PAK (OPT13 IZ, PS2-602, R2): composite textures prebuilt by the host engine -------------------------------------------
@@ -559,7 +582,13 @@ def main():
     ap.add_argument('--no-order', action='store_true', help='directory order of the pk3 (what cook.py did before OPT13)')
     ap.add_argument('--version', type=int, default=VERSION, choices=[1, 2])
     ap.add_argument('--no-dedup', action='store_true', help='v2: store identical lumps more than once')
+    gap_options = ap.add_mutually_exclusive_group()
+    gap_options.add_argument('--fill-gaps', dest='gap_fill', action='store_true',
+                             help='v2: fill alignment gaps with later small lumps (smaller packs, potentially more seeks; opt-in)')
+    gap_options.add_argument('--no-gap-fill', dest='gap_fill', action='store_false', help='keep append-only payload placement (default)')
+    ap.set_defaults(gap_fill=False)
     ap.add_argument('--log', type=Path, help='save cooker output')
+    ap.add_argument('--report', type=Path, help='save per-pack sizes, codec totals, gap reuse and cooking times as JSON')
     ap.add_argument('--texc', type=Path, metavar='DUMP', help='OPT13 IZ (PS2-602): make TEXC.PAK (prebuilt composite textures) in --out from the dump of the host engine (SRB2 -texcdump DUMP; tools/ps2/cook_texc.sh) and do nothing else')
     a = ap.parse_args()
     if a.jobs < 1:
@@ -585,19 +614,25 @@ def main():
     tot = [0, 0, 0]
     codec_name = {CM_RAW: 'raw', CM_LZ4: 'lz4'}
     allpics = {} if (a.keep_png or a.from_pak) else convert_pngs(a.src, a.tool_dir, a.only, log)
+    reports = []
     for pk3, pak in PACKS:
         if a.only and pk3 not in a.only:
             continue
         pics = {i: m for (p, i), m in allpics.items() if p == pk3}
         source = Path(a.from_pak) / pak if a.from_pak else Path(a.src) / pk3
-        r = cook(source, out / pak, a.jobs, pics, order, a.version, not a.no_dedup)
+        r = cook(source, out / pak, a.jobs, pics, order, a.version, not a.no_dedup, a.gap_fill)
         log(f'{source.name} -> {pak}: {r["n"]} entries ({r["folders"]} folders), source {r["srcsize"]:,} B, pack {r["file_size"]:,} B (index part {r["index_bytes"]:,} B), '
               f'pool {r["pool"]:,} B, nonmusic={r["flags"] & 1}, encode {r["t"]:.1f}s, PNG lumps left {r["png"]}, cooked pictures {r["cooked"]}, identical lumps stored once: {r["dedup_saved"]:,} B')
+        log(f'    alignment gaps reused: {r["gap_bytes"]:,} payload bytes in {r["gap_lumps"]:,} lumps; total cook {r["total_t"]:.2f}s')
         for c, (cnt, raw, disk) in sorted(r['stats'].items()):
             log(f'    {codec_name[c]:4} {cnt:6} lumps  {raw:>13,} B -> {disk:>13,} B' + (f'  ({disk / raw * 100:.1f}%)' if raw else ''))
         tot[0] += r['srcsize']
         tot[1] += r['file_size']
+        reports.append(dict(pack=pak, source=str(source), **r))
     log(f'total: source {tot[0]:,} B -> packs {tot[1]:,} B')
+    if a.report:
+        a.report.parent.mkdir(parents=True, exist_ok=True)
+        a.report.write_text(json.dumps(dict(version=a.version, gap_fill=a.gap_fill, packs=reports), indent=2) + '\n', encoding='utf-8')
 
 
 if __name__ == '__main__':

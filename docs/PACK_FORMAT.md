@@ -104,6 +104,19 @@ the pack is newer than the engine»), как и обрезанный файл, �
 Совместимость: пак версии 1 читается тем же кодом (без головы-таблицы и без проверок индекса); `--from-pak` перепаковывает существующий пак (v1 или v2) без исходных pk3 и без PNG-инструмента, сохраняя содержимое
 ламп (включая cooked-картинки) и их нумерацию. Свои паки кладите в свой каталог (`build/pak2`, `build/pak3`), не в общий `build/pak`.
 
+Optional layout compaction (`cook.py --fill-gaps`, optimization 17): v2 may place
+later small payloads into unused alignment gaps before large payloads. Existing
+64-byte/2048-byte alignment rules, all codecs and stored/decoded bytes remain
+unchanged. First-use entries named in `--order` retain their exact preceding
+positions. The unchanged reader accepts these packs. The option saves
+1,150,976 bytes for the stock packs, but can increase window misses on a
+directory-order scan, so append-only placement remains the default
+(`--no-gap-fill`). This is a disk/ISO saving, not a RAM/VRAM saving. See
+`docs/PS2_PAK_OPT17_20261116.md` for byte comparisons, real-reader sanitizer
+checks, malformed controls and the measured locality tradeoff. A layout change
+also changes the table checksum used by TEXC keys; rebuild an optional TEXC pack
+for the selected game packs.
+
 Проверка (Linux, без MSVC): `python3 tools/ps2/verify_pack.py --src /opt/srb2-assets --pak build/pak2` (SHA-256 каждой лампы против pk3), `python3 tools/ps2/test_pack_reader.py --pak build/pak2 --src /opt/srb2-assets
 --out build/hosttest/packtest` (Си-читатель gcc: все лампы четырёх паков, 252 тыс. частичных чтений, 21 отвергаемый случай версии 1, фикстуры версий 1 и 2 с головой-таблицей и без неё (`nohead`),
 дедупликацией и порядком, повреждения заголовка/индекса/пула/расширения, версия 3).
