@@ -32,6 +32,15 @@ def sha(path):
         return hashlib.file_digest(stream, 'sha256').hexdigest()
 
 
+def classify_skips(lines):
+    """Classify diagnostic text without excusing any skipped-draw signal."""
+    return {'selected_while_collecting': [x for x in lines if 'selected while collecting' in x],
+            'purged_source': [x for x in lines if 'no data (purged)' in x],
+            'not_resident': [x for x in lines if x.startswith('HWD texture not resident ')],
+            'other': [x for x in lines if 'selected while collecting' not in x
+                      and 'no data (purged)' not in x and not x.startswith('HWD texture not resident ')]}
+
+
 def inspect(run, elf, expected_args, assets, fixtures):
     summary = json.loads((run / 'summary.json').read_text())
     boot = (run / 'boot.txt').read_text(errors='replace')
@@ -53,6 +62,10 @@ def inspect(run, elf, expected_args, assets, fixtures):
     warnings = [line for line in boot.splitlines() if 'WARNING:' in line]
     if warnings:
         errors.append('Unexpected warning')
+    skipped = [line for line in boot.splitlines()
+               if line.startswith(('HWSKIP ', 'HWD texture not resident '))]
+    if skipped:
+        errors.append('Hardware texture draws missing or skipped between captures')
     if any(map(int, re.findall(r'(?:underruns|hmis|herr)=(\d+)', boot))):
         errors.append('Audio underrun or hash error')
     if len(captures) != 3 or 'VIDSHOT COMPLETE 3' not in boot:
@@ -88,7 +101,10 @@ def inspect(run, elf, expected_args, assets, fixtures):
         errors.append('Loader hash evidence absent')
     return {'rc': summary['rc'], 'elf_sha256': sha(elf), 'captures': captures,
             'loader_hashes': lhash, 'saved_config_sha256': sha(config) if config.is_file() else None,
-            'boot_sha256': sha(run / 'boot.txt'), 'warnings': warnings, 'errors': errors}
+            'boot_sha256': sha(run / 'boot.txt'), 'warnings': warnings,
+            'skipped_draw_lines': skipped, 'skipped_draw_classification': classify_skips(skipped),
+            'skipped_draw_scope': 'Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.',
+            'errors': errors}
 
 
 def main():
@@ -100,6 +116,8 @@ def main():
     parser.add_argument('--scenes', default=','.join(SCENES))
     parser.add_argument('--full-textures', action='store_true',
                         help='Explicit full-size mode in BOTH roles: -hwdbg 33554432 (default frame planning remains unchanged)')
+    parser.add_argument('--stop-on-purged-texture', action='store_true',
+                        help='Stop safely between scene pairs if candidate reports purged or nonresident texture draws; retain all strict errors')
     parser.add_argument('--diagnostic-seed', type=lambda value: int(value, 0),
                         help='Verify already patched fixed-local-RNG copies against both original build directories')
     parser.add_argument('--baseline-build', type=Path)
@@ -136,6 +154,8 @@ def main():
     ready = {'input_sha256': manifest, 'scenes': scenes}
     if args.full_textures:
         ready['explicit_engine_args_both_roles'] = ['-hwdbg', '33554432']
+    if args.stop_on_purged_texture:
+        ready['stop_on_purged_texture'] = True
     if admissions:
         ready['diagnostic_admissions'] = admissions
     args.out.mkdir(parents=True, exist_ok=True)
@@ -197,6 +217,13 @@ def main():
         if not all((equal, equal_loader, equal_config)):
             report['errors'].append(scene + ': full frame / loader / saved configuration mismatch')
         print(scene + ': ' + ('PASS' if all((equal, equal_loader, equal_config)) else 'FAIL'), flush=True)
+        classification = after['skipped_draw_classification']
+        if args.stop_on_purged_texture and (classification['purged_source'] or classification['not_resident']):
+            report['stopped_on_missing_content_scene'] = scene
+            report['errors'].append(scene + ': stopped before further scenes because texture content was purged or nonresident')
+            break
+    report['requested_scenes'] = scenes
+    report['complete_scene_suite'] = len(report['pairs']) == len(scenes)
     if manifest != {str(p): sha(p) for p in inputs}:
         report['errors'].append('Inputs changed during comparison')
     (args.out / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
