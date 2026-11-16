@@ -389,6 +389,203 @@ static void tile_pixel_key(const tile_plane_t *p, int x, int y, const texrec_t *
 	}
 }
 
+typedef struct
+{
+	tile_batch_t *batch;
+	int *count, *previous, *current;
+	int previous_n, current_n, previous_at;
+} tile_row_batch_t;
+
+// Retain only indices into the existing bounded batch. A flush consumes every
+// borrowed rectangle before its indices are discarded. Equal horizontal spans
+// on adjacent rows can therefore extend one disjoint rectangle in place.
+static int tile_row_add(const cv_t tri[3], const piece_t *pc, const texrec_t *source,
+	tile_row_batch_t *rows, int x0, int x1, int y, int ox, int oy)
+{
+	int index;
+	tile_batch_t *entry;
+
+	while (rows->previous_at < rows->previous_n
+		&& rows->batch[rows->previous[rows->previous_at]].rect.x0 < x0)
+		rows->previous_at++;
+	if (rows->previous_at < rows->previous_n)
+	{
+		index = rows->previous[rows->previous_at];
+		entry = &rows->batch[index];
+		if (entry->rect.x0 == x0 && entry->rect.x1 == x1 && entry->rect.y1 == y
+			&& entry->ox == ox && entry->oy == oy)
+		{
+			entry->rect.y1 = (u16)(y + 1);
+			rows->current[rows->current_n++] = index;
+			rows->previous_at++;
+			return 1;
+		}
+	}
+	index = *rows->count;
+	entry = &rows->batch[index];
+	entry->rect.x0 = x0; entry->rect.x1 = x1;
+	entry->rect.y0 = (u16)y; entry->rect.y1 = (u16)(y + 1);
+	entry->ox = ox; entry->oy = oy;
+	if (++*rows->count == H.vw)
+	{
+		if (!tile_batch_flush(tri, pc, source, rows->batch, rows->count)) return 0;
+		rows->previous_n = rows->current_n = rows->previous_at = 0;
+	}
+	else rows->current[rows->current_n++] = index;
+	return 1;
+}
+
+// The guarded GS vertices bound every positive row-edge slope below 2^21.
+// Keep the numerator wide through ceil construction: a value just above 2^32
+// must retain the original exact 64-bit division instead of wrapping to zero.
+static int64_t tile_row_div_positive(int64_t numerator, uint32_t denominator)
+{
+	if ((uint64_t)numerator <= UINT32_MAX) return (uint32_t)numerator / denominator;
+	return numerator / denominator;
+}
+
+// Exact inclusive edge inequalities locate the same inside samples used by
+// tile_pixel_key. Everything before/after the interval retains outside key 0.
+static void tile_row_inside(const tile_plane_t *p, int x0, int x1, int y, int *left, int *right)
+{
+	int64_t n[3], d[3];
+	int lo = x0, hi = x1;
+
+	tile_plane_edges(p, x0, y, &n[0], &n[1], &n[2]);
+	d[1] = (int64_t)(p->y[2] - p->y[0]) * 16;
+	d[2] = -(int64_t)(p->y[1] - p->y[0]) * 16;
+	d[0] = -d[1] - d[2];
+	for (int i = 0; i < 3; i++)
+	{
+		if (p->det < 0) { n[i] = -n[i]; d[i] = -d[i]; }
+		if (d[i] > 0 && n[i] < 0)
+		{
+			const int64_t distance = tile_row_div_positive(-n[i] + d[i] - 1, (uint32_t)d[i]);
+			if (distance >= x1 - x0) { lo = hi = x0; break; }
+			if (x0 + (int)distance > lo) lo = x0 + (int)distance;
+		}
+		else if (d[i] <= 0)
+		{
+			if (n[i] < 0) { lo = hi = x0; break; }
+			if (d[i] < 0)
+			{
+				const int64_t distance = tile_row_div_positive(n[i], (uint32_t)-d[i]);
+				if (distance < x1 - x0 && x0 + (int)distance + 1 < hi)
+					hi = x0 + (int)distance + 1;
+			}
+		}
+	}
+	if (lo >= hi) lo = hi = x0;
+	*left = lo; *right = hi;
+}
+
+// Crossing estimates never certify pixels: all resulting intervals still pass
+// tile_box_classify, with its original rounding/cancellation and halo bound.
+static int tile_row_next(const tile_plane_t *p, int x, int end, int y,
+	int core, float qdx, float udx, float vdx)
+{
+	int64_t n0, n1, n2;
+	float u, v, q, qa, ua, va;
+	int length = end - x;
+
+	tile_plane_edges(p, x, y, &n0, &n1, &n2);
+	tile_plane_uv(p, n1, n2, &u, &v, &q, &qa, &ua, &va);
+	if (!(q > 0.0f) || !isfinite(q) || !isfinite(u) || !isfinite(v)
+		|| fabsf(u) >= 0x1p20f || fabsf(v) >= 0x1p20f) return x + 1;
+	for (int axis = 0; axis < 2; axis++)
+	{
+		const float value = axis ? v : u, slope = axis ? vdx : udx;
+		const float direction = slope - value * qdx;
+		int cell = (int)(value * (1.0f / core));
+		if ((float)(cell * core) > value) cell--;
+		const float boundary = (float)((cell + (direction > 0.0f)) * core);
+		const float denominator = slope - boundary * qdx;
+		if (direction != 0.0f && denominator != 0.0f)
+		{
+			const float distance = (boundary - value) * q / denominator;
+			if (distance >= 0.0f && distance < (float)length)
+			{
+				const int next = (int)distance + 1;
+				if (next < length) length = next;
+			}
+		}
+	}
+	return x + length;
+}
+
+// A projective coordinate along a fixed row is a ratio of affine functions.
+// With positive Q its derivative has constant sign, so the next raw U/V core
+// crossing predicts a whole interval. Unsupported or ill-conditioned planes
+// keep the original two-dimensional classifier below.
+static int tile_emit_rows(const cv_t tri[3], const piece_t *pc, const texrec_t *source,
+	const tile_plane_t *p, const tile_box_t *bounds, tile_batch_t *batch, int *count)
+{
+	const float b1dx = 16.0f * ((float)p->y[2] - (float)p->y[0]) * p->inv_det;
+	const float b2dx = -16.0f * ((float)p->y[1] - (float)p->y[0]) * p->inv_det;
+	const float qdx = b1dx * (p->rq[1] - p->rq[0]) + b2dx * (p->rq[2] - p->rq[0]);
+	const float udx = b1dx * (p->us[1] - p->us[0]) + b2dx * (p->us[2] - p->us[0]);
+	const float vdx = b1dx * (p->vs[1] - p->vs[0]) + b2dx * (p->vs[2] - p->vs[0]);
+	const int core = tile_general_extent(source) / 2;
+
+	if (!isfinite(qdx) || !isfinite(udx) || !isfinite(vdx)) return 0;
+	for (int i = 0; i < 3; i++)
+		if (!(p->rq[i] > 0.0f) || !isfinite(p->rq[i])
+			|| p->x[i] < 0 || p->x[i] > 65535 || p->y[i] < 0 || p->y[i] > 65535) return 0;
+	for (int i = 0; i < 4; i++)
+	{
+		int64_t n0, n1, n2;
+		float u, v, q, qa, ua, va;
+		tile_plane_edges(p, i & 1 ? bounds->x1 - 1 : bounds->x0,
+			i & 2 ? bounds->y1 - 1 : bounds->y0, &n0, &n1, &n2);
+		tile_plane_uv(p, n1, n2, &u, &v, &q, &qa, &ua, &va);
+		if (!(q > 0.0f) || !isfinite(q) || !isfinite(u) || !isfinite(v)
+			|| fabsf(u) >= 0x1p20f || fabsf(v) >= 0x1p20f) return 0;
+		// Do not turn old ill-conditioned two-dimensional fallback into a
+		// viewport-sized sweep of individual pixels.
+		const float qe = 0x1p-17f * qa, room = 4.0f * (q - qe);
+		if (!(room > 0.0f) || 0x1p-17f * ua + fabsf(u) * qe > room
+			|| 0x1p-17f * va + fabsf(v) * qe > room) return 0;
+	}
+	int ox, oy;
+	if (tile_box_classify(p, bounds, source, &ox, &oy))
+	{
+		// Cropping can leave one source core even when raw vertex extrema
+		// needed multiple cores. Preserve the old whole-box certificate before
+		// introducing row boundaries or an additional outside-key0 group.
+		const tile_run_t run = {bounds->x0, bounds->x1, bounds->y0, ox, oy};
+		return tile_batch_add(tri, pc, source, batch, count, &run, bounds->y1) ? 1 : -1;
+	}
+	int references[2 * H.vw];
+	tile_row_batch_t rows = {batch, count, references, references + H.vw, 0, 0, 0};
+	for (int y = bounds->y0; y < bounds->y1; y++)
+	{
+		int left, right;
+		tile_row_inside(p, bounds->x0, bounds->x1, y, &left, &right);
+		if (bounds->x0 < left && !tile_row_add(tri, pc, source, &rows, bounds->x0, left, y, 0, 0)) return -1;
+		for (int x = left; x < right;)
+		{
+			int end = tile_row_next(p, x, right, y, core, qdx, udx, vdx), ox, oy;
+			tile_box_t box = {x, end, y, y + 1};
+			int kind = tile_box_classify(p, &box, source, &ox, &oy);
+			// Roundoff in the crossing estimate can include the next core's
+			// first sample. Retry one sample shorter, then shrink conservatively.
+			if (!kind && end > x + 1) { box.x1 = --end; kind = tile_box_classify(p, &box, source, &ox, &oy); }
+			while (!kind && end > x + 1)
+			{
+				box.x1 = end = x + (end - x) / 2;
+				kind = tile_box_classify(p, &box, source, &ox, &oy);
+			}
+			if (!kind) tile_pixel_key(p, x, y, source, &ox, &oy);
+			if (!tile_row_add(tri, pc, source, &rows, x, end, y, ox, oy)) return -1;
+			x = end;
+		}
+		if (right < bounds->x1 && !tile_row_add(tri, pc, source, &rows, right, bounds->x1, y, 0, 0)) return -1;
+		int *swap = rows.previous; rows.previous = rows.current; rows.current = swap;
+		rows.previous_n = rows.current_n; rows.current_n = rows.previous_at = 0;
+	}
+	return 1;
+}
+
 static void tile_emit_triangle(const cv_t tri[3], const piece_t *pc, int source_ri)
 {
 	const texrec_t source = H.rec[source_ri];
@@ -460,13 +657,16 @@ static void tile_emit_triangle(const cv_t tri[3], const piece_t *pc, int source_
 	// falls back to individual original pixel keys, without a graphics limit.
 	tile_batch_t batch[H.vw];
 	tile_box_t pending[32];
-	const u32 workbytes = (u32)(sizeof pending + sizeof batch);
+	const u32 workbytes = (u32)(sizeof pending + sizeof batch + 2 * H.vw * sizeof(int));
 	if (workbytes > tile_run_peak_bytes) tile_run_peak_bytes = workbytes;
 	tile_stencil_begin(x0, y0, x1, y1);
 	tile_plane_t plane;
 	for(i=0;i<3;i++) { plane.x[i]=(int)px[i];plane.y[i]=(int)py[i];plane.rq[i]=rq[i];plane.us[i]=us[i];plane.vs[i]=vs[i]; }
 	plane.inv_det=inv_det;plane.det=det;
 	tile_box_t box={x0,x1,y0,y1};int top=0;
+	const int rows = tile_emit_rows(tri, pc, &source, &plane, &box, batch, &batch_n);
+	if (rows < 0) goto failed;
+	if (rows > 0) goto flush;
 	for(;;)
 	{
 		int ox,oy;
@@ -498,6 +698,7 @@ static void tile_emit_triangle(const cv_t tri[3], const piece_t *pc, int source_
 		if(!top)break;
 		box=pending[--top];
 	}
+flush:
 	if(!tile_batch_flush(tri,pc,&source,batch,&batch_n))goto failed;
 	goto done;
 failed:
