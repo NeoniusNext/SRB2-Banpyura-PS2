@@ -1,0 +1,164 @@
+{
+  "version": "10-combined-zone-lifecycle",
+  "source_manifest_sha256": "d102eb845754e72320653ec7093eb8404219500576d8d9bf96d89095b3a2103a",
+  "source_sha256": {
+    "src/hardware/hw_cache.c": "89e5cc455eba82b7b3b8707adf67671579637c0c81f175cbf90a4238035c3127",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/hardware/hw_gcache.inc": "e74138633bf10a3171dd53b0358714629da091ef57cf1d5db45c8c692cdd5eb6",
+    "src/hardware/hw_light.c": "11ea9a197e01a2beb60715903201d783d930651a19272d844fbbb918bcfd9fd8",
+    "src/hardware/hw_md2.c": "9a8e58a3d268e67a7defeba35accb26d411d3041fb0f4e0431a133edd39fb899",
+    "src/ps2/hw/ps2_hw_draw.inc": "b142f3639c884abcf5f752702244bad2a16be30793fb064bc8954b952f36e585",
+    "src/ps2/hw/ps2_hw_gs.inc": "fcfc8ceaa61efa01dc990284208003d12653408c7d39249975690376f4ca8983",
+    "src/ps2/hw/ps2_hw_model.inc": "16220c4273728f07a9914b648975bedb0d9a720c8c14c462306e3ee422e439a1",
+    "src/ps2/hw/ps2_hw_plan.inc": "8b26d1049778697b94f6d319dbb27b4e3d936cc4b77cc9300b5661776ca08970",
+    "src/ps2/hw/ps2_hw_priv.inc": "6c6e00db930824d9096f92af0b4cbb1f7f1af8b0b1c6a605fc3ecb8b50230689",
+    "src/ps2/hw/ps2_hw_regs.inc": "bafea9f30d3a2b2c0ef59f6e5b8c1cf08dfd945cfb9794a44646e4bb6b701a0d",
+    "src/ps2/hw/ps2_hw_screen.inc": "aaba2b74e7290d26a8659020678c1117cdb471f02e9c57b13b6b043ce30f74c8",
+    "src/ps2/hw/ps2_hw_sky.inc": "266a459be858e408f32a4d4d7a6fe3e61fb00246639b37808b873b0bf36992d1",
+    "src/ps2/hw/ps2_hw_spr.inc": "2978635704694a6701749277ce07a8482fb8f511fe364d579f233be528e051e0",
+    "src/ps2/hw/ps2_hw_tex.inc": "fa3b6a4b86cc4a72e551ccce6195201928460e2d35c20abe92bdd7e20e632d95",
+    "src/ps2/hw/ps2_hw_tile.inc": "ede005aec469d670cff0a76cca682974a484ede867620bac464a9c8ba0961679",
+    "src/ps2/hw/ps2_hw_tile_draw.inc": "6527517aa6b1bbbbacb472cea12974116574888d9caaa8a7b69309616959b8ba",
+    "src/ps2/hw/ps2_hw_tile_stencil.inc": "37a55c2815acb9bec480fdb6628c5aedfdb53ae181f4ca0345b318f3460babae",
+    "src/ps2/hw/ps2_hw_tt.inc": "453d519c80efe439b2802d13ae1b2365a9f96dc8d5aadb8e4b4d8a35abc32ac2",
+    "src/ps2/hw/ps2_hw_vu1.inc": "b16440b623591447fd29954211ee1db6c3fc53a9c06ba3d53d3116b4564628c3",
+    "src/ps2/hw/ps2_hwd.c": "40896784a1ecd6c20b6a81e479dda53ef4912ce9271126444a53699068db4082"
+  },
+  "baseline_commit": "22b5620cf0710b06541b36eee8801eaad772deb3",
+  "full_patch_sha256": "6256055e3ea0dac9c2909dd1e5884b116a59e5bc6001cf0d2ae341a37ee91ade",
+  "two_file_delta_sha256": "b6a8dd1056e828842feaeac5178ddd62a6ccb4af65e3eeb117a6758c050faba5",
+  "scope": "TwoCPUownershipfixes, noABI/render/planner/qualitychanges. ActualobservedfatalownerisGC; flatcopybugisindependentlyproven. Nativefailed-switchandbroadmatrixrerunsremainparentgate.",
+  "observed_failure": {
+    "shipping_commit": "22b5620cf0710b06541b36eee8801eaad772deb3",
+    "shipping_ELF_sha256": "82bc5f2690d56e87c3f9b9d032ef0bccefb73226037aadeac96a54e36de66d7a",
+    "boot_path": "build/nov17-final/switch-pal/runs/switch-pal/boot.txt",
+    "boot_sha256": "71aea7db79430a1bd8b38c372c80cdbc93847c7f21cfa9a6bc483ddf71cff8e6",
+    "gametic": 141,
+    "diagnostic_ELF_sha256": "c6ac6169ef3fa6184723ff83d1341a1528068ffaa6d06c49c4b66f211d2ca1ca",
+    "diagnostic_boot_path": "build/nov17-restart-diagnostic/switch-pal/runs/switch-pal/boot.txt",
+    "diagnostic_boot_sha256": "a58bb4511a3c2aa52998d8a419dea504fcc0a5dd059584e49dece6de6bd0bdaa",
+    "diagnostic_owner": {
+      "tag": 52,
+      "size": 818176,
+      "payload": "0x191db00",
+      "user": "0x82ba18",
+      "held": "0x1400cc0",
+      "link_symbol": "gc.lto_priv.0",
+      "symbol_address": "0x82ba08",
+      "user_offset": 16,
+      "contract": "PU_HWRPLANEblockstillhasuser=&gc.blkbutgc.blknowpointsatnewblock"
+    },
+    "release_status": "82bc preparedartifact rejected; notpublishable"
+  },
+  "host_reports": {
+    "gcache-fixed": {
+      "path": "build/nov17-tiles/lifetime-proof/gcache-fixed/result.json",
+      "sha256": "a60038a57d945ef5ebff9cd849e5a65ea1eb3ed073a2c437d1449a43fb897e2b",
+      "passed": true
+    },
+    "gcache-normal": {
+      "path": "build/nov17-tiles/lifetime-proof/gcache-normal/result.json",
+      "sha256": "c07f3403a223ecfa58a6e1a64b74fd22f3399c91b09e1c927126277ab7042dc0",
+      "passed": true
+    },
+    "gcache-baseline-red": {
+      "path": "build/nov17-tiles/lifetime-proof/gcache-baseline-red/result.json",
+      "sha256": "3c31e83af4bc7bab63117f31e1d7c40162e9e23f173b4fce4c0f5e656b9744fb",
+      "passed": true
+    },
+    "pages": {
+      "path": "build/nov17-tiles/lifetime-proof/pages/result.json",
+      "sha256": "56286c128e17544301a385d67d3491fbf29ee736f92e76f4899ffe4efe565c77",
+      "passed": true
+    },
+    "compact": {
+      "path": "build/nov17-tiles/lifetime-proof/compact/result.json",
+      "sha256": "132f1d5a1294193303a52d2b81b8818c9f8668ba917e691b327aef5510636294",
+      "passed": true
+    },
+    "dense": {
+      "path": "build/nov17-tiles/lifetime-proof/dense/result.json",
+      "sha256": "d65b61a53800c11075ab59e9c5e7123f916157778a65162d14f6e008d920fca7",
+      "passed": true
+    },
+    "owner-reuse": {
+      "path": "build/nov17-tiles/lifetime-proof/owner-reuse/result.json",
+      "sha256": "cd4afa25595e3cdfa2e45fbb1b8cbb6a197d7a9a9070e8ee89449b6eee08de65",
+      "passed": true
+    },
+    "baseline-pages-red": {
+      "path": "build/nov17-tiles/lifetime-proof/baseline-pages-red/result.json",
+      "sha256": "c273a526fb6f9efdcc4b426ac67022b7e16dfe219f057558427c82ed715df228",
+      "passed": true
+    },
+    "baseline-dense-red": {
+      "path": "build/nov17-tiles/lifetime-proof/baseline-dense-red/result.json",
+      "sha256": "a58ce00142002db1ff6b0a472327626de323f4bb4164c01b5a6bd39eed170bcb",
+      "passed": true
+    },
+    "baseline-libcfree-red": {
+      "path": "build/nov17-tiles/lifetime-proof/baseline-libcfree-red/result.json",
+      "sha256": "4cb691d569cdc20b5dfb58ac116026281a0daf32b6906c99d4b31f0f39114566",
+      "passed": true
+    }
+  },
+  "fixtures": {
+    "tools/ps2/opt17/gcache_lifetime_hosttest.py": "0b90db1fe0c032e45a92a2537e2b26a0736c429d1845d691457d8d48a2d1939e",
+    "tools/ps2/opt17/gcache_lifetime_hosttest.c": "7889be328db7a62e2642df68bb67f1612a8811173688677d9c28052e93d709e6",
+    "tools/ps2/opt17/flat_child_lifetime_hosttest.py": "0c487c8166e2ce4ed984c5c87687969b9a6463ed5b88c0904bba589239bdb432",
+    "tools/ps2/opt17/flat_child_lifetime_hosttest.c": "28c351e1af699ad12af438012def72011057e10a39743945c162eff1552d67f3"
+  },
+  "target_syntax": {
+    "path": "build/nov17-tiles/lifetime-proof/target/result.json",
+    "sha256": "c18c5b61a6001e80034f1e1a15715ca98cd41bd2ac078b50aa9e5aa6a60425ba",
+    "commands_sha256": "7b7a46f41693152a7464808488fd56607dc16d20689998f1d7cdcbb55784dabb",
+    "results": {
+      "cache-pages": {
+        "returncode": 0,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "cache-dense": {
+        "returncode": 0,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "main-gcache": {
+        "returncode": 0,
+        "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    }
+  },
+  "GC_proof": {
+    "actual_function": "HWR_GCacheLevel",
+    "normal_and_ASan_checks_each": 1495,
+    "resets_each": 64,
+    "cases": "liveoldblock; alreadyZonefreedblock; default/userKB; resetstats unchanged; replacementowner",
+    "negative": "actualoldfunction+realZ reproduces sameZ_CheckHeap-1140properusererror",
+    "fixture_boundary": "used-field GCstate and detachservice, notgeometryreplay/raster"
+  },
+  "flat_proof": {
+    "actual_functions": [
+      "HWR_GetLevelFlat",
+      "HWR_PS2_RegenerateMipmap",
+      "HWR_PS2_StealData",
+      "HWR_FreeMapTextures",
+      "FreeFlatMipmap",
+      "FreeMapTexture",
+      "DeleteTextureMipmap"
+    ],
+    "sanitized_checks_each": 504,
+    "cycles_each": 24,
+    "layouts": [
+      "pages",
+      "compact",
+      "densebothoptouts"
+    ],
+    "source_bytes_compared_each": 12632064,
+    "normal_C_metadata_free": true,
+    "source_steal_case": true,
+    "baseline_direct_free_negative": "realenginecleanup leavesaliveZonechildafteractuallibcfree; checkedwithoutdereferencingfreedowner",
+    "baseline_exact_diagnostic_negative": "retiredchildstorageheld/zeroedtoexposeactualZCheckusererrorwithout hostUAF",
+    "fixed_owner_reuse_case": true,
+    "legacy_alias": "nonPS2PROFILEdeletefalse retained, independentlysource-reviewed"
+  },
+  "runtime_status": "pending root exactswitchPAL/480p and finalmatrix; noemulatorusedbyhosttools"
+}

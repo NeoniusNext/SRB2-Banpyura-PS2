@@ -1,0 +1,41 @@
+{
+  "scope": "Diagnostic admission past preemptive SS/free heuristics only. Actual OOM/driver recovery remains armed; no production policy edit or universal Hardware claim.",
+  "wrapper_exit": 0,
+  "ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+  "guard_lines": [
+    "HWE acquired driver=ps2_hwd renderer=Hardware experimental=1 size=320x200",
+    "HWE startup renderer=Hardware chosen=2 hardware=1",
+    "WARNING: Hardware renderer: out of memory (17544 bytes, PU_RENDERWORK). Switching to the Software renderer for this map.",
+    "ps2_hwfb: HARDWARE -> SOFTWARE (out of memory (17544 bytes, PU_RENDERWORK)) map 11 frame 1",
+    "HWE released Hardware texture owners before GS shutdown",
+    "HWE acquired renderer=Software",
+    "ps2_hwfb: fallbacks 1 returns 0 soft-retries 0 thrown 0 level-fails 0 zone-jumps 1 guarded-allocs 145575 gaveup 0 last \"out of memory (17544 bytes, PU_RENDERWORK)\""
+  ],
+  "fatal": [],
+  "ZSTAT": [
+    {
+      "ram": "33554432",
+      "class": "32",
+      "map": "11",
+      "levelframes": "35",
+      "frames": "35",
+      "cycles": "3409929955",
+      "arena": "23506944",
+      "used": "21908640",
+      "peak": "23477472",
+      "gpeak": "23477472",
+      "free": "1598304",
+      "largest": "91216",
+      "evicted": "2482",
+      "evictedbytes": "91668496",
+      "failed": "440",
+      "libcfree": "264072",
+      "flushes": "0",
+      "libcpeak": "434368",
+      "stackused": "132560",
+      "spillpeak": "1424480",
+      "spillnow": "708480",
+      "t_ms": "29189"
+    }
+  ]
+}

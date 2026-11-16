@@ -1,0 +1,280 @@
+{
+  "source_commit": "321c8d4da2cdc4d175271726b8b2bc450cbbc57b",
+  "shipping_ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+  "stages": {
+    "switch-pal": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/switch-pal",
+        "--case",
+        "switch-pal",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/switch-pal/report.json",
+      "report_sha256": "f245617af04bd079b0c6a892e416bb86ead9ac4945a1f3440b4c523533043b86"
+    },
+    "switch-480p": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/switch-480p",
+        "--case",
+        "switch-480p",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/switch-480p/report.json",
+      "report_sha256": "2be64c38ec2445e7db9b1fdfbb507d5c55f8df4242375360d9d52b2ad5c3eed0"
+    },
+    "default-images": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/visibility_memory_integration.py",
+        "--baseline",
+        "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/baseline/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--candidate",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/default-images",
+        "--diagnostic-seed",
+        "0x01b2d3f5",
+        "--baseline-build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/baseline/hardware",
+        "--candidate-build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--scenes",
+        "fog-npot,map02,map01,legacy,legacy-sprites",
+        "--stop-on-purged-texture"
+      ],
+      "exit": 1,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/default-images/report.json",
+      "report_sha256": "8e6693590b247107e26f33852c77b7752d3075c7e8fbca580cf7f920165a1c12"
+    },
+    "full-images": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/visibility_memory_integration.py",
+        "--baseline",
+        "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/baseline/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--candidate",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/full-images",
+        "--diagnostic-seed",
+        "0x01b2d3f5",
+        "--baseline-build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/baseline/hardware",
+        "--candidate-build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--scenes",
+        "fog-npot,map02,map01,legacy,legacy-sprites",
+        "--stop-on-purged-texture",
+        "--full-textures"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/full-images/report.json",
+      "report_sha256": "375cfcf28983a6e982d71d3df0fa53466ea57dcd29bc1bdbf7fce2329cd463e8"
+    },
+    "default-pressure": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/visibility_memory_pressure.py",
+        "--baseline-build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/baseline/hardware",
+        "--candidate-build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--baseline-elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/baseline/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--candidate-elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/default-pressure",
+        "--frames",
+        "350"
+      ],
+      "exit": 1,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/default-pressure/report.json",
+      "report_sha256": "6c2b8d7b589a7aa2ffd8976146edd3fac22d636f3a10cf934eba0f509e2cb5e1"
+    },
+    "heat-pal": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-pal",
+        "--case",
+        "heat-pal",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-pal/report.json",
+      "report_sha256": "f09a49ae5c62b591c7a27c8c3cb385b5f640f9494624c96a61a17e21398c92a0"
+    },
+    "heat-480p": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-480p",
+        "--case",
+        "heat-480p",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-480p/report.json",
+      "report_sha256": "092f0b57397033b196ebb67bfbb1973412182cb9bf33f734f9f937815147c81a"
+    },
+    "wipe-pal": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/wipe-pal",
+        "--case",
+        "wipe-pal",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/wipe-pal/report.json",
+      "report_sha256": "25d9a58a5254a474fc3818456aa7a61a7e08747249639812076aa233d5bfad30"
+    },
+    "wipe-480p": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/wipe-480p",
+        "--case",
+        "wipe-480p",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/wipe-480p/report.json",
+      "report_sha256": "2bf9d92e391cbe43fb29509a4e5ff26c97b12b0d74283cd51b22af76f82277f1"
+    },
+    "heat-wipe-pal": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-wipe-pal",
+        "--case",
+        "heat-wipe-pal",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-wipe-pal/report.json",
+      "report_sha256": "3249df9a73221ba762a2fb15a564f957d258beb7d05ee8eca04fdda793977204"
+    },
+    "heat-wipe-480p": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_game.py",
+        "--build",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-wipe-480p",
+        "--case",
+        "heat-wipe-480p",
+        "--hwstats",
+        "0"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/heat-wipe-480p/report.json",
+      "report_sha256": "f39111b8300d98aa430128c4609bb2bd72cd3d2cb31d4f38151570dccb75cc36"
+    },
+    "standard-gs": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/standard_gs.py",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/standard-gs-canonical",
+        "--reference",
+        "/workspace/SRB2-Banpyura-PS2/docs/research/opt17/standard-gs-reference.json"
+      ],
+      "exit": 1,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/standard-gs-canonical/report.json",
+      "report_sha256": "a4817f282b47282291be5074dbdfa8f0e2b1fdd7a4c4b3bb8c3c281a40001280"
+    }
+  },
+  "all_requested_stages_completed": true,
+  "strict_all_passed": false,
+  "physical_PS2_tested": false,
+  "global_FPS_claimed": false,
+  "additional_stages": {
+    "resource-native": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/run-resources.py"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/resource-native/report.json",
+      "report_sha256": "96dfe5ed6cd5255509d96120a69e4d1affedd93c76de2cf075643155c16d607c"
+    },
+    "map11-guard": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/run-map11-guard.py"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/map11-guard/report.json",
+      "report_sha256": "10339b863c653411a48fe8bb7678feb6352c1da043464b305f13abf20f27b61e",
+      "shutdown_marker": true
+    },
+    "map11-admission": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/run-map11-admission.py"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/map11-admission/report.json",
+      "report_sha256": "3dc6a0d29717885e096950fa1776d4b97fbd603966e3ee65a8362d300c580e2b",
+      "shutdown_marker": true
+    }
+  },
+  "retained_incomplete_history": {
+    "original_matrix_journal_sha256": "51fb918705445548640606212f19d2135a4ec1927ceb3396144d2d078b496036",
+    "incomplete_standard_report": "docs/research/opt17/restart/incomplete-basic-gs-fixture.json",
+    "reason": "Initial basic GS builder omitted2 existing GS-list model checks and4 readbacks; all30commonreadbacks exact. Fresh canonical builder rerun with unchanged34-reference and strict tolerances replaces that incomplete fixture only. No production source changes or strict failure exemptions."
+  }
+}

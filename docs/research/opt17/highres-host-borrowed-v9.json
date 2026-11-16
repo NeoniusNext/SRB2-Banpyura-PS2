@@ -1,0 +1,121 @@
+{
+  "version": "9-borrowed-wide-host",
+  "scope": "Actual source allocator/copy/packet and targetABI proofs. NoGSrasterorFPS. Native/whole-game gates remain separate.",
+  "source_manifest_sha256": "f917896dc0d1c615b3f6304079287a8eff860b9daa4b011dbf75000e25ad6558",
+  "full_patch_sha256": "9b30502e40e2fde2893e47239337dcc433492a18f5d2c344fc446549122a2d84",
+  "delta_from_indexed_v8_sha256": "088876f695aaf4c03d393d444c900c567ddf59516c43f0fc0894bbb087765229",
+  "source_sha256": {
+    "src/hardware/hw_cache.c": "7a3611e3b1e160a92221231baea24f948313b1912900e2bb12376705391d08d2",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/hardware/hw_light.c": "11ea9a197e01a2beb60715903201d783d930651a19272d844fbbb918bcfd9fd8",
+    "src/hardware/hw_md2.c": "9a8e58a3d268e67a7defeba35accb26d411d3041fb0f4e0431a133edd39fb899",
+    "src/ps2/hw/ps2_hw_draw.inc": "b142f3639c884abcf5f752702244bad2a16be30793fb064bc8954b952f36e585",
+    "src/ps2/hw/ps2_hw_gs.inc": "fcfc8ceaa61efa01dc990284208003d12653408c7d39249975690376f4ca8983",
+    "src/ps2/hw/ps2_hw_model.inc": "16220c4273728f07a9914b648975bedb0d9a720c8c14c462306e3ee422e439a1",
+    "src/ps2/hw/ps2_hw_plan.inc": "8b26d1049778697b94f6d319dbb27b4e3d936cc4b77cc9300b5661776ca08970",
+    "src/ps2/hw/ps2_hw_priv.inc": "6c6e00db930824d9096f92af0b4cbb1f7f1af8b0b1c6a605fc3ecb8b50230689",
+    "src/ps2/hw/ps2_hw_regs.inc": "bafea9f30d3a2b2c0ef59f6e5b8c1cf08dfd945cfb9794a44646e4bb6b701a0d",
+    "src/ps2/hw/ps2_hw_screen.inc": "aaba2b74e7290d26a8659020678c1117cdb471f02e9c57b13b6b043ce30f74c8",
+    "src/ps2/hw/ps2_hw_sky.inc": "266a459be858e408f32a4d4d7a6fe3e61fb00246639b37808b873b0bf36992d1",
+    "src/ps2/hw/ps2_hw_spr.inc": "2978635704694a6701749277ce07a8482fb8f511fe364d579f233be528e051e0",
+    "src/ps2/hw/ps2_hw_tex.inc": "fa3b6a4b86cc4a72e551ccce6195201928460e2d35c20abe92bdd7e20e632d95",
+    "src/ps2/hw/ps2_hw_tile.inc": "ede005aec469d670cff0a76cca682974a484ede867620bac464a9c8ba0961679",
+    "src/ps2/hw/ps2_hw_tile_draw.inc": "6527517aa6b1bbbbacb472cea12974116574888d9caaa8a7b69309616959b8ba",
+    "src/ps2/hw/ps2_hw_tile_stencil.inc": "37a55c2815acb9bec480fdb6628c5aedfdb53ae181f4ca0345b318f3460babae",
+    "src/ps2/hw/ps2_hw_tt.inc": "453d519c80efe439b2802d13ae1b2365a9f96dc8d5aadb8e4b4d8a35abc32ac2",
+    "src/ps2/hw/ps2_hw_vu1.inc": "b16440b623591447fd29954211ee1db6c3fc53a9c06ba3d53d3116b4564628c3",
+    "src/ps2/hw/ps2_hwd.c": "40896784a1ecd6c20b6a81e479dda53ef4912ce9271126444a53699068db4082"
+  },
+  "reports": {
+    "allocator_index": {
+      "path": "build/nov17-tiles/borrow-proof/proof-index.json",
+      "sha256": "d52bbde004ab557eb91258fa024d8150fdeeb47cd8ec9e232671e9169357fea9"
+    },
+    "abi": {
+      "path": "build/nov17-tiles/v9-host/abi/result.json",
+      "sha256": "df82ce217cfd0623595af1c71d4e0a8b5273494ef85fb4c4f395838c1dd364db"
+    },
+    "renderer_asan": {
+      "path": "build/nov17-tiles/v9-host/renderer/result.json",
+      "sha256": "0ee0bee04212dd258b1e646ad4b4a5cfacd084d401e0e385592119bc71ac89ad"
+    },
+    "queued_asan": {
+      "path": "build/nov17-tiles/v9-host/queued-final/result.json",
+      "sha256": "2f2fc7965e669db6d5e4a12478038a49f1e1c830c7983bace2eba833a2080ad8"
+    },
+    "queued_stale_reference_negative": {
+      "path": "build/nov17-tiles/v9-host/queued-final-negative/result.json",
+      "sha256": "1ec9efd8db79e9afc4ecaf64e9d908d8ac45cb8a2e2b6bd1836e12c8581e33ea"
+    },
+    "capture_asan": {
+      "path": "build/nov17-tiles/v9-host/capture/result.json",
+      "sha256": "93ea01380bbfde76c641f347a85ffa85f06363faed5379197b60fca5facfc385"
+    },
+    "packet_count": {
+      "path": "build/nov17-tiles/v9-host/cost/result.json",
+      "sha256": "6084ae0e9d7562052327c95cedf9a32f1d10a791c37760505bcd12a42d2115af"
+    },
+    "fixture_compile_red": {
+      "path": "build/nov17-tiles/v9-host/capture-ledger-fixture-compile-red/build.log",
+      "sha256": "f4862941871fc82fbb94f43c80985887a1b61db0913f31d6f2ddcf79284e0e52"
+    }
+  },
+  "fixtures": {
+    "tools/ps2/opt17/tile_borrow_hosttest.py": "27e56d7fd96f87ff46dd9971e4bd159fe130d960044b46dac1fe045f836f8509",
+    "tools/ps2/opt17/tile_borrow_hosttest.c": "6fbd3b98c9060c3e19004da58f8b418b3e186eecc7655cf2271dc71a1a619909",
+    "tools/ps2/opt17/tile_wide_draw_hosttest.py": "7bdd0099f495bcc42283fe94fd379be2975151e66d7738007da5478a9474cc40",
+    "tools/ps2/opt17/tile_wide_draw_hosttest.c": "43bc276a39e70c6c622bccbb8525630895ad4d2a322695a0ac4ef48e381a3c04",
+    "tools/ps2/opt17/tile_capture_hosttest.py": "f78deb571736e08f89a44424d7002d14135a1d78466882571f6634109d362dac",
+    "tools/ps2/opt17/tile_capture_hosttest.c": "b5a04488e2c941a1b4b3eabf4d9d32c2c37ddcf6fb4a5a0dead7d82fd756839e",
+    "tools/ps2/opt17/tile_host_common.py": "dd93b870b57f607b30109784073d374ad2b87d3ee5fa43d7e27253826be69bc4",
+    "tools/ps2/opt17/tile_abi_check.py": "7ceae7d0dd3dba8a48a490b400ad1ce8c5eee7903caf090b8be9bf86256645ef",
+    "tools/ps2/opt17/tile_abi.c": "b58b7988bdeee373332a18f115ff9cd4c5682a755e59c77a0c2d69230593488c"
+  },
+  "allocator_summary": {
+    "checks": 154070,
+    "conversion_cases": 10560,
+    "compared_bytes": 180224000,
+    "normal_and_asan_failures": 0,
+    "five_named_negatives_detected": true,
+    "ordinary_PAL448_reclaim_before_TXfailure_victims": true,
+    "ordinary_reclaim_evictions": 0,
+    "valid_fragmentation_before_after": [
+      8112,
+      8113
+    ],
+    "range_capacity": 8193
+  },
+  "queued_summary": {
+    "sanitized_checks": 262417,
+    "failures": 0,
+    "formats": [
+      "T8_128x256",
+      "SCREEN_CT32_128x64"
+    ],
+    "ordering": "copiedwideimage,originaltriangle,ordinarytex_upload448,reusedprefixoverwrite; nofixtureflush/fence/read",
+    "old_records_immutable": true,
+    "occupied_prefix_V8_fallback": true,
+    "stale_reference_negative_detected": true
+  },
+  "capture_summary": {
+    "sanitized_checks": 7949821,
+    "failures": 0,
+    "metadata_fixture_update": "actual64/128scratchrecord plusstrictCLAMP-to-base matching",
+    "initial_fixture_red": "signedness-Werroronly; preservedthenfixedliteral64u; rendererunchanged"
+  },
+  "ABI": {
+    "EE_texrec": 140,
+    "EE_GLMipmap": 68,
+    "prefix_offsets": 55,
+    "new_SX_bytes": 0,
+    "new_context_fields": 0,
+    "new_cache_BSS_bytes": 0,
+    "generic_loader_frame_before_after": [
+      880,
+      928
+    ],
+    "constprop_loader_frame": 864
+  },
+  "source_frozen": true,
+  "emulator_used_by_host_tools": false
+}

@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "returncode": 0,
+  "layout": "pages",
+  "sanitize": true,
+  "expect_orphan": false,
+  "owner_reuse": true,
+  "source_sha256": {
+    "src/hardware/hw_cache.c": "89e5cc455eba82b7b3b8707adf67671579637c0c81f175cbf90a4238035c3127",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/z_zone.c": "c7628ef5198e7c94735546f991914b9bdd83f5c628e4978c9aa9326c9257f0c3",
+    "src/ps2/ps2_mem.c": "fb8f305fa314e79e310b82345b9c9dad9d1d6a652e74d63e7d89b3eff93beb64"
+  },
+  "fixture_sha256": "28c351e1af699ad12af438012def72011057e10a39743945c162eff1552d67f3",
+  "runner_sha256": "0c487c8166e2ce4ed984c5c87687969b9a6463ed5b88c0904bba589239bdb432",
+  "generated_source_sha256": "bb2b9fe1e81df52421cfb5c1ddc84844cff04d0262360a7a5a8157edf161b06f",
+  "output": "FLAT LIFETIME COMPLETE checks=504 cycles=24 source_copy_steal=PASS\n",
+  "emulator_used": false
+}

@@ -1,0 +1,156 @@
+{
+  "version": "4-final-r2",
+  "patch_sha256": "4f06545e7b6275fc302e8d40c38bfe3d5bc30a71c8640f64614b9e49365a215c",
+  "guard_manifest_sha256": "104ee4b22e46cf5d98ec89ce3d85baa2411a4b0163757bfb43647c6fa6e80735",
+  "candidate_sha256": {
+    "src/hardware/hw_cache.c": "f76f30bfa9a710c59b26c85213dd871d89c20ea4464cd2bd161f1fa8eab3d682",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/hardware/hw_light.c": "11ea9a197e01a2beb60715903201d783d930651a19272d844fbbb918bcfd9fd8",
+    "src/hardware/hw_md2.c": "9a8e58a3d268e67a7defeba35accb26d411d3041fb0f4e0431a133edd39fb899",
+    "src/ps2/hw/ps2_hw_draw.inc": "b142f3639c884abcf5f752702244bad2a16be30793fb064bc8954b952f36e585",
+    "src/ps2/hw/ps2_hw_gs.inc": "fcfc8ceaa61efa01dc990284208003d12653408c7d39249975690376f4ca8983",
+    "src/ps2/hw/ps2_hw_model.inc": "16220c4273728f07a9914b648975bedb0d9a720c8c14c462306e3ee422e439a1",
+    "src/ps2/hw/ps2_hw_plan.inc": "8b26d1049778697b94f6d319dbb27b4e3d936cc4b77cc9300b5661776ca08970",
+    "src/ps2/hw/ps2_hw_priv.inc": "6c6e00db930824d9096f92af0b4cbb1f7f1af8b0b1c6a605fc3ecb8b50230689",
+    "src/ps2/hw/ps2_hw_regs.inc": "bafea9f30d3a2b2c0ef59f6e5b8c1cf08dfd945cfb9794a44646e4bb6b701a0d",
+    "src/ps2/hw/ps2_hw_screen.inc": "aaba2b74e7290d26a8659020678c1117cdb471f02e9c57b13b6b043ce30f74c8",
+    "src/ps2/hw/ps2_hw_sky.inc": "266a459be858e408f32a4d4d7a6fe3e61fb00246639b37808b873b0bf36992d1",
+    "src/ps2/hw/ps2_hw_spr.inc": "2978635704694a6701749277ce07a8482fb8f511fe364d579f233be528e051e0",
+    "src/ps2/hw/ps2_hw_tex.inc": "700794221258a58ac145444fd463400c58ebc12b241433010f3a232bdef6c0ae",
+    "src/ps2/hw/ps2_hw_tile.inc": "e6eda9fb52080f60a40314ce68249f6b6f0bf82575ac7889d335cfa0fcdf82be",
+    "src/ps2/hw/ps2_hw_tile_draw.inc": "977e69addc49c5853d4ccd0655d111da60e52792c498e21fdbba66e53462de4a",
+    "src/ps2/hw/ps2_hw_tile_stencil.inc": "dd8427657f27db603409dda90977ae9e50b7b0eddbe21b3b9f64c7367e84c0dc",
+    "src/ps2/hw/ps2_hw_tt.inc": "453d519c80efe439b2802d13ae1b2365a9f96dc8d5aadb8e4b4d8a35abc32ac2",
+    "src/ps2/hw/ps2_hw_vu1.inc": "b16440b623591447fd29954211ee1db6c3fc53a9c06ba3d53d3116b4564628c3",
+    "src/ps2/hw/ps2_hwd.c": "c871b241b32ae5d0e1e8fe7bf114abe69256fad17d3d32e7aae69dbefef65efa"
+  },
+  "scope": "Standalone actual EE/GS readbacks in unchanged standard 32 MiB single-slot PCSX2. Synthetic sources only; engine allocation/zone/regeneration hooks are fixture services. Not full-game or physical PS2 validation.",
+  "native_runs": {
+    "full-run": {
+      "report": "build/nov17-tiles/native/final-r2-full-run/native-report.json",
+      "sha256": "782aca96d9c68f09fbc521d8a91a0fbd0c953bf4e5f7fad80f3fdf964cd5c820",
+      "checks": 231,
+      "failures": 1,
+      "failure_lines": [
+        "H0 FAIL tn_texture_parity name=texture-f0-1024x512-s4-l0 beyond=1"
+      ],
+      "elf_sha256": "281cb14406e0475d80abcfa769def99c1d0bb9cf4db2048978b37cb91aff41f5",
+      "all_runtime_invariants_passed": true
+    },
+    "common-run": {
+      "report": "build/nov17-tiles/native/final-r2-common-run/native-report.json",
+      "sha256": "a4c640f5453b345039188c99b1f90b8550749369589f1bff8c5cf2210ff180eb",
+      "checks": 144,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "281cb14406e0475d80abcfa769def99c1d0bb9cf4db2048978b37cb91aff41f5",
+      "all_runtime_invariants_passed": true
+    },
+    "attributes-run": {
+      "report": "build/nov17-tiles/native/final-r2-attributes-run/native-report.json",
+      "sha256": "92db06fac315768cb5c92e7dd4fc979c7b61f3be58c3e5a4b8b05cc053e7c177",
+      "checks": 46,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "281cb14406e0475d80abcfa769def99c1d0bb9cf4db2048978b37cb91aff41f5",
+      "all_runtime_invariants_passed": true
+    },
+    "coordinate-run": {
+      "report": "build/nov17-tiles/native/final-r2-coordinate-run/native-report.json",
+      "sha256": "3ddad52181dcc6fad00fbf14e6dc8e73d5a3cb67999f715fab0c8e9696aff6b2",
+      "checks": 40,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "281cb14406e0475d80abcfa769def99c1d0bb9cf4db2048978b37cb91aff41f5",
+      "all_runtime_invariants_passed": true
+    },
+    "no-halo-run": {
+      "report": "build/nov17-tiles/native/final-r2-no-halo-run/native-report.json",
+      "sha256": "6ae17ebe6da3c55618c1c75dbb5f002868ff483e11abfb80b6714f4d24f87731",
+      "checks": 10,
+      "failures": 1,
+      "failure_lines": [
+        "H0 FAIL tn_texture_parity name=texture-f2-512x256-s6-l1 beyond=1559"
+      ],
+      "elf_sha256": "9d97d6fe99427cd6362cbfb33ea59a51baaea8b103ded7a8b9aa4bb639042eef",
+      "all_runtime_invariants_passed": true
+    }
+  },
+  "raw_readback_analysis": {
+    "capture-frame-proof": {
+      "path": "build/nov17-tiles/native/final-r2-capture-frame-proof.json",
+      "sha256": "66836615eb1522274293a0280d74d96aec29e3af9f2f3ef55a60863b08efc07d"
+    },
+    "coordinate-frame-proof": {
+      "path": "build/nov17-tiles/native/final-r2-coordinate-frame-proof.json",
+      "sha256": "3c37e2d13ecfc68ed777891e8c28c05af1b1e6ee4f479dd1cccff078b0155cf4"
+    },
+    "texture-RGBA-proof": {
+      "path": "build/nov17-tiles/native/final-r2-texture-RGBA-proof.json",
+      "sha256": "3dae1e88ad85e81417fbb95754133f417ad726531dec7c067fe8aa3ccfa3640e"
+    }
+  },
+  "default_original_strict_gate_passed": false,
+  "complete_texture_readbacks": {
+    "total_compared": 1088000,
+    "different_RGBA": 1,
+    "different_alpha": 0
+  },
+  "opaque_source_coordinates": [
+    {
+      "shape": 0,
+      "compared_frame_pixels": 64000,
+      "covered_in_both": 64000,
+      "changed_source_coordinates": 0,
+      "max_circular_dx": 0,
+      "max_circular_dy": 0,
+      "missing_coverage": 0,
+      "extra_coverage": 0
+    },
+    {
+      "shape": 3,
+      "compared_frame_pixels": 64000,
+      "covered_in_both": 51792,
+      "changed_source_coordinates": 0,
+      "max_circular_dx": 0,
+      "max_circular_dy": 0,
+      "missing_coverage": 0,
+      "extra_coverage": 0
+    }
+  ],
+  "capture_identity_and_wipe": [
+    {
+      "visible": [
+        640,
+        400
+      ],
+      "compared_pixels_per_check": 256000,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    },
+    {
+      "visible": [
+        640,
+        480
+      ],
+      "compared_pixels_per_check": 307200,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    },
+    {
+      "visible": [
+        640,
+        512
+      ],
+      "compared_pixels_per_check": 327680,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    }
+  ],
+  "retained_reference_exception": "One palette-lightrow pixel differs by one RGB level between the existing fast reference and general path; common EE rendering is exact. No original gate or tolerance was changed.",
+  "historical_evidence": [
+    "build/nov17-tiles/native/proof-index-v2.json",
+    "build/nov17-tiles/native/proof-index-v3.json",
+    "build/nov17-tiles/native/proof-index-v4.json"
+  ]
+}

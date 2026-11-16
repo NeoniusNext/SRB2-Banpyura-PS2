@@ -1,0 +1,41 @@
+{
+  "scope": "Observe current preemptive/OOM recovery policy on a known heavy map. No thresholds or recovery guards overridden. Not proof that all maps stay in Hardware.",
+  "wrapper_exit": 0,
+  "ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+  "guard_lines": [
+    "HWE acquired driver=ps2_hwd renderer=Hardware experimental=1 size=320x200",
+    "HWE startup renderer=Hardware chosen=2 hardware=1",
+    "WARNING: Hardware renderer: map with 15942 subsectors is too big for it. Switching to the Software renderer for this map.",
+    "ps2_hwfb: HARDWARE -> SOFTWARE (map with 15942 subsectors is too big for it) map 11 frame 0",
+    "HWE released Hardware texture owners before GS shutdown",
+    "HWE acquired renderer=Software",
+    "ps2_hwfb: fallbacks 1 returns 0 soft-retries 0 thrown 0 level-fails 0 zone-jumps 0 guarded-allocs 39336 gaveup 0 last \"map with 15942 subsectors is too big for it\""
+  ],
+  "fatal": [],
+  "ZSTAT": [
+    {
+      "ram": "33554432",
+      "class": "32",
+      "map": "11",
+      "levelframes": "35",
+      "frames": "35",
+      "cycles": "3297940720",
+      "arena": "23506944",
+      "used": "22654032",
+      "peak": "23483936",
+      "gpeak": "23483936",
+      "free": "852912",
+      "largest": "376064",
+      "evicted": "2209",
+      "evictedbytes": "101939472",
+      "failed": "247",
+      "libcfree": "289384",
+      "flushes": "0",
+      "libcpeak": "340224",
+      "stackused": "132560",
+      "spillpeak": "1276416",
+      "spillnow": "680448",
+      "t_ms": "23681"
+    }
+  ]
+}
