@@ -22,6 +22,12 @@
 
 TEXC заново экспортирован именно из этих компактных PAK. Его SHA256 `d4dca18293b00af3555e3989ea517274e197f95268a3397bb9ec64a6bfb42eb8` отличается от stock TEXC; для установки нужны совпадающие base PAK, перечисленные в [manifest](build-manifest.json). Для минимального расхода RAM используйте основной набор без TEXC: cache добавляет около 322358 Б fixed metadata/window payload и optional prefetch (default до 1 МиБ). `-texcmem 0` отключает prefetch, сохраняя metadata. Физическая PS2 и общий FPS gain не проверены.
 
-Локальные download-архивы созданы отдельно: `SRB2-PS2-PAKs-OPT17-20261116.zip` (четыре PAK, FINEACON, PNG sidecar, README и SHA256) и `SRB2-PS2-TEXC-for-OPT17-20261116.zip` (TEXC с base identity manifest). Их размеры и SHA256 — в [manifest](build-manifest.json) и [SHA256SUMS](SHA256SUMS). Игровые payload/ZIP и BIOS не добавлены в Git; этот каталог хранит воспроизводимые отчёты и контрольные суммы.
+Архивы опубликованы в [GitHub Release PAK OPT17](https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/tag/pak-opt17-20261116):
+
+- [Основной набор PAK, 162923970 Б](https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/download/pak-opt17-20261116/SRB2-PS2-PAKs-OPT17-20261116.zip) — четыре PAK, FINEACON, PNG sidecar, README и SHA256.
+- [Необязательный парный TEXC, 9327703 Б](https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/download/pak-opt17-20261116/SRB2-PS2-TEXC-for-OPT17-20261116.zip) — TEXC с base identity manifest.
+- [SHA256SUMS](https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/download/pak-opt17-20261116/SHA256SUMS) — контрольные суммы обоих ZIP.
+
+Размеры и GitHub SHA256 digests всех трёх assets сверены с локальными файлами перед публикацией; tag указывает на исходный commit `3aad51501a95cf39071870ca2cfa067d886d3102`. [Запись публикации](release-publication.json) сохраняет ссылки, размеры и digests; [manifest](build-manifest.json) и локальный [SHA256SUMS](SHA256SUMS) описывают те же архивы. Этот каталог хранит отчёты и контрольные суммы. Для переноса в Releases использована отдельная ветка `dist/pak-opt17-20261116` без истории исходников: она содержит проверенные части основного ZIP, необязательный ZIP и workflow загрузки. В assets релиза основной ZIP восстановлен побайтно, скачивать части не требуется. BIOS не публиковался.
 
 Сборка: `python tools/ps2/cook.py --from-pak build/pak --out <fresh-dir> --jobs 4 --fill-gaps`, затем копия `build/pak/FINEACON.DAT`. Парный TEXC: `tools/ps2/cook_texc.sh <fresh-dir> <optional-dir> <fresh-host-build>` при настроенных host dependencies. Проверки: `pak_layout_verify.py` и `texc_stock_verify.py`; полный invocation/source hash набор сохранён в отчётах.
