@@ -235,6 +235,7 @@ boolean PS2TexC_Present(void)
 	void *iobuf;
 	int d;
 	const char *dir[2];
+	char path[MAX_WADPATH];
 	UINT32 nk = 0;
 
 	if (TC.state)
@@ -249,16 +250,20 @@ boolean PS2TexC_Present(void)
 	dir[1] = srb2home;
 	for (d = 0; d < 2 && !f; d++)
 		if (dir[d] && dir[d][0])
-			f = fopen(va("%s" PATHSEP "TEXC.PAK", dir[d]), "rb");
+		{
+			snprintf(path, sizeof path, "%s" PATHSEP "TEXC.PAK", dir[d]);
+			f = fopen(path, "rb");
+		}
 	if (!f)
 		return false;
-	iobuf = WPack_SetupHandle(f);
+	// Keep the selected device/path for the medium policy and a read retry's reopen.
+	iobuf = WPack_SetupHandleEx(f, path);
 	if (!iobuf)
 	{
 		fclose(f);
 		return false;
 	}
-	if (!WPack_Detect(f) || !(lumps = WPack_GetLumps(f, "TEXC.PAK", &n, &pool, &nonmusic, NULL)))
+	if (!WPack_Detect(f) || !(lumps = WPack_GetLumps(f, path, &n, &pool, &nonmusic, NULL)))
 	{
 		fclose(f);
 		free(iobuf);
