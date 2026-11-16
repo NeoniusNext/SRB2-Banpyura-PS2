@@ -2002,6 +2002,11 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 
 	if (!TexInfo)
 		return;
+	if (skip_tex == TexInfo)
+	{
+		skip_tex = NULL;
+		skip_why = NULL;
+	}
 	if (H.up)
 		dma_fence(); // the engine frees the texels after this call: no queued DMA may read them (also when the image was evicted meanwhile)
 	if (H.imm_tex == TexInfo)

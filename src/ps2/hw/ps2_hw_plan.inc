@@ -1101,6 +1101,8 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 		{
 			H.cur_tex = NOREC;
 			H.cur_missing = 1; // nothing of this polygon is visible: nothing is drawn, nothing is uploaded
+			skip_tex = m;
+			skip_why = "immediate polygon outside view";
 			TX.invisible++;
 			return;
 		}

@@ -434,6 +434,7 @@ static u32 ramp_clut(const rampspec_t *s)
 		ov_flush_pending(); // the queue may reference the image that is about to be replaced
 	H.clut_ent[victim].key = key;
 	H.clut_ent[victim].stamp = H.clut_tick;
+	H.clut_epoch++; // a ramp can replace a light-table row cached by the VU1 path
 	e = clut_alloc(H.clut_base + (u32)victim * CLUT_BLOCKS);
 	ramp_entries(s, e);
 	clut_swizzle(e);
@@ -594,7 +595,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		if (skip_reports < 40 && H.frame_no > 20 && skip_tex && !(skip_why && skip_why[0] == 'n' && skip_why[1] == 'o' && skip_why[3] == 'p')) // (the plan's "invisible" ones are the normal case: only real losses are listed)
 		{
 			skip_reports++;
-			CONS_Printf("HWSKIP f=%u draw skipped: texture %s %ux%u fmt=%d: %s\n", (unsigned)H.frame_no, HWR_PS2_TexName(skip_tex), (unsigned)skip_tex->width, (unsigned)skip_tex->height, (int)skip_tex->format, skip_why ? skip_why : "?");
+			CONS_Printf("HWSKIP f=%u phase=%d flags=0x%x shader=%d immtex=%p draw skipped: texture %s %ux%u fmt=%d: %s\n", (unsigned)H.frame_no, batch_phase, (unsigned)flags, H.shader, (void *)H.imm_tex, HWR_PS2_TexName(skip_tex), (unsigned)skip_tex->width, (unsigned)skip_tex->height, (int)skip_tex->format, skip_why ? skip_why : "?");
 		}
 		return 0;
 	}

@@ -2226,6 +2226,49 @@ static void ap88_scan_patch(const GLMipmap_t *m, u32 cw, u32 ch, u32 pal255, int
 }
 #endif
 
+// A planned level may fail residency while the original source remains fully
+// drawable through tiles. Cached mip bytes never describe that proxy's holes.
+static int tex_full_p8_proxy(GLMipmap_t *m)
+{
+	const u8 *full = m->data;
+	dcent_t *full_cache = NULL;
+	int has255, clut, ri;
+
+	if (!full)
+	{
+		full_cache = dc_find(dc_key(m), m->width, m->height, 0);
+		if (full_cache) full = full_cache->p;
+	}
+	if (!full)
+	{
+		HWR_PS2_RegenerateMipmap(m);
+		full = m->data;
+	}
+	if (!full)
+	{
+		tex_fail_why = "no full-size texture source";
+		return NOREC;
+	}
+	if (full_cache)
+	{
+		if (full_cache->busy == 255) dma_fence();
+		if (full_cache->busy == 255)
+		{
+			tex_fail_why = "full-size texture source busy";
+			return NOREC;
+		}
+		if (!full_cache->busy++) HWR_PS2_LockData((void *)full);
+	}
+	else
+		HWR_PS2_LockData((void *)full);
+	has255 = scan_has_ff(full, (u32)m->width * m->height);
+	m->ps2_h255 = (u8)(has255 ? 2 : 1);
+	clut = (m->flags & TF_CHROMAKEYED) && has255 ? 2 : 1;
+	ri = tile_source_record(m, PSM_T8, clut, 0, clut == 2, 1, has255, m->width, m->height);
+	tile_source_unlock((void *)full, full_cache, 0);
+	return ri;
+}
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -2285,12 +2328,12 @@ static int tex_upload(GLMipmap_t *m)
 	if (!data || !sw || !sh)
 	{
 		tex_fail_why = !data ? "no data (purged)" : "zero size";
-		return NOREC;
+		goto failed;
 	}
 	if (sw > 16384 || sh > 16384)
 	{
 		tex_fail_why = "larger than 1024 and not divisible";
-		return NOREC;
+		goto failed;
 	}
 
 	memset(c, 0, sizeof *c);
@@ -2455,7 +2498,7 @@ static int tex_upload(GLMipmap_t *m)
 			break;
 		default:
 			tex_fail_why = "unknown format";
-			return NOREC;
+			goto failed;
 	}
 
 	// A source that cannot ever fit is represented by metadata only. Its original
@@ -2463,7 +2506,10 @@ static int tex_upload(GLMipmap_t *m)
 	if (!lv && !lvdec && !dsrc && !H.tex_cap_blocks && !cfg.tex_max_bytes
 		&& (cw > 1024u || ch > 1024u
 			|| tex_footprint(psm, cw, ch, psm == PSM_T8 ? ((cw + 127u) / 128u) * 2u : (cw + 63u) / 64u) > tex_usable_blocks()))
-		return tile_source_record(m, psm, clut, baked, holes, shareable, has255, cw, ch);
+	{
+		ri = tile_source_record(m, psm, clut, baked, holes, shareable, has255, cw, ch);
+		goto complete;
+	}
 
 #ifndef PS2_NOOPT_P4_BAND
 	// Exact packing is confined to the explicitly selected full-size mode.
@@ -2491,7 +2537,7 @@ static int tex_upload(GLMipmap_t *m)
 		if (!fit && !tex_plan(psm, sw, sh, H.tex_cap_blocks, shareable && !crop, &dx, &dy))
 		{
 			tex_fail_why = "larger than 1024 and not divisible";
-			return NOREC;
+			goto failed;
 		}
 		if (lv && !dx && !dy && psm == PSM_T8 && shareable)
 			dx = dy = lv; // stored at level lv: the texels come from dec_level (or the cache) below, the plain decimation of the fill functions is the fallback
@@ -2529,8 +2575,11 @@ static int tex_upload(GLMipmap_t *m)
 		if (cfg.tex_max_bytes > 0 && nblk > (u32)cfg.tex_max_bytes / 256u)
 		{
 			tex_fail_why = "footprint over budget";
+			if (dlock && dlock->p && !dlock->busy)
+				HWR_PS2_UnlockData(dlock->p);
+			dlock = NULL;
 			hw_failure("exact texture GS footprint exceeds configured budget");
-			return NOREC;
+			goto failed;
 		}
 		align = 1;
 		while (align < nblk && align < PAGE_BLOCKS)
@@ -2548,10 +2597,24 @@ static int tex_upload(GLMipmap_t *m)
 #endif
 		if (!H.cap_adapt || H.cap_idx >= NCAPS - 1)
 		{
+			// A freshly streamed flat level is locked before GS allocation.
+			// No queued reader exists on this failure path, so release its lease.
+			if (dlock && dlock->p && !dlock->busy)
+				HWR_PS2_UnlockData(dlock->p);
+			dlock = NULL;
 			if (!lv && !lvdec && !dsrc && !H.tex_cap_blocks && !cfg.tex_max_bytes)
-				return tile_source_record(m, psm, clut, baked, holes, shareable, has255, cw, ch);
+			{
+				ri = tile_source_record(m, psm, clut, baked, holes, shareable, has255, cw, ch);
+				goto complete;
+			}
+			if (!H.tex_cap_blocks && !cfg.tex_max_bytes && m->format == GL_TEXFMT_P_8
+				&& (m->regen_kind == 1 || m->regen_kind == 2))
+			{
+				ri = tex_full_p8_proxy(m);
+				goto complete;
+			}
 			tex_fail_why = "no VRAM block (pool)";
-			return NOREC;
+			goto failed;
 		}
 		cap_step(H.cap_idx + 1, "texture does not fit the pool");
 	}
@@ -2741,9 +2804,7 @@ static int tex_upload(GLMipmap_t *m)
 	{
 		tex_fail_why = "record table";
 		vram_free(blk, nblk);
-		if (dlock && dlock->p && !dlock->busy)
-			HWR_PS2_UnlockData(dlock->p);
-		return NOREC;
+		goto failed;
 	}
 	{
 		texrec_t *r = &H.rec[ri];
@@ -2796,9 +2857,7 @@ static int tex_upload(GLMipmap_t *m)
 			tex_fail_why = "record table";
 			vram_free(blk + nblkA, nblk - nblkA);
 			tex_drop(ri, 0);
-			if (dlock && dlock->p && !dlock->busy)
-				HWR_PS2_UnlockData(dlock->p);
-			return NOREC;
+			goto failed;
 		}
 		a = &H.rec[ri];
 		b = &H.rec[bi];
@@ -2833,6 +2892,11 @@ static int tex_upload(GLMipmap_t *m)
 	H.st.upload_bytes += store_psm == PSM_T4 ? (W2 * H2) >> 1 : W2 * (H2 + hb) * bpp;
 	H.st.cyc_tex += cyc() - t0;
 	tx_note_upload(m, store_psm, nblk);
+	goto complete;
+
+failed:
+	ri = NOREC;
+complete:
 	if (dlock && dlock->p && !dlock->busy)
 		HWR_PS2_UnlockData(dlock->p); // a zero-copy upload keeps the lock (busy) until its DMA has read the texels
 	return ri;
