@@ -335,6 +335,8 @@ boolean PS2HWD_Init(void)
 {
 	int rc;
 
+	tile_sky_pressure_reset();
+
 	if (H.up)
 		return true;
 	tile_stencil_reset_state();
@@ -468,6 +470,7 @@ boolean PS2HWD_Init(void)
 void PS2HWD_Shutdown(void)
 {
 	int i;
+	tile_sky_pressure_reset();
 
 	if (tile_stencil_active && H.up && H.ring[0]) tile_stencil_end();
 	tile_stencil_reset_state();
@@ -547,6 +550,7 @@ void PS2HWD_Shutdown(void)
 void PS2HWD_Abort(void)
 {
 	u32 irq;
+	tile_sky_pressure_revoke();
 
 	tile_stencil_reset_state();
 
@@ -1559,7 +1563,7 @@ static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, 
 }
 
 // The dome is built from vertices with colours (gl_skyvertex_t has the layout of FOutVector plus r, g, b, a).
-static void hw_RenderSkyDome(gl_sky_t *sky)
+static void hw_RenderSkyDome_inner(gl_sky_t *sky)
 {
 	FOutVector *sv;
 	float *sc, saved_mv[16];
@@ -1674,6 +1678,18 @@ static void hw_RenderSkyDome(gl_sky_t *sky)
 restore_sky:
 	memcpy(H.mv, saved_mv, sizeof H.mv);
 	H.mat_dirty = 1;
+}
+
+
+static void hw_RenderSkyDome(gl_sky_t *sky)
+{
+    // Match the original no-op boundary: invalid domes must not return a
+    // previous caller's optional borrow or change its queued state.
+    if (!H.up || !sky || !sky->data || !sky->loops || sky->vertex_count <= 0)
+        return;
+    const unsigned saved = tile_sky_pressure_enter();
+    hw_RenderSkyDome_inner(sky);
+    tile_sky_pressure_leave(saved);
 }
 
 static void hw_SetBlend(FBITFIELD PolyFlags)

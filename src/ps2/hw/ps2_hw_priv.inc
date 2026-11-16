@@ -498,8 +498,11 @@ static void hw_limit(u32 bit, const char *message)
 
 static void (*resource_error_handler)(const char *message);
 
+static void tile_sky_pressure_revoke(void);
+
 static void hw_failure(const char *message)
 {
+	tile_sky_pressure_revoke();
 	hw_limit(HW_MISSING, message);
 	if (resource_error_handler)
 		resource_error_handler(message);
