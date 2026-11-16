@@ -160,7 +160,7 @@ def main():
      'real packed-AP88 header accessor; ALPHA8 and indexed-RGBA palette history; CT32/CT16 screens',
      '198 actual loader layout/cache-hit/byte-count/lock-balance checks; allocator and upload boundaries stubbed',
      'candidate-only128 negative preserves all9856 frozen64 regressions; native geometry is a separate gate']}
-    
+
     (out/'result.json').write_text(json.dumps(report,indent=2)+'\n');return int(not matched)
 
 
