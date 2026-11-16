@@ -1,0 +1,175 @@
+{
+  "scope": "Same profiler and con_hudlines0 in BOTHroles. Original unmatched observer/reference comparison retained separately. Noqualitytolerance/cropping.",
+  "runs": {
+    "base": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "b60602ee2a38c65c89d85b21b8880b9b39517d246023668f677bb5a2b66f8545",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "84cd1c8fc1b6a2fceca9d24b5b2c5aad1346fb131a2320f795b9e403848364c8"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "24ec6c12450ef67547f8395a652082f74c6292c60e729464905aec4e9724dc4b",
+      "boot_sha256": "f898d4f0829838e9dae2ec4dbfffcbe11e3268f158f2f44e8dba236f496b1e63",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": [],
+      "TEXC_lines": [],
+      "observed_composite_hits": [],
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "base",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak-release-20261116/game",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/pak-release-20261116/reports/texc-matched-observer/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "240",
+        "--cfg",
+        "con_hudlines \"0\"",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-astat",
+        "-hwdbg",
+        "33554432",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware",
+        "-texcmem",
+        "0",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35"
+      ]
+    },
+    "texc": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "b60602ee2a38c65c89d85b21b8880b9b39517d246023668f677bb5a2b66f8545",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "84cd1c8fc1b6a2fceca9d24b5b2c5aad1346fb131a2320f795b9e403848364c8"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "24ec6c12450ef67547f8395a652082f74c6292c60e729464905aec4e9724dc4b",
+      "boot_sha256": "ffa4534d5a2fba5fa0a3c1c9f2cab3aa94d5cf4b93cba31542b27fbc7465a3d5",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": [],
+      "TEXC_lines": [
+        "TEXC.PAK: 3309 prebuilt composite textures",
+        "HWTEXC pack=3309 textures: composites used 1090 (stored form in memory 0, read from the pack 1090) cycles 333173653 (reads 333160573) | not in the pack 0, damaged 0 | level prefetch 0 KiB, 0 cycles"
+      ],
+      "observed_composite_hits": [
+        1090
+      ],
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "texc",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak-release-20261116/with-texc",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/pak-release-20261116/reports/texc-matched-observer/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "240",
+        "--cfg",
+        "con_hudlines \"0\"",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-astat",
+        "-hwdbg",
+        "33554432",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware",
+        "-texcmem",
+        "0",
+        "-ps2prof",
+        "-hwfb",
+        "-hwstats",
+        "35"
+      ]
+    }
+  },
+  "pairs": [
+    {
+      "file": "vidshot-320x200-l140.ppm",
+      "equal_full_frame": true
+    },
+    {
+      "file": "vidshot-320x200-l20.ppm",
+      "equal_full_frame": true
+    },
+    {
+      "file": "vidshot-320x200-l70.ppm",
+      "equal_full_frame": true
+    }
+  ],
+  "passed": true
+}

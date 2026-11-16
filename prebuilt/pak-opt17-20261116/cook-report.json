@@ -1,0 +1,121 @@
+{
+  "version": 2,
+  "gap_fill": true,
+  "packs": [
+    {
+      "pack": "SRB2.PAK",
+      "source": "build/pak/SRB2.PAK",
+      "n": 12614,
+      "stats": {
+        "1": [
+          11452,
+          212002521,
+          46391082
+        ],
+        "0": [
+          1162,
+          14392214,
+          14392214
+        ]
+      },
+      "file_size": 61253632,
+      "pool": 442939,
+      "flags": 3,
+      "t": 8.137547969818115,
+      "srcsize": 62382080,
+      "png": 0,
+      "cooked": 0,
+      "folders": 0,
+      "dedup_saved": 942502,
+      "index_bytes": 1003520,
+      "gap_bytes": 1049667,
+      "gap_lumps": 1671,
+      "total_t": 8.4228196144104
+    },
+    {
+      "pack": "ZONES.PAK",
+      "source": "build/pak/ZONES.PAK",
+      "n": 169,
+      "stats": {
+        "1": [
+          169,
+          63411040,
+          24357266
+        ]
+      },
+      "file_size": 24442880,
+      "pool": 7858,
+      "flags": 3,
+      "t": 2.471442699432373,
+      "srcsize": 24442880,
+      "png": 0,
+      "cooked": 0,
+      "folders": 0,
+      "dedup_saved": 7317,
+      "index_bytes": 20480,
+      "gap_bytes": 0,
+      "gap_lumps": 0,
+      "total_t": 2.539057493209839
+    },
+    {
+      "pack": "CHARS.PAK",
+      "source": "build/pak/CHARS.PAK",
+      "n": 2054,
+      "stats": {
+        "1": [
+          2045,
+          4123932,
+          2643335
+        ],
+        "0": [
+          9,
+          3370,
+          3370
+        ]
+      },
+      "file_size": 2682880,
+      "pool": 55196,
+      "flags": 3,
+      "t": 0.07402634620666504,
+      "srcsize": 2682880,
+      "png": 0,
+      "cooked": 0,
+      "folders": 0,
+      "dedup_saved": 177611,
+      "index_bytes": 153600,
+      "gap_bytes": 0,
+      "gap_lumps": 0,
+      "total_t": 0.09131598472595215
+    },
+    {
+      "pack": "MUSIC.PAK",
+      "source": "build/pak/MUSIC.PAK",
+      "n": 215,
+      "stats": {
+        "1": [
+          106,
+          8308221,
+          864100
+        ],
+        "0": [
+          109,
+          99560447,
+          99560447
+        ]
+      },
+      "file_size": 100573184,
+      "pool": 3067,
+      "flags": 2,
+      "t": 0.4882481098175049,
+      "srcsize": 100595712,
+      "png": 0,
+      "cooked": 0,
+      "folders": 0,
+      "dedup_saved": 24454,
+      "index_bytes": 18432,
+      "gap_bytes": 21688,
+      "gap_lumps": 16,
+      "total_t": 0.7634060382843018
+    }
+  ]
+}

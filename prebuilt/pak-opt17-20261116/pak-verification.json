@@ -1,0 +1,439 @@
+{
+  "inputs": {
+    "/workspace/.onboarding/srb2-assets/srb2.pk3": {
+      "bytes": 50115266,
+      "sha256": "0c5025b70dbd83faea86e59fbe888250ea70d799fa3b8c2f82535d180a3ef5b5",
+      "md5": "3182ce524acc2072ddaa81acf4b6a9aa"
+    },
+    "build/pak/SRB2.PAK": {
+      "bytes": 62382080,
+      "sha256": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+      "md5": "d83abedecbf0cda4b94e78bfb171f492"
+    },
+    "build/pak-release-20261116/game/SRB2.PAK": {
+      "bytes": 61253632,
+      "sha256": "947fb651efda632ebfde64c61636047562f6046a9c04f5e6b7728570bc414aad",
+      "md5": "906a406cc15ef625ae22c3e78bfe383c"
+    },
+    "build/pak/SRB2.PAK.pics.json": {
+      "bytes": 6685,
+      "sha256": "956ada608c039005d5856c0441116541bcdfbef0038a6a2e446da5f48cf4930e",
+      "md5": "1b2b650db67b1fb99410365d0194159e"
+    },
+    "build/pak-release-20261116/game/SRB2.PAK.pics.json": {
+      "bytes": 6685,
+      "sha256": "956ada608c039005d5856c0441116541bcdfbef0038a6a2e446da5f48cf4930e",
+      "md5": "1b2b650db67b1fb99410365d0194159e"
+    },
+    "/workspace/.onboarding/srb2-assets/zones.pk3": {
+      "bytes": 18503511,
+      "sha256": "2bc641793f339d2122ae97b71d23859d3802b726aea9dc9177c13ead3a95aae2",
+      "md5": "88ff4c300851ccdb0406698eadd89907"
+    },
+    "build/pak/ZONES.PAK": {
+      "bytes": 24442880,
+      "sha256": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+      "md5": "cd3a52602769fea6db1a34a884f236ef"
+    },
+    "build/pak-release-20261116/game/ZONES.PAK": {
+      "bytes": 24442880,
+      "sha256": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+      "md5": "cd3a52602769fea6db1a34a884f236ef"
+    },
+    "/workspace/.onboarding/srb2-assets/characters.pk3": {
+      "bytes": 2044315,
+      "sha256": "f787fac81736ddaf168472f44ef78be26f63a475b95723b8cc39bdaa5435222a",
+      "md5": "5c5936b8a690e007c0939bd0785a41fb"
+    },
+    "build/pak/CHARS.PAK": {
+      "bytes": 2682880,
+      "sha256": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+      "md5": "953486c879d56d51dcb6ca2c82d69586"
+    },
+    "build/pak-release-20261116/game/CHARS.PAK": {
+      "bytes": 2682880,
+      "sha256": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+      "md5": "953486c879d56d51dcb6ca2c82d69586"
+    },
+    "/workspace/.onboarding/srb2-assets/music.pk3": {
+      "bytes": 99639560,
+      "sha256": "42b481e04946089336a98ae25d8b6aee8007ec88f1b2fc9cd8315967b461b96f",
+      "md5": "b8763719b66716dbd5c0f9982269be69"
+    },
+    "build/pak/MUSIC.PAK": {
+      "bytes": 100595712,
+      "sha256": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0",
+      "md5": "163ad81b1ff4ff57fc3b9d4328926cf3"
+    },
+    "build/pak-release-20261116/game/MUSIC.PAK": {
+      "bytes": 100573184,
+      "sha256": "39de305eb44e2ec8fdde2dd0f5d7ec4eee5d4264167fcf999fce160be60ba269",
+      "md5": "18ea9ebe050011985fa2f0e310bc4d82"
+    },
+    "build/pak/FINEACON.DAT": {
+      "bytes": 524288,
+      "sha256": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792",
+      "md5": "c60388c74f041c61d2126445b1d21c70"
+    },
+    "build/pak-release-20261116/game/FINEACON.DAT": {
+      "bytes": 524288,
+      "sha256": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792",
+      "md5": "c60388c74f041c61d2126445b1d21c70"
+    }
+  },
+  "packs": {
+    "SRB2.PAK": {
+      "lumps": 12614,
+      "decoded_bytes": 226394735,
+      "stored_bytes": 60783296,
+      "moved_entries": 11181,
+      "protected_entries": 1347,
+      "protected_unique_payloads": 1290,
+      "reference_bytes": 62382080,
+      "candidate_bytes": 61253632,
+      "saved_bytes": 1128448,
+      "independent_archive_verifier_errors": 0,
+      "c_reader": {
+        "reference": {
+          "seconds": 3.7432,
+          "decoded_bytes": 226394735,
+          "partial_reads": 252200,
+          "io": {
+            "open": {
+              "cmds": 62,
+              "bytes": 952320
+            },
+            "iostat": {
+              "cmds": 5458,
+              "hits": 278953,
+              "misses": 4684,
+              "bulk": 367,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 341475328
+            }
+          }
+        },
+        "candidate": {
+          "seconds": 4.2129,
+          "decoded_bytes": 226394735,
+          "partial_reads": 252200,
+          "io": {
+            "open": {
+              "cmds": 62,
+              "bytes": 952320
+            },
+            "iostat": {
+              "cmds": 8528,
+              "hits": 276118,
+              "misses": 7754,
+              "bulk": 367,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 542670848
+            }
+          }
+        },
+        "asan_nohead": {
+          "seconds": 8.4346,
+          "decoded_bytes": 226394735,
+          "partial_reads": 252200,
+          "io": {
+            "open": {
+              "cmds": 62,
+              "bytes": 952320
+            },
+            "iostat": {
+              "cmds": 8483,
+              "hits": 301703,
+              "misses": 7709,
+              "bulk": 367,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 539721728
+            }
+          }
+        },
+        "literal_decoded_bytes_equal": true,
+        "metadata_equal": true
+      }
+    },
+    "ZONES.PAK": {
+      "lumps": 169,
+      "decoded_bytes": 63411040,
+      "stored_bytes": 24357266,
+      "moved_entries": 0,
+      "protected_entries": 6,
+      "protected_unique_payloads": 6,
+      "reference_bytes": 24442880,
+      "candidate_bytes": 24442880,
+      "saved_bytes": 0,
+      "independent_archive_verifier_errors": 0,
+      "c_reader": {
+        "reference": {
+          "seconds": 0.8539,
+          "decoded_bytes": 63411040,
+          "partial_reads": 3380,
+          "io": {
+            "open": {
+              "cmds": 3,
+              "bytes": 14336
+            },
+            "iostat": {
+              "cmds": 3443,
+              "hits": 6369,
+              "misses": 3439,
+              "bulk": 4,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 225128448
+            }
+          }
+        },
+        "candidate": {
+          "seconds": 0.8653,
+          "decoded_bytes": 63411040,
+          "partial_reads": 3380,
+          "io": {
+            "open": {
+              "cmds": 3,
+              "bytes": 14336
+            },
+            "iostat": {
+              "cmds": 3443,
+              "hits": 6369,
+              "misses": 3439,
+              "bulk": 4,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 225128448
+            }
+          }
+        },
+        "asan_nohead": {
+          "seconds": 1.8726,
+          "decoded_bytes": 63411040,
+          "partial_reads": 3380,
+          "io": {
+            "open": {
+              "cmds": 3,
+              "bytes": 14336
+            },
+            "iostat": {
+              "cmds": 3443,
+              "hits": 6369,
+              "misses": 3439,
+              "bulk": 4,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 225128448
+            }
+          }
+        },
+        "literal_decoded_bytes_equal": true,
+        "metadata_equal": true
+      }
+    },
+    "CHARS.PAK": {
+      "lumps": 2054,
+      "decoded_bytes": 4127302,
+      "stored_bytes": 2646705,
+      "moved_entries": 0,
+      "protected_entries": 17,
+      "protected_unique_payloads": 17,
+      "reference_bytes": 2682880,
+      "candidate_bytes": 2682880,
+      "saved_bytes": 0,
+      "independent_archive_verifier_errors": 0,
+      "c_reader": {
+        "reference": {
+          "seconds": 0.0769,
+          "decoded_bytes": 4127302,
+          "partial_reads": 41060,
+          "io": {
+            "open": {
+              "cmds": 12,
+              "bytes": 143360
+            },
+            "iostat": {
+              "cmds": 171,
+              "hits": 40894,
+              "misses": 158,
+              "bulk": 13,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 10287104
+            }
+          }
+        },
+        "candidate": {
+          "seconds": 0.0691,
+          "decoded_bytes": 4127302,
+          "partial_reads": 41060,
+          "io": {
+            "open": {
+              "cmds": 12,
+              "bytes": 143360
+            },
+            "iostat": {
+              "cmds": 171,
+              "hits": 40894,
+              "misses": 158,
+              "bulk": 13,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 10287104
+            }
+          }
+        },
+        "asan_nohead": {
+          "seconds": 0.1491,
+          "decoded_bytes": 4127302,
+          "partial_reads": 41060,
+          "io": {
+            "open": {
+              "cmds": 12,
+              "bytes": 143360
+            },
+            "iostat": {
+              "cmds": 171,
+              "hits": 45010,
+              "misses": 158,
+              "bulk": 13,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 10287104
+            }
+          }
+        },
+        "literal_decoded_bytes_equal": true,
+        "metadata_equal": true
+      }
+    },
+    "MUSIC.PAK": {
+      "lumps": 215,
+      "decoded_bytes": 107868668,
+      "stored_bytes": 100424547,
+      "moved_entries": 207,
+      "protected_entries": 0,
+      "protected_unique_payloads": 0,
+      "reference_bytes": 100595712,
+      "candidate_bytes": 100573184,
+      "saved_bytes": 22528,
+      "independent_archive_verifier_errors": 0,
+      "c_reader": {
+        "reference": {
+          "seconds": 1.3427,
+          "decoded_bytes": 107868668,
+          "partial_reads": 4300,
+          "io": {
+            "open": {
+              "cmds": 3,
+              "bytes": 12288
+            },
+            "iostat": {
+              "cmds": 6787,
+              "hits": 5609,
+              "misses": 1325,
+              "bulk": 1268,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 412299264
+            }
+          }
+        },
+        "candidate": {
+          "seconds": 1.3293,
+          "decoded_bytes": 107868668,
+          "partial_reads": 4300,
+          "io": {
+            "open": {
+              "cmds": 3,
+              "bytes": 12288
+            },
+            "iostat": {
+              "cmds": 6834,
+              "hits": 5571,
+              "misses": 1372,
+              "bulk": 1268,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 415379456
+            }
+          }
+        },
+        "asan_nohead": {
+          "seconds": 3.027,
+          "decoded_bytes": 107868668,
+          "partial_reads": 4300,
+          "io": {
+            "open": {
+              "cmds": 3,
+              "bytes": 12288
+            },
+            "iostat": {
+              "cmds": 6834,
+              "hits": 5571,
+              "misses": 1372,
+              "bulk": 1268,
+              "retries": 0,
+              "failures": 0,
+              "injected": 0,
+              "bytes": 415379456
+            }
+          }
+        },
+        "literal_decoded_bytes_equal": true,
+        "metadata_equal": true
+      }
+    }
+  },
+  "reader_sources": {
+    "pack_hosttest.c": "32deff266cdd11feb1d7253cbbe93a881e69bd9459d50b214fe965f5daf4b74a",
+    "pak_layout_hosttest.c": "7e339da9ff54856512f347d11d0100d790067425c745c2e3dbc52a304ade3663",
+    "w_pack.c": "6f840faaa32fae908edda13ecb9bc93e31580596aecd6bf3b83f2b1f2fdceec0",
+    "w_pack.h": "e76426bb03e6a0798661f2ecbe6f76b01c7143170b20336ce4fe794e9a1085da",
+    "w_wad.h": "2d75decb9545f85a7b76d9364f332c6cff7252cd1911239e445c8b24df4e9d18"
+  },
+  "source_md5_note": "SRP2 v1/v2 has no embedded source MD5; reserved bytes and original archive MD5 are preserved. Existing PS2 cooked-pack zero-digest semantics and add-on hashing are unchanged.",
+  "fixtures": {
+    "gap_fixture": {
+      "lumps": 9,
+      "decoded_bytes": 421404,
+      "stored_bytes": 4544,
+      "moved_entries": 4,
+      "protected_entries": 4,
+      "protected_unique_payloads": 4,
+      "reference_bytes": 18432,
+      "candidate_bytes": 16384,
+      "saved_bytes": 2048
+    },
+    "raw_bytes_checked": true,
+    "negative_changed_payload_detected": true,
+    "negative_startup_order_detected": true,
+    "recook_idempotent": true,
+    "malformed_rejections": 26,
+    "existing_validation_failures": 0
+  },
+  "inputs_changed": [],
+  "total_lumps": 15052,
+  "total_decoded_bytes": 401801745,
+  "total_saved_bytes": 1150976,
+  "tools": {
+    "tools/ps2/pak_layout_verify.py": "349c891a533eb48368a11b87da033819f253a3f39fd07752b0cabf5f4bd0368a",
+    "tools/ps2/cook.py": "0e232e09282e5800ee526b257a01d7fd4e42e39d68493a80dbef0c134fcc8967",
+    "tools/ps2/verify_pack.py": "f926aae6764ba73ae99762c1f669e2e1ab1a7831eeff9e259f521c1bbc5bf4a4",
+    "tools/ps2/lump_order.txt": "109565a2dcb8659262d5fef684cc1f6505829def804c9e4737f7fea426ca1c92"
+  }
+}

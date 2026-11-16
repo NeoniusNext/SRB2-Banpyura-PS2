@@ -1,0 +1,85 @@
+{
+  "build_source_commit": "bb5732ad36b566c7c546f68859917ce19ef0621c",
+  "compatible_shipping_ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+  "layout": "SRP2v2/LZ4HC12/dedup/startup-order/fill-gaps",
+  "base_files": {
+    "SRB2.PAK": {
+      "bytes": 61253632,
+      "sha256": "947fb651efda632ebfde64c61636047562f6046a9c04f5e6b7728570bc414aad"
+    },
+    "ZONES.PAK": {
+      "bytes": 24442880,
+      "sha256": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0"
+    },
+    "CHARS.PAK": {
+      "bytes": 2682880,
+      "sha256": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f"
+    },
+    "MUSIC.PAK": {
+      "bytes": 100573184,
+      "sha256": "39de305eb44e2ec8fdde2dd0f5d7ec4eee5d4264167fcf999fce160be60ba269"
+    },
+    "FINEACON.DAT": {
+      "bytes": 524288,
+      "sha256": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792"
+    },
+    "SRB2.PAK.pics.json": {
+      "bytes": 6685,
+      "sha256": "956ada608c039005d5856c0441116541bcdfbef0038a6a2e446da5f48cf4930e"
+    }
+  },
+  "optional_TEXC": {
+    "bytes": 15738880,
+    "sha256": "d4dca18293b00af3555e3989ea517274e197f95268a3397bb9ec64a6bfb42eb8"
+  },
+  "archives": {
+    "SRB2-PS2-PAKs-OPT17-20261116.zip": {
+      "bytes": 162923970,
+      "sha256": "2c4d56ed1eb2221fb27035f99e9ecd3c7b0c0bd6b9b2c1402bff5c5bebb9d1ea",
+      "members": [
+        "SRB2.PAK",
+        "ZONES.PAK",
+        "CHARS.PAK",
+        "MUSIC.PAK",
+        "FINEACON.DAT",
+        "SRB2.PAK.pics.json",
+        "README-RU.txt",
+        "SHA256SUMS"
+      ]
+    },
+    "SRB2-PS2-TEXC-for-OPT17-20261116.zip": {
+      "bytes": 9327703,
+      "sha256": "0b045a82e5f3d5067e7f013e12bfc5969fae88ff681fa49d1b21465592d1e1ae",
+      "members": [
+        "TEXC.PAK",
+        "REQUIRES-PAKS.sha256",
+        "README-RU.txt",
+        "SHA256SUMS"
+      ]
+    }
+  },
+  "four_PAK_bytes": 188952576,
+  "saved_disk_bytes": 1150976,
+  "all_original_inputs_unchanged": true,
+  "native_frame_pairs": 6,
+  "physical_PS2_tested": false,
+  "FPS_gain_claimed": false,
+  "additional_TEXC_same_observer_frame_pairs": 3,
+  "observed_TEXC_hits": 1090,
+  "observed_TEXC_missing_keys": 0,
+  "observed_TEXC_damaged": 0,
+  "retained_unmatched_observer": {
+    "report": "texc-runtime-usage/report.json",
+    "overall_passed": false,
+    "cause": "Profiler console overlay was compared with a reference without profiling; exact difference boxes lie in y0..39 HUD rows. Fresh matched observer control keeps con_hudlines0 in BOTHroles and compares completeframes exactly, without cropping or tolerancechanges."
+  },
+  "evidence_sha256": {
+    "input-freeze.json": "119b7372637572241db0787e76d71e45f73653900ad3bd4d0de87c020f3f27cd",
+    "cook.json": "21d69e2c12a37e522b1944bf1516339000189dd6452ddcde4f02c00630f29868",
+    "verify/report.json": "f8d446767b940acd56523ff495be4b61d2be0d526bcc2bb027f52a4063169598",
+    "texc-verify/report.json": "24832a120404ab74031ad38385b803571b74413a658b5f806eb47405a03b2574",
+    "native/report.json": "654dc43be96e5643b57080e3d04bf124fe1cb921d4aded1f69f651833a5f848f",
+    "texc-runtime-usage/report.json": "1ab862cbc1eed1a21a31b7602c10744ff32d0c821f43a450f28f8f3ca7b8a875",
+    "texc-matched-observer/report.json": "516f799948324c75f39ad59fa8c107b49832c60dd742cfbc8a2fb605a97c8f46"
+  }
+}
