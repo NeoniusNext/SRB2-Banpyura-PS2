@@ -1,0 +1,560 @@
+{
+  "source_root": "build/nov16-hwopt/candidate-v7/source",
+  "references": [
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 268,
+      "source": "H.rec[i].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 270,
+      "source": "H.rec[i].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 507,
+      "source": "CONS_Printf(\"HWFX frame %u: %s\\n\", (unsigned)H.frame_no, line);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 518,
+      "source": "if (im->imgws != H.frame_no + 1) // OPT9: the images (not the records) of the working set"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 520,
+      "source": "im->imgws = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 526,
+      "source": "if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60 && im->owner)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 533,
+      "source": "if (pk->ps2_planfr == H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 540,
+      "source": "if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 546,
+      "source": "if (r->ws != H.frame_no + 1) // working set statistics: every texture counted once per frame"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 550,
+      "source": "r->ws = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 553,
+      "source": "if (H.pred_frame != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 556,
+      "source": "H.pred_frame = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 593,
+      "source": "if (skip_reports < 40 && H.frame_no > 20 && skip_tex && !(skip_why && skip_why[0] == 'n' && skip_why[1] == 'o' && skip_why[3] == 'p')) // (the plan's \"invisible\" ones are the normal case: only real losses are listed)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 596,
+      "source": "CONS_Printf(\"HWSKIP f=%u draw skipped: texture %s %ux%u fmt=%d: %s\\n\", (unsigned)H.frame_no, HWR_PS2_TexName(skip_tex), (unsigned)skip_tex->width, (unsigned)skip_tex->height, (int)skip_tex->format, skip_why ? skip_why : \"?\");"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 621,
+      "source": "if (H.frame_no % 300 == 299 && fx_report_frame != H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 623,
+      "source": "fx_report_frame = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 668,
+      "source": "if ((dbg & 4096) && H.frame_no == 150) // -hwdbg 4096: the light parameters of every lit polygon of frame 150"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 1074,
+      "source": "if ((dbg & 4096) && H.frame_no == 150 && P.textured)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 2174,
+      "source": "if (!(ps2hwd_dbg_flags & HWDBG_PLANC) || (flags & PF_Corona) || (!(flags & PF_NoTexture) && H.cur_tex == NOREC && H.cur_missing) || H.frame_no % 300 == 299) // (the frame of the HWFX census makes every plan)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "line": 2403,
+      "source": "if ((hwr_geo_off_dbg & 0x400000u) && H.frame_no % 105 == 60 && P.textured && P.r)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_gs.inc",
+      "line": 147,
+      "source": "why, (unsigned)*VIF1_STAT, (unsigned)*D1_CHCR, (unsigned)*D1_MADR, (unsigned)*D1_QWC, (unsigned)*D1_TADR, V.on, H.frame_no, H.frame_open, H.finish_pending, H.pend, H.pend_done, H.disp, H.target, (unsigned)H.vbl, (unsigned)H.flips,"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_gs.inc",
+      "line": 671,
+      "source": "I_OutputMsg(\"HWHASH f=%u h=%016llx\\n\", (unsigned)H.frame_no, (unsigned long long)hash_frame);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_gs.inc",
+      "line": 674,
+      "source": "H.frame_no++;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_model.inc",
+      "line": 742,
+      "source": "if (H.frame_no != mdl_budget_frame)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_model.inc",
+      "line": 744,
+      "source": "mdl_budget_frame = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_pal.inc",
+      "line": 39,
+      "source": "if (frame != H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_pal.inc",
+      "line": 41,
+      "source": "frame = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 55,
+      "source": "if (plan_frame != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 57,
+      "source": "plan_frame = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 505,
+      "source": "if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 614,
+      "source": "if (k->ps2_planfr == H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 616,
+      "source": "k->ps2_planfr = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 802,
+      "source": "const planinfo_t *pi = (k->ps2_planfr == H.frame_no + 1 && k->ps2_pi < plan_n) ? &plan_info[k->ps2_pi] : NULL;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 857,
+      "source": "full = k->ps2_full_fr && H.frame_no + 1 - k->ps2_full_fr < PLAN_FULL_KEEP;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 964,
+      "source": "if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 986,
+      "source": "key[i]->ps2_ihfr = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 1003,
+      "source": "if (k->ps2_planfr != H.frame_no + 1 || batch_phase != 2 || k->ps2_pi == 0xFFFFu)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 1005,
+      "source": "if (k->ps2_full_fr && H.frame_no + 1 - k->ps2_full_fr < PLAN_FULL_KEEP)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 1020,
+      "source": "if (have <= want || k->ps2_planfr != H.frame_no + 1 || k->ps2_pi >= plan_n)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 1060,
+      "source": "if (k->ps2_imfr != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 1062,
+      "source": "k->ps2_imfr = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 1087,
+      "source": "k->ps2_full_fr = H.frame_no + 1; // drawn at full size, whatever else says: the batches of the frame must not make it coarser (and back, every frame)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "line": 1091,
+      "source": "if (verts && k->ps2_ihfr && H.frame_no + 1 - k->ps2_ihfr <= 2)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_screen.inc",
+      "line": 72,
+      "source": "r->stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_screen.inc",
+      "line": 129,
+      "source": "H.rec[ri].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_screen.inc",
+      "line": 135,
+      "source": "H.rec[H.cur_tex].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_screen.inc",
+      "line": 165,
+      "source": "H.rec[H.scr_rec[slot]].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_screen.inc",
+      "line": 256,
+      "source": "H.rec[bri].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_screen.inc",
+      "line": 290,
+      "source": "H.rec[eri].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_spr.inc",
+      "line": 100,
+      "source": "w[12] = (u32)H.target | (H.frame_no << 4) | ((u32)palette_mode() << 3);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_spr.inc",
+      "line": 353,
+      "source": "H.rec[img_of(idx)].done = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 348,
+      "source": "if (count_eviction && !r->screen && !r->pin && r->stamp == H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 354,
+      "source": "CONS_Printf(\"HWIMM f=%u EVICT %s %ux%u lvl=%d blk=%u age=%u done=%d cur=%d phase=%d\\n\", (unsigned)H.frame_no, r->owner ? HWR_PS2_TexName(r->owner) : \"-\", (unsigned)r->sw, (unsigned)r->sh, (int)r->dx,"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 355,
+      "source": "(unsigned)r->nblk, (unsigned)(H.frame_no - r->stamp), (int)(r->done == H.frame_no + 1), H.cur_tex == i, batch_phase);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 384,
+      "source": "return H.frame_no & 1u;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 446,
+      "source": "if (r->screen <= 2 && H.frame_no - r->stamp > WIPE_DEAD_FRAMES)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 452,
+      "source": "if (r->stamp == H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 456,
+      "source": "if (batch_phase == 2 && r->done != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 1718,
+      "source": "if (!H.cap_adapt || H.pred_frame != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 1806,
+      "source": "if (up_hist[h].m == m && up_hist[h].frame1 == H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 1812,
+      "source": "up_hist[h].frame1 = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 2604,
+      "source": "r->stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 2704,
+      "source": "r->stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 2828,
+      "source": "if (im->lodfr != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 2830,
+      "source": "im->lodfr = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 2845,
+      "source": "if (!r->used || r->share != NOREC || r->screen || r->lodfr != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "line": 3064,
+      "source": "r->stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_val.inc",
+      "line": 84,
+      "source": "I_OutputMsg(\"HWVAL %s f=%u: %s\\n\", ve_name[cls], H.frame_no, buf);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_val.inc",
+      "line": 94,
+      "source": "n = snprintf(buf, sizeof buf, \"HWVAL SUMMARY %s f=%u: packets=%u qwords=%u verts=%u prims=%u images=%u image_qw=%u ad=%u texflush=%u tex0=%u max_texel=%u max_span=%u |\", why, H.frame_no,"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_val.inc",
+      "line": 951,
+      "source": "if (H.frame_no >= LINT.next_report) // a periodic line: the run may end (ZQUIT) before the engine shuts the driver down"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_val.inc",
+      "line": 953,
+      "source": "LINT.next_report = H.frame_no + 50;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_val.inc",
+      "line": 954,
+      "source": "I_OutputMsg(\"HWVAL LINT SUMMARY: frame %u direct runs=%u flushes=%u errors=%u\\n\", H.frame_no, LINT.runs, LINT.flushes, LINT.errs);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_val.inc",
+      "line": 959,
+      "source": "if (H.frame_no >= VAL.summary_frame + 300)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_val.inc",
+      "line": 961,
+      "source": "VAL.summary_frame = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 744,
+      "source": "w[30] = (u32)H.target | (H.frame_no << 4) | ((u32)palette_mode_fr() << 3);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 951,
+      "source": "// -hwvudump N (OPT11-STAB, diagnosis of a VU1 program that does not end): every polygon the VU1 path takes in the frame number N (H.frame_no) is printed with its light level"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 960,
+      "source": "if (vu_stop_frame && H.frame_no >= vu_stop_frame)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 962,
+      "source": "if (!vu_max_poly || !vu_dump_frame || H.frame_no != vu_dump_frame)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 964,
+      "source": "if (vu_poly_frame != H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 966,
+      "source": "vu_poly_frame = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 976,
+      "source": "I_OutputMsg(\"VUPOLY f%u n=%d light=%g\", (unsigned)H.frame_no, n, (double)light);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 1065,
+      "source": "if (vu_dump_frame && H.frame_no == vu_dump_frame)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_vu1.inc",
+      "line": 1173,
+      "source": "if (vu_dump_frame && H.frame_no == vu_dump_frame)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_water.inc",
+      "line": 1023,
+      "source": "if (H.frame_no % 105 == 104 && fx_frame != H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_water.inc",
+      "line": 1025,
+      "source": "fx_frame = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 123,
+      "source": "#define TRACING() (trace_frame >= 0 && H.frame_no == (u32)trace_frame)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 656,
+      "source": "if (!H.rec[i].used || H.rec[i].ws != H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 967,
+      "source": "H.rec[w].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1149,
+      "source": "const u32 k = H.frame_no * 2u + (H.shaders_on ? 1u : 0u);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1736,
+      "source": "if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != H.frame_no + 1)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1737,
+      "source": "pk->ps2_full_fr = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1752,
+      "source": "CONS_Printf(\"HWIMM f=%u %s %ux%u want=%u have=%d UPGRADE imm=%d\\n\", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1764,
+      "source": "CONS_Printf(\"HWIMM f=%u %s %ux%u want=%u have=%d DOWNGRADE imm=%d\\n\", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, (int)r->dx, imm_level);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1802,
+      "source": "if ((ps2hwd_dbg_flags & HWDBG_BATCHORDER) && batch_phase == 2 && H.frame_no % 105 == 60)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1803,
+      "source": "CONS_Printf(\"HWBO f=%u %s %ux%u %s fmt=%d blk=%u\\n\", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, r ? \"hit\" : \"UPLOAD\", (int)TexInfo->format, r ? (unsigned)r->nblk : 0u);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1809,
+      "source": "H.rec[img_of(H.cur_tex)].done = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1829,
+      "source": "CONS_Printf(\"HWREGEN f=%u %s %ux%u kind=%d made again in %u cycles (zone free %u K) uploads before=%u dropped by=%u\\n\", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height,"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1843,
+      "source": "CONS_Printf(\"HWIMM f=%u %s %ux%u want=%u UPLOAD imm=%d phase=%d\\n\", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo), (unsigned)TexInfo->width, (unsigned)TexInfo->height, (unsigned)want, imm_level, batch_phase);"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1851,
+      "source": "CONS_Printf(\"HWUPSLOW f=%u %s %ux%u fmt=%d want=%u cycles %u (upload number %u of this texture, dropped by %u)\\n\", (unsigned)H.frame_no, HWR_PS2_TexName(TexInfo),"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1867,
+      "source": "CONS_Printf(\"HWD texture not resident [frame %u phase %d spr_flush %d tex %p dl %u]: %s %s fmt=%d %ux%u flags=0x%x data=%p pool used %u/%u blocks, free ranges %d (draws skipped)\\n\", (unsigned)H.frame_no, batch_phase, SPR.in_flush, (void *)TexInfo, (unsigned)TexInfo->downloaded, tex_fail_why, HWR_PS2_TexName(TexInfo),"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1882,
+      "source": "H.rec[ri].done = H.frame_no + 1;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1920,
+      "source": "if (TexInfo == last && last_frame == H.frame_no)"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1927,
+      "source": "H.rec[img_of((int)(r - H.rec))].stamp = H.frame_no;"
+    },
+    {
+      "path": "src/ps2/hw/ps2_hwd.c",
+      "line": 1929,
+      "source": "last_frame = H.frame_no;"
+    }
+  ],
+  "reference_count": 104,
+  "source_sha256": {
+    "src/ps2/hw/ps2_hw_bench.inc": "2bac4778288f72f218894b5fcc6e8090028b802b23e9ddb70c61ab35d556cedd",
+    "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c",
+    "src/ps2/hw/ps2_hw_fast.inc": "fd547a09b05b05896ed96fff96606c281ec9000acf23479c60df6b70e938718b",
+    "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+    "src/ps2/hw/ps2_hw_fx2.inc": "b80204310e2ef95116e640f965022ffe4c7ec575a776a43b99c070d0a7613055",
+    "src/ps2/hw/ps2_hw_gs.inc": "fdf12939e01ba31472ebad75a4418aeb1fada38784f0c4bc796a8b5bd2b71d1e",
+    "src/ps2/hw/ps2_hw_hg.inc": "34d2908b3e97d3855cbefe4adcdf16ec3be83198d3f37d42196b663623134bc2",
+    "src/ps2/hw/ps2_hw_light.inc": "938fdb371acaeedb8299d2bbfa819e34d0eaf8983aa4987bea6aeafc5f8328c2",
+    "src/ps2/hw/ps2_hw_model.inc": "6e01b53b5d440be20f8bb94d2275dda96e82dd26d32ba9d222dc244e1db15064",
+    "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+    "src/ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
+    "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+    "src/ps2/hw/ps2_hw_prof.h": "09aa44f5dea6632ac6220af0b99ed573ff86b6861b243264ad3437949394a1ed",
+    "src/ps2/hw/ps2_hw_quad.h": "4843200edd2eb3ad749bbe48aac0ef4d6361af1e221f62254a5e779e8273dc82",
+    "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+    "src/ps2/hw/ps2_hw_screen.inc": "ffce2fd191a5d2c18f311fe14b6f85672a8234f465e98c454a87974ef402fd27",
+    "src/ps2/hw/ps2_hw_sky.inc": "12be9c96a2888e7d376ea14bd11f6a3951bf275354f310d377aef2b31daa01ca",
+    "src/ps2/hw/ps2_hw_split.h": "5b6e815382882e06601a189ec51868bf8f3b1bb4841a7ee3075320de1bd64248",
+    "src/ps2/hw/ps2_hw_spr.inc": "f6eeb2a54ae5ece666754957808ec595acbf030d2a7ec15f39388f338808fc10",
+    "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+    "src/ps2/hw/ps2_hw_tt.inc": "f047073526a99d73a851e69e185685c570a4799be45a6a627c24bdd6ac4c08fa",
+    "src/ps2/hw/ps2_hw_val.inc": "df958312ebe4becda71a502ea4a7eadfd06d5789c0336e929e475bbe8c81ac6a",
+    "src/ps2/hw/ps2_hw_vif.inc": "d4466b94860c44b1eddf1454284c32ca5495453a747098d21e466a7221dc75a2",
+    "src/ps2/hw/ps2_hw_vu0.inc": "30d5e6f65c5c3bd3419ee442bf3f1dfc6049f2effd70f3a9148359b80e8bf48a",
+    "src/ps2/hw/ps2_hw_vu1.inc": "c29867be00f83b03f54fdba3161b8e585268d921d3851ae744e20be48e13f25b",
+    "src/ps2/hw/ps2_hw_water.inc": "e494069e2528143ba2e8c6c589dd8604e0fd7d11125e634bb2e52cbc67d3ccbc",
+    "src/ps2/hw/ps2_hw_wire.inc": "13b8102713f64a50541ef0ecb6258031d5717c2a12cd863140950d41ec982e40",
+    "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+    "src/ps2/hw/ps2_hwd.c": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72",
+    "src/ps2/hw/ps2_hwd.h": "15509f6de5c97eb9c93123f678f3ae2ac514af400d7078d149790622a5508828",
+    "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+    "src/ps2/hw/ps2_hwd_null.c": "b6c7bd6ed08b2a8f28f86d0222f5284969935713c97004d53a3ffcfc4fbb4c0b"
+  }
+}

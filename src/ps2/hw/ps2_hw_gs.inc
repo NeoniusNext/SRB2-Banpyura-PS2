@@ -44,6 +44,8 @@ static void dma_start_locked(void) // interrupts disabled
 	H.q_n--;
 	H.dma_cur = i;
 	H.dma_busy = 1;
+	if (PS2_ACTIVITY_ON)
+		PS2Activity_GpuSubmit(cyc());
 	if (V.on) // PS2-HW-44: the chain goes to the VIF (channel 1) with the VIF codes of its tags (TTE)
 	{
 		*D1_TADR = phys(H.ring[i]);
@@ -159,6 +161,7 @@ static u32 wd_last_flips = ~0u; // the flip count of the last recovery
 static void wd_recover(const char *why)
 {
 	u32 irq;
+	const int interrupted_stencil = tile_stencil_active;
 
 	H.st.timeouts++;
 	wd_diag(why);
@@ -200,16 +203,26 @@ static void wd_recover(const char *why)
 	if (irq)
 		EIntr();
 	rel_release_all();
+	if (interrupted_stencil)
+	{
+		// A reset discarded part of a high-byte mask/primitive sequence.
+		// Do not resume with an unknowable mask: unwind this frame through
+		// the existing renderer resource guard after stopping all transport.
+		PS2HWD_Abort();
+		hw_failure("PS2 GS watchdog interrupted a tiled stencil frame");
+		abort(); // resource handlers must not return; standalone probes fail closed
+	}
 }
 
 // Sleep until at most `limit` buffers are queued or in flight.
 static void ring_wait(int limit)
 {
-	u32 t0, t1;
+	u32 t0, t1, activity;
 
 	if (H.pending <= limit)
 		return;
 	t0 = cyc();
+	activity = PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), t0);
 	H.st.dma_waits++;
 	while (H.pending > limit)
 	{
@@ -219,10 +232,12 @@ static void ring_wait(int limit)
 		PS2_SleepUs(30); // OPT12 NET-3: no SDK alarm library; polled sleep: a lost interrupt can never hang the game
 		if ((u32)(cyc() - t0) > WAIT_LIMIT)
 		{
+			PS2_ACTIVITY_IDLE_END(activity, cyc());
 			wd_recover("GIF DMA ownership timeout (ring_wait)"); // channel 2 is stopped first: no in-flight buffer is handed back
 			return;
 		}
 	}
+	PS2_ACTIVITY_IDLE_END(activity, cyc());
 	t1 = cyc() - t0;
 	H.st.cyc_wait += t1;
 }
@@ -394,21 +409,36 @@ static qw_t *ad_alloc(u32 n)
 // Wait until the GS executed everything that was sent (FINISH seen).
 static int gs_wait_finished(void)
 {
-	u32 t0;
+	u32 t0, activity, gpu_token = 0;
 	int ok = 1;
 
 	if (!H.finish_pending)
 		return 1;
+	activity = PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), cyc());
 	ring_wait(0);
+	if (PS2_ACTIVITY_ON)
+	{
+		u32 irq = DIntr();
+		gpu_token = PS2Activity_GpuToken();
+		if (irq) EIntr();
+	}
 	t0 = cyc();
 	while (!(*GS_CSR & 2))
 	{
 		if ((u32)(cyc() - t0) > WAIT_LIMIT)
 		{
+			PS2_ACTIVITY_IDLE_END(activity, cyc());
 			wd_recover("GS FINISH timeout (gs_wait_finished)");
 			return 0;
 		}
 		PS2_SleepUs(60);
+	}
+	PS2_ACTIVITY_IDLE_END(activity, cyc());
+	if (PS2_ACTIVITY_ON)
+	{
+		u32 irq = DIntr();
+		PS2Activity_GpuFinish(gpu_token, cyc());
+		if (irq) EIntr();
 	}
 	H.st.cyc_wait += cyc() - t0;
 	H.finish_pending = 0;
@@ -422,6 +452,8 @@ static void do_flip(void)
 {
 	int b = H.pend_buf;
 
+	if (PS2_ACTIVITY_ON)
+		PS2Activity_GpuFinish(PS2Activity_GpuToken(), cyc());
 	GS_SET_DISPFB2(H.fb_addr[b] / 8192, H.fbw / 64, H.fbpsm, 0, 0);
 	H.disp = b;
 	H.pend = 0;
@@ -452,12 +484,14 @@ static int vblank_handler(int cause)
 
 static void vblank_wait(int n)
 {
+	const unsigned activity = n > 0 ? PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), cyc()) : 0;
 	while (n-- > 0)
 	{
 		while (PollSema(H.sema_vbl) == H.sema_vbl)
 			; // forget vblanks that passed already
 		WaitSema(H.sema_vbl);
 	}
+	PS2_ACTIVITY_IDLE_END(activity, cyc());
 }
 
 static int detect_pal(void)
@@ -497,11 +531,12 @@ static void emit_const_env(void)
 // the next frame, read-backs): a new frame is prepared without waiting for the flip, its buffers are held back by dma_start_locked.
 static void flip_wait(void)
 {
-	u32 w0, vbl0;
+	u32 w0, vbl0, activity;
 
 	if (!H.pend)
 		return;
 	w0 = cyc();
+	activity = PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), w0);
 	vbl0 = H.vbl;
 	H.st.flip_waits++;
 	while (H.pend)
@@ -523,11 +558,14 @@ static void flip_wait(void)
 		}
 		if (el > WAIT_LIMIT)
 		{
+			PS2_ACTIVITY_IDLE_END(activity, cyc());
+			activity = 0;
 			wd_recover("flip timeout (flip_wait)");
 			break;
 		}
 		PS2_SleepUs(100);
 	}
+	PS2_ACTIVITY_IDLE_END(activity, cyc());
 	H.st.cyc_flipwait += cyc() - w0;
 }
 
@@ -561,6 +599,7 @@ static void frame_begin(void)
 	if (H.pend)
 	{
 		u32 w0 = cyc();
+		const unsigned activity = PS2_ACTIVITY_IDLE_BEGIN(GetThreadId(), w0);
 
 		H.st.flip_waits++;
 		while (H.pend && (u32)(cyc() - w0) < FLIP_LIMIT)
@@ -577,6 +616,7 @@ static void frame_begin(void)
 			if (fi)
 				EIntr();
 		}
+		PS2_ACTIVITY_IDLE_END(activity, cyc());
 		H.st.cyc_flipwait += cyc() - w0;
 	}
 	// target: the frame buffer the CRTC does not read; a frame that was drawn but never shown is replaced
@@ -672,6 +712,7 @@ static void frame_end(void)
 		hash_frame = 0;
 	}
 	H.frame_no++;
+	plan_advance(1u);
 	if ((ps2hwd_dbg_flags & HWDBG_TEX) && ++TX.frames >= 105)
 		tx_report();
 	pk_flush();

@@ -1,0 +1,389 @@
+{
+  "runs": {
+    "baseline-fog-npot": {
+      "rc": 0,
+      "elf_sha256": "98e29429007272e7d18b015b5cf16ccb0b3bdf5abcbc2eca6cb0840ef9774007",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "326cda14fc7b5ac021d8506f0e70bc777f66e9c5fcf7f706161e41cc487a638c",
+        "vidshot-320x200-l20.ppm": "9129c1ad17e4bb1fe01af5cdf80b13eec64f6c1d4ec39021318e9a077114fc2c",
+        "vidshot-320x200-l70.ppm": "3651b6f1d999584b220c43ecf323168684ee75ab65a55e83c83728cb03947a7d"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 87e90d593788986c",
+        "LHASH spr.all c3ce316522f5dcbc",
+        "LHASH map.vtx d2d8812d00ebe754",
+        "LHASH map.sec 79844583fa8bbfde",
+        "LHASH map.lin 563e77bbc22ab292",
+        "LHASH map.sid 96d57ddc7b2fcde9",
+        "LHASH map.bsp cde70322d3f733a7",
+        "LHASH map.lut ef0a7b445d67ed59",
+        "LHASH map.thg eab10543da06fc16",
+        "LHASH map.all eab10543da06fc16"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "28b2a4cfb1e724df3513f1286fb0741dff42c76acf253448b5efa723ab1496a8",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "candidate-fog-npot": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "326cda14fc7b5ac021d8506f0e70bc777f66e9c5fcf7f706161e41cc487a638c",
+        "vidshot-320x200-l20.ppm": "9129c1ad17e4bb1fe01af5cdf80b13eec64f6c1d4ec39021318e9a077114fc2c",
+        "vidshot-320x200-l70.ppm": "3651b6f1d999584b220c43ecf323168684ee75ab65a55e83c83728cb03947a7d"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 87e90d593788986c",
+        "LHASH spr.all c3ce316522f5dcbc",
+        "LHASH map.vtx d2d8812d00ebe754",
+        "LHASH map.sec 79844583fa8bbfde",
+        "LHASH map.lin 563e77bbc22ab292",
+        "LHASH map.sid 96d57ddc7b2fcde9",
+        "LHASH map.bsp cde70322d3f733a7",
+        "LHASH map.lut ef0a7b445d67ed59",
+        "LHASH map.thg eab10543da06fc16",
+        "LHASH map.all eab10543da06fc16"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "85028c8d917e8a75ed28d31c651b6df582218bb25799d0f9808ecb133434abd3",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "baseline-map02": {
+      "rc": 0,
+      "elf_sha256": "98e29429007272e7d18b015b5cf16ccb0b3bdf5abcbc2eca6cb0840ef9774007",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "c7e3caea5ad51857e5023e6b853ec9b912ea9af55344a5bdb4aecf10593fec69",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "candidate-map02": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "233dbb16e262375b976139638e600b1fefdd027958e0c0312e78bf015e99d7cc",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "baseline-map01": {
+      "rc": 0,
+      "elf_sha256": "98e29429007272e7d18b015b5cf16ccb0b3bdf5abcbc2eca6cb0840ef9774007",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "b1625e67036a4a88abe12824e6c832a73cbc48ae5dd543611475349fad2b9b5e",
+        "vidshot-320x200-l20.ppm": "407d058d4de231b9bed5892ca82a3e7e4aa525f497822e4fa3502e044e538de4",
+        "vidshot-320x200-l70.ppm": "ececba1e36e53cdfa0727a7bbacfd618a388aeea32be7a4de2085e780d593b5f"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx d2d8812d00ebe754",
+        "LHASH map.sec 79844583fa8bbfde",
+        "LHASH map.lin 563e77bbc22ab292",
+        "LHASH map.sid 96d57ddc7b2fcde9",
+        "LHASH map.bsp cde70322d3f733a7",
+        "LHASH map.lut ef0a7b445d67ed59",
+        "LHASH map.thg eab10543da06fc16",
+        "LHASH map.all eab10543da06fc16"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "c399cde5919f8fb54aef7bc50798c0bec11553b8410069ebec733c1c0806189d",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "candidate-map01": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "b1625e67036a4a88abe12824e6c832a73cbc48ae5dd543611475349fad2b9b5e",
+        "vidshot-320x200-l20.ppm": "407d058d4de231b9bed5892ca82a3e7e4aa525f497822e4fa3502e044e538de4",
+        "vidshot-320x200-l70.ppm": "ececba1e36e53cdfa0727a7bbacfd618a388aeea32be7a4de2085e780d593b5f"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx d2d8812d00ebe754",
+        "LHASH map.sec 79844583fa8bbfde",
+        "LHASH map.lin 563e77bbc22ab292",
+        "LHASH map.sid 96d57ddc7b2fcde9",
+        "LHASH map.bsp cde70322d3f733a7",
+        "LHASH map.lut ef0a7b445d67ed59",
+        "LHASH map.thg eab10543da06fc16",
+        "LHASH map.all eab10543da06fc16"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "b63169c5129787ddda9f9f97af4b57292120d34c451c5854a8b6ee5badb147af",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "baseline-legacy": {
+      "rc": 0,
+      "elf_sha256": "98e29429007272e7d18b015b5cf16ccb0b3bdf5abcbc2eca6cb0840ef9774007",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "ce3cbfe9c03c9d60f407268d405efebce905c6f0a9de062342d2b65b413bb0c7",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "candidate-legacy": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "b9cca2149df48cdd53b10058e1b382cc850b17a9c3447c8d4887567c1f8bf332",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "baseline-legacy-sprites": {
+      "rc": 0,
+      "elf_sha256": "98e29429007272e7d18b015b5cf16ccb0b3bdf5abcbc2eca6cb0840ef9774007",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "e75b732b9fa11130ad8d9b5fc2ae4029e239a49ba8c300f50a6f90daba635810",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    },
+    "candidate-legacy-sprites": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "af5037e1e57ee4bc5bcf779aa85a801d8feebed6adc1479e72ef6a0c72b6c3ba",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": []
+    }
+  },
+  "pairs": [
+    {
+      "scene": "fog-npot",
+      "complete_frames": 3,
+      "equal_frames": true,
+      "equal_loader_hashes": true,
+      "equal_saved_config": true
+    },
+    {
+      "scene": "map02",
+      "complete_frames": 3,
+      "equal_frames": true,
+      "equal_loader_hashes": true,
+      "equal_saved_config": true
+    },
+    {
+      "scene": "map01",
+      "complete_frames": 3,
+      "equal_frames": true,
+      "equal_loader_hashes": true,
+      "equal_saved_config": true
+    },
+    {
+      "scene": "legacy",
+      "complete_frames": 3,
+      "equal_frames": true,
+      "equal_loader_hashes": true,
+      "equal_saved_config": true
+    },
+    {
+      "scene": "legacy-sprites",
+      "complete_frames": 3,
+      "equal_frames": true,
+      "equal_loader_hashes": true,
+      "equal_saved_config": true
+    }
+  ],
+  "errors": [],
+  "normal_OS_RNG": false,
+  "diagnostic_seed": 28496885,
+  "FPS_claimed": false,
+  "physical_PS2_tested": false,
+  "shutdown_limit": "Marker follows save and sound/graphics shutdown; later W_Shutdown/PS2Boot_Exit unproved.",
+  "explicit_engine_args_both_roles": [
+    "-hwdbg",
+    "33554432"
+  ],
+  "requested_scenes": [
+    "fog-npot",
+    "map02",
+    "map01",
+    "legacy",
+    "legacy-sprites"
+  ],
+  "complete_scene_suite": true
+}

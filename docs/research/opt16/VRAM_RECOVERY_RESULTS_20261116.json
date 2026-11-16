@@ -1,0 +1,115 @@
+{
+  "status": "Applied after source/ownership proof; whole-game v7 gate pending.",
+  "baseline_ref": "604cfd150c5240142d8cb5367950b53d987916d1",
+  "texture_source_sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+  "source_report": "build/nov16-hwopt/vram-recovery-v3/report.json",
+  "source_report_sha256": "eb502776458ba59f06d9278ec1425e6befce48f41068541b812b5b083af99b59",
+  "literal_baseline_allocator_prefix_matches": true,
+  "original_64_attempt_source_prefix_unchanged": true,
+  "captured_boundary_state_hashes_equal": true,
+  "old_cases": [
+    {
+      "name": "free-fast",
+      "allocated": 2048,
+      "evictions": 0,
+      "prefix_hash": 0,
+      "used_blocks": 64
+    },
+    {
+      "name": "last-victim-retry",
+      "allocated": 0,
+      "evictions": 64,
+      "prefix_hash": 1747051168,
+      "used_blocks": 0
+    },
+    {
+      "name": "scattered-oldest",
+      "allocated": 0,
+      "evictions": 64,
+      "prefix_hash": 3558506754,
+      "used_blocks": 192
+    },
+    {
+      "name": "protected-window",
+      "allocated": 0,
+      "evictions": 64,
+      "prefix_hash": 3864774206,
+      "used_blocks": 192
+    },
+    {
+      "name": "all-protected",
+      "allocated": 0,
+      "evictions": 0,
+      "prefix_hash": 0,
+      "used_blocks": 128
+    },
+    {
+      "name": "impossible-alignment",
+      "allocated": 0,
+      "evictions": 64,
+      "prefix_hash": 3541369417,
+      "used_blocks": 0
+    }
+  ],
+  "repaired_cases": [
+    {
+      "name": "free-fast",
+      "allocated": 2048,
+      "evictions": 0,
+      "prefix_hash": 0,
+      "used_blocks": 64
+    },
+    {
+      "name": "last-victim-retry",
+      "allocated": 2048,
+      "evictions": 64,
+      "prefix_hash": 1747051168,
+      "used_blocks": 64
+    },
+    {
+      "name": "scattered-oldest",
+      "allocated": 2048,
+      "evictions": 128,
+      "prefix_hash": 3558506754,
+      "used_blocks": 256
+    },
+    {
+      "name": "protected-window",
+      "allocated": 2080,
+      "evictions": 142,
+      "prefix_hash": 3864774206,
+      "used_blocks": 242
+    },
+    {
+      "name": "all-protected",
+      "allocated": 0,
+      "evictions": 0,
+      "prefix_hash": 0,
+      "used_blocks": 128
+    },
+    {
+      "name": "impossible-alignment",
+      "allocated": 0,
+      "evictions": 64,
+      "prefix_hash": 3541369417,
+      "used_blocks": 0
+    }
+  ],
+  "plain_and_sanitized_results_equal": true,
+  "negative_controls": {
+    "no-recovery": {
+      "executed_failure": "VRAM recovery proof failed: retry after the 64th victim must allocate the now-free pool"
+    },
+    "unsafe-window": {
+      "executed_failure": "VRAM recovery proof failed: recovery preserves pin, current shared image, view and capture"
+    }
+  },
+  "MMI_functions_unchanged": true,
+  "complete_P4_component_report": "build/nov16-hwopt/p4-production-recovery-host-v1/report.json",
+  "complete_P4_component_report_sha256": "be699ab1bda583e11e9aab54e6d95246fae873d8b1335abf5ea542ae64beb390",
+  "P4_checks_per_plain_and_sanitized_run": 101434367,
+  "P4_negative_controls_detected": 6,
+  "private_target_record_bytes": 140,
+  "EE_Werror_syntax_log": "build/nov16-hwopt/vram-recovery-target-syntax/build.log",
+  "physical_console_or_FPS_claim": false
+}

@@ -1,0 +1,28 @@
+{
+  "scope": "Failure-only release diagnostic of the rejected 22b renderer-switch chain. Owner location outside the Zone is legal; the observed mismatch between its value and the old payload is the error.",
+  "base_source_commit": "22b5620cf0710b06541b36eee8801eaad772deb3",
+  "rejected_shipping_ELF_sha256": "82bc5f2690d56e87c3f9b9d032ef0bccefb73226037aadeac96a54e36de66d7a",
+  "diagnostic_ELF_sha256": "c6ac6169ef3fa6184723ff83d1341a1528068ffaa6d06c49c4b66f211d2ca1ca",
+  "source_proof_sha256": "9649579f2ea9145efd17e311e405eb9e3f4f2b08e7378e00db0c5ef389e3ca3a",
+  "boot_sha256": "a58bb4511a3c2aa52998d8a419dea504fcc0a5dd059584e49dece6de6bd0bdaa",
+  "link_map_sha256": "7448d00a4bd1c896d5f677190de833114fffc44a932b07f45ba55254e5093a2a",
+  "observation": "Z_CheckHeap: block 1853 tag 52 size 818176 payload 0x191db00: user 0x82ba18 holds 0x1400cc0, outside the arena",
+  "zone_tag": 52,
+  "zone_tag_name": "PU_HWRPLANE",
+  "zone_block_bytes": 818176,
+  "old_payload": "0x0191db00",
+  "owner_cell": "0x0082ba18",
+  "owner_cell_value": "0x01400cc0",
+  "linked_owner_symbol": {
+    "name": "gc.lto_priv.0",
+    "base": "0x0082ba08",
+    "bytes": 728,
+    "owner_field": "gc.blk",
+    "field_offset": 16
+  },
+  "strict_failure_retained": true,
+  "diagnostic_delta": "Only the existing Z_CheckHeap owner-mismatch failure logger is exposed in release; original condition, I_Error, tags, headers and ZDEBUG=false retained.",
+  "same_level_reentry": "HWR_Switch -> HWR_LoadLevel -> HWR_PlaneCacheReset -> HWR_GCacheLevel can run before PU_HWRPLANE level teardown. Clearing gc.blk without freeing the old allocation lets the replacement overwrite its Zone user cell.",
+  "physical_PS2_tested": false,
+  "runtime_report": "diagnostic-switch-pal.json"
+}

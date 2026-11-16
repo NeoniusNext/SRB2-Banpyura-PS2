@@ -1,8 +1,8 @@
 // PS2 GS hardware renderer driver: screen textures, wipes, post-processing and read-back (included by ps2_hwd.c).
 //
 // A screen texture is a full-size copy of the frame buffer region (internal resolution, frame buffer format) made with a
-// GS local-to-local transfer: no loss, no resampling. GENERIC2, the final picture, needs no copy at all: it is the last
-// completed frame. Explicit captures always retain their own slot identity, including when spilled to EE RAM.
+// GS local-to-local transfer, or retained in EE RAM when it exceeds the pool: no loss, no resampling.
+// GENERIC2, the final picture, needs no copy at all: it is the last completed frame. Explicit captures always retain their own slot identity, including when spilled to EE RAM.
 
 // the view state the 2D screen draws replace (identity projection over the whole frame)
 typedef struct
@@ -67,7 +67,19 @@ static int scr_capture(int tex)
 	ri = scr_tex_get(tex);
 	if (ri == NOREC)
 		return 0;
+	tile_invalidate(); // a same-slot recapture can retain its EE pointer and record identity
 	r = &H.rec[ri];
+	if (r->tiled)
+	{
+		if (!scr_backing_read(tex, H.fb_addr[H.target] / 256, (u32)(H.fbw / 64)))
+		{
+			if (!H.scr_data[tex])
+				tex_drop(ri, 0);
+			return 0;
+		}
+		r->stamp = H.frame_no;
+		return 1;
+	}
 	scr_backing_free(tex); // this capture replaces the older snapshot, including any spill backing
 	r->stamp = H.frame_no;
 	s = (u64)(H.fb_addr[H.target] / 256) | ((u64)(H.fbw / 64) << 16) | ((u64)H.fbpsm << 24);
@@ -78,6 +90,112 @@ static int scr_capture(int tex)
 	ad_set(&p[2], (u64)H.vw | ((u64)H.vh << 32), GSR_TRXREG);
 	ad_set(&p[3], 2, GSR_TRXDIR); // local -> local
 	ad_set(&p[4], 0, GSR_TEXFLUSH);
+	return 1;
+}
+
+// Transfer one source rectangle verbatim, including all CT32 alpha bits used by wipes.
+static void screen_copy_rect(const texrec_t *r, int sx, int sy, int dx, int dy, int w, int h)
+{
+	u64 s = (u64)r->blk | ((u64)r->tbw << 16) | ((u64)H.fbpsm << 24);
+	u64 d = (u64)(H.fb_addr[H.target] / 256) | ((u64)(H.fbw / 64) << 16) | ((u64)H.fbpsm << 24);
+	qw_t *p = ad_alloc(5);
+
+	ad_set(&p[0], s | (d << 32), GSR_BITBLTBUF);
+	ad_set(&p[1], (u64)(u32)sx | ((u64)(u32)sy << 16) | ((u64)(u32)dx << 32) | ((u64)(u32)dy << 48), GSR_TRXPOS);
+	ad_set(&p[2], (u64)(u32)w | ((u64)(u32)h << 32), GSR_TRXREG);
+	ad_set(&p[3], 2, GSR_TRXDIR);
+	ad_set(&p[4], 0, GSR_TEXFLUSH);
+}
+
+// The source record is copied: the first tile upload can grow the record table.
+static int screen_copy(const texrec_t *source)
+{
+	texrec_t r = *source, tile;
+	int x, y;
+
+	if (!r.tiled)
+	{
+		screen_copy_rect(&r, 0, 0, 0, 0, H.vw, H.vh);
+		return 1;
+	}
+	for (y = 0; y < H.vh; y += TILE_CORE)
+		for (x = 0; x < H.vw; x += TILE_CORE)
+		{
+			int w = H.vw - x < TILE_CORE ? H.vw - x : TILE_CORE;
+			int h = H.vh - y < TILE_CORE ? H.vh - y : TILE_CORE;
+
+			if (!tile_load(&r, x, y, 0, 0, &tile))
+				return 0;
+			screen_copy_rect(&tile, 1, 1, x, y, w, h);
+		}
+	return 1;
+}
+
+// Choose whole destination pixels whose original affine mapping lies in this tile's core.
+// UV endpoints are evaluated from the original rectangle, preserving the phase under scaling.
+static int screen_tile_span(int d0, int d1, float t0, float t1, int c0, int c1, int clip,
+	int *lo, int *hi, float *uv0, float *uv1)
+{
+	float dt = t1 - t0, scale, a, b;
+	int l, h;
+
+	if (d1 <= d0 || clip <= 0 || dt == 0.0f)
+		return 0;
+	scale = (float)(d1 - d0) / dt;
+	a = (float)d0 + ((float)c0 - t0) * scale;
+	b = (float)d0 + ((float)c1 - t0) * scale;
+	if (dt > 0.0f)
+	{
+		l = (int)ceilf(a);
+		h = (int)ceilf(b);
+	}
+	else
+	{
+		l = (int)floorf(b) + 1;
+		h = (int)floorf(a) + 1;
+	}
+	if (l < d0) l = d0;
+	if (h > d1) h = d1;
+	if (l < 0) l = 0;
+	if (h > clip) h = clip;
+	if (l >= h)
+		return 0;
+	*lo = l;
+	*hi = h;
+	*uv0 = t0 + (float)(l - d0) * dt / (float)(d1 - d0) - (float)c0 + 1.0f;
+	*uv1 = t0 + (float)(h - d0) * dt / (float)(d1 - d0) - (float)c0 + 1.0f;
+	return 1;
+}
+
+// Sprites used by wipes retain their exact frame mask, blend equation and CLUT override.
+// A one-texel halo permits bilinear reads at a core edge without clamping a neighbouring sample.
+static int sprite_screen(texrec_t *source, int linear, u64 frame, u64 alpha, int abe,
+	int x0, int y0, int x1, int y1, float u0, float v0, float u1, float v1,
+	int sciss_w, int sciss_h, u32 clut_blk)
+{
+	texrec_t r = *source, tile;
+	int x, y, sw = r.w, sh = r.h;
+
+	if (!r.tiled)
+	{
+		sprite_tex(&r, linear, frame, alpha, abe, x0, y0, x1, y1, u0, v0, u1, v1, sciss_w, sciss_h, clut_blk);
+		return 1;
+	}
+	for (y = 0; y < sh; y += TILE_CORE)
+		for (x = 0; x < sw; x += TILE_CORE)
+		{
+			int dx0, dy0, dx1, dy1;
+			int cw = sw - x < TILE_CORE ? sw - x : TILE_CORE;
+			int ch = sh - y < TILE_CORE ? sh - y : TILE_CORE;
+			float tu0, tv0, tu1, tv1;
+
+			if (!screen_tile_span(x0, x1, u0, u1, x, x + cw, sciss_w, &dx0, &dx1, &tu0, &tu1)
+				|| !screen_tile_span(y0, y1, v0, v1, y, y + ch, sciss_h, &dy0, &dy1, &tv0, &tv1))
+				continue;
+			if (!tile_load(&r, x, y, 0, 0, &tile))
+				return 0;
+			sprite_tex(&tile, linear, frame, alpha, abe, dx0, dy0, dx1, dy1, tu0, tv0, tu1, tv1, sciss_w, sciss_h, clut_blk);
+		}
 	return 1;
 }
 
@@ -97,36 +215,30 @@ static void draw_screen_tex(int slot, FSurfaceInfo *surf, u32 flags, float xoff,
 	FOutVector q[4];
 	view_save_t sv;
 	int saved_tex = H.cur_tex, saved_missing = H.cur_missing;
-	int ri;
-	u8 pinned = saved_tex != NOREC ? H.rec[saved_tex].pin : 0;
+	int ri, saved_img = saved_tex != NOREC && H.rec[saved_tex].used ? img_of(saved_tex) : NOREC;
+	u8 pinned = saved_img != NOREC && H.rec[saved_img].used ? H.rec[saved_img].pin : 0;
 
-	if (saved_tex != NOREC)
-		H.rec[saved_tex].pin = 1;
+	if (saved_img != NOREC && H.rec[saved_img].used)
+		H.rec[saved_img].pin = 1;
 	ri = scr_resident(slot);
-	if (saved_tex != NOREC)
-		H.rec[saved_tex].pin = pinned;
 
 	if (ri == NOREC)
 	{
+		if (saved_img != NOREC && H.rec[saved_img].used)
+			H.rec[saved_img].pin = pinned;
 		hw_limit(HW_MISSING, "screen draw slot unavailable; draw rejected");
 		return;
 	}
 	if (!surf && flags == PF_NoDepthTest && xoff == 1.0f && yoff == 1.0f)
 	{
 		// Identity presentation is an exact GS transfer: no bilinear triangle-interpolation rounding and no fill cost.
-		qw_t *p;
-		u64 s, d;
 		ov_flush_all();
 		frame_prepare(0);
-		s = (u64)H.rec[ri].blk | ((u64)H.rec[ri].tbw << 16) | ((u64)H.fbpsm << 24);
-		d = (u64)(H.fb_addr[H.target] / 256) | ((u64)(H.fbw / 64) << 16) | ((u64)H.fbpsm << 24);
-		p = ad_alloc(5);
-		ad_set(&p[0], s | (d << 32), GSR_BITBLTBUF);
-		ad_set(&p[1], 0, GSR_TRXPOS);
-		ad_set(&p[2], (u64)H.vw | ((u64)H.vh << 32), GSR_TRXREG);
-		ad_set(&p[3], 2, GSR_TRXDIR);
-		ad_set(&p[4], 0, GSR_TEXFLUSH);
+		if (!screen_copy(&H.rec[ri]))
+			hw_limit(HW_MISSING, "screen presentation tile upload failed");
 		H.rec[ri].stamp = H.frame_no;
+		if (saved_img != NOREC && H.rec[saved_img].used)
+			H.rec[saved_img].pin = pinned;
 		return;
 	}
 	screen_quad(q, xoff, yoff);
@@ -137,6 +249,8 @@ static void draw_screen_tex(int slot, FSurfaceInfo *surf, u32 flags, float xoff,
 	if (begin_draw(flags & ~(u32)(PF_ColorMapped | PF_Occlude), surf))
 		emit_fan(q, NULL, 4, NULL);
 	screen_mode_end(&sv);
+	if (saved_img != NOREC && H.rec[saved_img].used)
+		H.rec[saved_img].pin = pinned;
 	H.cur_tex = saved_tex;
 	H.cur_missing = saved_missing;
 }
@@ -149,16 +263,17 @@ static void hw_PostImgRedraw(float points[SCREENVERTS][SCREENVERTS][2])
 	int saved_tex = H.cur_tex, saved_missing = H.cur_missing;
 	FSurfaceInfo black_surf;
 	u8 pinned;
-	int ri;
+	int ri, saved_img;
 
 	if (!H.up)
 		return;
-	pinned = saved_tex != NOREC ? H.rec[saved_tex].pin : 0;
-	if (saved_tex != NOREC) H.rec[saved_tex].pin = 1;
+	saved_img = saved_tex != NOREC && H.rec[saved_tex].used ? img_of(saved_tex) : NOREC;
+	pinned = saved_img != NOREC && H.rec[saved_img].used ? H.rec[saved_img].pin : 0;
+	if (saved_img != NOREC && H.rec[saved_img].used) H.rec[saved_img].pin = 1;
 	ri = scr_resident(slot);
-	if (saved_tex != NOREC) H.rec[saved_tex].pin = pinned;
 	if (ri == NOREC)
 	{
+		if (saved_img != NOREC && H.rec[saved_img].used) H.rec[saved_img].pin = pinned;
 		hw_limit(HW_MISSING, "post-image capture unavailable; draw rejected");
 		return;
 	}
@@ -198,6 +313,8 @@ static void hw_PostImgRedraw(float points[SCREENVERTS][SCREENVERTS][2])
 		}
 	}
 	screen_mode_end(&sv);
+	if (saved_img != NOREC && H.rec[saved_img].used)
+		H.rec[saved_img].pin = pinned;
 	H.cur_tex = saved_tex;
 	H.cur_missing = saved_missing;
 }
@@ -256,7 +373,8 @@ static void hw_DoScreenWipe(int wipeStart, int wipeEnd, FSurfaceInfo *surf, FBIT
 	H.rec[bri].stamp = H.frame_no;
 	screen_mode_begin(&sv);
 	// the base picture
-	sprite_tex(&H.rec[bri], 0, frame_reg(H.target, 0), ALPHA_TRANS, 0, 0, 0, H.vw, H.vh, 0.0f, 0.0f, (float)H.vw, (float)H.vh, H.vw, H.vh, 0);
+	if (!sprite_screen(&H.rec[bri], 0, frame_reg(H.target, 0), ALPHA_TRANS, 0, 0, 0, H.vw, H.vh, 0.0f, 0.0f, (float)H.vw, (float)H.vh, H.vw, H.vh, 0))
+		goto tile_failed;
 	mask = &H.rec[maskri]; // the record table can grow while restoring a capture
 	if (!H.fb32)
 		hw_limit(HW_WIPE, "CT16S frame buffer has a 1-bit alpha: the fade mask is thresholded");
@@ -272,8 +390,10 @@ static void hw_DoScreenWipe(int wipeStart, int wipeEnd, FSurfaceInfo *surf, FBIT
 		{
 			u32 clut = clut_get(CK_WIPE, (u32)ch | ((surf->PolyColor.s.alpha >= 128 ? 1u : 0u) << 2) | (pc[ch] << 8), 0);
 
-			sprite_tex(mask, 0, frame_reg(H.target, ~(0xFFu << (8 * ch))), (polyFlags & PF_Additive) ? ALPHA_ADD : ALPHA_RSUB, 1, 0, 0, H.vw, H.vh,
-				0.0f, 0.0f, (float)mask->w, (float)mask->h, H.vw, H.vh, clut);
+			mask = &H.rec[maskri]; // tile cache creation can grow the record table
+			if (!sprite_screen(mask, 0, frame_reg(H.target, ~(0xFFu << (8 * ch))), (polyFlags & PF_Additive) ? ALPHA_ADD : ALPHA_RSUB, 1, 0, 0, H.vw, H.vh,
+				0.0f, 0.0f, (float)mask->w, (float)mask->h, H.vw, H.vh, clut))
+				goto tile_failed;
 		}
 	}
 	else
@@ -289,13 +409,22 @@ static void hw_DoScreenWipe(int wipeStart, int wipeEnd, FSurfaceInfo *surf, FBIT
 		mask = &H.rec[maskri];
 		H.rec[eri].stamp = H.frame_no;
 		// 1. the mask into the alpha channel only
-		sprite_tex(mask, 0, frame_reg(H.target, 0x00FFFFFFu), ALPHA_TRANS, 0, 0, 0, H.vw, H.vh, 0.0f, 0.0f, (float)mask->w, (float)mask->h, H.vw, H.vh, 0);
+		if (!sprite_screen(mask, 0, frame_reg(H.target, 0x00FFFFFFu), ALPHA_TRANS, 0, 0, 0, H.vw, H.vh, 0.0f, 0.0f, (float)mask->w, (float)mask->h, H.vw, H.vh, 0))
+			goto tile_failed;
 		// 2. the end picture where the mask says so
-		sprite_tex(&H.rec[eri], 0, frame_reg(H.target, 0), ALPHA_AD, 1, 0, 0, H.vw, H.vh, 0.0f, 0.0f, (float)H.vw, (float)H.vh, H.vw, H.vh, 0);
+		if (!sprite_screen(&H.rec[eri], 0, frame_reg(H.target, 0), ALPHA_AD, 1, 0, 0, H.vw, H.vh, 0.0f, 0.0f, (float)H.vw, (float)H.vh, H.vw, H.vh, 0))
+			goto tile_failed;
 	}
 	screen_mode_end(&sv);
 	H.rec[maskri].pin = 0;
 	H.cur_tex = maskri;
+	return;
+
+tile_failed:
+	screen_mode_end(&sv);
+	H.rec[maskri].pin = 0;
+	H.cur_tex = maskri;
+	hw_limit(HW_MISSING, "wipe tile upload failed; remaining passes rejected");
 }
 
 static void hw_DrawScreenTexture(int tex, FSurfaceInfo *surf, FBITFIELD polyflags)
@@ -319,7 +448,7 @@ static void hw_MakeScreenTexture(int tex)
 	{
 		char message[160];
 
-		snprintf(message, sizeof message, "screen capture slot %d does not fit the GS pool (%u/%u blocks used)", (int)tex, H.used_blocks, H.pool_blocks);
+		snprintf(message, sizeof message, "screen capture slot %d unavailable (GS %u/%u blocks, EE %u bytes)", (int)tex, H.used_blocks, H.pool_blocks, H.screen_bytes);
 		hw_limit(HW_MISSING, message);
 	}
 }
@@ -393,7 +522,7 @@ boolean PS2HWD_ReadScreenRGB(INT32 tex, UINT8 *dst_data)
 	}
 	else
 	{
-		if (H.scr_rec[tex] == NOREC && !H.scr_data[tex])
+		if (!H.scr_data[tex] && (H.scr_rec[tex] == NOREC || H.rec[H.scr_rec[tex]].tiled))
 		{
 			hw_failure("readback screen slot unavailable; destination untouched");
 			return false;

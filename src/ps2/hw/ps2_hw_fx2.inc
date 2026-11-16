@@ -54,9 +54,25 @@ int PS2HWD_ParaHidden(const ps2cull_t *cs, const float *p0, const float *r, cons
 {
 	float c[4][4], w2 = cs->w2; // [corner][x, y, z, w]
 	float hx, hy, ox, oy, x0 = 1.0e30f, x1 = -1.0e30f, y0 = 1.0e30f, y1 = -1.0e30f;
-	int k, and_ = 0x3F;
+	int k;
 
+	// All four corners must clear the eye guard before any plane can reject
+	// the quad. Keep the same corner expressions, but do that row first.
+	{
+		const float *a = cs->r[3];
+		const float b = a[0] * p0[0] + a[1] * p0[1] + a[2] * p0[2] + a[3];
+		const float dr = a[0] * r[0] + a[1] * r[1] + a[2] * r[2];
+		const float du = a[0] * u[0] + a[1] * u[1] + a[2] * u[2];
+
+		c[0][3] = b;
+		c[1][3] = b + dr;
+		c[3][3] = b + du;
+		c[2][3] = b + dr + du;
+	}
 	for (k = 0; k < 4; k++)
+		if (c[k][3] < w2)
+			return 0; // near the eye (or behind it): the clipper decides
+	for (k = 0; k < 3; k++)
 	{
 		const float *a = cs->r[k];
 		const float b = a[0] * p0[0] + a[1] * p0[1] + a[2] * p0[2] + a[3];
@@ -67,6 +83,13 @@ int PS2HWD_ParaHidden(const ps2cull_t *cs, const float *p0, const float *r, cons
 		c[1][k] = b + dr;
 		c[3][k] = b + du;
 		c[2][k] = b + dr + du;
+		// This is the original outcode AND, tested one coordinate at a time.
+		// A common outside plane needs no perspective divisions or later rows.
+		if ((c[0][k] < -c[0][3] && c[1][k] < -c[1][3]
+			&& c[2][k] < -c[2][3] && c[3][k] < -c[3][3])
+			|| (c[0][k] > c[0][3] && c[1][k] > c[1][3]
+			&& c[2][k] > c[2][3] && c[3][k] > c[3][3]))
+			return 1;
 	}
 	hx = H.vpw * 0.5f;
 	hy = H.vph * 0.5f;
@@ -74,12 +97,9 @@ int PS2HWD_ParaHidden(const ps2cull_t *cs, const float *p0, const float *r, cons
 	oy = H.vpy + hy - 0.5f;
 	for (k = 0; k < 4; k++)
 	{
-		const float x = c[k][0], y = c[k][1], z = c[k][2], w = c[k][3];
+		const float x = c[k][0], y = c[k][1], w = c[k][3];
 		float iw, sx, sy;
 
-		if (w < w2)
-			return 0; // near the eye (or behind it): the clipper decides
-		and_ &= (x < -w ? 1 : 0) | (x > w ? 2 : 0) | (y < -w ? 4 : 0) | (y > w ? 8 : 0) | (z < -w ? 16 : 0) | (z > w ? 32 : 0);
 		iw = 1.0f / w;
 		sx = ox + x * iw * hx;
 		sy = oy - y * iw * hy;
@@ -88,8 +108,6 @@ int PS2HWD_ParaHidden(const ps2cull_t *cs, const float *p0, const float *r, cons
 		y0 = sy < y0 ? sy : y0;
 		y1 = sy > y1 ? sy : y1;
 	}
-	if (and_)
-		return 1; // wholly outside the view volume
 	if (x1 - x0 > 8.0f || y1 - y0 > 8.0f)
 		return 0; // big: it covers a centre for sure
 	return quad_no_centre(x0, x1, y0, y1) ? 1 : 0;

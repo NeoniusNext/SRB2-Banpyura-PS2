@@ -1,0 +1,84 @@
+{
+  "scope": "Prove DeleteTexture view/fence behavior and reused-key source invalidation.",
+  "actual_delete_sha256": "325040b666553a8b9622d02959b05bd46a21e409fd57bad7a8a7517a733517b2",
+  "fixture_sha256": "04e58d151522f5a3e11675ef3bac2dc9c5fe4945d11c31e41f93f5395a44fad8",
+  "variants": {
+    "baseline": {
+      "source_inputs": {
+        "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+        "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+        "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+        "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+        "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+        "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+        "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+        "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+      },
+      "results": {
+        "normal": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "2",
+          "wrong_indices": "1024",
+          "clut": "1",
+          "canonical": "1",
+          "index_crc": "87dd986e",
+          "expected_index_crc": "75df2a12"
+        },
+        "sanitize": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "2",
+          "wrong_indices": "1024",
+          "clut": "1",
+          "canonical": "1",
+          "index_crc": "87dd986e",
+          "expected_index_crc": "75df2a12"
+        }
+      }
+    },
+    "fixed": {
+      "source_inputs": {
+        "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+        "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+        "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+        "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+        "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+        "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+        "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+        "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+      },
+      "results": {
+        "normal": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "0",
+          "wrong_indices": "0",
+          "clut": "2",
+          "canonical": "2",
+          "index_crc": "75df2a12",
+          "expected_index_crc": "75df2a12"
+        },
+        "sanitize": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "0",
+          "wrong_indices": "0",
+          "clut": "2",
+          "canonical": "2",
+          "index_crc": "75df2a12",
+          "expected_index_crc": "75df2a12"
+        }
+      }
+    }
+  },
+  "retained_report": {
+    "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-delete-host-v1/report.json",
+    "sha256": "47a08f42bcc2885a6abb1aa0dbae7c46590dd88ecc80b086e2b35563605c3c30"
+  },
+  "scope_note": "Actual DeleteTexture child-view fence and canonical-object delete/recreate. Normal level/SW-HW paths globally flush first; direct HWR_LoadMapTextures callers can reuse keys without that global flush."
+}

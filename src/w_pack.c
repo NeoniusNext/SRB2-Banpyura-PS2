@@ -590,9 +590,12 @@ void WPack_PrefetchAdd(FILE *fp, const lumpinfo_t *l)
 	if (pf.n == pf.cap)
 	{
 		const UINT32 cap = pf.cap ? pf.cap * 2 : 1024;
-		pf_item_t *grown = realloc(pf.items, cap * sizeof *grown);
+		pf_item_t *grown;
 
-		if (!grown || cap > 65536)
+		if (cap > 65536)
+			return;
+		grown = realloc(pf.items, cap * sizeof *grown);
+		if (!grown)
 			return;
 		pf.items = grown;
 		pf.cap = cap;
@@ -1218,6 +1221,10 @@ void WPack_Shutdown(void)
 	free(iobuf);
 	free(cbuf);
 	iobuf = cbuf = NULL;
+	WPack_PrefetchDrop();
+	free(pf.items);
+	pf.items = NULL;
+	pf.cap = 0;
 }
 
 // Delivers decoded bytes [lo, hi) of one block (decoded size bsize, stored in csize bytes at file offset *pos; *pos moves past the block)
@@ -1550,11 +1557,12 @@ UINT32 WPack_Verify(wpack_t *pk, FILE *handle, const lumpinfo_t *lumps, UINT32 n
 		UINT32 want = (UINT32)table[i * 4] | ((UINT32)table[i * 4 + 1] << 8) | ((UINT32)table[i * 4 + 2] << 16) | ((UINT32)table[i * 4 + 3] << 24);
 		UINT32 crc = 0;
 		size_t done = 0;
+		const size_t need = min((size_t)l->size, (size_t)(4 * WPACK_BLOCK));
 
-		if (l->size > bufsize)
+		if (need > bufsize)
 		{
 			free(buf);
-			bufsize = l->size;
+			bufsize = need;
 			buf = malloc(bufsize);
 			if (!buf)
 			{
@@ -1567,12 +1575,11 @@ UINT32 WPack_Verify(wpack_t *pk, FILE *handle, const lumpinfo_t *lumps, UINT32 n
 		{
 			size_t chunk = min((size_t)l->size - done, (size_t)(4 * WPACK_BLOCK));
 
-			if (WPack_ReadLump(handle, l, buf + done, chunk, done) != chunk)
+			if (WPack_ReadLump(handle, l, buf, chunk, done) != chunk)
 				break;
+			crc = Crc32(crc, buf, chunk);
 			done += chunk;
 		}
-		if (done == l->size)
-			crc = Crc32(0, buf, done);
 		if (done != l->size || crc != want)
 		{
 			bad++;

@@ -41,12 +41,22 @@
 #define PSM_CT16 0x02
 #define PSM_CT16S 0x0A
 #define PSM_T8 0x13
+#define PSM_T4 0x14
 #define PSM_Z24 0x31
 #define PSM_Z32 0x30
 // ... and in FRAME/ZBUF (the Z formats there are 4 bits)
 #define ZPSM_32 0x00
 #define ZPSM_24 0x01
 #define ZPSM_16S 0x0A
+
+static inline int psm_indexed(int psm)
+{
+	return psm == PSM_T8
+#ifndef PS2_NOOPT_P4_BAND
+		|| psm == PSM_T4
+#endif
+		;
+}
 
 // GS memory
 #define VRAM_BLOCKS 16384 // 4 MiB in 256-byte blocks
@@ -198,8 +208,8 @@ static const u32 CAPS[NCAPS] = {0u, 4096u, 1024u, 512u, 256u, 128u, 64u, 32u};
 typedef struct
 {
 	GLMipmap_t *owner;
-	u32 blk; // first 256-byte block in VRAM
-	u32 nblk;
+	u16 blk; // first 256-byte block in VRAM: 0..VRAM_BLOCKS-1, fits the checked u16 range above
+	u16 nblk; // an admitted image occupies at most VRAM_BLOCKS (including GS page/block holes)
 	u16 w, h; // exact engine texel dimensions; unsupported sizes fail without resampling
 	u8 tw, th; // log2 of the power of two >= w, h (TEX0 TW/TH)
 	u8 tbw;
@@ -220,12 +230,12 @@ typedef struct
 	u32 ws; // frame_no + 1 of the last frame that counted the texture into the working set statistics
 	u32 wgt; // eviction weight per block, set by best_window()
 	int prev, next; // LRU list, indices into the table (-1 = none)
-	u32 uw, vh; // the used part of a screen texture in texels
+	u16 uw, vh; // used dimensions: <=16384 with AP88 crop, <=1024 for other images, split pieces and captures
 	float sxs, sys; // engine texture coordinate -> GS ST scale: w / 2^tw, h / 2^th (1 for power of two sizes)
 	u16 sw, sh; // OPT8: the engine's size of the texture (the stored size is w x h = sw >> dx, sh >> dy)
 	u8 dx, dy; // decimation shifts of the stored texture
 	u8 capi; // footprint cap index (CAPS[]) the stored plan was made for
-	u8 pad2;
+	u8 csa; // PSMT4: original aligned 16-entry palette band; zero for other formats
 	u16 fp[NCAPS]; // footprint in blocks the texture would take under each cap (working set prediction)
 	// OPT9 (PS2-HW-30): one VRAM image for the CLUT variants of a map texture / flat (chroma keyed or not): the variants are separate records
 	// (own owner, clut, flags) and only the first one owns the blocks.
@@ -235,14 +245,23 @@ typedef struct
 	u8 has255; // owner: the image has texels of index 255 (holes under the keyed CLUT)
 	u8 shareable; // owner: P_8 data of a map texture or flat: views for the other variants may share it
 	u8 dmapend; // zero-copy upload (PS2-HW-32): the image data is read by queued DMA
-	u8 pad3;
+	u8 tiled; // 1: full-size source streamed through halo tiles; 2: the pinned reusable GS tile
 	u32 imgws; // owner: frame_no + 1 of the last frame in which a draw used the image (through any of its records)
 	u32 lodfr; // owner: frame_no + 1 of the frame lod belongs to
 	u8 lod; // owner: the finest mip level (0 = full size) a polygon of the frame needed (instrumentation, PS2-HW-34)
 	// OPT10 (PS2-HW-70): an image of more than 1024 rows (the GS limit) is stored as two images, the rows [0, 1024) and the rest, each with its own blocks
 	u8 psplit; // 0 = an ordinary image, 1 = the first piece (what the engine's texture is bound to), 2 = the second piece
 	int pnext, ppar; // first piece: the record of the second (NOREC = none); second piece: the first. One of them goes, the other goes with it
-	float pt0, pt1, ptk; // the piece holds the engine texture rows [pt0, pt1) of one repeat (fractions of the height); a polygon's t in the piece is (t - pt0) * ptk
+	union
+	{
+		struct { float pt0, pt1, ptk; }; // split: engine rows [pt0,pt1), t = (t - pt0) * ptk
+		struct
+		{
+			u32 *tile_palette; // tiled==1, never psplit: optional 1 KiB RGBA index history
+			void *tile_source; // non-regenerable source retained in place while its proxy exists
+			u32 tile_source_bytes;
+		};
+	}; // split metadata and tiled RGBA history are mutually exclusive; EE record size is unchanged
 } texrec_t;
 
 #define NOREC (-1)
@@ -359,7 +378,7 @@ static struct
 	u32 pal[256]; // GS CLUT entries, 0x00BBGGRR, no alpha, in index order
 	int pal_set;
 	u32 pal_gen; // bumped by every palette change; CLUT variants older than this are rebuilt
-	u32 clut_loaded; // block of the CLUT in the GS CLUT buffer, 0 = unknown
+	u32 clut_loaded; // all 256 CT32 CSM1 entries of this block are in the single GS CLUT buffer; 0 = unknown
 
 	// engine view
 	int scr_w, scr_h;
@@ -387,6 +406,20 @@ static struct
 	u32 warned;
 } H __attribute__((aligned(16)));
 
+// Transient tile stencil uses only Z24's otherwise unused upper byte.
+static int tile_stencil_active;
+static u32 tile_stencil_zor;
+static u32 tile_stencil_rectangles, tile_stencil_mask_sprites;
+static u64 tile_stencil_triangle_submissions, tile_stencil_bbox_pixels;
+static void tile_stencil_reset_region(void);
+static void tile_stencil_reset_state(void)
+{
+	tile_stencil_reset_region();
+	tile_stencil_active = 0;
+	tile_stencil_zor = 0;
+}
+
+
 int ps2hwd_dbg_flags;
 int ps2hwd_force_lt = -1;
 int ps2hwd_water_ab = 0;
@@ -409,6 +442,16 @@ static const char *skip_why;
 #define BIG_IMAGE_BLOCKS 512u // PS2-HW-39: images of at least this many blocks are placed from the top of the pool (screen captures are there too), the others from the bottom
 #define PLAN_MIN_TEXELS 65536u // PS2-HW-34: smaller textures are always stored at full size: their share of the working set is small and the estimate costs cycles
 #define PLAN_FULL_KEEP 150 // frames a texture that was drawn unplanned keeps its full size in the plans
+
+// Texture planner stamps outlive GS state; keep their clock separate from frame diagnostics.
+static u32 plan_clock = 1; // zero is reserved for unknown engine stamps
+static inline u32 plan_stamp(void) { return plan_clock; }
+static inline void plan_advance(u32 amount)
+{
+	plan_clock += amount;
+	if (!plan_clock)
+		plan_clock = 1;
+}
 
 // OPT9 (HT): texture statistics of the window of 105 frames; printed as HWTEX lines when ps2hwd_dbg_flags has bit 1024 (-hwdbg 1024)
 typedef struct
@@ -455,8 +498,11 @@ static void hw_limit(u32 bit, const char *message)
 
 static void (*resource_error_handler)(const char *message);
 
+static void tile_sky_pressure_revoke(void);
+
 static void hw_failure(const char *message)
 {
+	tile_sky_pressure_revoke();
 	hw_limit(HW_MISSING, message);
 	if (resource_error_handler)
 		resource_error_handler(message);

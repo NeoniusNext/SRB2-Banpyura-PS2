@@ -29,11 +29,13 @@
 ;    13     (kz16, 1 / kz16, 127, rhi): rhi = the highest row the plan may meet (a float)
 ;    14     (big, -big, -K80, -tiny)
 ;    15     GIF tag of the A+D packet that holds the TEX0 of a row (NLOOP 1, EOP 0)
-;    16     integers: x = palette rows on, y = textured, z = row whose CLUT the GS holds now (kept between runs), w = 0
+;    16     integers: x = palette rows on, y = textured, z = row whose CLUT the GS holds now (kept between runs), w = PSMT4 selection follows each full CLUT load
 ;    17     (1 / 17, 15, 4 * sfudge, 0.26): the constants of the light of a polygon (the level is in its header)
 ;    18     spill: x = current row, y = last row of the polygon, z = base of the rest of the polygon, w = its vertex count
 ;    19     x = vertex count of the lower piece, y = the output buffer to write next (kept between runs)
-;    32..63 TEX0 of every row: (lo, hi, 6, 0), the A+D packet data
+;    20..25 clip plane vectors, 26..31 immutable outcode/remaining-plane masks
+;    856    TEX2 PSMT4/CLD0/CSA selector; lists end at855, sprite scratch begins1000
+;    32..63 TEX2 PSMT8/CLD1/CSA0 of every row: (lo, hi, 0x16, 0), the full 256-entry CLUT load
 ;    64..319 / 320..575   input buffers (TOPS: BASE 64, OFFSET 256)
 ;    576..655 / 656..735  output buffers (80 quad words each)
 ;    736..775, 776..815, 816..855  vertex lists (20 vertices of 2 qw): clip coordinates + (s, t, outcode, 0)
@@ -44,6 +46,7 @@
 		.equ	K_LIGHTB,	17
 		.equ	K_SPILL,	18
 		.equ	K_SPILL2,	19
+		.equ	P4_TEX2,	856
 		.equ	ROWTAB,		32
 		.equ	OUT0,		576
 		.equ	OUT1,		656
@@ -490,11 +493,21 @@ Pack:
 		IDLE	2
 		NOP					ibeq		VI01,VI00,PackTag
 		NOP					NOP
-; the CLUT of the row: TEX0 with CLD, behind its own GIF tag
+; Load all 256 entries of the row using PSMT8/CLD1/CSA0. PSMT4/CLD1 would
+; always read the first 16 source entries, regardless of its CSA destination.
 		NOP					lq			VF11,ROWTAB(VI13)
 		NOP					sq			VF28,0(VI12)
 		NOP					isw.z		VI13,K_INT(VI00)
 		IDLE	1
+		NOP					sq			VF11,1(VI12)
+		NOP					iaddiu		VI12,VI12,2
+		NOP					ilw.w		VI01,K_INT(VI00)
+		IDLE	4
+		NOP					ibeq		VI01,VI00,PackTag
+		NOP					NOP
+		NOP					lq			VF11,P4_TEX2(VI00)
+		NOP					sq			VF28,0(VI12)
+		IDLE	2
 		NOP					sq			VF11,1(VI12)
 		NOP					iaddiu		VI12,VI12,2
 PackTag:

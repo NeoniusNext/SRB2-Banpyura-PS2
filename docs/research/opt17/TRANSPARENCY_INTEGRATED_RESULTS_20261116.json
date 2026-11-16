@@ -1,0 +1,253 @@
+{
+  "scope": "All five regression tools executed against current integrated source, complete texture source plus real selected header helpers. Each negative isolated variant reverses only its exact reviewed fix. Original frozen-v7 proof artifacts unchanged. P8 state/bytes, actual DeleteTexture function, and real-zone lock ownership covered; full engine/native scene acceptance remains separate.",
+  "passed": true,
+  "texture_sha256": "0417241f650fd29a522a7fb985b3b26fbb0aeb7ab8d436d12d821891f8f89959",
+  "source_inputs": {
+    "src/hardware/hw_defs.h": "8af2f4fd02999542aa881150f86cbfda3c0194ed4e834b1495b1f89413de2394",
+    "src/hardware/hw_data.h": "63bb3b275a5d05a539ffff51f3f5724fe3e45b172dee12c76e84debd28a15701",
+    "src/doomtype.h": "7b10522ac20f9f904153842629f01a36be09a4a78a445633a452a7ebc8da3c47",
+    "src/hardware/hw_drv.h": "fdad1a3906b99d531104e8459e86434d6549bd0f189f973d97043fb2d3686c51",
+    "src/hardware/hw_model.h": "fb82c084d84c131840416d8da63dd9ee1f8d453c812f908a9c5c79596c20ae07",
+    "src/ps2/hw/ps2_hw_priv.inc": "a0fbba19493e10c9ada81fac9444363df7e22d7aae26940251ec15d10f1a0e19",
+    "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+    "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+    "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+    "src/ps2/hw/ps2_hw_tex.inc": "0417241f650fd29a522a7fb985b3b26fbb0aeb7ab8d436d12d821891f8f89959",
+    "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+    "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+    "src/ps2/hw/ps2_hw_draw.inc": "ae0d07376fdae1e353c6a0455acf0be92a7815782ecb4777ede1f06456df940d"
+  },
+  "summary": {
+    "primary": {
+      "negative_control": "Only the exact canonical-h255 reviewed fix is reversed in isolated baseline; every other integrated change retained.",
+      "baseline": {
+        "observations": 41,
+        "rgba_bad": 12,
+        "poisoned": 24,
+        "checks": 759
+      },
+      "fixed": {
+        "observations": 41,
+        "rgba_bad": 0,
+        "poisoned": 0,
+        "checks": 759
+      },
+      "index_crc_pairs_exact": 41,
+      "executed_modes": [
+        "normal",
+        "sanitize",
+        "packed",
+        "packed_sanitize"
+      ]
+    },
+    "map": {
+      "negative_control": "Only the exact canonical-h255 reviewed fix is reversed in isolated baseline; every other integrated change retained.",
+      "baseline": {
+        "observations": 6,
+        "rgba_bad": 2,
+        "poisoned": 3,
+        "checks": 101
+      },
+      "fixed": {
+        "observations": 6,
+        "rgba_bad": 0,
+        "poisoned": 0,
+        "checks": 101
+      },
+      "index_crc_pairs_exact": 6,
+      "executed_modes": [
+        "normal",
+        "sanitize",
+        "packed",
+        "packed_sanitize"
+      ]
+    },
+    "stride": {
+      "negative_normal_exit": 1,
+      "negative_sanitizer_exit": 1,
+      "fixed": {
+        "normal": {
+          "exit": 0,
+          "log_sha256": "445dc64215626d35c24fa3e37a68c994437a8030678fba8051af8abefe6734e0",
+          "last_line": "T17 COMPLETE observations=41 rgba_bad=0 poisoned=0 checks=704"
+        },
+        "sanitize": {
+          "exit": 0,
+          "log_sha256": "445dc64215626d35c24fa3e37a68c994437a8030678fba8051af8abefe6734e0",
+          "last_line": "T17 COMPLETE observations=41 rgba_bad=0 poisoned=0 checks=704"
+        }
+      },
+      "scope": "Only reviewed packed-mip stride fix reversed in isolated negative; canonical h255 and all other integrated fixes remain."
+    },
+    "delete": {
+      "baseline": {
+        "normal": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "2",
+          "wrong_indices": "1024",
+          "clut": "1",
+          "canonical": "1",
+          "index_crc": "87dd986e",
+          "expected_index_crc": "75df2a12"
+        },
+        "sanitize": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "2",
+          "wrong_indices": "1024",
+          "clut": "1",
+          "canonical": "1",
+          "index_crc": "87dd986e",
+          "expected_index_crc": "75df2a12"
+        }
+      },
+      "fixed": {
+        "normal": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "0",
+          "wrong_indices": "0",
+          "clut": "2",
+          "canonical": "2",
+          "index_crc": "75df2a12",
+          "expected_index_crc": "75df2a12"
+        },
+        "sanitize": {
+          "pending_before": "1",
+          "pending_after": "0",
+          "cache_before": "2",
+          "cache_after": "0",
+          "wrong_indices": "0",
+          "clut": "2",
+          "canonical": "2",
+          "index_crc": "75df2a12",
+          "expected_index_crc": "75df2a12"
+        }
+      },
+      "actual_integrated_function_matches_tested_fixed_function": true
+    },
+    "lock": {
+      "baseline_stranded_sources": 3,
+      "fixed_stranded_sources": 0,
+      "index_crc_pairs_exact": 4,
+      "busy_source_before_fence": {
+        "source_tag_queued": "48",
+        "source_busy_queued": "1",
+        "source_tag_done": "27",
+        "source_busy_done": "0",
+        "source_alive_after_purge": "0",
+        "index_crc": "94aaa930"
+      },
+      "premature_unlock_control_executed_failure": true,
+      "normal_equals_sanitized": true
+    }
+  },
+  "manifest": {
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-integrated-primary-v1/report.json": {
+      "bytes": 169107,
+      "sha256": "95a85f3a4f822575042d41a27ce15d50b802fb9b3a9aa2f8aa6d76349fa921c9"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-integrated-map-v1/report.json": {
+      "bytes": 29426,
+      "sha256": "00a3254f24d98f5915acc43385bac7f3f8dc3344c668d8057d0bef9786b38d60"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-integrated-stride-v1/report.json": {
+      "bytes": 3912,
+      "sha256": "556eec61d43ed19d7f997b4d2004300c879ca04fdb96291b42dda8e1652bff59"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-integrated-delete-v1/report.json": {
+      "bytes": 4430,
+      "sha256": "bd9b8cf3747d131964fc57b49b8bc0800c1f3baab703e74d18335a5069f38a77"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-integrated-lock-v1/report.json": {
+      "bytes": 14432,
+      "sha256": "021c6519257d8c7b239746348381690922ead1f4bb4030ce40a9b7060a546678"
+    },
+    "/workspace/SRB2-Banpyura-PS2/src/ps2/hw/ps2_hwd.c": {
+      "bytes": 72718,
+      "sha256": "7bb4f6f46e16a18b2321152291084d49a45ff5bfc3496f15e32059dddc8a20f6"
+    },
+    "/workspace/SRB2-Banpyura-PS2/src/hardware/hw_cache.c": {
+      "bytes": 86478,
+      "sha256": "f60ebfdf390dad165b60f618521aee0cc2ac757083ef048462a8dfb817ec70f6"
+    },
+    "/workspace/SRB2-Banpyura-PS2/src/z_zone.c": {
+      "bytes": 92788,
+      "sha256": "c7628ef5198e7c94735546f991914b9bdd83f5c628e4978c9aa9326c9257f0c3"
+    },
+    "/workspace/SRB2-Banpyura-PS2/src/z_zone.h": {
+      "bytes": 13712,
+      "sha256": "c3b2e5a05dd617a366a4bae091fc262f96a7aba54825df964a5234cd8a788bd7"
+    },
+    "/workspace/SRB2-Banpyura-PS2/src/ps2/ps2_mem.c": {
+      "bytes": 57258,
+      "sha256": "fb8f305fa314e79e310b82345b9c9dad9d1d6a652e74d63e7d89b3eff93beb64"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_delete_hosttest.c": {
+      "bytes": 3296,
+      "sha256": "04e58d151522f5a3e11675ef3bac2dc9c5fe4945d11c31e41f93f5395a44fad8"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_delete_hosttest.py": {
+      "bytes": 4484,
+      "sha256": "e143227090715c4d10d215e1c0f8c4b1c64a1c07c3f1e559a71222388cc6bae9"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_hosttest.c": {
+      "bytes": 15026,
+      "sha256": "24a41df6c9b28e7c2d41f39bef9e3432991422f8ce09fe9a688a116177604668"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_hosttest.py": {
+      "bytes": 8377,
+      "sha256": "4f9af09a4d99c20766bed63f82b80f20d393a9841c3cdc12cf2f1e86da859764"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_lock_hosttest.c": {
+      "bytes": 4505,
+      "sha256": "21cfd182a472c650b8817a41131cf0a5c05ff1f8839531ead34e7faff7513534"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_lock_hosttest.py": {
+      "bytes": 6482,
+      "sha256": "3d26f235512980aecb6b1044ff39844373f36c81b1ccf5e4ae26ad3e6058ee2e"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_map_twin_hosttest.c": {
+      "bytes": 2926,
+      "sha256": "51f7663e47dca01a4d963bb06bffc666aaeba111c097139bfe6c197910c50918"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_map_twin_hosttest.py": {
+      "bytes": 2500,
+      "sha256": "1a2e5b0dc8f8c1289a3bfc52afc08adf3cf89c16d3059a3cbcef13a4bcfda987"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_native.py": {
+      "bytes": 6403,
+      "sha256": "55d94b83b2440b1173653b2d9f29a46a649b1f958a522f8b4e6a87f08b01cc7c"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_native_driver.inc": {
+      "bytes": 1418,
+      "sha256": "30ee87a43847400e7bbf567a8332fe5c99cf4694779fa5cc556076d9c8af22dd"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_native_main.inc": {
+      "bytes": 4810,
+      "sha256": "b904647a56b523993049d7b4dd9df2f17fa070511d801f7e80fcc6a1a47e5189"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_native_report.py": {
+      "bytes": 5507,
+      "sha256": "503501c024593af34e6695375a0c3ad2857499bafb9630ac9c3d7fa3134171dc"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_stride_hosttest.py": {
+      "bytes": 3540,
+      "sha256": "1638217abf532c2bb8df2c6abcfa3ebfcef9ac11de6cd4c840739f40b116367e"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_update_hosttest.c": {
+      "bytes": 3411,
+      "sha256": "b2726f6adab7d52bebfb73038decf6972a881c37ff5a332b8ea08ccf128cdaca"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_update_hosttest.py": {
+      "bytes": 6914,
+      "sha256": "05cbd1450a785f69ef83b7637e76c8d53b27a283ee1df1c67fd2c5cca3e9fd12"
+    }
+  },
+  "production_edits_by_transparency_agent": false,
+  "UpdateTexture_candidate": "Held: immediate-admission proof only; sibling engine CPU-data contract unresolved and no present shared-map caller established."
+}

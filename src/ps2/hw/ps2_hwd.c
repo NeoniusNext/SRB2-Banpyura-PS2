@@ -42,6 +42,7 @@ extern boolean hwr_sprite_batch; // hw_batching.c
 
 #include "ps2_hwd.h"
 #include "ps2_hwd_dbg.h"
+#include "../ps2_activity.h"
 #include "../ps2_sys.h" // PS2_SleepUs (OPT12 NET-3)
 #include "../ps2_models.h" // PS2Models_TryAlloc (the model work areas)
 
@@ -73,6 +74,9 @@ static void settex_now(GLMipmap_t *TexInfo); // (below)
 #include "ps2_hw_sky.inc" // PS2-HW-42: the sky dome as strips (OPT9)
 #include "ps2_hw_model.inc"
 #include "ps2_hw_wire.inc" // OPT11-MODEL (PS2-HW-270): PF_WireFrame and gr_wireframe as GS lines
+static int sprite_screen(texrec_t *source, int linear, u64 frame, u64 alpha, int abe,
+	int x0, int y0, int x1, int y1, float u0, float v0, float u1, float v1,
+	int sciss_w, int sciss_h, u32 clut_blk); // shared tiled sprite path, defined with screen helpers
 #include "ps2_hw_tt.inc" // PS2-HW-69: -hwtextest texture conformance self-test
 #include "ps2_hw_bench.inc" // OPT11 round 2: -hwbench, what the instructions cost
 
@@ -90,6 +94,32 @@ static int trace_frame = -1;
 
 void PS2HWD_SetTrace(int frame, int dbg_flags)
 {
+#ifndef PS2_NOOPT_P4_BAND
+	if (H.up && ((ps2hwd_dbg_flags ^ dbg_flags) & HWDBG_NOPLAN))
+	{
+		int i;
+
+		// Consume every old draw/reference before changing its quality mode.
+		ov_flush_all();
+		dma_fence();
+		H.imm_tex = NULL;
+		for (i = 0; i < plan_n; i++)
+			if (plan_info[i].key)
+				plan_info[i].key->ps2_planfr = 0;
+		plan_reset();
+		// A newly selected quality mode starts with the initialization policy,
+		// not reserve/thrash history measured with the preceding format set.
+		H.plan_reserve = H.unplanned_cur = H.plan_last = H.plan_exact = 0;
+		H.plan_pct = H.plan_calm = H.thrash_n = H.thrash_blk = 0;
+		for (i = 0; i < H.rec_n; i++)
+			if (H.rec[i].used)
+			{
+				H.rec[i].imgws = 0; // existing T8 images may recharge the new mode's reserve this frame
+				if (H.rec[i].psm == PSM_T4)
+					tex_drop(img_of(i), 0); // owners and every plain/keyed view
+			}
+	}
+#endif
 	trace_frame = frame;
 	ps2hwd_dbg_flags = dbg_flags;
 }
@@ -305,11 +335,19 @@ boolean PS2HWD_Init(void)
 {
 	int rc;
 
+	tile_sky_pressure_reset();
+
 	if (H.up)
 		return true;
+	tile_stencil_reset_state();
 	if (!hwbig_alloc())
 		return false; // VID_StartupOpenGL / VID_CheckRenderer then stay with the software renderer
 	memset(&H, 0, sizeof H);
+	tile_stencil_reset_state();
+	tile_stencil_rectangles = tile_stencil_mask_sprites = 0;
+	tile_stencil_triangle_submissions = tile_stencil_bbox_pixels = 0;
+	tile_run_peak_bytes = 0;
+	tile_core_fast_triangles = tile_box_nodes = tile_pixel_fallbacks = 0;
 	// PS2-HW-255 (OPT11 round 3, FX3): the sprite stream is opt-in (-hwspr). Measured on the tree with the VU2 collection of polygons in blocks (docs/GATES/g1/opt11-FX.md 7.7): the stream costs the EE
 	// what the batch costs for the same sprites (D1 +1.3 % of the sprite set, D2 -2.7 %, D3 -1.5 %, D4 +4.6 %, against the cheap projection alone), and its lists are 75 KB of the zone, which is
 	// at its edge on 32 MB (DEMO_003 ends in "Out of memory" on the tip of the main branch already). Without -hwspr the lists are not made and every sprite goes through the batch.
@@ -326,6 +364,11 @@ boolean PS2HWD_Init(void)
 	if (M_CheckParm("-hwqh") && M_IsNextParm())
 		qh_mode = atoi(M_GetNextParm()); // PS2-HW-220: 1 = the scalar sprite test, 2 = both and the differences counted
 	vu_nobretarget = M_CheckParm("-hwnobretarget") != 0;
+	if (M_CheckParm("-hwfulltex"))
+	{
+		ps2hwd_dbg_flags |= HWDBG_NOPLAN; // explicit full-size mode; default planning stays on
+		CONS_Printf("HWD full-size textures selected (-hwfulltex = -hwdbg 33554432)\n");
+	}
 	plan_nofid = 0;
 	if (M_CheckParm("-hwfid") && M_IsNextParm())
 		plan_nofid = atoi(M_GetNextParm()) != 0; // PS2-HW-443: 1 = no fidelity pass in the frame plan (the images stay at the level where a texel is a pixel)
@@ -395,6 +438,19 @@ boolean PS2HWD_Init(void)
 	H.up = 1;
 	if (!H.fb32)
 		hw_limit(HW_SCREEN_LOSS, "opt-in CT16S frame buffer loses RGB precision and continuous destination alpha");
+	// A high-resolution mode necessarily streams screen images. Reserve its
+	// one 16 KiB tile before engine textures can fill the pool; later screen
+	// draws can then retain their saved selected texture throughout the draw.
+	if (fb_pages(H.fbw, H.fbh, H.fb32) * PAGE_BLOCKS > H.pool_blocks
+		&& tile_cache_get() == NOREC)
+	{
+		CONS_Alert(CONS_ERROR, "PS2 GS: lossless screen tile allocation failed\n");
+		PS2HWD_Shutdown();
+		return false;
+	}
+	if (tile_cache_rec != NOREC && tile_cache_rec < H.rec_n && H.rec[tile_cache_rec].used)
+		CONS_Printf("PS2 GS: full-size streaming tile %ux%u, %u blocks reserved; ordinary texture capacity %u/%u blocks\n",
+			TILE_SIZE, TILE_SIZE, (unsigned)H.rec[tile_cache_rec].nblk, (unsigned)tex_usable_blocks(), (unsigned)H.pool_blocks);
 	gs_irq_selftest();
 	clut_fixed_refresh(1);
 	gs_clear_both();
@@ -414,6 +470,10 @@ boolean PS2HWD_Init(void)
 void PS2HWD_Shutdown(void)
 {
 	int i;
+	tile_sky_pressure_reset();
+
+	if (tile_stencil_active && H.up && H.ring[0]) tile_stencil_end();
+	tile_stencil_reset_state();
 
 	if (!H.up)
 		return;
@@ -477,7 +537,10 @@ void PS2HWD_Shutdown(void)
 	scratch_cap = 0;
 	if (H.gs)
 		gsKit_deinit_global(H.gs);
+	if (PS2_ACTIVITY_ON)
+		PS2Activity_RendererReset(cyc());
 	memset(&H, 0, sizeof H);
+	tile_stencil_reset_state();
 	hwbig_free();
 }
 
@@ -487,6 +550,9 @@ void PS2HWD_Shutdown(void)
 void PS2HWD_Abort(void)
 {
 	u32 irq;
+	tile_sky_pressure_revoke();
+
+	tile_stencil_reset_state();
 
 	if (!H.up || !H.ring[0])
 		return;
@@ -549,6 +615,13 @@ void PS2HWD_SetScreenSize(INT32 w, INT32 h)
 			nh = cfg.fbh;
 		if (nw == H.vw && nh == H.vh)
 		{
+			if (!PS2HWD_Sync()) // consume queued overlays/VU chunks before their plan state is reset
+			{
+				hw_failure("GS fence for a logical screen-size change failed");
+				return;
+			}
+			H.imm_tex = NULL;
+			plan_reset(); // logical-size changes invalidate previous density hints too
 			cfg.screen_w = w;
 			cfg.screen_h = h;
 			H.scr_w = w;
@@ -639,6 +712,15 @@ void PS2HWD_DumpWorkingSet(void)
 	CONS_Printf("HWWS total resident-in-frame blocks %u (last frame)\n", (unsigned)total);
 }
 
+#ifdef HW_VU0
+// Share the correctness checks' transform body; the timed loop calls vu0_xform
+// directly, so this diagnostic-only size saving adds no measured call overhead.
+static __attribute__((noinline)) int test_vu0_vertex(const FOutVector *s, cv_t *d, pv_t *pv)
+{
+	return vu0_xform(s, d, pv);
+}
+#endif
+
 // scalar reference of vu0_xform: xform_vertex + outcode + the projection of put_vertex
 static void scalar_xform(const FOutVector *s, int *oc, int *xi, int *yi, int *zi, float *q)
 {
@@ -663,7 +745,6 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		FTransform t;
 		FSurfaceInfo surf;
 		unsigned int i, rng = seed * 2654435761u + 12345u;
-		float xs = 0.0f;
 		FOutVector *pts; // OPT13 RDRV: was `static FOutVector pts[4096]` = 80 KB of .bss in the product for the -hwvu0bench measurement only
 		u32 c0;
 
@@ -686,8 +767,10 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 		surf.PolyColor.rgba = 0xFFFFFFFFu;
 		if (!begin_draw(PF_NoTexture | PF_Modulated | PF_Occlude, &surf))
 			return;
-		if (ps2hwd_dbg_flags & 256) // negative control of tools/ps2/hw_test.c: a wrong scale in VU0
-			vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), P.kx * 1.01f, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		// begin_draw leaves constants lazy. Load once, with the same values as
+		// vu0_need except for negative control 256's deliberately wrong X scale.
+		vu0_batch_load(H.mvp, (float)H.guard_x * (1.0f / 1024.0f), (float)H.guard_y * (1.0f / 1024.0f), (ps2hwd_dbg_flags & 256) ? P.kx * 1.01f : P.kx, P.ky, P.zk, P.ox, P.oy, P.zo + P.zbias, P.zmax);
+		P.vu0_ld = 1;
 		pts = malloc((size_t)n * sizeof *pts);
 		if (!pts)
 			return;
@@ -734,8 +817,8 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 				pv_t p1[2], p2[2];
 				int oc1[2], oc2[2];
 
-				oc1[0] = vu0_xform(&pts[i], &d1[0], &p1[0]);
-				oc1[1] = vu0_xform(&pts[i + 1], &d1[1], &p1[1]);
+				oc1[0] = test_vu0_vertex(&pts[i], &d1[0], &p1[0]);
+				oc1[1] = test_vu0_vertex(&pts[i + 1], &d1[1], &p1[1]);
 				vu0_xform2(&pts[i], &pts[i + 1], &d2[0], &d2[1], &p2[0], &p2[1], &oc2[0], &oc2[1]);
 				if (oc1[0] != oc2[0] || oc1[1] != oc2[1] || memcmp(&d1[0], &d2[0], sizeof(float) * 6) || memcmp(&d1[1], &d2[1], sizeof(float) * 6) || memcmp(&p1[0], &p2[0], sizeof p1[0])
 					|| memcmp(&p1[1], &p2[1], sizeof p1[1]))
@@ -753,7 +836,6 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 
 			scalar_xform(&v, &oc, &xi, &yi, &zi, &q);
 			oc2 = vu0_xform(&v, &d, &pv);
-			xs += d.x;
 			out->n++;
 			if (oc != oc2)
 				out->oc_diff++;
@@ -776,8 +858,6 @@ void PS2HWD_TestVU0(unsigned int n, unsigned int seed, ps2hwd_vu0test_t *out)
 				if (qd > out->max_q_rel) out->max_q_rel = qd;
 			}
 		}
-		if (xs == 12345.678f)
-			out->n++; // keeps the compiler from dropping the clip results
 		free(pts);
 #undef TRND
 	}
@@ -1139,7 +1219,7 @@ int PS2HWD_PalLit(const void *vsurf, unsigned int flags, const void *vtex, int s
 	{
 		const texrec_t *r = &H.rec[m->downloaded - 1];
 
-		return r->used && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2) && !r->screen;
+		return r->used && psm_indexed(r->psm) && (r->clut == 1 || r->clut == 2) && !r->screen;
 	}
 	return 0;
 }
@@ -1483,7 +1563,7 @@ static void hw_DrawIndexedTriangles(FSurfaceInfo *pSurf, FOutVector *pOutVerts, 
 }
 
 // The dome is built from vertices with colours (gl_skyvertex_t has the layout of FOutVector plus r, g, b, a).
-static void hw_RenderSkyDome(gl_sky_t *sky)
+static void hw_RenderSkyDome_inner(gl_sky_t *sky)
 {
 	FOutVector *sv;
 	float *sc, saved_mv[16];
@@ -1600,6 +1680,18 @@ restore_sky:
 	H.mat_dirty = 1;
 }
 
+
+static void hw_RenderSkyDome(gl_sky_t *sky)
+{
+    // Match the original no-op boundary: invalid domes must not return a
+    // previous caller's optional borrow or change its queued state.
+    if (!H.up || !sky || !sky->data || !sky->loops || sky->vertex_count <= 0)
+        return;
+    const unsigned saved = tile_sky_pressure_enter();
+    hw_RenderSkyDome_inner(sky);
+    tile_sky_pressure_leave(saved);
+}
+
 static void hw_SetBlend(FBITFIELD PolyFlags)
 {
 	H.cur_flags = (u32)PolyFlags;
@@ -1607,6 +1699,8 @@ static void hw_SetBlend(FBITFIELD PolyFlags)
 
 static void hw_ClearBuffer(FBOOLEAN ColorMask, FBOOLEAN DepthMask, FRGBAFloat *ClearColor)
 {
+	if (tile_stencil_active && H.up && H.ring[0]) tile_stencil_end();
+	tile_stencil_reset_state();
 	if (!H.up)
 		return;
 	do_clear(ColorMask ? 1 : 0, DepthMask ? 1 : 0, ClearColor);
@@ -1695,8 +1789,8 @@ static void settex_now(GLMipmap_t *TexInfo)
 		int vis = 1;
 
 		want = tex_want(TexInfo, &vis);
-		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != H.frame_no + 1)
-			pk->ps2_full_fr = H.frame_no + 1;
+		if ((batch_phase == 0 && imm_level < 0) || pk->ps2_planfr != plan_stamp())
+			pk->ps2_full_fr = plan_stamp();
 		if (!vis && !r && !TT.on) // PS2-HW-69: the conformance test draws textures no frame plan sees
 		{
 			// no polygon of the frame can see it: nothing is uploaded, the (clipped away) draws are skipped
@@ -1818,7 +1912,7 @@ static void settex_now(GLMipmap_t *TexInfo)
 		HWR_PS2_FlatUnpin(tex_flatpin, (size_t)TexInfo->width * TexInfo->height);
 		tex_flatpin = NULL;
 	}
-	if (!zc_last) // a zero-copy upload keeps the block locked until the DMA has read it (rel_add)
+	if (!zc_last && !(ri != NOREC && H.rec[ri].tiled == 1 && H.rec[ri].tile_source)) // queued DMA or a non-regenerable tile proxy retains the source
 		HWR_PS2_ReleaseMipmapData(TexInfo);
 	if (ri == NOREC)
 	{
@@ -1903,6 +1997,16 @@ static void hw_UpdateTexture(GLMipmap_t *TexInfo)
 	{
 		ov_flush_all();
 		dma_fence(); // the engine has changed the texels: no queued reference may still read the old ones
+		if (r->tiled == 1 && r->tile_source && TexInfo->data)
+		{
+			// An explicit free/reallocation may reuse the old source address.
+			// Protect the current block and transfer its lease to re-admission;
+			// deleting the old proxy must not unlock this new generation.
+			HWR_PS2_LockData(TexInfo->data);
+			r->tile_source = NULL;
+			r->tile_source_bytes = 0;
+			TexInfo->ps2_cpu &= ~(u8)HWR_PS2_CPU_TILED_SOURCE;
+		}
 		tex_drop((int)(r - H.rec), 0);
 	}
 	settex_now(TexInfo);
@@ -1914,6 +2018,11 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 
 	if (!TexInfo)
 		return;
+	if (skip_tex == TexInfo)
+	{
+		skip_tex = NULL;
+		skip_why = NULL;
+	}
 	if (H.up)
 		dma_fence(); // the engine frees the texels after this call: no queued DMA may read them (also when the image was evicted meanwhile)
 	if (H.imm_tex == TexInfo)
@@ -1926,6 +2035,17 @@ static void hw_DeleteTexture(GLMipmap_t *TexInfo)
 		tex_drop((int)(r - H.rec), 0);
 	}
 	TexInfo->downloaded = 0;
+	if (H.up && TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && !TexInfo->ps2_twin)
+	{
+		int i;
+
+		// The engine deletes the child variant before the canonical object.
+		// A new object under this number must not inherit its cached source.
+		TexInfo->ps2_h255 = 0;
+		for (i = 0; i < DC_MAX; i++)
+			if (dc[i].key == dc_key(TexInfo))
+				dc_drop(&dc[i]);
+	}
 }
 
 static void hw_GClipRect(INT32 minx, INT32 miny, INT32 maxx, INT32 maxy, float nearclip)
@@ -1940,6 +2060,9 @@ static void hw_ClearMipMapCache(void)
 {
 	int i;
 
+	if (tile_stencil_active && H.up && H.ring[0]) tile_stencil_end();
+	tile_stencil_reset_state();
+
 	if (!H.up)
 		return;
 	ov_flush_all();
@@ -1949,7 +2072,7 @@ static void hw_ClearMipMapCache(void)
 	dc_flush(); // the engine may have another set of textures under the same numbers after this call (a new level, an add-on)
 	// ordinary textures only: screen textures have their own life cycle (FlushScreenTextures)
 	for (i = 0; i < H.rec_n; i++)
-		if (H.rec[i].used && !H.rec[i].screen)
+		if (H.rec[i].used && !H.rec[i].screen && H.rec[i].tiled != 2)
 			tex_drop(i, 0);
 	H.cur_tex = NOREC;
 	H.cur_missing = 0;

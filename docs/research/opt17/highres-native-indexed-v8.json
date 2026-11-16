@@ -1,0 +1,559 @@
+{
+  "version": "8-indexed128",
+  "patch_sha256": "7731c1e0ae4d36306a0c135e79121a7ef190f3da2ee8b7d70e1f8ad0d69a0e4d",
+  "guard_manifest_sha256": "c879af5043bc2036af0170fdbad8a04e26a539b4213d7303ba6ba08bef93829e",
+  "candidate_sha256": {
+    "src/hardware/hw_cache.c": "7a3611e3b1e160a92221231baea24f948313b1912900e2bb12376705391d08d2",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/hardware/hw_light.c": "11ea9a197e01a2beb60715903201d783d930651a19272d844fbbb918bcfd9fd8",
+    "src/hardware/hw_md2.c": "9a8e58a3d268e67a7defeba35accb26d411d3041fb0f4e0431a133edd39fb899",
+    "src/ps2/hw/ps2_hw_draw.inc": "b142f3639c884abcf5f752702244bad2a16be30793fb064bc8954b952f36e585",
+    "src/ps2/hw/ps2_hw_gs.inc": "fcfc8ceaa61efa01dc990284208003d12653408c7d39249975690376f4ca8983",
+    "src/ps2/hw/ps2_hw_model.inc": "16220c4273728f07a9914b648975bedb0d9a720c8c14c462306e3ee422e439a1",
+    "src/ps2/hw/ps2_hw_plan.inc": "8b26d1049778697b94f6d319dbb27b4e3d936cc4b77cc9300b5661776ca08970",
+    "src/ps2/hw/ps2_hw_priv.inc": "6c6e00db930824d9096f92af0b4cbb1f7f1af8b0b1c6a605fc3ecb8b50230689",
+    "src/ps2/hw/ps2_hw_regs.inc": "bafea9f30d3a2b2c0ef59f6e5b8c1cf08dfd945cfb9794a44646e4bb6b701a0d",
+    "src/ps2/hw/ps2_hw_screen.inc": "aaba2b74e7290d26a8659020678c1117cdb471f02e9c57b13b6b043ce30f74c8",
+    "src/ps2/hw/ps2_hw_sky.inc": "266a459be858e408f32a4d4d7a6fe3e61fb00246639b37808b873b0bf36992d1",
+    "src/ps2/hw/ps2_hw_spr.inc": "2978635704694a6701749277ce07a8482fb8f511fe364d579f233be528e051e0",
+    "src/ps2/hw/ps2_hw_tex.inc": "3c7afcc590fd97cfc9ff2dac7763198d6fc0e75df66092f3e5b2d7a616b91ff0",
+    "src/ps2/hw/ps2_hw_tile.inc": "c8949dff1bf6e5219b4f41d89e436d0370d0832bad166f8397383a34768993fd",
+    "src/ps2/hw/ps2_hw_tile_draw.inc": "97e10e43b400d0d63718713128db622600b95b985068950f904df265a9841e2c",
+    "src/ps2/hw/ps2_hw_tile_stencil.inc": "37a55c2815acb9bec480fdb6628c5aedfdb53ae181f4ca0345b318f3460babae",
+    "src/ps2/hw/ps2_hw_tt.inc": "453d519c80efe439b2802d13ae1b2365a9f96dc8d5aadb8e4b4d8a35abc32ac2",
+    "src/ps2/hw/ps2_hw_vu1.inc": "b16440b623591447fd29954211ee1db6c3fc53a9c06ba3d53d3116b4564628c3",
+    "src/ps2/hw/ps2_hwd.c": "40896784a1ecd6c20b6a81e479dda53ef4912ce9271126444a53699068db4082"
+  },
+  "scope": "Standalone actual EE/GS readbacks in unchanged standard 32 MiB single-slot PCSX2. Synthetic sources only; engine allocation/zone/regeneration hooks are fixture services. Not full-game or physical PS2 validation.",
+  "native_runs": {
+    "full-run": {
+      "report": "build/nov17-tiles/native/indexed-v8-full-run/native-report.json",
+      "sha256": "4d60ee4451a978bf41493628df9cbfbe441a1b6a7e8ff77bb3c5d86d53328280",
+      "checks": 231,
+      "failures": 1,
+      "failure_lines": [
+        "H0 FAIL tn_texture_parity name=texture-f0-1024x512-s4-l0 beyond=1"
+      ],
+      "elf_sha256": "e86677f93bbec5709dc77bd91ae02135b400d5b8d498fb3b21b4bab11b7dad76",
+      "all_runtime_invariants_passed": true
+    },
+    "common-run": {
+      "report": "build/nov17-tiles/native/indexed-v8-common-run/native-report.json",
+      "sha256": "9d11b354bce10a435271a4dbc8e890bc0327741aafc5f6040fd8d7618bfbe37c",
+      "checks": 144,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "e86677f93bbec5709dc77bd91ae02135b400d5b8d498fb3b21b4bab11b7dad76",
+      "all_runtime_invariants_passed": true
+    },
+    "attributes-run": {
+      "report": "build/nov17-tiles/native/indexed-v8-attributes-run/native-report.json",
+      "sha256": "dd0801dda43105d4ec1b0f5233d6bb7e597dadae272be59b79d1f46047e3eece",
+      "checks": 46,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "e86677f93bbec5709dc77bd91ae02135b400d5b8d498fb3b21b4bab11b7dad76",
+      "all_runtime_invariants_passed": true
+    },
+    "coordinate-run": {
+      "report": "build/nov17-tiles/native/indexed-v8-coordinate-run/native-report.json",
+      "sha256": "84c591951f8e0451f22ec93864630021fff171448eb3e1897b9f1dae8dbfca51",
+      "checks": 40,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "e86677f93bbec5709dc77bd91ae02135b400d5b8d498fb3b21b4bab11b7dad76",
+      "all_runtime_invariants_passed": true
+    },
+    "no-halo-run": {
+      "report": "build/nov17-tiles/native/indexed-v8-no-halo-run/native-report.json",
+      "sha256": "d89e03a53ec2750507b61d68d3460e3808081fb5754b849a55f5f5559abed962",
+      "checks": 20,
+      "failures": 2,
+      "failure_lines": [
+        "H0 FAIL tn_texture_parity name=texture-f2-512x256-s6-l1 beyond=1559",
+        "H0 FAIL tn_texture_parity name=texture-f0-1024x512-s6-l1 beyond=14632"
+      ],
+      "elf_sha256": "df4c3ecfeb8c4840515baa2942c90a3cb5b9dc685de86725e95399b6d565fded",
+      "all_runtime_invariants_passed": true
+    },
+    "onecore-run": {
+      "report": "build/nov17-tiles/native/indexed-v8-onecore-run/native-report.json",
+      "sha256": "4795f6ed3ee7c3d9e2d2210ebe83be728df6902c3d1eee057797552817bc485a",
+      "checks": 257,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "e86677f93bbec5709dc77bd91ae02135b400d5b8d498fb3b21b4bab11b7dad76",
+      "all_runtime_invariants_passed": true
+    }
+  },
+  "raw_readback_analysis": {
+    "capture-frame-proof": {
+      "path": "build/nov17-tiles/native/indexed-v8-capture-frame-proof.json",
+      "sha256": "bebf71a4f26ab2fd916231e541c0f944c081b7c71756a397de1255e8e90a9be2"
+    },
+    "coordinate-frame-proof": {
+      "path": "build/nov17-tiles/native/indexed-v8-coordinate-frame-proof.json",
+      "sha256": "96b2f7ac2019640a6e12a9724500f7d8770a19615a79813b78ea630bf9c8580c"
+    },
+    "texture-RGBA-proof": {
+      "path": "build/nov17-tiles/native/indexed-v8-texture-RGBA-proof.json",
+      "sha256": "3dae1e88ad85e81417fbb95754133f417ad726531dec7c067fe8aa3ccfa3640e"
+    }
+  },
+  "default_original_strict_gate_passed": false,
+  "complete_texture_readbacks": {
+    "total_compared": 1088000,
+    "different_RGBA": 1,
+    "different_alpha": 0
+  },
+  "opaque_source_coordinates": [
+    {
+      "shape": 0,
+      "compared_frame_pixels": 64000,
+      "covered_in_both": 64000,
+      "changed_source_coordinates": 0,
+      "max_circular_dx": 0,
+      "max_circular_dy": 0,
+      "missing_coverage": 0,
+      "extra_coverage": 0
+    },
+    {
+      "shape": 3,
+      "compared_frame_pixels": 64000,
+      "covered_in_both": 51792,
+      "changed_source_coordinates": 0,
+      "max_circular_dx": 0,
+      "max_circular_dy": 0,
+      "missing_coverage": 0,
+      "extra_coverage": 0
+    }
+  ],
+  "capture_identity_and_wipe": [
+    {
+      "visible": [
+        640,
+        400
+      ],
+      "compared_pixels_per_check": 256000,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    },
+    {
+      "visible": [
+        640,
+        480
+      ],
+      "compared_pixels_per_check": 307200,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    },
+    {
+      "visible": [
+        640,
+        512
+      ],
+      "compared_pixels_per_check": 327680,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    }
+  ],
+  "retained_reference_exception": "One palette-lightrow pixel differs by one RGB level between the existing fast reference and general path; common EE rendering is exact. No original gate or tolerance was changed.",
+  "historical_evidence": [
+    "build/nov17-tiles/native/proof-index-v2.json",
+    "build/nov17-tiles/native/proof-index-v3.json",
+    "build/nov17-tiles/native/proof-index-v4.json"
+  ],
+  "one_window_native_witness": {
+    "scope": "Actual complete GS readbacks through production colored/model-light NoDepth fog emission, perspective Q, and both Z-write settings.",
+    "cases": {
+      "1": "Narrow 80..95 window",
+      "2": "Inclusive 0..32 boundaries",
+      "3": "Nonaligned 61-texel span",
+      "4": "Raw 512-texel repeat must reject the fast path",
+      "5": "Nonaligned 125-texel span, UV80..205 by100..225"
+    },
+    "positive_pairs": 16,
+    "fallback_pairs": 1,
+    "compared_RGBA_pixels": 1088000,
+    "different_RGBA_pixels": 0,
+    "different_Zlow24_pixels": 0,
+    "counter_observations": [
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 5,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 4,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 4,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 0,
+        "masks": 1349,
+        "mask_sprites": 3424,
+        "workspace": 6912
+      }
+    ],
+    "log": "build/nov17-tiles/native/indexed-v8-onecore-run/native.txt",
+    "log_sha256": "16fcf2cf28abeca73b4612fdc4a1194a764fee6d83e2fbd344c2073da2cf2a34"
+  },
+  "dynamic_extent_halo_negative_witness": {
+    "wrong_pixels": {
+      "texture-f2-512x256-s6-l1": 1559,
+      "texture-f0-1024x512-s6-l1": 14632
+    },
+    "physical_tile_observations": [
+      "TN TILEPHYSICAL name=texture-f2-512x256-s6-l1 valid=1 layout=1 extent=64 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s6-l1 valid=1 layout=3 extent=128 blocks=64"
+    ],
+    "mutation": "Clamp region-relative dx/dy after subtracting extent/4 to0..extent/2-1; preserve physical rolled address.",
+    "log": "build/nov17-tiles/native/indexed-v8-no-halo-run/native.txt",
+    "log_sha256": "12f1593e6f9529357209e4ffe8d4e830da61e44793861b427724f6f68df27244",
+    "positive_physical_tile_observations": [
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s0-l0 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s2-l1 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1000x500-s1-l0 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s3-l1 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s4-l0 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f1-512x256-s2-l1 valid=1 layout=1 extent=64 blocks=64",
+      "TN TILEPHYSICAL name=texture-f2-512x256-s2-l1 valid=1 layout=1 extent=64 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s5-l0 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s6-l1 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f1-512x256-s6-l1 valid=1 layout=1 extent=64 blocks=64",
+      "TN TILEPHYSICAL name=texture-f2-512x256-s6-l1 valid=1 layout=1 extent=64 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s7-l0 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s7-l1 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s8-l0 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s8-l1 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s9-l0 valid=1 layout=3 extent=128 blocks=64",
+      "TN TILEPHYSICAL name=texture-f0-1024x512-s9-l1 valid=1 layout=3 extent=128 blocks=64"
+    ],
+    "positive_log": "build/nov17-tiles/native/indexed-v8-full-run/native.txt",
+    "positive_log_sha256": "fbf3532c7015a4c9189c6a08cf977532426e2199a64d3487e19b58e168e6c6f9"
+  }
+}

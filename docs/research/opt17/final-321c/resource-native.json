@@ -1,0 +1,202 @@
+{
+  "scope": "Native same-ELF visual admission of optional lossless resource sets; no loading/FPS or steady-state RAM claim.",
+  "physical_PS2_tested": false,
+  "runs": {
+    "gap-layout": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "7aca8993bfd4abeca773978d73eadf956ee2f6ef00e6df3465522a257b3ce952",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": [],
+      "complete_PPM_literal_pairs": [
+        {
+          "file": "vidshot-320x200-l140.ppm",
+          "identical": true,
+          "baseline_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+          "candidate_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336"
+        },
+        {
+          "file": "vidshot-320x200-l20.ppm",
+          "identical": true,
+          "baseline_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+          "candidate_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4"
+        },
+        {
+          "file": "vidshot-320x200-l70.ppm",
+          "identical": true,
+          "baseline_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952",
+          "candidate_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+        }
+      ],
+      "saved_config_matches_stock": true,
+      "TEXC_lines": [],
+      "loader_hashes_match_stock": true,
+      "resource_pack_sha256": {
+        "CHARS.PAK": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+        "MUSIC.PAK": "39de305eb44e2ec8fdde2dd0f5d7ec4eee5d4264167fcf999fce160be60ba269",
+        "SRB2.PAK": "947fb651efda632ebfde64c61636047562f6046a9c04f5e6b7728570bc414aad",
+        "ZONES.PAK": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+        "FINEACON.DAT": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792"
+      },
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "gap-layout",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak-opt17",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/resource-native/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "240",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-astat",
+        "-hwdbg",
+        "33554432",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware"
+      ],
+      "passed": true
+    },
+    "texc-direct-zero-prefetch": {
+      "rc": 0,
+      "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "captures": {
+        "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+        "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+        "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+      },
+      "loader_hashes": [
+        "LHASH tex.boot 13cb6e0834278031",
+        "LHASH spr.all a0a22bcec38eaabf",
+        "LHASH map.vtx 50385f14c8ad0a59",
+        "LHASH map.sec ea135c152447daa4",
+        "LHASH map.lin d31ea0b71b228cb2",
+        "LHASH map.sid 44da8cb24e77b387",
+        "LHASH map.bsp 52d8b0931c52a64e",
+        "LHASH map.lut 24dddd6210ba70f7",
+        "LHASH map.thg a95f21b55d87d054",
+        "LHASH map.all a95f21b55d87d054"
+      ],
+      "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+      "boot_sha256": "872983178530898cdab893221aec871eeddf31b46f6bc93c07b4132184b30dcf",
+      "warnings": [],
+      "skipped_draw_lines": [],
+      "skipped_draw_classification": {
+        "selected_while_collecting": [],
+        "purged_source": [],
+        "not_resident": [],
+        "other": []
+      },
+      "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+      "errors": [],
+      "complete_PPM_literal_pairs": [
+        {
+          "file": "vidshot-320x200-l140.ppm",
+          "identical": true,
+          "baseline_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+          "candidate_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336"
+        },
+        {
+          "file": "vidshot-320x200-l20.ppm",
+          "identical": true,
+          "baseline_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+          "candidate_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4"
+        },
+        {
+          "file": "vidshot-320x200-l70.ppm",
+          "identical": true,
+          "baseline_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952",
+          "candidate_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+        }
+      ],
+      "saved_config_matches_stock": true,
+      "TEXC_lines": [],
+      "loader_hashes_match_stock": true,
+      "resource_pack_sha256": {
+        "CHARS.PAK": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+        "MUSIC.PAK": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0",
+        "SRB2.PAK": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+        "TEXC.PAK": "6f408ef03180291f098e26dd1049e09018e71c44ffcfbd1231779a9fbef3b485",
+        "ZONES.PAK": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+        "FINEACON.DAT": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792"
+      },
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "texc-direct-zero-prefetch",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak-texc17",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/resource-native/runs",
+        "--map",
+        "MAP02",
+        "--timeout",
+        "240",
+        "--until",
+        "I_ShutdownSystem(): end of logstream.",
+        "--",
+        "-singletics",
+        "-loadprof",
+        "-loadhash",
+        "-astat",
+        "-hwdbg",
+        "33554432",
+        "-vidshot",
+        "l20,l70,l140",
+        "-renderer",
+        "Hardware",
+        "-texcmem",
+        "0"
+      ],
+      "passed": true
+    }
+  },
+  "passed": true
+}

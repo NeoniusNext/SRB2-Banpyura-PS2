@@ -1,0 +1,294 @@
+{
+  "scope": "OPT16 targeted source research only; not runtime acceptance",
+  "baseline_commit": "604cfd150c5240142d8cb5367950b53d987916d1",
+  "wave_filename_date": "20261116",
+  "actual_checks_utc_date": "2026-11-15",
+  "evidence_created_utc": "2026-11-15T15:19:15.871807+00:00",
+  "sources": [
+    {
+      "filename": "GS_Users_Manual.pdf",
+      "url": "https://raw.githubusercontent.com/ninjadynamics/PS2Docs/main/GS_Users_Manual.pdf",
+      "http_status": 200,
+      "bytes": 1265948,
+      "sha256": "daf72c776f6e27721149f28dc46ad47443e560b22a04f3d8ff4bcf74f254bf12",
+      "pages": 176,
+      "targeted_one_based_pages": [
+        30,
+        31,
+        55,
+        56,
+        57,
+        76,
+        79,
+        126,
+        163,
+        164,
+        168,
+        171,
+        172,
+        173
+      ],
+      "access": "Direct HTTPS GET; pdftotext -layout; only metadata retained in repository"
+    },
+    {
+      "filename": "final-gdc2002-clippingps2.pdf",
+      "url": "https://lukasz.dk/files/final-gdc2002-clippingps2.pdf",
+      "http_status": 200,
+      "bytes": 92683,
+      "sha256": "e80b0a673e9ec575049cc05800e536e3b9d4b427def7bc2c618b5f695ad33517",
+      "pages": 36,
+      "targeted_one_based_pages": [
+        22,
+        26,
+        27,
+        34,
+        35
+      ],
+      "access": "Direct HTTPS GET; pdftotext -layout; only metadata retained in repository"
+    },
+    {
+      "filename": "am2005jgt_paper.pdf",
+      "url": "https://users.aalto.fi/~ailat1/publications/am2005jgt_paper.pdf",
+      "http_status": 200,
+      "bytes": 1165613,
+      "sha256": "ff5dd8b4d5bd145c25b269387ad34b3c3a9af3176136a2b4bd91553649114da3",
+      "pages": 7,
+      "targeted_one_based_pages": [
+        3,
+        4,
+        5
+      ],
+      "access": "Direct HTTPS GET; pdftotext -layout; only metadata retained in repository"
+    }
+  ],
+  "other_opened_sources": [
+    {
+      "url": "https://users.aalto.fi/~ailat1/",
+      "role": "Author index links am2005jgt draft"
+    },
+    {
+      "url": "https://fobes.dev/ps2/fragmenting-memory-with-the-ct24-format",
+      "role": "Original-author article; Z24/high-indexed-format lead, already catalogued in prior research"
+    }
+  ],
+  "access_differences": {
+    "gs_manual_web_reader": "Unsupported content-type application/octet-stream; direct HTTPS worked",
+    "clipping_www_web_reader": "Not accessible; direct canonical lukasz.dk HTTPS worked",
+    "conservative_rasterizer": "Web PDF parser and direct HTTPS both worked"
+  },
+  "readonly_product_sources": [
+    {
+      "path": "src/ps2/hw/ps2_hw_tex.inc",
+      "sha256": "091e790814cf00002765b633f0bf12aa6d875880eefec59685f6ba5fb02401ea",
+      "baseline_sha256": "091e790814cf00002765b633f0bf12aa6d875880eefec59685f6ba5fb02401ea",
+      "matched_baseline_when_hashed": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_draw.inc",
+      "sha256": "f117715b398b42b1084541d8ea6cb64c2422d5fab151227ad22ad8dc70c8c862",
+      "baseline_sha256": "f117715b398b42b1084541d8ea6cb64c2422d5fab151227ad22ad8dc70c8c862",
+      "matched_baseline_when_hashed": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_plan.inc",
+      "sha256": "4705ff5b6edc5c3c121fa188c5eb1dae8a63adc89e6e0af48c89911f687788f1",
+      "baseline_sha256": "4705ff5b6edc5c3c121fa188c5eb1dae8a63adc89e6e0af48c89911f687788f1",
+      "matched_baseline_when_hashed": true
+    },
+    {
+      "path": "src/ps2/hw/ps2_hw_gs.inc",
+      "sha256": "fdf12939e01ba31472ebad75a4418aeb1fada38784f0c4bc796a8b5bd2b71d1e",
+      "baseline_sha256": "fdf12939e01ba31472ebad75a4418aeb1fada38784f0c4bc796a8b5bd2b71d1e",
+      "matched_baseline_when_hashed": true
+    },
+    {
+      "path": "src/hardware/hw_front.inc",
+      "sha256": "1fd7ac4e5a8dcdc6bdf993e52786936091ed0894f6a537862160e768995c433a",
+      "baseline_sha256": "1fd7ac4e5a8dcdc6bdf993e52786936091ed0894f6a537862160e768995c433a",
+      "matched_baseline_when_hashed": true
+    }
+  ],
+  "address_model": {
+    "description": "Enumerates touched GS blocks from manual page/block tables, starting at relative block 0, with minimum legal even TBW. This is a host address calculation; no GS execution.",
+    "examples": [
+      {
+        "width": 8,
+        "height": 8,
+        "tbw": 2,
+        "PSMT8": {
+          "payload_bytes": 64,
+          "touched_block_count": 1,
+          "contiguous_span_blocks": 1,
+          "contiguous_span_bytes": 256,
+          "relative_touched_blocks": [
+            0
+          ]
+        },
+        "PSMT4": {
+          "payload_bytes": 32,
+          "touched_block_count": 1,
+          "contiguous_span_blocks": 1,
+          "contiguous_span_bytes": 256,
+          "relative_touched_blocks": [
+            0
+          ]
+        }
+      },
+      {
+        "width": 16,
+        "height": 16,
+        "tbw": 2,
+        "PSMT8": {
+          "payload_bytes": 256,
+          "touched_block_count": 1,
+          "contiguous_span_blocks": 1,
+          "contiguous_span_bytes": 256,
+          "relative_touched_blocks": [
+            0
+          ]
+        },
+        "PSMT4": {
+          "payload_bytes": 128,
+          "touched_block_count": 1,
+          "contiguous_span_blocks": 1,
+          "contiguous_span_bytes": 256,
+          "relative_touched_blocks": [
+            0
+          ]
+        }
+      },
+      {
+        "width": 64,
+        "height": 16,
+        "tbw": 2,
+        "PSMT8": {
+          "payload_bytes": 1024,
+          "touched_block_count": 4,
+          "contiguous_span_blocks": 6,
+          "contiguous_span_bytes": 1536,
+          "relative_touched_blocks": [
+            0,
+            1,
+            4,
+            5
+          ]
+        },
+        "PSMT4": {
+          "payload_bytes": 512,
+          "touched_block_count": 2,
+          "contiguous_span_blocks": 3,
+          "contiguous_span_bytes": 768,
+          "relative_touched_blocks": [
+            0,
+            2
+          ]
+        }
+      },
+      {
+        "width": 128,
+        "height": 16,
+        "tbw": 2,
+        "PSMT8": {
+          "payload_bytes": 2048,
+          "touched_block_count": 8,
+          "contiguous_span_blocks": 22,
+          "contiguous_span_bytes": 5632,
+          "relative_touched_blocks": [
+            0,
+            1,
+            4,
+            5,
+            16,
+            17,
+            20,
+            21
+          ]
+        },
+        "PSMT4": {
+          "payload_bytes": 1024,
+          "touched_block_count": 4,
+          "contiguous_span_blocks": 11,
+          "contiguous_span_bytes": 2816,
+          "relative_touched_blocks": [
+            0,
+            2,
+            8,
+            10
+          ]
+        }
+      },
+      {
+        "width": 64,
+        "height": 32,
+        "tbw": 2,
+        "PSMT8": {
+          "payload_bytes": 2048,
+          "touched_block_count": 8,
+          "contiguous_span_blocks": 8,
+          "contiguous_span_bytes": 2048,
+          "relative_touched_blocks": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7
+          ]
+        },
+        "PSMT4": {
+          "payload_bytes": 1024,
+          "touched_block_count": 4,
+          "contiguous_span_blocks": 4,
+          "contiguous_span_bytes": 1024,
+          "relative_touched_blocks": [
+            0,
+            1,
+            2,
+            3
+          ]
+        }
+      },
+      {
+        "width": 128,
+        "height": 128,
+        "tbw": 2,
+        "PSMT8": {
+          "payload_bytes": 16384,
+          "touched_block_count": 64,
+          "contiguous_span_blocks": 64,
+          "contiguous_span_bytes": 16384
+        },
+        "PSMT4": {
+          "payload_bytes": 8192,
+          "touched_block_count": 32,
+          "contiguous_span_blocks": 32,
+          "contiguous_span_bytes": 8192
+        }
+      },
+      {
+        "width": 1024,
+        "height": 1024,
+        "tbw": 16,
+        "PSMT8": {
+          "payload_bytes": 1048576,
+          "touched_block_count": 4096,
+          "contiguous_span_blocks": 4096,
+          "contiguous_span_bytes": 1048576
+        },
+        "PSMT4": {
+          "payload_bytes": 524288,
+          "touched_block_count": 2048,
+          "contiguous_span_blocks": 2048,
+          "contiguous_span_bytes": 524288
+        }
+      }
+    ]
+  },
+  "ran_compiler": false,
+  "ran_emulator": false,
+  "ran_game": false,
+  "product_edits": false,
+  "committed_or_pushed": false
+}

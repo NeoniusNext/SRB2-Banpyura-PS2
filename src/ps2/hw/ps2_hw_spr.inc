@@ -269,7 +269,7 @@ static void spr_flush_list(int which)
 			gid[i] = 0xFF; // not resident (no room or no data): the draw is skipped, as the batch skips it
 			continue;
 		}
-		if (r->psm != PSM_T8 || (r->clut != 1 && r->clut != 2) || r->screen || r->wrapx || r->wrapy || (e->flags & (PF_ForceWrapX | PF_ForceWrapY | PF_RemoveYWrap)))
+		if (r->tiled == 1 || r->psm != PSM_T8 || (r->clut != 1 && r->clut != 2) || r->screen || r->wrapx || r->wrapy || (e->flags & (PF_ForceWrapX | PF_ForceWrapY | PF_RemoveYWrap)))
 		{
 			gid[i] = 0xFE; // not for the stream: the way of the single draws (below)
 			continue;

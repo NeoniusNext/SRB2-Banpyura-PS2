@@ -1,0 +1,53 @@
+{
+  "source_commit": "321c8d4da2cdc4d175271726b8b2bc450cbbc57b",
+  "stages": {
+    "standard-gs-canonical": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/standard_gs.py",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/standard-gs-canonical",
+        "--reference",
+        "/workspace/SRB2-Banpyura-PS2/docs/research/opt17/standard-gs-reference.json"
+      ],
+      "exit": 1,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/standard-gs-canonical/report.json",
+      "report_sha256": "a4817f282b47282291be5074dbdfa8f0e2b1fdd7a4c4b3bb8c3c281a40001280"
+    },
+    "resource-native": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/run-resources.py"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/resource-native/report.json",
+      "report_sha256": "96dfe5ed6cd5255509d96120a69e4d1affedd93c76de2cf075643155c16d607c"
+    },
+    "map11-guard": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/run-map11-guard.py"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/map11-guard/report.json",
+      "report_sha256": "10339b863c653411a48fe8bb7678feb6352c1da043464b305f13abf20f27b61e",
+      "shutdown_marker": true
+    },
+    "map11-admission": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/run-map11-admission.py"
+      ],
+      "exit": 0,
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/map11-admission/report.json",
+      "report_sha256": "3dc6a0d29717885e096950fa1776d4b97fbd603966e3ee65a8362d300c580e2b",
+      "shutdown_marker": true
+    }
+  },
+  "all_requested_stages_completed": true,
+  "strict_all_passed": false
+}

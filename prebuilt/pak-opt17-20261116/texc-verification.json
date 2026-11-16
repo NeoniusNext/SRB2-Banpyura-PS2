@@ -1,0 +1,177 @@
+{
+  "source_sha256": {
+    "src/ps2/ps2_texc.c": "5ba74bbe84e0e2f7f48e23f0b66c8b3913705903757e53dd93a69cf2a2811da0",
+    "src/r_textures.c": "437f6a3c61c61ebda12ff8581aa5122093cc5431af1260409b9229288d337925",
+    "src/w_pack.c": "6f840faaa32fae908edda13ecb9bc93e31580596aecd6bf3b83f2b1f2fdceec0",
+    "src/w_pack.h": "e76426bb03e6a0798661f2ecbe6f76b01c7143170b20336ce4fe794e9a1085da",
+    "src/w_wad.h": "2d75decb9545f85a7b76d9364f332c6cff7252cd1911239e445c8b24df4e9d18",
+    "tools/ps2/cook.py": "0e232e09282e5800ee526b257a01d7fd4e42e39d68493a80dbef0c134fcc8967",
+    "tools/ps2/cook_texc.sh": "3980a3eea09157afa414572f5afff1a6fecb13ad864d04bccd3ce73201087424",
+    "tools/ps2/texc_stock_hosttest.c": "46404eba33c88ba5eb4a521303e3e7fcafd873501c8c7f0975371eccbf12aab6",
+    "tools/ps2/resource_stream_opt17_hosttest.c": "3a701fa2c3bad3fc5816ef823d44ddbe3265a166e09e4dfe130ddb1a72c27596",
+    "tools/ps2/resource_stream_opt17_hosttest.py": "6b27778d4bee601947511ed5c3aa396324939b83bda2cdced2c02aad09d312cf",
+    "tools/ps2/texc_stock_verify.py": "b8715173740a884beaf3c69f3badf77c719afa04ee7fbb3e78d050aae16cc0b2"
+  },
+  "pack_sha256": "d4dca18293b00af3555e3989ea517274e197f95268a3397bb9ec64a6bfb42eb8",
+  "dump_sha256": "2261c4437d8076022531cfedb2a911d38707cf2122777b14f5e4e01cb939cbe9",
+  "compositor": {
+    "records": 3318,
+    "unique_keys": 3309,
+    "pixel_bytes_all_records": 129989949,
+    "literal_bytes_unique_plus_info": 129686189,
+    "literal_sha256": "376bc5a921dbe2ab453118047873e080ef01727c399730bd9e36e72f384e804b",
+    "python_all_bytes_equal": true
+  },
+  "readers": {
+    "plain-heads": {
+      "seconds": 1.6373,
+      "decoded_bytes": 129686189,
+      "partial_reads": 66200,
+      "io": {
+        "open": {
+          "cmds": 16,
+          "bytes": 192512
+        },
+        "iostat": {
+          "cmds": 1199,
+          "hits": 73683,
+          "misses": 1182,
+          "bulk": 17,
+          "retries": 0,
+          "failures": 0,
+          "injected": 0,
+          "bytes": 77531136
+        }
+      }
+    },
+    "plain-nohead": {
+      "seconds": 1.6146,
+      "decoded_bytes": 129686189,
+      "partial_reads": 66200,
+      "io": {
+        "open": {
+          "cmds": 16,
+          "bytes": 192512
+        },
+        "iostat": {
+          "cmds": 1199,
+          "hits": 80327,
+          "misses": 1182,
+          "bulk": 17,
+          "retries": 0,
+          "failures": 0,
+          "injected": 0,
+          "bytes": 77531136
+        }
+      }
+    },
+    "asan-heads": {
+      "seconds": 3.5964,
+      "decoded_bytes": 129686189,
+      "partial_reads": 66200,
+      "io": {
+        "open": {
+          "cmds": 16,
+          "bytes": 192512
+        },
+        "iostat": {
+          "cmds": 1199,
+          "hits": 73683,
+          "misses": 1182,
+          "bulk": 17,
+          "retries": 0,
+          "failures": 0,
+          "injected": 0,
+          "bytes": 77531136
+        }
+      }
+    },
+    "asan-nohead": {
+      "seconds": 3.7645,
+      "decoded_bytes": 129686189,
+      "partial_reads": 66200,
+      "io": {
+        "open": {
+          "cmds": 16,
+          "bytes": 192512
+        },
+        "iostat": {
+          "cmds": 1199,
+          "hits": 80327,
+          "misses": 1182,
+          "bulk": 17,
+          "retries": 0,
+          "failures": 0,
+          "injected": 0,
+          "bytes": 77531136
+        }
+      }
+    }
+  },
+  "fetch-plain": {
+    "rc": 0,
+    "stdout": "TEXC_BUDGET budget=0 resident=0 peak_extra=0 temporary=0 composites=0\nTEXC prefetch: 35 stored composites, 255 KiB, 0 cycles\nTEXC_BUDGET budget=262144 resident=262112 peak_extra=615604 temporary=353492 composites=35\nTEXC prefetch: 31 stored composites, 512 KiB, 0 cycles\nTEXC_BUDGET budget=524288 resident=524288 peak_extra=914644 temporary=390356 composites=31\nTEXC prefetch: 132 stored composites, 1024 KiB, 0 cycles\nTEXC_BUDGET budget=1048576 resident=1048576 peak_extra=1438932 temporary=390356 composites=132\nTEXC prefetch: 234 stored composites, 2040 KiB, 0 cycles\nTEXC_BUDGET budget=2097152 resident=2089360 peak_extra=2479716 temporary=390356 composites=234\nSTOCK TEXC PASS records=3318 literal_bytes_each_path=129989949 max_old_temporary=287661 new_fetch_extra=0 checks=905753 live=0",
+    "stderr": ""
+  },
+  "fetch-asan": {
+    "rc": 0,
+    "stdout": "TEXC_BUDGET budget=0 resident=0 peak_extra=0 temporary=0 composites=0\nTEXC prefetch: 35 stored composites, 255 KiB, 0 cycles\nTEXC_BUDGET budget=262144 resident=262112 peak_extra=615604 temporary=353492 composites=35\nTEXC prefetch: 31 stored composites, 512 KiB, 0 cycles\nTEXC_BUDGET budget=524288 resident=524288 peak_extra=914644 temporary=390356 composites=31\nTEXC prefetch: 132 stored composites, 1024 KiB, 0 cycles\nTEXC_BUDGET budget=1048576 resident=1048576 peak_extra=1438932 temporary=390356 composites=132\nTEXC prefetch: 234 stored composites, 2040 KiB, 0 cycles\nTEXC_BUDGET budget=2097152 resident=2089360 peak_extra=2479716 temporary=390356 composites=234\nSTOCK TEXC PASS records=3318 literal_bytes_each_path=129989949 max_old_temporary=287661 new_fetch_extra=0 checks=905753 live=0",
+    "stderr": ""
+  },
+  "budget_stress": [
+    {
+      "budget": 0,
+      "resident": 0,
+      "peak_extra": 0,
+      "temporary": 0,
+      "composites": 0
+    },
+    {
+      "budget": 262144,
+      "resident": 262112,
+      "peak_extra": 615604,
+      "temporary": 353492,
+      "composites": 35
+    },
+    {
+      "budget": 524288,
+      "resident": 524288,
+      "peak_extra": 914644,
+      "temporary": 390356,
+      "composites": 31
+    },
+    {
+      "budget": 1048576,
+      "resident": 1048576,
+      "peak_extra": 1438932,
+      "temporary": 390356,
+      "composites": 132
+    },
+    {
+      "budget": 2097152,
+      "resident": 2089360,
+      "peak_extra": 2479716,
+      "temporary": 390356,
+      "composites": 234
+    }
+  ],
+  "negative-compositor-byte": {
+    "rc": 1,
+    "stdout": "",
+    "stderr": "FAIL line 116: !memcmp(storage+63, expected, size) && attempts == before && live == opened"
+  },
+  "negative-fetch-allocation": {
+    "rc": 1,
+    "stdout": "",
+    "stderr": "FAIL line 115: PS2TexC_Fetch(0, storage+63, size)"
+  },
+  "storage": {
+    "file_bytes": 15738880,
+    "name_pool_bytes": 56262,
+    "lumps": 3310,
+    "largest_decoded": 1048576,
+    "largest_stored": 287661,
+    "largest_prefetch_single_run_rounded": 290816,
+    "unique_stored_bytes": 14778164
+  }
+}

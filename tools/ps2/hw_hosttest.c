@@ -1,9 +1,10 @@
-/* x86 host test of the GS renderer driver logic (see tools/ps2/hw_hosttest.py): the real src/ps2/hw/ps2_hw_*.inc files are
+/* Host test of the GS renderer driver logic (see tools/ps2/hw_hosttest.py): the real src/ps2/hw/ps2_hw_*.inc files are
  * compiled as they are, the GS side (DMA ring) is replaced by a capture buffer, and every result is compared with code that
  * is written independently here (double precision pipeline, GS register bit field encoders, block address tables).
  *   neg=N : negative control N - a deliberate mutation; the group named in "HT negctl N expects <group>" must FAIL.
  */
 #include <math.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,11 +15,28 @@
 #define HWGIF_UNUSED 0
 #define CONS_WARNING 1
 #define CONS_ERROR 2
-#define CONS_Alert(level, ...) ((void)(level))
-#define CONS_Printf(...) ((void)0)
-/* Host packet tests do not submit DMA; ordinary malloc/free is sufficient here. */
-#define memalign(alignment, bytes) malloc(bytes)
+/* Consume diagnostics' arguments so host warnings still check the expressions. */
+static void host_log(const char *format, ...) { (void)format; }
+#define CONS_Alert(level, ...) ((void)(level), host_log(__VA_ARGS__))
+#define CONS_Printf host_log
+#define I_OutputMsg host_log
+static void *host_memalign(size_t alignment, size_t bytes)
+{
+#ifdef _MSC_VER
+	/* MSVC copies omit the GCC alignment attributes, as in the original fixture. */
+	(void)alignment;
+	return malloc(bytes);
+#else
+	return aligned_alloc(alignment, (bytes + alignment - 1) & ~(alignment - 1));
+#endif
+}
+#define memalign host_memalign
 #include "ps2_hw_priv.inc"
+#include "ps2_hw_hg.inc"
+int ps2hwp_skyview;
+int ps2hwd_fx2;
+UINT32 hwr_texsig;
+#include "ps2_hw_vif.inc"
 #include "ps2_hw_regs.inc"
 
 /* ---- replacements for ps2_hw_gs.inc: a capture buffer with the same buffer boundaries as the DMA ring ---- */
@@ -82,12 +100,25 @@ static void pk_ref(const void *data, u32 qwc)
 {
 	(void)data; (void)qwc;
 }
+static void pk_ref_tail(const void *data, u32 bytes) { (void)data; (void)bytes; }
+static void vu_chunk_flush(void);
+static void Z_SetRebuildCost(void **data, unsigned int cost) { (void)data; (void)cost; }
+#define PU_STATIC 1 /* src/z_zone.h: static entire execution time */
+static u32 Z_FrameCount(void) { return H.frame_no; }
+static void Z_Free(void *data) { free(data); }
+static void *PS2Models_TryAlloc(size_t size, INT32 tag, void *user, INT32 alignbits)
+{
+	(void)tag; (void)user;
+	return host_memalign((size_t)1 << alignbits, size);
+}
+static INT32 M_CheckParm(const char *check) { (void)check; return 0; }
 #define SyncDCache(a, b) ((void)0)
 void HWR_PS2_LockData(void *data) { (void)data; }
 void HWR_PS2_UnlockData(void *data) { (void)data; }
 void HWR_PS2_FreeData(void *data) { free(data); }
 void *HWR_PS2_StealData(GLMipmap_t *m, void **newuser) { void *p = m->data; m->data = NULL; *newuser = p; return p; }
 void *HWR_PS2_AllocData(size_t bytes, void **newuser) { void *p = malloc(bytes); *newuser = p; return p; }
+const char *HWR_PS2_TexName(const GLMipmap_t *m) { (void)m; return "host texture"; }
 /* PS2-HW-34: the frame plan (ps2_hw_plan.inc) is not part of the host test: every texture is stored at full size */
 static u32 tex_want(const GLMipmap_t *m, int *visible) { (void)m; *visible = 1; return 0; }
 static int clear_count;
@@ -111,8 +142,12 @@ int PS2HWD_ReadVram(void *dst, unsigned int blk, unsigned int tbw, int psm, int 
 	return 0;
 }
 
+static void imm_prepare(const FOutVector *verts, unsigned int n) { (void)verts; (void)n; }
 #include "ps2_hw_xform.inc"
 #include "ps2_hw_light.inc"
+int HWR_ShouldUsePaletteRendering(void) { return 0; }
+#include "ps2_hw_pal.inc"
+#include "ps2_hw_fx2.h"
 #include "ps2_hw_tex.inc"
 #include "ps2_hw_draw.inc"
 #include "ps2_hw_model.inc"
@@ -167,7 +202,6 @@ static void host_init(int fb32)
 		blk_owner_p = calloc(1, sizeof *blk_owner_p);
 		ovq_p = calloc(1, sizeof *ovq_p);
 		cutbuf_p = calloc(1, sizeof *cutbuf_p);
-		plan_info_p = calloc(1, sizeof *plan_info_p);
 	}
 	memset(blk_owner, 0, sizeof blk_owner);
 	batch_phase = 0;
@@ -371,7 +405,7 @@ static void test_matrices(void)
 		}
 	}
 	{
-		char d[128];
+		char d[256];
 
 		snprintf(d, sizeof d, "4x4 model-view-projection of 300 random transforms against the double precision product, worst error: rotation part %.2e absolute, translation part %.2e relative; 5 analytic points", worst_rot, worst_tr);
 		group_end(d);
@@ -768,7 +802,7 @@ static void test_packing(void)
 	}
 	nclip = 0;
 	{
-		char d[160];
+		char d[256];
 
 		snprintf(d, sizeof d, "%d unclipped polygons (CT32 and CT16S setups, textured and flat): GIF tag, vertex x/y/z within 1/16 pixel, S/T/Q, colours", nunc);
 		group_end(d);
@@ -988,7 +1022,7 @@ static void test_lists(void)
 		EXPECT(fabs(ref_area - got_area) < 2.0 + ref_area * 2e-3 + got_tris * 0.3, "area %.1f px^2 against the reference %.1f (%d polygons, %d triangles in, %llu out)", got_area, ref_area, polys, ni / 3, (unsigned long long)got_tris);
 	}
 	{
-		char d[160];
+		char d[256];
 
 		snprintf(d, sizeof d, "%d triangles in 60 batches through DrawIndexedTriangles' packer (%d DMA buffers filled): one GIF tag per run, no packet across a buffer boundary, visible area = double precision reference", ntri_total, nbuf_total);
 		group_end(d);
@@ -1196,7 +1230,7 @@ static void test_registers(void)
 		EXPECT(cld_count == 1, "CLD=1 written %d times for three draws with the same texture", cld_count);
 	}
 	{
-		char d[160];
+		char d[256];
 
 		snprintf(d, sizeof d, "TEST/ALPHA/ZBUF/FRAME/SCISSOR for 10 blend and depth flag sets (x invisible, x CT32/CT16S) and TEX0/TEX1/CLAMP for 6 texture kinds x modulate x filter, against the GS manual's field layout");
 		group_end(d);
@@ -1527,7 +1561,7 @@ static void test_conversion(void)
 		}
 	}
 	{
-		char d[160];
+		char d[256];
 
 		snprintf(d, sizeof d, "%d texels from 200 random palettes (with duplicate colours): lowest index wins, alpha 0 -> index 255, partial alpha refused (%d textures), index 255's colour maps to the nearest other", texels, partial_rejects);
 		group_end(d);
@@ -1674,7 +1708,7 @@ static void test_upload(void)
 			free(m);
 		}
 	{
-		char d[200];
+		char d[256];
 
 		snprintf(d, sizeof d, "%d textures (PSMT8 indexed, keyed, CT16, CT32 with alpha; 16x16..1024x1024 and odd sizes): transfer set-up registers, band geometry, IMAGE sizes, payload against an independent resampling (%d bytes)", uploads, bytes);
 		group_end(d);
@@ -2302,7 +2336,7 @@ static void ff_run(int mode)
 	static const u32 plans[4] = {PF_Masked | PF_Modulated, PF_Translucent | PF_Modulated | PF_NoDepthTest, PF_Additive | PF_Modulated | PF_NoTexture, PF_Masked | PF_Occlude | PF_Modulated};
 	FSurfaceInfo s;
 	GLMipmap_t *t[3];
-	int i, k, plan;
+	int i, k, plan, invalidations = 0, fast_draws = 0;
 
 	rng_s = 0x1234567ull;
 	host_init(0);
@@ -2330,6 +2364,7 @@ static void ff_run(int mode)
 		for (k = 0; k < 60; k++)
 		{
 			FOutVector q[6];
+			u32 before = H.st.verts_out;
 			int n = 3 + (int)(rnd() % 4), j, d = (int)(rnd() % 12);
 			float cx = (float)rndf(-60.0, 60.0), cy = (float)rndf(-40.0, 40.0), z = (float)rndf(8.0, 300.0), r = (float)rndf(2.0, 80.0);
 
@@ -2344,18 +2379,38 @@ static void ff_run(int mode)
 				q[j].t = (float)(0.5 + 0.5 * sin(a));
 			}
 			emit_fan(q, NULL, n, NULL);
+			/* No vertex colours; all UV spans are below UV_EXTENT. A
+			 * surviving P.fast polygon therefore takes emit_fast_fan.
+			 * G.p_fast is incremented only in the HW_VU0 build. */
+			fast_draws += P.fast && H.st.verts_out > before;
 			switch (d)
 			{
 				case 1: do_clear(1, 1, NULL); break;
 				case 2: (void)clut_get(CK_TINT, 0xFF8040u + (rnd() & 0xFF), 0); break;
 				case 3: if (!(rnd() & 7)) { GLMipmap_t *x = mk_tex(16, 16, GL_TEXFMT_P_8); tex_upload(x); } break;
-				case 4: { qw_t *pp = ad_alloc(1); ad_set(pp, 0, GSR_PRMODECONT); H.gsr.valid = 0; if (neg == 21) P.serial = H.serial; break; } /* neg 21: a missed invalidation */
+				case 4:
+				{
+					qw_t *pp = ad_alloc(1);
+
+					/* TEST_1 belongs to pass_setup and to ff_replay's register
+					 * oracle. PRMODECONT (used here by the old fixture) does
+					 * not, so its mutation could not test invalidation. */
+					ad_set(pp, 0, GSR_TEST_1);
+					H.gsr.valid = 0;
+					invalidations++;
+					if (mode && neg == 21)
+						P.serial = H.serial; /* missed invalidation: skip pass_setup */
+					break;
+				}
 				case 5: ov_flush_all(); break;
 				default: break;
 			}
 		}
 	}
 	ps2hwd_dbg_flags = 0;
+	EXPECT(invalidations > 0, "no GS state invalidation in mode %d", mode);
+	EXPECT(mode ? fast_draws > 0 : fast_draws == 0,
+		"wrong branch coverage in mode %d: %d fast fans", mode, fast_draws);
 	ff_n[mode] = ff_replay(ff_hash[mode], FF_MAXPRIM);
 }
 

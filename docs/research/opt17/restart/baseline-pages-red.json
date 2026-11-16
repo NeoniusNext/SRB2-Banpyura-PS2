@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "returncode": 0,
+  "layout": "pages",
+  "sanitize": true,
+  "expect_orphan": true,
+  "owner_reuse": true,
+  "source_sha256": {
+    "src/hardware/hw_cache.c": "7a3611e3b1e160a92221231baea24f948313b1912900e2bb12376705391d08d2",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/z_zone.c": "c7628ef5198e7c94735546f991914b9bdd83f5c628e4978c9aa9326c9257f0c3",
+    "src/ps2/ps2_mem.c": "fb8f305fa314e79e310b82345b9c9dad9d1d6a652e74d63e7d89b3eff93beb64"
+  },
+  "fixture_sha256": "28c351e1af699ad12af438012def72011057e10a39743945c162eff1552d67f3",
+  "runner_sha256": "0c487c8166e2ce4ed984c5c87687969b9a6463ed5b88c0904bba589239bdb432",
+  "generated_source_sha256": "9832afcc053571e97d8d0c47e945bb75f15f07e6cab4c8ea640ae9b4ccd58f25",
+  "output": "FLAT EXPECTED RED Z_CheckHeap -1140: block 2 doesn't have a proper user\nFLAT LIFETIME COMPLETE expected_orphan=1\n",
+  "emulator_used": false
+}

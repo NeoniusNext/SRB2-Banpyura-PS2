@@ -1,0 +1,65 @@
+{
+  "scope": "Unmodified standard GS reference from the pre-tile v7 driver. Strict numerical VU0 failures remain failures. These are complete CT32 and CT16 readbacks, not frame-rate evidence.",
+  "source_report_sha256": "354e2b5483ab0484e091931b178bafc2eec695f22aa87c4e6f545f1374c22c92",
+  "reference_ELF_sha256": "69b353535e9cb8ae9fd71e823e36710687dea83d399d08794b64734d6247ad5d",
+  "runs": {
+    "ct32": {
+      "suite_exit": 1,
+      "wrapper_exit": 0,
+      "complete": [
+        "H0 COMPLETE checks=56 failures=1"
+      ],
+      "failures": [
+        "H0 FAIL vu0_transform 49152 vertices, 0 outcode differences, max dX 1 dY 1 dZ 86, max 1/w relative error 3.61343e-05"
+      ],
+      "pass_count": 55
+    },
+    "ct16": {
+      "suite_exit": 1,
+      "wrapper_exit": 0,
+      "complete": [
+        "H0 COMPLETE checks=51 failures=1"
+      ],
+      "failures": [
+        "H0 FAIL vu0_transform 49152 vertices, 0 outcode differences, max dX 1 dY 1 dZ 86, max 1/w relative error 3.61343e-05"
+      ],
+      "pass_count": 50
+    }
+  },
+  "images": {
+    "hw-clear-32.ppm": "8284da12bd8d50df49cbf6643b988e76376821b79bb84cfef84f7ba2c3bbdab4",
+    "hw-clear.ppm": "e6a5fc8145d0750fc1696e4c1e04aae3c2a323cb7be080b850e1e75fde120ce9",
+    "hw-clut_all_256-32.ppm": "17ea9fe11cc1bd17aa31125b9c977aea78b8dc59046fd365492c0069c986c6f6",
+    "hw-clut_all_256.ppm": "e6e4b9ccb8721054b234db8ccdfcac0d4872d3eec341109832d8b08fbf8eb1d6",
+    "hw-depth_order-32.ppm": "efb2c94d14591cf59fbedc515d4c981f8537f669f61ac9b03c3d01ff473bc0ac",
+    "hw-depth_order.ppm": "efb2c94d14591cf59fbedc515d4c981f8537f669f61ac9b03c3d01ff473bc0ac",
+    "hw-evict-32.ppm": "77c4e7ad3e88bada9112f1316fdb20e576c24f3d4b4e8dbcf903a71f447b3599",
+    "hw-evict.ppm": "e00b670d556309edd8bac1ee091200b36bdf5a37e23fc7f5e9ede6601a4c8400",
+    "hw-flat-32.ppm": "e06f5003fb4495efee1a342dd9bd789a8458ffdf970222d9667199cea71a01d9",
+    "hw-flat.ppm": "e125bc3b88e5c87335efa4fb9527fc3a80f19c6e90349c19b5e6bd76247b37d4",
+    "hw-gs-list-model-flat-32.ppm": "c2c70a8968f8d89fcd22fa426cd1f2226c6eaef4a5a0b6098a274393eca28d16",
+    "hw-gs-list-model-flat.ppm": "fd4fb2057507830cab27921871a416e4d7f2c2453781d575c1bd02ba78e0b0be",
+    "hw-gs-list-model-light-32.ppm": "31cfdfd23a52734e2e8629613dba10f3677a90a0568181bf13e8a8a45a78abbb",
+    "hw-gs-list-model-light.ppm": "7aeba90c68118acd4bfb3c0221239b25752a7847aea34bca21bd29edcbc795e7",
+    "hw-indexed-32.ppm": "b3e7ea3b6146db470df429e4d4d3e176d7d9d5a6905a5b425d8f1fb56a24493e",
+    "hw-indexed.ppm": "53db4607e8cb96c869ec398bd73161fdbae9a5db6e7dc572c2b5e89e2552333e",
+    "hw-pool-32.ppm": "041e225072969f2173f7d31c6c911deae5c40715dc30445103d33cc039921071",
+    "hw-pool.ppm": "2712d44cfc0dea21b40819149a2e11cf036ef3181bf0d9936133107b94fd9f85",
+    "hw-screen-32.ppm": "dbaf2ab7cd4cbe739fb06d4544124bf5ebafe5d17038a0284b2800782e195256",
+    "hw-screen.ppm": "dbaf2ab7cd4cbe739fb06d4544124bf5ebafe5d17038a0284b2800782e195256",
+    "hw-sky-32.ppm": "9be85738408679ef77f9385272ef7fc2bacb7b1b9b8370a246ed4bec8508ac59",
+    "hw-sky.ppm": "ef80c6d29c8a33a360591a24cf117b2b0b169fd50907903f4214cd58761827c5",
+    "hw-tex_nearest_clamp-32.ppm": "50572651d814d7f591d39683b1ca1c8dabbeeacd5558f76b4b551c3526d79709",
+    "hw-tex_nearest_clamp.ppm": "6a6a5c6239561f7d8343703de1e9d66b4030462b2b6600766e3dfdbec8f8222b",
+    "hw-tex_nearest_repeat-32.ppm": "50572651d814d7f591d39683b1ca1c8dabbeeacd5558f76b4b551c3526d79709",
+    "hw-tex_nearest_repeat.ppm": "6a6a5c6239561f7d8343703de1e9d66b4030462b2b6600766e3dfdbec8f8222b",
+    "hw-transform_view0-32.ppm": "a276e988a01b9080cd3456b5f66a2c5e462d6347e0555d7c96ddaf827c12d8d5",
+    "hw-transform_view0.ppm": "a276e988a01b9080cd3456b5f66a2c5e462d6347e0555d7c96ddaf827c12d8d5",
+    "hw-transform_view_yaw200-32.ppm": "15428e41dc15a5f0c2adbd364f3fd7d1c2f4e602dbde9afd9b956be22aa556d8",
+    "hw-transform_view_yaw200.ppm": "15428e41dc15a5f0c2adbd364f3fd7d1c2f4e602dbde9afd9b956be22aa556d8",
+    "hw-transform_view_yaw40_pitch10-32.ppm": "c6de12aaf41fb3da2c06e5826a31c657a1d7689208ce6bc75c94aeae93ad74ca",
+    "hw-transform_view_yaw40_pitch10.ppm": "c6de12aaf41fb3da2c06e5826a31c657a1d7689208ce6bc75c94aeae93ad74ca",
+    "hw-wipe-32.ppm": "54392d4e44cdb6f7b9492d2a6e599d9e737725a110f0f205588f81746f5594a9",
+    "hw-wipe.ppm": "54392d4e44cdb6f7b9492d2a6e599d9e737725a110f0f205588f81746f5594a9"
+  }
+}

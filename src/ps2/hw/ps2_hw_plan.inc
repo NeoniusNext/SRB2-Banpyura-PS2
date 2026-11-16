@@ -18,6 +18,7 @@
 static int plan_active;
 
 #define PLAN_MAX 256 // images of one frame's plan (more are stored at full size)
+#define PLAN_LEVEL_MAX 5 // plan_lmax bounds every entry's level and coarsening cap
 #define PLAN_BINS 32 // texel size histogram: 4 bins per octave, 2^-5 .. 2^3 pixels
 #define PLAN_EPS 0.02f // share of an image's visible area that may be magnified by more than the plan allows
 #define PLAN_PCT_MAX 75u // the planned images of a frame may take this share of the pool (per cent; the rest is for sprites, patches, the small textures)
@@ -51,9 +52,9 @@ static u32 plan_frame; // frame_no + 1 the table belongs to (a frame can plan tw
 
 static void plan_sync(void)
 {
-	if (plan_frame != H.frame_no + 1)
+	if (plan_frame != plan_stamp())
 	{
-		plan_frame = H.frame_no + 1;
+		plan_frame = plan_stamp();
 		plan_n = 0;
 	}
 }
@@ -610,9 +611,9 @@ static planinfo_t *plan_key(GLMipmap_t *m)
 	planinfo_t *pi;
 
 	plan_sync();
-	if (k->ps2_planfr == H.frame_no + 1)
+	if (k->ps2_planfr == plan_stamp())
 		return k->ps2_pi < plan_n ? &plan_info[k->ps2_pi] : NULL;
-	k->ps2_planfr = H.frame_no + 1;
+	k->ps2_planfr = plan_stamp();
 	k->ps2_want = 255;
 	k->ps2_vis = 0;
 	if (plan_n >= PLAN_MAX)
@@ -725,7 +726,7 @@ void PS2HWD_PlanBlock(GLMipmap_t *m, const void *vb)
 // the most levels an image of this size may be reduced by: every axis keeps at least 16 texels and the size divides
 static int plan_lmax(const GLMipmap_t *m)
 {
-	int lv = 5;
+	int lv = PLAN_LEVEL_MAX;
 
 	while (lv > 0 && ((m->width >> lv) < 16 || (m->height >> lv) < 16 || (m->width & ((1u << lv) - 1)) || (m->height & ((1u << lv) - 1))))
 		lv--;
@@ -734,6 +735,29 @@ static int plan_lmax(const GLMipmap_t *m)
 
 static inline u32 plan_blocks(const GLMipmap_t *m, int lv)
 {
+	const GLMipmap_t *k = m->ps2_twin ? m->ps2_twin : m;
+	const texrec_t *r;
+
+	// A live full-size hint cannot be reduced by the plan. Its current virtual
+	// image owns no GS blocks; the shared upload tile is already excluded from
+	// tex_usable_blocks(). Keep the ordinary costs for adaptable/expired images.
+	if (!lv && k->ps2_full_fr && plan_stamp() - k->ps2_full_fr < PLAN_FULL_KEEP)
+	{
+		r = rec_of(m);
+		if (!r && m != k)
+			r = rec_of(k);
+		if (!r)
+			for (const GLMipmap_t *v = k->nextcolormap; v; v = v->nextcolormap)
+				if (v->ps2_twin == k && (r = rec_of(v)) != NULL)
+					break;
+		if (r)
+		{
+			const texrec_t *image = &H.rec[img_of((int)(r - H.rec))];
+
+			if (image->used && image->tiled == 1 && !image->nblk)
+				return 0;
+		}
+	}
 	return tex_plan_blocks(PSM_T8, m->width, m->height, (u32)lv, (u32)lv);
 }
 
@@ -747,6 +771,7 @@ static float imm_ptotal[IMM_MAX], imm_pseps[IMM_MAX];
 // the engine drops its textures (a new level, a cache flush): nothing the plan remembers may be touched again
 static void plan_reset(void)
 {
+	plan_advance(PLAN_FULL_KEEP + 3u); // expire old full-size and immediate hints across reset
 	plan_n = 0;
 	plan_frame = 0;
 	imm_ncur = imm_nprev = 0;
@@ -798,7 +823,7 @@ static void plan_frame_end(void)
 	for (i = 0; i < imm_ncur; i++)
 	{
 		GLMipmap_t *k = imm_cur[i];
-		const planinfo_t *pi = (k->ps2_planfr == H.frame_no + 1 && k->ps2_pi < plan_n) ? &plan_info[k->ps2_pi] : NULL;
+		const planinfo_t *pi = (k->ps2_planfr == plan_stamp() && k->ps2_pi < plan_n) ? &plan_info[k->ps2_pi] : NULL;
 
 		imm_prev[i] = k;
 		imm_ptotal[i] = pi ? pi->total : 0.0f;
@@ -819,7 +844,7 @@ void PS2HWD_PlanEnd(void)
 	static float tot[ENT_MAX];
 	static u8 lx[ENT_MAX], cap[ENT_MAX];
 	static u32 npl[ENT_MAX];
-	static u32 blk_l[ENT_MAX][8]; // blocks of an entry at level l (filled for lx..cap + 1 when the plan is over budget)
+	static u32 blk_l[ENT_MAX][PLAN_LEVEL_MAX + 1]; // only lx..cap are read; lx + 1 is used only while lx < cap
 	u32 budget, sum = 0, exact_sum;
 	int i, n = 0, step;
 
@@ -829,7 +854,7 @@ void PS2HWD_PlanEnd(void)
 	TX.plan_cyc += cyc() - plan_t0; // the measuring of the polygons (PlanPolygon) is the time between Begin and End
 	if (!H.plan_pct)
 		H.plan_pct = PLAN_PCT_MAX;
-	budget = H.pool_blocks / 100u * H.plan_pct;
+	budget = tex_usable_blocks() / 100u * H.plan_pct;
 	if (budget > H.plan_reserve)
 		budget -= H.plan_reserve;
 	for (i = 0; i < plan_n; i++)
@@ -853,7 +878,7 @@ void PS2HWD_PlanEnd(void)
 		cap[n] = (u8)(lrx > lm ? lm : lrx);
 		if (cap[n] < lx[n])
 			cap[n] = lx[n];
-		full = k->ps2_full_fr && H.frame_no + 1 - k->ps2_full_fr < PLAN_FULL_KEEP;
+		full = k->ps2_full_fr && plan_stamp() - k->ps2_full_fr < PLAN_FULL_KEEP;
 		if (full)
 			lx[n] = cap[n] = 0; // something draws it at full size without knowing its geometry (the sky dome): that is what it costs
 		sum += plan_blocks(k, lx[n]);
@@ -879,6 +904,10 @@ void PS2HWD_PlanEnd(void)
 		cap[n] = (u8)(lrx > lm ? lm : lrx);
 		if (cap[n] < lx[n])
 			cap[n] = lx[n];
+		// A carried virtual image under a live full-size hint is still forced
+		// to L0 by tex_want. Its zero cost cannot become a coarsening "saving".
+		if (k->ps2_full_fr && plan_stamp() - k->ps2_full_fr < PLAN_FULL_KEEP && !plan_blocks(k, 0))
+			lx[n] = cap[n] = 0;
 		sum += plan_blocks(k, lx[n]);
 		if (imm_pseps[i] < 1.0e5f && plan_blocks(k, lx[n]) >= PLAN_BIG_BLOCKS && lx[n] + PLAN_BIG_EXTRA <= lm)
 			cap[n] = (u8)(lx[n] + PLAN_BIG_EXTRA); // (the sky dome, whose polygons are not known, stays)
@@ -892,7 +921,7 @@ void PS2HWD_PlanEnd(void)
 		{
 			int l;
 
-			for (l = lx[i]; l <= cap[i] + 1 && l < 8; l++)
+			for (l = lx[i]; l <= cap[i]; l++)
 				blk_l[i][l] = plan_blocks(key[i], l);
 		}
 	}
@@ -982,7 +1011,7 @@ void PS2HWD_PlanEnd(void)
 		else
 		{
 			key[i]->ps2_ihint = lx[i];
-			key[i]->ps2_ihfr = H.frame_no + 1;
+			key[i]->ps2_ihfr = plan_stamp();
 		}
 	}
 }
@@ -995,11 +1024,13 @@ static u32 tex_want(const GLMipmap_t *m, int *visible)
 	const GLMipmap_t *k = m->ps2_twin ? m->ps2_twin : m;
 
 	*visible = 1;
+	if (ps2hwd_dbg_flags & HWDBG_NOPLAN)
+		return 0; // full-size mode also rejects any stale same-frame hint
 	if (imm_level >= 0)
 		return (u32)imm_level;
-	if (k->ps2_planfr != H.frame_no + 1 || batch_phase != 2 || k->ps2_pi == 0xFFFFu)
+	if (k->ps2_planfr != plan_stamp() || batch_phase != 2 || k->ps2_pi == 0xFFFFu)
 		return 0;
-	if (k->ps2_full_fr && H.frame_no + 1 - k->ps2_full_fr < PLAN_FULL_KEEP)
+	if (k->ps2_full_fr && plan_stamp() - k->ps2_full_fr < PLAN_FULL_KEEP)
 		return 0;
 	if (!k->ps2_vis)
 	{
@@ -1014,7 +1045,7 @@ static int plan_too_coarse(const GLMipmap_t *m, u32 have, u32 want)
 {
 	const GLMipmap_t *k = m->ps2_twin ? m->ps2_twin : m;
 
-	if (have <= want || k->ps2_planfr != H.frame_no + 1 || k->ps2_pi >= plan_n)
+	if (have <= want || k->ps2_planfr != plan_stamp() || k->ps2_pi >= plan_n)
 		return have > want;
 	return plan_seps(&plan_info[k->ps2_pi]) * (float)(1u << have) > PLAN_TOL_KEEP;
 }
@@ -1054,9 +1085,9 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 	k = m->ps2_twin ? m->ps2_twin : m;
 	pi = plan_key(m);
 	H.cur_missing = 0;
-	if (k->ps2_imfr != H.frame_no + 1)
+	if (k->ps2_imfr != plan_stamp())
 	{
-		k->ps2_imfr = H.frame_no + 1;
+		k->ps2_imfr = plan_stamp();
 		if (imm_ncur < IMM_MAX)
 			imm_cur[imm_ncur++] = k;
 	}
@@ -1070,6 +1101,8 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 		{
 			H.cur_tex = NOREC;
 			H.cur_missing = 1; // nothing of this polygon is visible: nothing is drawn, nothing is uploaded
+			skip_tex = m;
+			skip_why = "immediate polygon outside view";
 			TX.invisible++;
 			return;
 		}
@@ -1081,11 +1114,11 @@ static void imm_prepare(const FOutVector *verts, unsigned int n)
 	{
 		if (pi)
 			plan_add(pi, 1.0e6f, 1.0f);
-		k->ps2_full_fr = H.frame_no + 1; // drawn at full size, whatever else says: the batches of the frame must not make it coarser (and back, every frame)
+		k->ps2_full_fr = plan_stamp(); // drawn at full size, whatever else says: the batches of the frame must not make it coarser (and back, every frame)
 		lv = 0;
 	}
 	k->ps2_vis = 1;
-	if (verts && k->ps2_ihfr && H.frame_no + 1 - k->ps2_ihfr <= 2)
+	if (verts && k->ps2_ihfr && plan_stamp() - k->ps2_ihfr <= 2)
 		lv = k->ps2_ihint; // the plan of the whole previous frame (with the budget) decides: the polygons seen so far in this frame would make the level flip from polygon to polygon
 	lm = plan_lmax(k);
 	imm_level = lv > lm ? lm : lv;

@@ -42,7 +42,7 @@
 
 static boolean ps2_slow_composite; // the original column loops (the check of the fast path)
 boolean ps2hwt_comp_old; // OPT13 RDRV: -hwcomp 0 = the composition as before (A/B): the raw lump read per patch use, the GL structures and the patch built and freed for every placement
-typedef struct { UINT16 wad, lump; patch_t *p; } ps2_cpatch_t;
+typedef struct { UINT16 wad, lump; patch_t *p; INT32 last; } ps2_cpatch_t;
 #define PS2_CPATCH_MAX 32 // distinct patches held while one texture is composed (a placement of the same patch again in the texture finds it)
 unsigned int ps2hwt_mkpatch_n, ps2hwt_mkpatch_cyc; // OPT10: patches composed for the GS driver and the EE cycles it took (HWTEX lines)
 static inline unsigned int ps2hwt_now(void)
@@ -58,9 +58,9 @@ static inline unsigned int ps2hwt_now(void)
 // the sprite is missing for the frame). ps2_hwd.c sets PU_HWRCACHE_UNLOCKED again with -hwkeep 1 (the old rule, A/B).
 #ifdef PS2_PROFILE
 INT32 ps2hwt_patchtag = PU_HWRCACHE_LRU;
-#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), ps2hwt_patchtag)
+#define HWR_PATCH_UNLOCKED(m) HWR_RELEASE_MIPMAP_DATA((m), ps2hwt_patchtag)
 #else
-#define HWR_PATCH_UNLOCKED(p) Z_ChangeTag((p), PU_HWRCACHE_UNLOCKED)
+#define HWR_PATCH_UNLOCKED(m) HWR_RELEASE_MIPMAP_DATA((m), PU_HWRCACHE_UNLOCKED)
 #endif
 
 INT32 patchformat = GL_TEXFMT_AP_88; // use alpha for holes
@@ -565,6 +565,9 @@ static UINT8 *MakeBlockEx(GLMipmap_t *grMipmap, boolean try)
 	UINT16 bu16 = ((0x00 <<8) | HWR_PATCHES_CHROMAKEY_COLORINDEX);
 	INT32 blocksize = (grMipmap->width * grMipmap->height);
 
+#if defined(PS2) && defined(PS2_PROFILE)
+	grMipmap->ps2_cpu = 0;
+#endif
 	bpp =  format2bpp(grMipmap->format);
 #ifdef PS2
 	if (try)
@@ -613,6 +616,149 @@ static UINT8 *MakeBlock(GLMipmap_t *grMipmap)
 {
 	return MakeBlockEx(grMipmap, false);
 }
+
+#ifdef HWR_PS2_PACKED_PATCHES
+// Only canonical binary-alpha patch columns can omit the AP88 alpha bytes and
+// power-of-two padding. Other formats and unusual post extents keep MakeBlock.
+static boolean HWR_PS2_CanPackPatch(const patch_t *patch, const GLMipmap_t *m)
+{
+	INT32 x;
+
+	if (!patch || m->regen_kind || m->format != GL_TEXFMT_AP_88
+		|| patch->width <= 0 || patch->height <= 0 || !patch->columns
+		|| m->ps2_uw != (UINT16)patch->width || m->ps2_uh != (UINT16)patch->height
+		|| m->ps2_uw > m->width || m->ps2_uh > m->height
+		|| (size_t)m->width * m->height > (size_t)0x7ffffff0u / 2u)
+		return false;
+	for (x = 0; x < patch->width; x++)
+	{
+		const column_t *column = &patch->columns[x];
+		unsigned i;
+
+		if (column->num_posts && !column->posts)
+			return false;
+		for (i = 0; i < column->num_posts; i++)
+		{
+			const post_t *post = &column->posts[i];
+
+			if (post->topdelta > (unsigned)patch->height
+				|| post->length > (unsigned)patch->height - post->topdelta
+				|| (post->length && !column->pixels))
+				return false;
+		}
+	}
+	return true;
+}
+
+static UINT8 *HWR_PS2_MakePatchBitmap(GLMipmap_t *m, const patch_t *patch, boolean try)
+{
+	if (HWR_PS2_CanPackPatch(patch, m))
+	{
+		const size_t pixels = (size_t)m->ps2_uw * m->ps2_uh;
+		const size_t bytes = pixels + ((pixels + 7u) >> 3);
+		const UINT8 *cm = m->colormap ? m->colormap->data : NULL;
+		UINT8 *block, *coverage;
+		UINT8 mode = HWR_PS2_CPU_PATCH | HWR_PS2_CPU_HOLES255;
+		size_t covered = 0, opaque255 = 0;
+		INT32 y0, x;
+
+		m->ps2_cpu = 0;
+		block = try ? Z_TryMallocAlign(bytes, PU_HWRCACHE, &m->data, sizeof(void *))
+			: Z_Malloc(bytes, PU_HWRCACHE, &m->data);
+		if (!block)
+			return NULL;
+		coverage = block + pixels;
+		memset(block, 255, pixels);
+		memset(coverage, 0, bytes - pixels);
+		// Keep the preceding banded drawer's source order and locality, without
+		// allocating an unpacked AP88 image or a separate staging buffer.
+		for (y0 = 0; y0 < patch->height; y0 += 64)
+		{
+			const INT32 y1 = y0 + 64 < patch->height ? y0 + 64 : patch->height;
+
+			for (x = 0; x < patch->width; x++)
+			{
+				const column_t *column = &patch->columns[x];
+				unsigned i;
+
+				for (i = 0; i < column->num_posts; i++)
+				{
+					const post_t *post = &column->posts[i];
+					const INT32 top = (INT32)post->topdelta;
+					const INT32 end = top + (INT32)post->length;
+					const INT32 ys = top > y0 ? top : y0;
+					const INT32 ye = end < y1 ? end : y1;
+					const UINT8 *src;
+					INT32 y;
+
+					if (ys >= ye)
+						continue;
+					src = column->pixels + post->data_offset + (size_t)(ys - top);
+					for (y = ys; y < ye; y++)
+					{
+						const UINT8 original = *src++;
+						const UINT8 index = cm ? cm[original] : original;
+						const size_t p = (size_t)y * m->ps2_uw + (size_t)x;
+						const UINT8 bit = (UINT8)(1u << (p & 7u));
+						const UINT8 previous = coverage[p >> 3];
+
+						// Maintain exact byte facts even when later posts overwrite
+						// a covered pixel. No palette RGB equivalence is cached.
+						if (previous & bit)
+						{
+							covered--;
+							opaque255 -= block[p] == 255;
+						}
+						block[p] = index;
+						if ((m->flags & TF_CHROMAKEYED) && original == 255)
+						{
+							coverage[p >> 3] = previous & (UINT8)~bit;
+							if (index != 255)
+								mode &= (UINT8)~HWR_PS2_CPU_HOLES255;
+						}
+						else
+						{
+							coverage[p >> 3] = previous | bit;
+							covered++;
+							opaque255 += index == 255;
+						}
+					}
+				}
+			}
+		}
+		if (covered < pixels)
+			mode |= HWR_PS2_CPU_HAS_HOLES;
+		else
+			mode |= HWR_PS2_CPU_HOLES255;
+		if (opaque255)
+			mode |= HWR_PS2_CPU_OPAQUE255;
+		m->ps2_cpu = mode;
+		return block;
+	}
+	if (!MakeBlockEx(m, try))
+		return NULL;
+	HWR_DrawPatchInCache(m, m->width, m->height, patch->width, patch->height, patch);
+	return m->data;
+}
+
+static boolean HWR_PS2_PatchBitmapMatches(const GLMipmap_t *m, const UINT8 *raw, size_t bytes)
+{
+	UINT32 y, x;
+
+	if (!(m->ps2_cpu & HWR_PS2_CPU_PATCH))
+		return !memcmp(raw, m->data, bytes);
+	for (y = 0; y < m->height; y++)
+		for (x = 0; x < m->width; x++)
+		{
+			const size_t p = ((size_t)y * m->width + x) * 2u;
+			const UINT16 pixel = HWR_PS2_ReadAP88(m, x, y);
+
+			if (raw[p] != (UINT8)pixel || raw[p + 1u] != (UINT8)(pixel >> 8))
+				return false;
+		}
+	return true;
+}
+#endif
 
 #ifdef PS2
 // PS2-140 (OPT10-S): the picture of one entry of a composite texture, built as HWR_GenerateTexture below builds it but for lumps of this size
@@ -679,7 +825,7 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 #endif
 #ifdef PS2_PROFILE
 	const unsigned int gt0 = ps2hwt_now(); // OPT13 IZ (PS2-603): what making this texture cost, for the eviction (Z_SetRebuildCost)
-	ps2_cpatch_t held[PS2_CPATCH_MAX]; // OPT13 RDRV: patches read for this texture, kept until it is composed
+	ps2_cpatch_t held[PS2_CPATCH_MAX]; // Patches loaded here, retained through their final placement only.
 	INT32 nheld = 0, h;
 #endif
 
@@ -819,7 +965,13 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 						{
 							held[nheld].wad = wadnum;
 							held[nheld].lump = lumpnum;
+							INT32 j;
+
 							held[nheld].p = realpatch;
+							held[nheld].last = i;
+							for (j = i + 1; j < texture->patchcount; j++)
+								if (texture->patches[j].wad == wadnum && texture->patches[j].lump == lumpnum)
+									held[nheld].last = j;
 							nheld++;
 						}
 						else
@@ -847,11 +999,22 @@ static void HWR_GenerateTexture(INT32 texnum, GLMapTexture_t *grtex, GLMipmap_t 
 		// the arena then ran out); a texture is composed again only after the GS pool or the texture cache dropped it
 		else if (loaded_here)
 			Patch_Free(realpatch);
+		else
+			for (h = 0; h < nheld; h++)
+				if (held[h].p == realpatch && held[h].last == i)
+				{
+					// Only patches loaded by this call belong to held. Keep every
+					// later reuse, then release after the final synchronous copy.
+					Patch_Free(realpatch);
+					held[h].p = NULL;
+					break;
+				}
 #endif
 	}
 #ifdef PS2_PROFILE
 	for (h = 0; h < nheld; h++)
-		Patch_Free(held[h].p); // OPT13 RDRV: the patches this texture was composed from are not kept (PS2-146: the arena would fill with the patches of every texture seen)
+		if (held[h].p)
+			Patch_Free(held[h].p); // Entries stay numbered as before, including the original 32-entry fallback.
 #endif
 #ifdef PS2
 	if (missing)
@@ -947,6 +1110,9 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 
 	Z_Free(grMipmap->data);
 	grMipmap->data = NULL;
+#if defined(PS2) && defined(PS2_PROFILE)
+	grMipmap->ps2_cpu = 0;
+#endif
 
 	if (makebitmap)
 	{
@@ -955,7 +1121,11 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 #endif
 #ifdef PS2
 		// PS2-140: a patch of 64 KB and more as a texture (a 1024x512 one is 1 MB) that does not fit has no data: the driver skips the draws that need it
+#ifdef HWR_PS2_PACKED_PATCHES
+		if (!HWR_PS2_MakePatchBitmap(grMipmap, patch, (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format) >= HWR_TRYPATCH_MIN))
+#else
 		if (!MakeBlockEx(grMipmap, (size_t)grMipmap->width * grMipmap->height * format2bpp(grMipmap->format) >= HWR_TRYPATCH_MIN))
+#endif
 		{
 			static unsigned ps2_nopatch_reports;
 
@@ -967,10 +1137,12 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 		MakeBlock(grMipmap);
 #endif
 
+#ifndef HWR_PS2_PACKED_PATCHES
 		HWR_DrawPatchInCache(grMipmap,
 			grMipmap->width, grMipmap->height,
 			patch->width, patch->height,
 			patch);
+#endif
 #ifdef PS2_PROFILE
 		ps2hwt_mkpatch_n++;
 		ps2hwt_mkpatch_cyc += ps2hwt_now() - t0;
@@ -987,7 +1159,12 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 			HWR_DrawPatchInCache(&chk, chk.width, chk.height, patch->width, patch->height, patch);
 			ps2_slow_composite = false;
 			checked++;
-			if (!chk.data || memcmp(chk.data, grMipmap->data, bytes))
+			if (!chk.data ||
+#ifdef HWR_PS2_PACKED_PATCHES
+				!HWR_PS2_PatchBitmapMatches(grMipmap, chk.data, bytes))
+#else
+				memcmp(chk.data, grMipmap->data, bytes))
+#endif
 			{
 				bad++;
 				CONS_Printf("HWC patch composite MISMATCH %dx%d (patch %dx%d) colormap %d (%u of %u checked differ)\n", (int)grMipmap->width, (int)grMipmap->height, (int)patch->width, (int)patch->height,
@@ -1008,16 +1185,31 @@ void HWR_MakePatch (const patch_t *patch, GLPatch_t *grPatch, GLMipmap_t *grMipm
 //             CACHING HANDLING
 // =================================================
 
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_TEXTURE_PAGES)
+#define HWR_TEXTURE_PAGES
+#define HWR_TEXTURE_PAGE_SIZE 16u
+#endif
+
 static size_t gl_numtextures = 0; // Texture count
+#ifdef HWR_TEXTURE_PAGES
+// Allocate stable records only for pages that are actually selected. Every
+// texture number remains addressable, and live pages never move or shrink.
+static GLMapTexture_t **gl_textures;
+static void **gl_flats;
+#else
 static GLMapTexture_t *gl_textures; // For all textures
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
-// Flats only use their mipmap. Keep the full table allocated up front, but omit
-// wall-only scales on the default PB path. The legacy collector sorts by raw
-// texture pointers, so -hwgo 65536 must retain its original allocation/stride.
 static void *gl_flats;
+#else
+static GLMapTexture_t *gl_flats;
+#endif
+#endif
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 // Zero keeps the original stride, including after initialization/reset.
 static size_t gl_flats_cut;
+#endif
 
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 static boolean HWR_UseCompactFlatMetadata(void)
 {
 	INT32 i;
@@ -1035,15 +1227,76 @@ static boolean HWR_UseCompactFlatMetadata(void)
 	}
 	return true;
 }
+#endif
 
+#ifdef HWR_TEXTURE_PAGES
+static size_t HWR_TexturePageCount(void)
+{
+	return gl_numtextures / HWR_TEXTURE_PAGE_SIZE + (gl_numtextures % HWR_TEXTURE_PAGE_SIZE != 0);
+}
+
+static void *HWR_AllocateTexturePage(size_t page, size_t stride)
+{
+	size_t count = gl_numtextures - page * HWR_TEXTURE_PAGE_SIZE;
+	void *records;
+
+	if (count > HWR_TEXTURE_PAGE_SIZE)
+		count = HWR_TEXTURE_PAGE_SIZE;
+	records = calloc(count, stride);
+	if (!records)
+	{
+		Z_GuardThrow("HWR_AllocateTexturePage: ran out of memory for texture metadata");
+		I_Error("HWR_AllocateTexturePage: ran out of memory for texture metadata");
+	}
+	return records;
+}
+
+static inline GLMapTexture_t *HWR_MapTexture(size_t n, boolean create)
+{
+	const size_t page = n / HWR_TEXTURE_PAGE_SIZE;
+	GLMapTexture_t *records = gl_textures[page];
+
+	if (!records && create)
+	{
+		records = HWR_AllocateTexturePage(page, sizeof(*records));
+		gl_textures[page] = records;
+	}
+	return records ? &records[n % HWR_TEXTURE_PAGE_SIZE] : NULL;
+}
+
+static inline GLMipmap_t *HWR_FindFlatMipmap(size_t n, boolean create)
+{
+	const size_t page = n / HWR_TEXTURE_PAGE_SIZE;
+	const size_t stride = sizeof(GLMapTexture_t) - gl_flats_cut;
+	void *records = gl_flats[page];
+
+	if (!records && create)
+	{
+		records = HWR_AllocateTexturePage(page, stride);
+		gl_flats[page] = records;
+	}
+	return records ? (GLMipmap_t *)((UINT8 *)records + (n % HWR_TEXTURE_PAGE_SIZE) * stride) : NULL;
+}
+
+static inline GLMipmap_t *HWR_FlatMipmap(size_t n)
+{
+	return HWR_FindFlatMipmap(n, true);
+}
+#else
+static inline GLMapTexture_t *HWR_MapTexture(size_t n, boolean create)
+{
+	(void)create;
+	return &gl_textures[n];
+}
+
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 static inline GLMipmap_t *HWR_FlatMipmap(size_t n)
 {
 	const size_t stride = sizeof(GLMapTexture_t) - gl_flats_cut;
 
 	return (GLMipmap_t *)((UINT8 *)gl_flats + n * stride);
 }
-#else
-static GLMapTexture_t *gl_flats; // For all (texture) flats, as normal flats don't need to be cached
+#endif
 #endif
 boolean gl_maptexturesloaded = false;
 
@@ -1054,9 +1307,12 @@ UINT32 hwr_texsig = 1; // OPT13 IR: a number that changes whenever a word of HWR
 // an input of the geometry cache key. tex is a translated texture number (R_GetTextureNum).
 UINT32 HWR_PS2_TexTransparent(INT32 tex)
 {
+	const GLMapTexture_t *grtex;
+
 	if (!gl_textures || tex < 0 || tex >= (signed)gl_numtextures)
 		return 0;
-	return (gl_textures[tex].mipmap.flags & TF_TRANSPARENT) ? 1u : 0u;
+	grtex = HWR_MapTexture((size_t)tex, false);
+	return (grtex && (grtex->mipmap.flags & TF_TRANSPARENT)) ? 1u : 0u;
 }
 
 // The word of a side texture in the key of the cache: the translated number (texture animation) and the TF_TRANSPARENT bit of its mipmap; 0 for no texture. One call for
@@ -1064,13 +1320,16 @@ UINT32 HWR_PS2_TexTransparent(INT32 tex)
 UINT32 HWR_PS2_SideTexWord(INT32 raw)
 {
 	INT32 t;
+	const GLMapTexture_t *grtex = NULL;
 
 	if (raw < 0 || raw >= numtextures)
 		return 0;
 	t = texturetranslation[raw];
 	if (!t)
 		return 0;
-	return (UINT32)t | ((gl_textures && t > 0 && t < (signed)gl_numtextures && (gl_textures[t].mipmap.flags & TF_TRANSPARENT)) ? 0x80000000u : 0u);
+	if (gl_textures && t > 0 && t < (signed)gl_numtextures)
+		grtex = HWR_MapTexture((size_t)t, false);
+	return (UINT32)t | ((grtex && (grtex->mipmap.flags & TF_TRANSPARENT)) ? 0x80000000u : 0u);
 }
 #endif
 
@@ -1087,6 +1346,9 @@ void HWR_FreeTextureData(patch_t *patch)
 		HWD.pfnDeleteTexture(grPatch->mipmap);
 	if (grPatch->mipmap->data)
 		Z_Free(grPatch->mipmap->data);
+#if defined(PS2) && defined(PS2_PROFILE)
+	grPatch->mipmap->ps2_cpu = 0;
+#endif
 }
 
 void HWR_FreeTexture(patch_t *patch)
@@ -1204,7 +1466,7 @@ void HWR_InitMapTextures(void)
 {
 	gl_textures = NULL;
 	gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	gl_flats_cut = 0;
 #endif
 	gl_maptexturesloaded = false;
@@ -1230,12 +1492,14 @@ static void FreeMapTexture(GLMapTexture_t *tex, boolean delete_chromakeys)
 	DeleteTextureMipmap(&tex->mipmap, true);
 }
 
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 static void FreeFlatMipmap(GLMipmap_t *mipmap)
 {
 	if (mipmap->nextcolormap)
 	{
-		DeleteTextureMipmap(mipmap->nextcolormap, false);
+		// PS2_PROFILE flat variants own a separate zone allocation. Release its
+		// user before freeing the metadata that contains that user pointer.
+		DeleteTextureMipmap(mipmap->nextcolormap, true);
 		free(mipmap->nextcolormap);
 		mipmap->nextcolormap = NULL;
 	}
@@ -1254,23 +1518,49 @@ void HWR_FreeMapTextures(void)
 
 	for (i = 0; i < gl_numtextures; i++)
 	{
+#ifdef HWR_TEXTURE_PAGES
+		GLMapTexture_t *wall = HWR_MapTexture(i, false);
+		GLMipmap_t *flat = HWR_FindFlatMipmap(i, false);
+
+		// Untouched pages never gave the driver a texture or a zone owner.
+		// Existing pages retain the original delete-before-data-free order,
+		// including the driver's DMA fence and child/primary ordering.
+		if (wall)
+			FreeMapTexture(wall, true);
+		if (flat)
+			FreeFlatMipmap(flat);
+#else
 		FreeMapTexture(&gl_textures[i], true);
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 		FreeFlatMipmap(HWR_FlatMipmap(i));
 #else
-		FreeMapTexture(&gl_flats[i], false);
+#ifdef PS2_PROFILE
+		FreeMapTexture(&gl_flats[i], true); // the profile flat path owns each variant's pixels
+#else
+		FreeMapTexture(&gl_flats[i], false); // the legacy path aliases the canonical pixels
+#endif
+#endif
 #endif
 	}
 
 	// now the heap don't have any 'user' pointing to our
 	// texturecache info, we can free it
+#ifdef HWR_TEXTURE_PAGES
+	for (i = 0; i < HWR_TexturePageCount(); i++)
+	{
+		if (gl_textures)
+			free(gl_textures[i]);
+		if (gl_flats)
+			free(gl_flats[i]);
+	}
+#endif
 	if (gl_textures)
 		free(gl_textures);
 	if (gl_flats)
 		free(gl_flats);
 	gl_textures = NULL;
 	gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	gl_flats_cut = 0;
 #endif
 	gl_numtextures = 0;
@@ -1290,11 +1580,16 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 	gl_flats_cut = HWR_UseCompactFlatMetadata() ? sizeof(GLMapTexture_t) - sizeof(GLMipmap_t) : 0;
 #endif
+#ifdef HWR_TEXTURE_PAGES
+	gl_textures = calloc(HWR_TexturePageCount(), sizeof(*gl_textures));
+	gl_flats = calloc(HWR_TexturePageCount(), sizeof(*gl_flats));
+#else
 	gl_textures = calloc(gl_numtextures, sizeof(*gl_textures));
 #if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
 	gl_flats = calloc(gl_numtextures, sizeof(GLMapTexture_t) - gl_flats_cut);
 #else
 	gl_flats = calloc(gl_numtextures, sizeof(*gl_flats));
+#endif
 #endif
 #ifdef PS2_PROFILE
 	{
@@ -1307,7 +1602,7 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 		{
 			free(gl_flats);
 			gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	gl_flats_cut = 0;
 #endif
 		}
@@ -1321,8 +1616,9 @@ void HWR_LoadMapTextures(size_t pnumtextures)
 		// tables are given back and the level goes on in software (the stab_run.sh hwfb chain ended here, at map 23, with the start before this change as well)
 		free(gl_textures);
 		free(gl_flats);
-		gl_textures = gl_flats = NULL;
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+		gl_textures = NULL;
+		gl_flats = NULL;
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 		gl_flats_cut = 0;
 #endif
 		gl_numtextures = 0;
@@ -1350,7 +1646,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 	if (tex < 0 || tex >= (signed)gl_numtextures)
 		tex = 0;
 
-	grtex = &gl_textures[tex];
+	grtex = HWR_MapTexture((size_t)tex, true);
 	grMipmap = originalMipmap = &grtex->mipmap;
 
 	if (!originalMipmap->downloaded)
@@ -1394,7 +1690,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap); // PS2-HW-32: the driver asks for the texels (HWR_PS2_RegenerateMipmap) when its data cache has not got them
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grMipmap, PU_HWRCACHE_UNLOCKED);
 
 	return grtex;
 }
@@ -1461,7 +1757,7 @@ GLMapTexture_t *HWR_GetTexture(INT32 tex, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap);
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grMipmap, PU_HWRCACHE_UNLOCKED);
 
 	return grtex;
 }
@@ -1503,7 +1799,7 @@ void HWR_GetRawFlat(lumpnum_t flatlumpnum)
 	HWR_SetCurrentTexture(grmip);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grmip->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grmip, PU_HWRCACHE_UNLOCKED);
 }
 
 static void MakeLevelFlatMipmap(GLMipmap_t *grMipmap, INT32 texturenum, UINT16 flags)
@@ -1521,7 +1817,7 @@ static void MakeLevelFlatMipmap(GLMipmap_t *grMipmap, INT32 texturenum, UINT16 f
 void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 {
 	INT32 texturenum;
-#if !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
+#if !defined(HWR_TEXTURE_PAGES) && !(defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	GLMapTexture_t *grtex;
 #endif
 	GLMipmap_t *grMipmap, *originalMipmap;
@@ -1533,7 +1829,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 	}
 
 	texturenum = texturetranslation[levelflat->texture_id];
-#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA)
+#if defined(HWR_TEXTURE_PAGES) || (defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_FLAT_METADATA))
 	grMipmap = originalMipmap = HWR_FlatMipmap((size_t)texturenum);
 #else
 	grtex = &gl_flats[texturenum];
@@ -1565,17 +1861,86 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap); // PS2-HW-32: as HWR_GetTexture
 	HWR_SetCurrentTexture(grMipmap);
 
-	Z_ChangeTag(grMipmap->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grMipmap, PU_HWRCACHE_UNLOCKED);
 }
+
+#if defined(PS2) && !defined(PS2_NOOPT_PATCH_RESCUE)
+// Only used after a patch's upload source was purged. The converted patch
+// stays pinned while its hardware metadata exists, including generated and
+// translated patches. Keep no additional per-texture source pointer.
+static struct
+{
+	GLMipmap_t *mipmap;
+	const patch_t *patch;
+} ps2_patch_source;
+
+static boolean HWR_PS2_FindPatchSource(void *mem)
+{
+	const patch_t *patch = mem;
+	const GLPatch_t *grPatch;
+	const GLMipmap_t *mipmap;
+
+	if (ps2_patch_source.patch || patch->width <= 0 || patch->height <= 0 || !patch->columns)
+		return false;
+	grPatch = patch->hardware;
+	if (!grPatch)
+		return false;
+	for (mipmap = grPatch->mipmap; mipmap; mipmap = mipmap->nextcolormap)
+		if (mipmap == ps2_patch_source.mipmap)
+		{
+			ps2_patch_source.patch = patch;
+			break;
+		}
+	return false;
+}
+
+static void HWR_PS2_RegeneratePatch(GLMipmap_t *m)
+{
+	const patch_t *patch;
+
+	// Try allocation still rejects requests above this allocator limit with a
+	// fatal error. Check first; the byte bound also keeps MakeBlockEx's signed
+	// width*height product representable. Failure retains the existing skip.
+	if (m->data || m->format != GL_TEXFMT_AP_88 || !m->width || !m->height
+		|| (size_t)m->width * m->height > (size_t)0x7FFFFFF0u / 2u)
+		return;
+	ps2_patch_source.mipmap = m;
+	ps2_patch_source.patch = NULL;
+	// PU_PATCH_DATA lies between these ranges and is not a patch_t.
+	Z_IterateTags(PU_PATCH, PU_PATCH_ROTATED, HWR_PS2_FindPatchSource);
+	if (!ps2_patch_source.patch)
+		Z_IterateTags(PU_SPRITE, PU_HUDGFX, HWR_PS2_FindPatchSource);
+	patch = ps2_patch_source.patch;
+	ps2_patch_source.mipmap = NULL;
+	ps2_patch_source.patch = NULL;
+	// No allocation or callback can invalidate an iterator's next-block
+	// pointer: the read-only search has finished before any pixels are made.
+	if (!patch || patch->width > m->width || patch->height > m->height)
+		return;
+#ifdef HWR_PS2_PACKED_PATCHES
+	if (!HWR_PS2_MakePatchBitmap(m, patch, true))
+		return;
+#else
+	if (!MakeBlockEx(m, true))
+		return;
+	HWR_DrawPatchInCache(m, m->width, m->height, patch->width, patch->height, patch);
+#endif
+}
+#endif
 
 void HWR_PS2_RegenerateMipmap(GLMipmap_t *m)
 {
 	if (m->data)
 		return;
+#if defined(PS2) && !defined(PS2_NOOPT_PATCH_RESCUE)
+	if (!m->regen_kind)
+		HWR_PS2_RegeneratePatch(m);
+	else
+#endif
 	if (m->regen_kind == 1)
 	{
 		if (m->regen_id >= 0 && (size_t)m->regen_id < gl_numtextures && gl_textures)
-			HWR_GenerateTexture(m->regen_id, &gl_textures[m->regen_id], m);
+			HWR_GenerateTexture(m->regen_id, HWR_MapTexture((size_t)m->regen_id, true), m);
 	}
 	else if (m->regen_kind == 2)
 	{
@@ -1642,7 +2007,7 @@ static void HWR_WarmTexture(INT32 tex)
 
 	if (!gl_textures || tex < 0 || (size_t)tex >= gl_numtextures || !textures[tex])
 		return;
-	grtex = &gl_textures[tex];
+	grtex = HWR_MapTexture((size_t)tex, true);
 	m = &grtex->mipmap;
 	if (m->data || m->downloaded)
 		return;
@@ -1654,7 +2019,7 @@ static void HWR_WarmTexture(INT32 tex)
 	m->regen_id = tex;
 	HWR_GenerateTexture(tex, grtex, m);
 	if (m->data)
-		Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+		HWR_RELEASE_MIPMAP_DATA(m, PU_HWRCACHE_UNLOCKED);
 }
 
 static void HWR_PS2_WarmLevel(void)
@@ -1797,7 +2162,7 @@ void HWR_PS2_FlatUnpin(const UINT8 *p, size_t bytes)
 
 void HWR_PS2_ReleaseMipmapData(GLMipmap_t *m)
 {
-	Z_ChangeTag(m->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(m, PU_HWRCACHE_UNLOCKED);
 }
 
 // PS2-HW-32: zero-copy uploads: the GS driver sends the texels with DMA references, so the zone must not move or purge them until the
@@ -1910,7 +2275,7 @@ void HWR_GetLevelFlat(levelflat_t *levelflat, boolean chromakeyed)
 		HWD.pfnSetTexture(grMipmap);
 	HWR_SetCurrentTexture(grMipmap);
 
-	HWR_PATCH_UNLOCKED(grMipmap->data);
+	HWR_PATCH_UNLOCKED(grMipmap);
 }
 
 #endif
@@ -1930,7 +2295,7 @@ static void HWR_LoadPatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	HWR_PATCH_UNLOCKED(grMipmap->data);
+	HWR_PATCH_UNLOCKED(grMipmap);
 }
 
 // ----------------------+
@@ -1950,7 +2315,7 @@ static void HWR_UpdatePatchMipmap(patch_t *patch, GLMipmap_t *grMipmap)
 	HWR_SetCurrentTexture(grMipmap);
 
 	// The system-memory data can be purged now.
-	HWR_PATCH_UNLOCKED(grMipmap->data);
+	HWR_PATCH_UNLOCKED(grMipmap);
 }
 
 // -----------------+
@@ -2023,7 +2388,7 @@ void HWR_UnlockCachedPatch(GLPatch_t *gpatch)
 	if (!gpatch)
 		return;
 
-	HWR_PATCH_UNLOCKED(gpatch->mipmap->data);
+	HWR_PATCH_UNLOCKED(gpatch->mipmap);
 }
 
 patch_t *HWR_GetCachedGLPatchPwad(UINT16 wadnum, UINT16 lumpnum)
@@ -2140,7 +2505,7 @@ void HWR_GetFadeMask(lumpnum_t fademasklumpnum)
 	HWD.pfnSetTexture(grmip);
 
 	// The system-memory data can be purged now.
-	Z_ChangeTag(grmip->data, PU_HWRCACHE_UNLOCKED);
+	HWR_RELEASE_MIPMAP_DATA(grmip, PU_HWRCACHE_UNLOCKED);
 }
 
 // =================================================

@@ -1,0 +1,94 @@
+{
+  "rc": 0,
+  "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+  "captures": {
+    "vidshot-320x200-l140.ppm": "4785452860757bfcee4985b989dceb66903cc78b9e4fbc20fb40b89ed14ac082",
+    "vidshot-320x200-l20.ppm": "ef58017769c36cf23cd312beaf71870e3efaa9634d20a1698f6585e503e7e9fb",
+    "vidshot-320x200-l70.ppm": "d879bd307feba81f4f832d0b2693656ba329b630708baabd1c678d66f3ec9c6e"
+  },
+  "loader_hashes": [
+    "LHASH tex.boot 13cb6e0834278031",
+    "LHASH spr.all a0a22bcec38eaabf",
+    "LHASH map.vtx 50385f14c8ad0a59",
+    "LHASH map.sec ea135c152447daa4",
+    "LHASH map.lin d31ea0b71b228cb2",
+    "LHASH map.sid 44da8cb24e77b387",
+    "LHASH map.bsp 52d8b0931c52a64e",
+    "LHASH map.lut 24dddd6210ba70f7",
+    "LHASH map.thg a95f21b55d87d054",
+    "LHASH map.all a95f21b55d87d054"
+  ],
+  "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+  "boot_sha256": "8fb11c6b6b55ab1f996d79fbee80fb58ccc62a0884851a99e4f49cded5b4dec8",
+  "warnings": [],
+  "skipped_draw_lines": [],
+  "skipped_draw_classification": {
+    "selected_while_collecting": [],
+    "purged_source": [],
+    "not_resident": [],
+    "other": []
+  },
+  "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+  "errors": [],
+  "command": [
+    "/workspace/.onboarding/assets-venv/bin/python",
+    "-B",
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+    "--name",
+    "texc-usage",
+    "--elf",
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+    "--ram",
+    "32",
+    "--pak",
+    "/workspace/SRB2-Banpyura-PS2/build/pak-release-20261116/with-texc",
+    "--out",
+    "/workspace/SRB2-Banpyura-PS2/build/pak-release-20261116/reports/texc-runtime-usage/runs",
+    "--map",
+    "MAP02",
+    "--timeout",
+    "240",
+    "--until",
+    "I_ShutdownSystem(): end of logstream.",
+    "--",
+    "-singletics",
+    "-loadprof",
+    "-loadhash",
+    "-astat",
+    "-hwdbg",
+    "33554432",
+    "-vidshot",
+    "l20,l70,l140",
+    "-renderer",
+    "Hardware",
+    "-texcmem",
+    "0",
+    "-ps2prof",
+    "-hwfb",
+    "-hwstats",
+    "35"
+  ],
+  "TEXC_lines": [
+    "TEXC.PAK: 3309 prebuilt composite textures",
+    "HWTEXC pack=3309 textures: composites used 1034 (stored form in memory 0, read from the pack 1034) cycles 328437321 (reads 328424913) | not in the pack 0, damaged 0 | level prefetch 0 KiB, 0 cycles"
+  ],
+  "observed_composite_hits": [
+    1034
+  ],
+  "frame_pairs": [
+    {
+      "file": "vidshot-320x200-l140.ppm",
+      "equal": false
+    },
+    {
+      "file": "vidshot-320x200-l20.ppm",
+      "equal": false
+    },
+    {
+      "file": "vidshot-320x200-l70.ppm",
+      "equal": false
+    }
+  ],
+  "scope": "Profiler observer proves the new matched TEXC is actually used. Not a performance or RAM benchmark.",
+  "passed": false
+}

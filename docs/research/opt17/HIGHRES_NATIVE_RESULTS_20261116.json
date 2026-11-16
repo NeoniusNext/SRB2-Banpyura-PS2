@@ -1,0 +1,544 @@
+{
+  "scope": "Judge the unchanged-v7 480p mode/switch probe; never starts an emulator.",
+  "completed": true,
+  "clean_render_gate_passed": false,
+  "profile_32MiB_observed": true,
+  "guard_disabled_for_diagnosis": true,
+  "normal_guard_behavior_tested": false,
+  "physical_PS2_tested": false,
+  "pixel_parity_claimed": false,
+  "lower_bound_texture_residency_failure_log_count": 8,
+  "residency_failures": [
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f4eec0 dl 0]: no VRAM block (pool) T:SKY1 fmt=1 1024x512 flags=0x3 data=0xac2cc0 pool used 0/1472 blocks, free ranges 1 (draws skipped)",
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f4f7d0 dl 0]: no VRAM block (pool) F:GFS_CLD4 fmt=1 1024x1024 flags=0x3 data=0xb62d80 pool used 526/1472 blocks, free ranges 3 (draws skipped)",
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f4f7d0 dl 0]: no VRAM block (pool) F:GFS_CLD4 fmt=1 1024x1024 flags=0x3 data=0xb62d80 pool used 526/1472 blocks, free ranges 3 (draws skipped)",
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f4f7d0 dl 0]: no VRAM block (pool) F:GFS_CLD4 fmt=1 1024x1024 flags=0x3 data=0xb62d80 pool used 526/1472 blocks, free ranges 3 (draws skipped)",
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f67040 dl 0]: no VRAM block (pool) T:SKY1 fmt=1 1024x512 flags=0x3 data=0xcd7a80 pool used 0/1472 blocks, free ranges 1 (draws skipped)",
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f70900 dl 0]: no VRAM block (pool) F:GFS_CLD4 fmt=1 1024x1024 flags=0x3 data=0xff9bc0 pool used 590/1472 blocks, free ranges 3 (draws skipped)",
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f70900 dl 0]: no VRAM block (pool) F:GFS_CLD4 fmt=1 1024x1024 flags=0x3 data=0xff9bc0 pool used 590/1472 blocks, free ranges 3 (draws skipped)",
+    "HWD texture not resident [frame 0 phase 0 spr_flush 0 tex 0x1f70900 dl 0]: no VRAM block (pool) F:GFS_CLD4 fmt=1 1024x1024 flags=0x3 data=0xff9bc0 pool used 590/1472 blocks, free ranges 3 (draws skipped)"
+  ],
+  "limitation_lines": [
+    "PS2 GS experimental limitation: a texture could not be made resident in the GS pool (or its data was purged); its draws are skipped",
+    "PS2 GS experimental limitation: a texture could not be made resident in the GS pool (or its data was purged); its draws are skipped"
+  ],
+  "inherited_selected_while_collecting_HWSKIP": 40,
+  "errors": [],
+  "layouts_observed": [
+    {
+      "render": [
+        320,
+        240
+      ],
+      "stride_rows": [
+        320,
+        240
+      ],
+      "format": "CT32",
+      "crtc": [
+        4,
+        2
+      ],
+      "output": 2,
+      "pool_bytes": 3080192,
+      "log": "PS2 GS hardware renderer: internal 320x240 (frame 320 x 240 CT32, CRTC x4/x2, output 2), frame buffers at 0K/320K, Z24 at 640K, texture pool 3008K (376 pages), GIF DMA interrupt"
+    },
+    {
+      "render": [
+        640,
+        480
+      ],
+      "stride_rows": [
+        640,
+        480
+      ],
+      "format": "CT32",
+      "crtc": [
+        2,
+        1
+      ],
+      "output": 2,
+      "pool_bytes": 376832,
+      "log": "PS2 GS hardware renderer: internal 640x480 (frame 640 x 480 CT32, CRTC x2/x1, output 2), frame buffers at 0K/1200K, Z24 at 2400K, texture pool 368K (46 pages), GIF DMA interrupt"
+    },
+    {
+      "render": [
+        640,
+        480
+      ],
+      "stride_rows": [
+        640,
+        480
+      ],
+      "format": "CT32",
+      "crtc": [
+        2,
+        1
+      ],
+      "output": 2,
+      "pool_bytes": 376832,
+      "log": "PS2 GS hardware renderer: internal 640x480 (frame 640 x 480 CT32, CRTC x2/x1, output 2), frame buffers at 0K/1200K, Z24 at 2400K, texture pool 368K (46 pages), GIF DMA interrupt"
+    },
+    {
+      "render": [
+        320,
+        240
+      ],
+      "stride_rows": [
+        320,
+        240
+      ],
+      "format": "CT32",
+      "crtc": [
+        4,
+        2
+      ],
+      "output": 2,
+      "pool_bytes": 3080192,
+      "log": "PS2 GS hardware renderer: internal 320x240 (frame 320 x 240 CT32, CRTC x4/x2, output 2), frame buffers at 0K/320K, Z24 at 640K, texture pool 3008K (376 pages), GIF DMA interrupt"
+    }
+  ],
+  "shots": [
+    {
+      "frame": 12,
+      "logical": [
+        320,
+        200
+      ],
+      "renderer": "Hardware",
+      "leveltime": 16,
+      "internal_observed_from_latest_init": {
+        "render": [
+          320,
+          240
+        ],
+        "stride_rows": [
+          320,
+          240
+        ],
+        "format": "CT32",
+        "crtc": [
+          4,
+          2
+        ],
+        "output": 2,
+        "pool_bytes": 3080192,
+        "log": "PS2 GS hardware renderer: internal 320x240 (frame 320 x 240 CT32, CRTC x4/x2, output 2), frame buffers at 0K/320K, Z24 at 640K, texture pool 3008K (376 pages), GIF DMA interrupt"
+      },
+      "expected_logical": [
+        320,
+        200
+      ],
+      "expected_renderer": "Hardware",
+      "metadata_ok": true,
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/vidshot-320x200-l12.ppm",
+      "exists": true,
+      "ppm_size": [
+        320,
+        200
+      ],
+      "ppm_sha256": "3e385de9d889290e9bfc09cb864c37aaf688d4ed231e86de9684ca7fdbe2df04",
+      "ppm_size_ok": true
+    },
+    {
+      "frame": 24,
+      "logical": [
+        640,
+        400
+      ],
+      "renderer": "Hardware",
+      "leveltime": 37,
+      "internal_observed_from_latest_init": {
+        "render": [
+          640,
+          480
+        ],
+        "stride_rows": [
+          640,
+          480
+        ],
+        "format": "CT32",
+        "crtc": [
+          2,
+          1
+        ],
+        "output": 2,
+        "pool_bytes": 376832,
+        "log": "PS2 GS hardware renderer: internal 640x480 (frame 640 x 480 CT32, CRTC x2/x1, output 2), frame buffers at 0K/1200K, Z24 at 2400K, texture pool 368K (46 pages), GIF DMA interrupt"
+      },
+      "expected_logical": [
+        640,
+        400
+      ],
+      "expected_renderer": "Hardware",
+      "metadata_ok": true,
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/vidshot-640x400-l24.ppm",
+      "exists": true,
+      "ppm_size": [
+        640,
+        400
+      ],
+      "ppm_sha256": "0fff5998b4726eecb7a22725c61e9efa405c49df1377610b46c1be7036bd4784",
+      "ppm_size_ok": true
+    },
+    {
+      "frame": 36,
+      "logical": [
+        640,
+        400
+      ],
+      "renderer": "Software",
+      "leveltime": 58,
+      "internal_observed_from_latest_init": null,
+      "expected_logical": [
+        640,
+        400
+      ],
+      "expected_renderer": "Software",
+      "metadata_ok": true,
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/vidshot-640x400-l36.ppm",
+      "exists": true,
+      "ppm_size": [
+        640,
+        400
+      ],
+      "ppm_sha256": "7fefa62095293a8d9ef3e50420ab69bb5768f694f559a4b46a0aadac2e5a3a92",
+      "ppm_size_ok": true
+    },
+    {
+      "frame": 48,
+      "logical": [
+        640,
+        480
+      ],
+      "renderer": "Software",
+      "leveltime": 82,
+      "internal_observed_from_latest_init": null,
+      "expected_logical": [
+        640,
+        480
+      ],
+      "expected_renderer": "Software",
+      "metadata_ok": true,
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/vidshot-640x480-l48.ppm",
+      "exists": true,
+      "ppm_size": [
+        640,
+        480
+      ],
+      "ppm_sha256": "d31a1da4d7d47bf76c8c50b5e3164d8d600f63270b6301c8e5f2e6d5333f4f73",
+      "ppm_size_ok": true,
+      "sky_roi_black_pixels": {
+        "roi": [
+          288,
+          65,
+          352,
+          90
+        ],
+        "black": 0,
+        "pixels": 1600,
+        "scope": "illustration only; shot times and renderer algorithms differ"
+      }
+    },
+    {
+      "frame": 60,
+      "logical": [
+        640,
+        480
+      ],
+      "renderer": "Hardware",
+      "leveltime": 101,
+      "internal_observed_from_latest_init": {
+        "render": [
+          640,
+          480
+        ],
+        "stride_rows": [
+          640,
+          480
+        ],
+        "format": "CT32",
+        "crtc": [
+          2,
+          1
+        ],
+        "output": 2,
+        "pool_bytes": 376832,
+        "log": "PS2 GS hardware renderer: internal 640x480 (frame 640 x 480 CT32, CRTC x2/x1, output 2), frame buffers at 0K/1200K, Z24 at 2400K, texture pool 368K (46 pages), GIF DMA interrupt"
+      },
+      "expected_logical": [
+        640,
+        480
+      ],
+      "expected_renderer": "Hardware",
+      "metadata_ok": true,
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/vidshot-640x480-l60.ppm",
+      "exists": true,
+      "ppm_size": [
+        640,
+        480
+      ],
+      "ppm_sha256": "58f175b3bafbd1e9d2ef4fde7e4b3ffec155ae06038622ab099d22e0631d049d",
+      "ppm_size_ok": true,
+      "sky_roi_black_pixels": {
+        "roi": [
+          288,
+          65,
+          352,
+          90
+        ],
+        "black": 1302,
+        "pixels": 1600,
+        "scope": "illustration only; shot times and renderer algorithms differ"
+      }
+    },
+    {
+      "frame": 72,
+      "logical": [
+        640,
+        448
+      ],
+      "renderer": "Hardware",
+      "leveltime": 121,
+      "internal_observed_from_latest_init": {
+        "render": [
+          640,
+          480
+        ],
+        "stride_rows": [
+          640,
+          480
+        ],
+        "format": "CT32",
+        "crtc": [
+          2,
+          1
+        ],
+        "output": 2,
+        "pool_bytes": 376832,
+        "log": "PS2 GS hardware renderer: internal 640x480 (frame 640 x 480 CT32, CRTC x2/x1, output 2), frame buffers at 0K/1200K, Z24 at 2400K, texture pool 368K (46 pages), GIF DMA interrupt"
+      },
+      "expected_logical": [
+        640,
+        448
+      ],
+      "expected_renderer": "Hardware",
+      "metadata_ok": true,
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/vidshot-640x448-l72.ppm",
+      "exists": true,
+      "ppm_size": [
+        640,
+        448
+      ],
+      "ppm_sha256": "9973cfb199d07622cae8d2d73a6ec067c7c112822177f63bf42768d4eda24d5c",
+      "ppm_size_ok": true
+    },
+    {
+      "frame": 84,
+      "logical": [
+        320,
+        200
+      ],
+      "renderer": "Hardware",
+      "leveltime": 135,
+      "internal_observed_from_latest_init": {
+        "render": [
+          320,
+          240
+        ],
+        "stride_rows": [
+          320,
+          240
+        ],
+        "format": "CT32",
+        "crtc": [
+          4,
+          2
+        ],
+        "output": 2,
+        "pool_bytes": 3080192,
+        "log": "PS2 GS hardware renderer: internal 320x240 (frame 320 x 240 CT32, CRTC x4/x2, output 2), frame buffers at 0K/320K, Z24 at 640K, texture pool 3008K (376 pages), GIF DMA interrupt"
+      },
+      "expected_logical": [
+        320,
+        200
+      ],
+      "expected_renderer": "Hardware",
+      "metadata_ok": true,
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/vidshot-320x200-l84.ppm",
+      "exists": true,
+      "ppm_size": [
+        320,
+        200
+      ],
+      "ppm_sha256": "96985b5e51614bbcd30807f37d5f34c664ce921a35af38b99aa02d5d758e6f40",
+      "ppm_size_ok": true
+    }
+  ],
+  "manifest": {
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/hardware/SRB2.ELF": {
+      "bytes": 11268908,
+      "sha256": "8fabe702b3785a8a5b80b0711c0e7b2edcf95d561a58586fc2e91d07983f67df"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/SRB2.ELF": {
+      "bytes": 11268908,
+      "sha256": "8fabe702b3785a8a5b80b0711c0e7b2edcf95d561a58586fc2e91d07983f67df"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/ps2args": {
+      "bytes": 238,
+      "sha256": "e3cc72627434a5d3846ae0cd20749eac45d742a3942f4a2293ed67c784c5e036"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/.srb2/reference.cfg": {
+      "bytes": 76,
+      "sha256": "de0d14f426449aa4b0d57074c8a3d22ad387eeb27d004b0e8ad7dc55029063c4"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/boot.txt": {
+      "bytes": 31660,
+      "sha256": "5e541a0c8f3883387186864c7150e5643f94bd3b199aace9b1f3af0122cd6f70"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/pcsx2.log": {
+      "bytes": 102121,
+      "sha256": "64abd81e82bbd2737aaaf809e5bbcbcd7e0884c376c29dc64a527e2a1ef901be"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/summary.json": {
+      "bytes": 592,
+      "sha256": "00f4cbce46d5fb2ece2311d0e208ee6c88f2ca0f86484c8f7b9ac5da24d2f1b5"
+    },
+    "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": {
+      "bytes": 1827,
+      "sha256": "18652186414004e225402e34b38ec1f5b5683dca027a5116858b12f00a92c623"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/highres_native_report.py": {
+      "bytes": 6265,
+      "sha256": "34fffd35f1d1938adef30916dcf45a4c88c148348768bb28964047fb537a5256"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/CHARS.PAK": {
+      "bytes": 2682880,
+      "sha256": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/MUSIC.PAK": {
+      "bytes": 100595712,
+      "sha256": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/SRB2.PAK": {
+      "bytes": 62382080,
+      "sha256": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/ZONES.PAK": {
+      "bytes": 24442880,
+      "sha256": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/runs/highres-480p-switch-v7/FINEACON.DAT": {
+      "bytes": 524288,
+      "sha256": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/i_video.c": {
+      "bytes": 52916,
+      "sha256": "980a1ea06474cf24d4b7232e27039dab1177ea4fe888884c672917ce77625ba8"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/ps2_vmodes.h": {
+      "bytes": 9194,
+      "sha256": "fb899a309af5de102c409ad8eb80676a1f6d00e5424519e2e8f7fed844e89b92"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_bench.inc": {
+      "bytes": 7476,
+      "sha256": "2bac4778288f72f218894b5fcc6e8090028b802b23e9ddb70c61ab35d556cedd"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_draw.inc": {
+      "bytes": 87362,
+      "sha256": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_fast.inc": {
+      "bytes": 7869,
+      "sha256": "fd547a09b05b05896ed96fff96606c281ec9000acf23479c60df6b70e938718b"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_fx2.inc": {
+      "bytes": 4778,
+      "sha256": "b80204310e2ef95116e640f965022ffe4c7ec575a776a43b99c070d0a7613055"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_gs.inc": {
+      "bytes": 29782,
+      "sha256": "fdf12939e01ba31472ebad75a4418aeb1fada38784f0c4bc796a8b5bd2b71d1e"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_hg.inc": {
+      "bytes": 17614,
+      "sha256": "34d2908b3e97d3855cbefe4adcdf16ec3be83198d3f37d42196b663623134bc2"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_light.inc": {
+      "bytes": 4513,
+      "sha256": "938fdb371acaeedb8299d2bbfa819e34d0eaf8983aa4987bea6aeafc5f8328c2"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_model.inc": {
+      "bytes": 27811,
+      "sha256": "6e01b53b5d440be20f8bb94d2275dda96e82dd26d32ba9d222dc244e1db15064"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_pal.inc": {
+      "bytes": 7637,
+      "sha256": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_plan.inc": {
+      "bytes": 49020,
+      "sha256": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_priv.inc": {
+      "bytes": 21281,
+      "sha256": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_regs.inc": {
+      "bytes": 705,
+      "sha256": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_screen.inc": {
+      "bytes": 16088,
+      "sha256": "ffce2fd191a5d2c18f311fe14b6f85672a8234f465e98c454a87974ef402fd27"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_sky.inc": {
+      "bytes": 17953,
+      "sha256": "12be9c96a2888e7d376ea14bd11f6a3951bf275354f310d377aef2b31daa01ca"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_spr.inc": {
+      "bytes": 22177,
+      "sha256": "f6eeb2a54ae5ece666754957808ec595acbf030d2a7ec15f39388f338808fc10"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_tex.inc": {
+      "bytes": 97279,
+      "sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_tt.inc": {
+      "bytes": 11643,
+      "sha256": "f047073526a99d73a851e69e185685c570a4799be45a6a627c24bdd6ac4c08fa"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_val.inc": {
+      "bytes": 34737,
+      "sha256": "df958312ebe4becda71a502ea4a7eadfd06d5789c0336e929e475bbe8c81ac6a"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_vif.inc": {
+      "bytes": 3468,
+      "sha256": "d4466b94860c44b1eddf1454284c32ca5495453a747098d21e466a7221dc75a2"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_vu0.inc": {
+      "bytes": 5991,
+      "sha256": "30d5e6f65c5c3bd3419ee442bf3f1dfc6049f2effd70f3a9148359b80e8bf48a"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_vu1.inc": {
+      "bytes": 58709,
+      "sha256": "c29867be00f83b03f54fdba3161b8e585268d921d3851ae744e20be48e13f25b"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_water.inc": {
+      "bytes": 33721,
+      "sha256": "e494069e2528143ba2e8c6c589dd8604e0fd7d11125e634bb2e52cbc67d3ccbc"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_wire.inc": {
+      "bytes": 5720,
+      "sha256": "13b8102713f64a50541ef0ecb6258031d5717c2a12cd863140950d41ec982e40"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hw_xform.inc": {
+      "bytes": 9019,
+      "sha256": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source/src/ps2/hw/ps2_hwd.c": {
+      "bytes": 72039,
+      "sha256": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72"
+    }
+  }
+}

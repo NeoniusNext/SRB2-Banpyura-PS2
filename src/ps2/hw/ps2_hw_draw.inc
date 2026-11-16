@@ -235,9 +235,25 @@ static void tex_regs(const texrec_t *r, int wms, int wmt, int linear, u32 cbp, i
 	*clamp = (u64)((r->region & 1) ? 2 : wms) | ((u64)((r->region & 2) ? 2 : wmt) << 2) | ((u64)(r->uw - 1) << 14) | ((u64)(r->vh - 1) << 34); // REGION_CLAMP (2): MINU = MINV = 0, MAXU = w - 1, MAXV = h - 1
 	*tex1 = 1ull | ((u64)linear << 5) | ((u64)linear << 6); // LCM = 1 (fixed LOD), MMAG, MMIN
 	t0 = (u64)r->blk | ((u64)r->tbw << 14) | ((u64)r->psm << 20) | ((u64)r->tw << 26) | ((u64)r->th << 30) | ((u64)(r->notcc ? 0 : 1) << 34) | ((u64)(decal ? 1 : 0) << 35);
-	if (r->psm == PSM_T8)
+	if (psm_indexed(r->psm))
 	{
 		t0 |= (u64)cbp << 37; // CPSM = CT32, CSM1, CSA = 0
+#ifndef PS2_NOOPT_P4_BAND
+		if (r->psm == PSM_T4)
+		{
+			// CSA chooses the internal CLUT bank, not its source. Load all
+			// 256 original entries as T8 before selecting the unchanged band.
+			if (H.clut_loaded != cbp)
+			{
+				qw_t *p = ad_alloc(1);
+				ad_set(p, ((u64)PSM_T8 << 20) | ((u64)cbp << 37) | (1ull << 61), GSR_TEX2_1);
+				H.clut_loaded = cbp;
+				H.gsr.valid &= ~RV_TEX0;
+			}
+			t0 |= (u64)r->csa << 56;
+		}
+		else
+#endif
 		if (H.clut_loaded != cbp)
 		{
 			cld = 1;
@@ -275,6 +291,7 @@ static struct
 } OV;
 
 static void ov_flush(void);
+static void tile_stencil_before_pass(int depth_always);
 #define ov_flush_pending ov_flush
 
 // ---- the depth ramp: a shared 256 x 1 identity texture; a CLUT image per lighting turns the interpolated eye depth into darkness ----
@@ -417,6 +434,7 @@ static u32 ramp_clut(const rampspec_t *s)
 		ov_flush_pending(); // the queue may reference the image that is about to be replaced
 	H.clut_ent[victim].key = key;
 	H.clut_ent[victim].stamp = H.clut_tick;
+	H.clut_epoch++; // a ramp can replace a light-table row cached by the VU1 path
 	e = clut_alloc(H.clut_base + (u32)victim * CLUT_BLOCKS);
 	ramp_entries(s, e);
 	clut_swizzle(e);
@@ -504,7 +522,7 @@ static void plan_tex_touch(texrec_t *r)
 			im->imgws = H.frame_no + 1;
 			TX.need_blk += im->nblk;
 			TX.need_n++;
-			if (!(im->owner && im->owner->regen_kind && im->psm == PSM_T8 && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
+			if (!(im->owner && im->owner->regen_kind && psm_indexed(im->psm) && (u32)im->sw * im->sh >= PLAN_MIN_TEXELS))
 			{
 				H.unplanned_cur += im->nblk; // PS2-HW-37: what the plan has to leave room for
 				if ((ps2hwd_dbg_flags & HWDBG_LODDBG) && H.frame_no % 105 == 60 && im->owner)
@@ -514,7 +532,7 @@ static void plan_tex_touch(texrec_t *r)
 			{
 				const GLMipmap_t *pk = im->owner->ps2_twin ? im->owner->ps2_twin : im->owner;
 
-				if (pk->ps2_planfr == H.frame_no + 1)
+				if (pk->ps2_planfr == plan_stamp())
 				{
 					TX.need_in_plan += im->nblk;
 				}
@@ -577,7 +595,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		if (skip_reports < 40 && H.frame_no > 20 && skip_tex && !(skip_why && skip_why[0] == 'n' && skip_why[1] == 'o' && skip_why[3] == 'p')) // (the plan's "invisible" ones are the normal case: only real losses are listed)
 		{
 			skip_reports++;
-			CONS_Printf("HWSKIP f=%u draw skipped: texture %s %ux%u fmt=%d: %s\n", (unsigned)H.frame_no, HWR_PS2_TexName(skip_tex), (unsigned)skip_tex->width, (unsigned)skip_tex->height, (int)skip_tex->format, skip_why ? skip_why : "?");
+			CONS_Printf("HWSKIP f=%u phase=%d flags=0x%x shader=%d immtex=%p draw skipped: texture %s %ux%u fmt=%d: %s\n", (unsigned)H.frame_no, batch_phase, (unsigned)flags, H.shader, (void *)H.imm_tex, HWR_PS2_TexName(skip_tex), (unsigned)skip_tex->width, (unsigned)skip_tex->height, (int)skip_tex->format, skip_why ? skip_why : "?");
 		}
 		return 0;
 	}
@@ -640,7 +658,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 		wall = H.shader == 1 || H.shader == 2 || H.shader == 3; // wall fudges: wall, sprite, model; floor fudges: floor, water, fog
 		light_setup(&P.rs.lp, (int)surf->LightInfo.light_level, wall, (int)surf->LightInfo.fade_start, (int)surf->LightInfo.fade_end);
 		// PS2-HW-71: palette rendering: the engine gave the polygon a light table; a palette texture is lit by the CLUT of the colormap row
-		if (surf->LightTableId && lt_ok(surf->LightTableId) && textured && r->psm == PSM_T8 && (r->clut == 1 || r->clut == 2)
+		if (surf->LightTableId && lt_ok(surf->LightTableId) && textured && psm_indexed(r->psm) && (r->clut == 1 || r->clut == 2)
 			&& blend != PF_Fog && blend != (PF_Multiplicative & PF_Blending) && !(dbg & 2048))
 		{
 			P.rs.lp.pal = 1;
@@ -942,7 +960,7 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	if (lit && blend != PF_Fog && blend != (PF_Multiplicative & PF_Blending))
 	{
 		int solid = occlude && !(flags & PF_NoDepthTest) && !invisible && P.npass == 1 && P.pass[0].abe == 0
-			&& (!textured || (r->psm == PSM_T8 && r->clut == 1)) && !P.water && !(flags & PF_Ripple);
+			&& (!textured || (psm_indexed(r->psm) && r->clut == 1)) && !P.water && !(flags & PF_Ripple);
 
 		(void)solid;
 		// Use actual staircase boundaries: a sampled depth ramp moves transitions by up to one ramp texel.
@@ -994,6 +1012,12 @@ static int begin_draw_inner(u32 flags, const FSurfaceInfo *surf)
 	if (!P.vuok && (P.cutx || P.cuty) && !vu_nocut && V.on && V.ready && P.npass == 1 && !P.water && !P.pass[0].ramp && !(flags & PF_Ripple) && !P.vcol && !(flags & PF_Invisible) && P.pass[0].tex == (u8)textured
 		&& !P.oldpath && !(ps2hwd_dbg_flags & 64) && (P.lmode == LM_NONE || (P.lmode == LM_BANDS && P.pal && r && (r->clut == 2 || (r->clut == 1 && H.rec[img_of(H.cur_tex)].shareable && !H.rec[img_of(H.cur_tex)].has255)))))
 		P.vuok = 1; // PS2-HW-236 (a lit plan only with the keyed rows of its light table, as vu_plan_setup chooses them: the plain rows of the other kind are another 32 CLUT images a table, and the 124 of the CLUT cache do not hold four such sets): a texture with a side that is not a power of two: the polygons are cut at the repeats in object space (vu_cut_blk) and the program draws the pieces
+	if (r && r->tiled == 1)
+	{
+		// Every sampled pass must pass through emit_piece, including sky/model
+		// colours and ripple strips. The same GS renderer and shading stay active.
+		P.fast = P.litfast = P.vuok = 0;
+	}
 	P.serial = H.serial - 1; // the first polygon sets the state up
 	xf_update();
 	P.zmax = PS2HWD_ZMAX;
@@ -1131,7 +1155,7 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 	u32 zi;
 
 	zf = clampf(zf, 0.0f, P.zmax);
-	zi = (u32)(int)zf; // 0 <= zf <= Z24: the signed conversion is one instruction, the unsigned one a compare and a branch (PS2-HW-59)
+	zi = (u32)(int)zf | tile_stencil_zor; // 0 <= zf <= Z24: the signed conversion is one instruction, the unsigned one a compare and a branch (PS2-HW-59)
 	if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 4 || pk->fmt == 5 || pk->fmt == 6)
 	{
 		if (pk->ramp)
@@ -1180,7 +1204,7 @@ static inline qw_t *put_vertex(qw_t *o, const cv_t *s, const pack_t *pk)
 		H.gsr.valid &= ~(u32)RV_RGBAQ; // packed vertices changed Q (and sky colours) behind the A+D state cache
 	o->w[0] = (u32)xi;
 	o->w[1] = (u32)yi;
-	if (pk->fmt == 1 || pk->fmt == 3 || pk->fmt == 6)
+	if ((pk->fmt == 1 || pk->fmt == 3 || pk->fmt == 6) && !tile_stencil_zor)
 	{
 		o->w[2] = zi << 4;
 		o->w[3] = pk->fog << 4;
@@ -1205,7 +1229,7 @@ static inline u64 *put_vertex_reglist(u64 *o, const cv_t *s, const pack_t *pk)
 	u32 zi, col = pk->col;
 
 	zf = clampf(zf, 0.0f, P.zmax);
-	zi = (u32)(int)zf;
+	zi = (u32)(int)zf | tile_stencil_zor;
 	if (pk->ramp)
 	{
 		st.f[0] = P.ra + P.rb * q;
@@ -1236,7 +1260,7 @@ static inline u64 *put_vertex_reglist(u64 *o, const cv_t *s, const pack_t *pk)
 	st.f[0] = q;
 	*o++ = (u64)col | ((u64)st.w[0] << 32);
 	*o++ = (u64)(xi & 0xFFFF) | ((u64)(yi & 0xFFFF) << 16)
-		| ((u64)zi << 32) | ((pk->fmt == 1 || pk->fmt == 6) ? (u64)(pk->fog & 255) << 56 : 0);
+		| ((u64)zi << 32) | ((pk->fmt == 1 || pk->fmt == 6) && !tile_stencil_zor ? (u64)(pk->fog & 255) << 56 : 0);
 	H.gsr.valid &= ~(u32)RV_RGBAQ;
 	return o;
 }
@@ -1248,6 +1272,12 @@ static inline int pack_regs(int fmt)
 
 static inline u64 pack_regdesc(int fmt)
 {
+	if (tile_stencil_zor)
+	{
+		if (fmt == 1 || fmt == 6) return GIF_REGS_STQ_RGBA_XYZ;
+		if (fmt == 3) return GIF_REGS_XYZ;
+	}
+
 	switch (fmt)
 	{
 		case 0: return GIF_REGS_STQ_RGBA_XYZ;
@@ -1279,7 +1309,7 @@ static void emit_reglist_fan(const cv_t *v, int cnt, const pack_t *pk, u32 prim)
 	int i;
 
 	p[0].d[0] = HWGIF_TAG(1, 1, 0, 0, 1, nr & 15);
-	p[0].d[1] = fan_reglist_desc[pk->fmt][cnt];
+	p[0].d[1] = fan_reglist_desc[tile_stencil_zor && pk->fmt == 1 ? 0 : tile_stencil_zor && pk->fmt == 3 ? 2 : pk->fmt][cnt];
 	*o++ = prim;
 	for (i = 0; i < cnt; i++)
 	{
@@ -1291,7 +1321,7 @@ static void emit_reglist_fan(const cv_t *v, int cnt, const pack_t *pk, u32 prim)
 		u32 zi;
 
 		zf = clampf(zf, 0.0f, P.zmax);
-		zi = (u32)(int)zf; // (PS2-HW-59)
+		zi = (u32)(int)zf | tile_stencil_zor; // (PS2-HW-59)
 		if (pk->fmt == 0 || pk->fmt == 1 || pk->fmt == 5)
 		{
 			qw_t st;
@@ -1304,7 +1334,7 @@ static void emit_reglist_fan(const cv_t *v, int cnt, const pack_t *pk, u32 prim)
 				*o++ = (u64)pk->col | ((u64)st.w[0] << 32);
 			}
 		}
-		if (pk->fmt == 1 || pk->fmt == 3)
+		if ((pk->fmt == 1 || pk->fmt == 3) && !tile_stencil_zor)
 			*o++ = (u64)(xi & 0xFFFF) | ((u64)(yi & 0xFFFF) << 16) | ((u64)zi << 32) | ((u64)pk->fog << 56);
 		else
 			*o++ = (u64)(xi & 0xFFFF) | ((u64)(yi & 0xFFFF) << 16) | ((u64)zi << 32);
@@ -1324,6 +1354,7 @@ static void pass_setup(int k, int force_tex)
 
 	memset(&s, 0, sizeof s);
 	s.test = ps->test | (1ull << 16) | ((u64)((P.flags & PF_NoDepthTest) ? 1 : ((ps2hwd_dbg_flags & 1) ? 1 : 2)) << 17);
+	if (tile_stencil_active) s.test = (s.test & ~(3ull << 17)) | (2ull << 17);
 	s.alpha = ps->alpha;
 	s.zbuf = zbuf_reg(ps->zwrite ? 0 : 1);
 	s.frame = frame_reg(H.target, ps->fbmsk);
@@ -1337,7 +1368,7 @@ static void pass_setup(int k, int force_tex)
 		const texrec_t *r = P.r;
 		u32 cbp = 0;
 
-		if (r->psm == PSM_T8)
+		if (psm_indexed(r->psm))
 		{
 			if (ps->clut_kind)
 				cbp = clut_get(ps->clut_kind, ps->clut_param, ps->clut_keyed);
@@ -1487,6 +1518,8 @@ static void emit_overlay(const cv_t *v, int cnt)
 	H.st.verts_out += (u32)cnt;
 }
 
+static void tile_emit_piece(const cv_t *v, int cnt, const piece_t *pc);
+
 // all passes of one piece
 static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 {
@@ -1499,6 +1532,11 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 
 	if (cnt < 3)
 		return;
+	if (P.textured && P.r && P.r->tiled == 1)
+	{
+		tile_emit_piece(v, cnt, pc);
+		return;
+	}
 	if (pc->cls >= 0)
 		fogF = (P.lmode == LM_BANDS && !P.oldpath) ? lf_fog(pc->cls, &fog_on) : fog_of_class(&P.rs, pc->cls, &fog_on);
 	for (k = 0; k < P.npass; k++)
@@ -1510,6 +1548,8 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		(void)tmp;
 		if (ps->ramp)
 			continue; // light overlays and fog ramps are handled below
+		if (tile_stencil_active)
+			tile_stencil_before_pass((P.flags & PF_NoDepthTest) || (ps2hwd_dbg_flags & 1));
 		if (P.pal && ps->tex && ps->clut_kind == CK_LIGHT)
 		{
 			// PS2-HW-71: the CLUT of the colormap row of this piece
@@ -1551,6 +1591,13 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		pk.fog = fogF;
 		pk.fmt = P.vlight ? 6 : P.vcol ? 4 : (ps->tex ? (usefog ? 1 : 0) : (usefog ? 3 : 2));
 		pk.col = ps->col;
+		if (tile_stencil_zor && (pk.fmt == 1 || pk.fmt == 3 || pk.fmt == 6))
+		{
+			// XYZF2 carries only24 depth bits. F is constant in this light
+			// piece, so latch it explicitly and emit XYZ2 with all32 bits.
+			qw_t *fp = ad_alloc(1);
+			ad_set(fp, (u64)fogF << 56, GSR_FOG);
+		}
 		if (pk.fmt == 0)
 		{
 			int unitq = 1;
@@ -1585,6 +1632,9 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 	}
 	if (P.lmode == LM_RAMP && P.npass >= 1 && !P.pass[0].ramp)
 	{
+		// The overlay's original test is GEQUAL even when its base ignored
+		// depth. Restore a canonical high0 plane before packing that pass.
+		if (tile_stencil_active) tile_stencil_before_pass(0);
 		// the light overlay of a solid polygon
 		if (!ov_room(cnt))
 			ov_flush();
@@ -1603,6 +1653,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 
 			if (!ps->ramp)
 				continue;
+			if (tile_stencil_active) tile_stencil_before_pass((P.flags & PF_NoDepthTest) != 0);
 			rs.variant = (u8)ps->clut_param;
 			rs.scale = (u8)P.ramp_scale;
 			memset(&s, 0, sizeof s);
@@ -1610,6 +1661,7 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 			tex_regs(rt, 1, 1, 0, ramp_clut(&rs), 1, &s.tex0, &s.tex1, &s.clamp);
 			s.clamp = 1ull | (1ull << 2);
 			s.test = ps->test | (1ull << 16) | ((u64)((P.flags & PF_NoDepthTest) ? 1 : 2) << 17);
+			if (tile_stencil_active) s.test = (s.test & ~(3ull << 17)) | (2ull << 17);
 			s.alpha = ps->alpha;
 			s.zbuf = zbuf_reg(ps->zwrite ? 0 : 1);
 			s.frame = frame_reg(H.target, ps->fbmsk);
@@ -1632,6 +1684,9 @@ static void emit_piece(const cv_t *v, int cnt, const piece_t *pc)
 		}
 	}
 }
+
+#include "ps2_hw_tile_stencil.inc"
+#include "ps2_hw_tile_draw.inc"
 
 // Cut a convex polygon along one attribute at ascending values cuts[0..n); the piece before cuts[0] gets index 0, ...
 static void cut_and_emit(const cv_t *v, int cnt, int stage, piece_t pc, int na);
@@ -2119,7 +2174,7 @@ static inline void pcache_make_key(plankey_t *k, u32 flags, const FSurfaceInfo *
 	k->filter = (u32)H.tex_filter;
 	if (r)
 		t |= (u32)r->psm | ((u32)r->clut << 6) | ((u32)(r->notcc != 0) << 8) | ((u32)(r->screen != 0) << 9) | ((u32)(r->wrapx != 0) << 10) | ((u32)(r->wrapy != 0) << 11)
-			| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17);
+			| ((u32)(r->npot_x != 0) << 12) | ((u32)(r->npot_y != 0) << 13) | ((u32)(r->region & 3) << 14) | ((u32)(r->nearest_only != 0) << 16) | (1u << 17) | ((u32)(r->tiled == 1) << 19);
 	k->tex = t;
 }
 
@@ -2240,7 +2295,7 @@ static inline void vu0_need(void)
 static void emit_poly(const FOutVector *base, const u32 *idx, int n, const float *vcol)
 {
 	const float gx = (float)H.guard_x * (1.0f / 1024.0f), gy = (float)H.guard_y * (1.0f / 1024.0f);
-	int i, cnt, and_ = 0x3F, or_ = 0, na = P.vcol ? 6 : 2, big = 0;
+	int i, cnt, and_ = 0x3F, or_ = 0, na = P.vlight ? 3 : P.vcol ? 6 : 2, big = 0;
 	cv_t *v;
 	u32 t0 = cyc(), gt1;
 	piece_t pc;
@@ -2537,7 +2592,7 @@ static void emit_tris(const FOutVector *base, const u32 *idx, u32 nidx, const fl
 {
 	u32 i, t0 = cyc();
 	int na = P.vlight ? 3 : P.vcol ? 6 : 2;
-	int simple_mode = P.npass == 1 && (P.lmode == LM_NONE || (P.lmode == LM_RAMP && !P.pass[0].ramp)) && !P.cutx && !P.cuty && !P.water && P.pass[0].tex == (u8)P.textured;
+	int simple_mode = !(P.r && P.r->tiled == 1) && P.npass == 1 && (P.lmode == LM_NONE || (P.lmode == LM_RAMP && !P.pass[0].ramp)) && !P.cutx && !P.cuty && !P.water && P.pass[0].tex == (u8)P.textured;
 	int fmt = P.vlight ? 6 : P.vcol ? 4 : (P.textured ? 0 : 2);
 	int nreg = pack_regs(fmt);
 	pack_t pk;
@@ -2722,7 +2777,7 @@ static void sprite_tex(texrec_t *r, int linear, u64 frame, u64 alpha, int abe, i
 	if (OV.n)
 		ov_flush();
 	memset(&s, 0, sizeof s);
-	if (r->psm == PSM_T8 && !cbp)
+	if (psm_indexed(r->psm) && !cbp)
 		cbp = clut_get(r->clut == 3 ? CK_ALPHA : (r->clut == 2 ? CK_KEYED : CK_OPAQUE), 0, 0);
 	tex_regs(r, 1, 1, linear, cbp, 1, &s.tex0, &s.tex1, &s.clamp);
 	s.test = TEST_BITS(0, ATST_ALWAYS, 0) | (1ull << 16) | (1ull << 17);

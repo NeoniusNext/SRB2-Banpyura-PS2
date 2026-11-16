@@ -1,0 +1,1333 @@
+{
+  "scope": "Complete stock decoded PAK source census. Each patch modeled as ordinary primary AP88 hardware patch with real-extent crop enabled and no explicit/automatic texture cap. Texture-folder patches are also composition inputs; their hypothetical standalone image totals are not actual usage. Native payload/spans are full-size arithmetic before tex_plan and are not valid full-size sampling claims for oversized pictures. No simultaneous residency, frame memory, feature equivalence, GPU validation or implementation claim.",
+  "source_root": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source",
+  "source_sha256": {
+    "src/r_patch.c": "db0dcea9521c8c41f95b8ccac4b3f2e57563e63e3d6e5e3d82a6fb151614942a",
+    "src/r_defs.h": "6c88912e24bb3f85cc8d0166f5734ad5e01e42dfe0bad3ae266e91cba831f62c",
+    "src/r_picformats.c": "9838bd7b625cacf18a54bd89e5d20c02aa365fc007d9e4261a4c20a30166a07f",
+    "src/hardware/hw_cache.c": "2ff513529707134b55d2fc6e048ecbe9177d77c96e9e4cec22da5bc69fe9e542",
+    "src/hardware/hw_data.h": "ae19d9a3ce26bda9a11acb9fe52906712edb5b711b759cf9d070e63077c190a7",
+    "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+    "src/ps2/hw/ps2_hw_spr.inc": "f6eeb2a54ae5ece666754957808ec595acbf030d2a7ec15f39388f338808fc10",
+    "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+    "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665"
+  },
+  "tool_sha256": "0e1ab7e153e9f04a4634021321e11cb068b7c8ab1736036c878681c32d0008e9",
+  "pack_sha256": {
+    "SRB2.PAK": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+    "CHARS.PAK": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+    "ZONES.PAK": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+    "MUSIC.PAK": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0"
+  },
+  "canonical_ee_abi": {
+    "patch_t": 48,
+    "column_t": 12,
+    "post_t": 12,
+    "column_align": 4,
+    "post_align": 4,
+    "patch_pixels_offset": 8,
+    "patch_columns_offset": 12,
+    "patch_posts_offset": 16,
+    "post_top_offset": 0,
+    "post_length_offset": 4,
+    "post_data_offset": 8
+  },
+  "all_patches": {
+    "count": 12443,
+    "area": 262358515,
+    "opaque_pixels": 154276454,
+    "holes": 108082061,
+    "canonical_pixels": 154276454,
+    "canonical_posts": 2485855,
+    "canonical_columns": 1390803,
+    "canonical_ee_bytes": 201444534,
+    "canonical_pixels_lz4_model_bytes": 26407846,
+    "canonical_post8_model_ee_bytes": 191497350,
+    "canonical_post6_model_ee_bytes": 186541814,
+    "ap88_pow2_bytes": 881263572,
+    "ap88_cropped_bytes": 524717030,
+    "ap88_lz4_model_bytes": 34585436,
+    "cpu_p8_or_p9_model_bytes": 440631786,
+    "cpu_tight_p8_or_p9_model_bytes": 262358515,
+    "cpu_tight_always_coverage_model_bytes": 295155586,
+    "current_native_payload": 262358515,
+    "current_native_span_bytes": 327134464,
+    "native_formats": {
+      "P8": 12443
+    },
+    "with_holes": 9571,
+    "with_opaque255": 13,
+    "gs_fullsize_legal": 12422,
+    "with_holes_and_opaque255": 0,
+    "cpu_p8_exact_eligible": {
+      "count": 12443,
+      "ap88_bytes": 881263572
+    },
+    "shared_p4_eligible": {
+      "count": 882,
+      "ap88_bytes": 42522496,
+      "current_span_bytes": 21779200,
+      "p4_span_bytes": 10928640,
+      "image_span_reduction": 10850560,
+      "image_span_reduction_after_one_generic_clut_per_image": 9992448
+    },
+    "custom_p4_index_states_eligible": {
+      "count": 4182,
+      "ap88_bytes": 186418560,
+      "current_span_bytes": 88716544,
+      "p4_span_bytes": 45076992,
+      "image_span_reduction": 43639552,
+      "image_span_reduction_after_one_generic_clut_per_image": 40028160
+    },
+    "custom_p4_rgba_colors_eligible": {
+      "count": 4182,
+      "ap88_bytes": 186418560,
+      "current_span_bytes": 88716544,
+      "p4_span_bytes": 45076992,
+      "image_span_reduction": 43639552,
+      "image_span_reduction_after_one_generic_clut_per_image": 40028160
+    },
+    "custom_p8_index_states_eligible": {
+      "count": 12443,
+      "ap88_bytes": 881263572
+    },
+    "custom_p8_rgba_colors_eligible": {
+      "count": 12443,
+      "ap88_bytes": 881263572
+    },
+    "max_post_top": 2032,
+    "max_post_length": 254,
+    "max_post_data_offset": 2032,
+    "max_column_pixels": 2048,
+    "identical_canonical": {
+      "groups_with_duplicates": 426,
+      "duplicate_instances": 578,
+      "payload_opportunity_bytes": 4197278
+    },
+    "identical_ap88_images": {
+      "groups_with_duplicates": 498,
+      "duplicate_instances": 656,
+      "payload_opportunity_bytes": 24879454
+    }
+  },
+  "sprites_and_characters": {
+    "count": 7306,
+    "area": 64258691,
+    "opaque_pixels": 19614135,
+    "holes": 44644556,
+    "canonical_pixels": 19614135,
+    "canonical_posts": 675856,
+    "canonical_columns": 542272,
+    "canonical_ee_bytes": 34621591,
+    "canonical_pixels_lz4_model_bytes": 7446435,
+    "canonical_post8_model_ee_bytes": 31915575,
+    "canonical_post6_model_ee_bytes": 30576231,
+    "ap88_pow2_bytes": 265310986,
+    "ap88_cropped_bytes": 128517382,
+    "ap88_lz4_model_bytes": 11225168,
+    "cpu_p8_or_p9_model_bytes": 132655493,
+    "cpu_tight_p8_or_p9_model_bytes": 64258691,
+    "cpu_tight_always_coverage_model_bytes": 72292822,
+    "current_native_payload": 64258691,
+    "current_native_span_bytes": 99864576,
+    "native_formats": {
+      "P8": 7306
+    },
+    "with_holes": 7271,
+    "with_opaque255": 0,
+    "gs_fullsize_legal": 7306,
+    "with_holes_and_opaque255": 0,
+    "cpu_p8_exact_eligible": {
+      "count": 7306,
+      "ap88_bytes": 265310986
+    },
+    "shared_p4_eligible": {
+      "count": 12,
+      "ap88_bytes": 105472,
+      "current_span_bytes": 61696,
+      "p4_span_bytes": 31232,
+      "image_span_reduction": 30464,
+      "image_span_reduction_after_one_generic_clut_per_image": 19200
+    },
+    "custom_p4_index_states_eligible": {
+      "count": 1075,
+      "ap88_bytes": 19055872,
+      "current_span_bytes": 7829504,
+      "p4_span_bytes": 3981568,
+      "image_span_reduction": 3847936,
+      "image_span_reduction_after_one_generic_clut_per_image": 2989568
+    },
+    "custom_p4_rgba_colors_eligible": {
+      "count": 1075,
+      "ap88_bytes": 19055872,
+      "current_span_bytes": 7829504,
+      "p4_span_bytes": 3981568,
+      "image_span_reduction": 3847936,
+      "image_span_reduction_after_one_generic_clut_per_image": 2989568
+    },
+    "custom_p8_index_states_eligible": {
+      "count": 7306,
+      "ap88_bytes": 265310986
+    },
+    "custom_p8_rgba_colors_eligible": {
+      "count": 7306,
+      "ap88_bytes": 265310986
+    },
+    "max_post_top": 763,
+    "max_post_length": 254,
+    "max_post_data_offset": 762,
+    "max_column_pixels": 765,
+    "identical_canonical": {
+      "groups_with_duplicates": 316,
+      "duplicate_instances": 385,
+      "payload_opportunity_bytes": 1736114
+    },
+    "identical_ap88_images": {
+      "groups_with_duplicates": 341,
+      "duplicate_instances": 415,
+      "payload_opportunity_bytes": 15259648
+    }
+  },
+  "by_category": {
+    "CHARS.PAK:1_Sonic": {
+      "count": 356,
+      "area": 1142983,
+      "opaque_pixels": 520871,
+      "holes": 622112,
+      "canonical_pixels": 520871,
+      "canonical_posts": 27523,
+      "canonical_columns": 16302,
+      "canonical_ee_bytes": 1065959,
+      "canonical_pixels_lz4_model_bytes": 301788,
+      "canonical_post8_model_ee_bytes": 955527,
+      "canonical_post6_model_ee_bytes": 901079,
+      "ap88_pow2_bytes": 4794880,
+      "ap88_cropped_bytes": 2285966,
+      "ap88_lz4_model_bytes": 458315,
+      "cpu_p8_or_p9_model_bytes": 2397440,
+      "cpu_tight_p8_or_p9_model_bytes": 1142983,
+      "cpu_tight_always_coverage_model_bytes": 1285961,
+      "current_native_payload": 1142983,
+      "current_native_span_bytes": 2461696,
+      "native_formats": {
+        "P8": 356
+      },
+      "with_holes": 354,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 356,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 356,
+        "ap88_bytes": 4794880
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 17,
+        "ap88_bytes": 868352,
+        "current_span_bytes": 315392,
+        "p4_span_bytes": 158464,
+        "image_span_reduction": 156928,
+        "image_span_reduction_after_one_generic_clut_per_image": 139520
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 17,
+        "ap88_bytes": 868352,
+        "current_span_bytes": 315392,
+        "p4_span_bytes": 158464,
+        "image_span_reduction": 156928,
+        "image_span_reduction_after_one_generic_clut_per_image": 139520
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 356,
+        "ap88_bytes": 4794880
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 356,
+        "ap88_bytes": 4794880
+      },
+      "max_post_top": 151,
+      "max_post_length": 93,
+      "max_post_data_offset": 99,
+      "max_column_pixels": 110,
+      "identical_canonical": {
+        "groups_with_duplicates": 18,
+        "duplicate_instances": 19,
+        "payload_opportunity_bytes": 55719
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 20,
+        "duplicate_instances": 25,
+        "payload_opportunity_bytes": 331776
+      }
+    },
+    "CHARS.PAK:2_Tails": {
+      "count": 507,
+      "area": 3669483,
+      "opaque_pixels": 448956,
+      "holes": 3220527,
+      "canonical_pixels": 448956,
+      "canonical_posts": 26676,
+      "canonical_columns": 42065,
+      "canonical_ee_bytes": 1301116,
+      "canonical_pixels_lz4_model_bytes": 237486,
+      "canonical_post8_model_ee_bytes": 1193532,
+      "canonical_post6_model_ee_bytes": 1141708,
+      "ap88_pow2_bytes": 11137536,
+      "ap88_cropped_bytes": 7338966,
+      "ap88_lz4_model_bytes": 381829,
+      "cpu_p8_or_p9_model_bytes": 5568768,
+      "cpu_tight_p8_or_p9_model_bytes": 3669483,
+      "cpu_tight_always_coverage_model_bytes": 4128185,
+      "current_native_payload": 3669483,
+      "current_native_span_bytes": 5236992,
+      "native_formats": {
+        "P8": 507
+      },
+      "with_holes": 506,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 507,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 507,
+        "ap88_bytes": 11137536
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 47,
+        "ap88_bytes": 1133056,
+        "current_span_bytes": 448256,
+        "p4_span_bytes": 224256,
+        "image_span_reduction": 224000,
+        "image_span_reduction_after_one_generic_clut_per_image": 177408
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 47,
+        "ap88_bytes": 1133056,
+        "current_span_bytes": 448256,
+        "p4_span_bytes": 224256,
+        "image_span_reduction": 224000,
+        "image_span_reduction_after_one_generic_clut_per_image": 177408
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 507,
+        "ap88_bytes": 11137536
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 507,
+        "ap88_bytes": 11137536
+      },
+      "max_post_top": 147,
+      "max_post_length": 78,
+      "max_post_data_offset": 56,
+      "max_column_pixels": 82,
+      "identical_canonical": {
+        "groups_with_duplicates": 11,
+        "duplicate_instances": 12,
+        "payload_opportunity_bytes": 41126
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 11,
+        "duplicate_instances": 12,
+        "payload_opportunity_bytes": 172032
+      }
+    },
+    "CHARS.PAK:3_Knuckles": {
+      "count": 275,
+      "area": 855301,
+      "opaque_pixels": 404669,
+      "holes": 450632,
+      "canonical_pixels": 404669,
+      "canonical_posts": 18848,
+      "canonical_columns": 13494,
+      "canonical_ee_bytes": 807325,
+      "canonical_pixels_lz4_model_bytes": 212987,
+      "canonical_post8_model_ee_bytes": 732077,
+      "canonical_post6_model_ee_bytes": 694717,
+      "ap88_pow2_bytes": 3052032,
+      "ap88_cropped_bytes": 1710602,
+      "ap88_lz4_model_bytes": 327593,
+      "cpu_p8_or_p9_model_bytes": 1526016,
+      "cpu_tight_p8_or_p9_model_bytes": 855301,
+      "cpu_tight_always_coverage_model_bytes": 962302,
+      "current_native_payload": 855301,
+      "current_native_span_bytes": 1312512,
+      "native_formats": {
+        "P8": 275
+      },
+      "with_holes": 274,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 275,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 275,
+        "ap88_bytes": 3052032
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 17,
+        "ap88_bytes": 868352,
+        "current_span_bytes": 315392,
+        "p4_span_bytes": 158464,
+        "image_span_reduction": 156928,
+        "image_span_reduction_after_one_generic_clut_per_image": 139520
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 17,
+        "ap88_bytes": 868352,
+        "current_span_bytes": 315392,
+        "p4_span_bytes": 158464,
+        "image_span_reduction": 156928,
+        "image_span_reduction_after_one_generic_clut_per_image": 139520
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 275,
+        "ap88_bytes": 3052032
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 275,
+        "ap88_bytes": 3052032
+      },
+      "max_post_top": 146,
+      "max_post_length": 123,
+      "max_post_data_offset": 98,
+      "max_column_pixels": 123,
+      "identical_canonical": {
+        "groups_with_duplicates": 2,
+        "duplicate_instances": 2,
+        "payload_opportunity_bytes": 5250
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 3,
+        "duplicate_instances": 3,
+        "payload_opportunity_bytes": 24576
+      }
+    },
+    "CHARS.PAK:4_Amy": {
+      "count": 320,
+      "area": 2180353,
+      "opaque_pixels": 436555,
+      "holes": 1743798,
+      "canonical_pixels": 436555,
+      "canonical_posts": 24314,
+      "canonical_columns": 25656,
+      "canonical_ee_bytes": 1053387,
+      "canonical_pixels_lz4_model_bytes": 279431,
+      "canonical_post8_model_ee_bytes": 955451,
+      "canonical_post6_model_ee_bytes": 908043,
+      "ap88_pow2_bytes": 10908160,
+      "ap88_cropped_bytes": 4360706,
+      "ap88_lz4_model_bytes": 431582,
+      "cpu_p8_or_p9_model_bytes": 5454080,
+      "cpu_tight_p8_or_p9_model_bytes": 2180353,
+      "cpu_tight_always_coverage_model_bytes": 2453008,
+      "current_native_payload": 2180353,
+      "current_native_span_bytes": 4431104,
+      "native_formats": {
+        "P8": 320
+      },
+      "with_holes": 319,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 320,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 320,
+        "ap88_bytes": 10908160
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 3,
+        "ap88_bytes": 786432,
+        "current_span_bytes": 274944,
+        "p4_span_bytes": 137472,
+        "image_span_reduction": 137472,
+        "image_span_reduction_after_one_generic_clut_per_image": 134400
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 3,
+        "ap88_bytes": 786432,
+        "current_span_bytes": 274944,
+        "p4_span_bytes": 137472,
+        "image_span_reduction": 137472,
+        "image_span_reduction_after_one_generic_clut_per_image": 134400
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 320,
+        "ap88_bytes": 10908160
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 320,
+        "ap88_bytes": 10908160
+      },
+      "max_post_top": 148,
+      "max_post_length": 119,
+      "max_post_data_offset": 96,
+      "max_column_pixels": 119,
+      "identical_canonical": {
+        "groups_with_duplicates": 14,
+        "duplicate_instances": 16,
+        "payload_opportunity_bytes": 58588
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 15,
+        "duplicate_instances": 17,
+        "payload_opportunity_bytes": 507904
+      }
+    },
+    "CHARS.PAK:5_Fang": {
+      "count": 424,
+      "area": 1771237,
+      "opaque_pixels": 810986,
+      "holes": 960251,
+      "canonical_pixels": 810986,
+      "canonical_posts": 45895,
+      "canonical_columns": 24437,
+      "canonical_ee_bytes": 1678074,
+      "canonical_pixels_lz4_model_bytes": 483530,
+      "canonical_post8_model_ee_bytes": 1494266,
+      "canonical_post6_model_ee_bytes": 1402874,
+      "ap88_pow2_bytes": 7574016,
+      "ap88_cropped_bytes": 3542474,
+      "ap88_lz4_model_bytes": 683518,
+      "cpu_p8_or_p9_model_bytes": 3787008,
+      "cpu_tight_p8_or_p9_model_bytes": 1771237,
+      "cpu_tight_always_coverage_model_bytes": 1992783,
+      "current_native_payload": 1771237,
+      "current_native_span_bytes": 3731968,
+      "native_formats": {
+        "P8": 424
+      },
+      "with_holes": 423,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 424,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 424,
+        "ap88_bytes": 7574016
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 3,
+        "ap88_bytes": 786432,
+        "current_span_bytes": 274944,
+        "p4_span_bytes": 137472,
+        "image_span_reduction": 137472,
+        "image_span_reduction_after_one_generic_clut_per_image": 134400
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 3,
+        "ap88_bytes": 786432,
+        "current_span_bytes": 274944,
+        "p4_span_bytes": 137472,
+        "image_span_reduction": 137472,
+        "image_span_reduction_after_one_generic_clut_per_image": 134400
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 424,
+        "ap88_bytes": 7574016
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 424,
+        "ap88_bytes": 7574016
+      },
+      "max_post_top": 146,
+      "max_post_length": 105,
+      "max_post_data_offset": 105,
+      "max_column_pixels": 111,
+      "identical_canonical": {
+        "groups_with_duplicates": 41,
+        "duplicate_instances": 53,
+        "payload_opportunity_bytes": 213440
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 41,
+        "duplicate_instances": 53,
+        "payload_opportunity_bytes": 1048576
+      }
+    },
+    "CHARS.PAK:6_MetalSonic": {
+      "count": 162,
+      "area": 598695,
+      "opaque_pixels": 200822,
+      "holes": 397873,
+      "canonical_pixels": 200822,
+      "canonical_posts": 11829,
+      "canonical_columns": 8070,
+      "canonical_ee_bytes": 448166,
+      "canonical_pixels_lz4_model_bytes": 116950,
+      "canonical_post8_model_ee_bytes": 400918,
+      "canonical_post6_model_ee_bytes": 377334,
+      "ap88_pow2_bytes": 2568704,
+      "ap88_cropped_bytes": 1197390,
+      "ap88_lz4_model_bytes": 189387,
+      "cpu_p8_or_p9_model_bytes": 1284352,
+      "cpu_tight_p8_or_p9_model_bytes": 598695,
+      "cpu_tight_always_coverage_model_bytes": 673581,
+      "current_native_payload": 598695,
+      "current_native_span_bytes": 1141504,
+      "native_formats": {
+        "P8": 162
+      },
+      "with_holes": 161,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 162,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 162,
+        "ap88_bytes": 2568704
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 18,
+        "ap88_bytes": 876544,
+        "current_span_bytes": 324096,
+        "p4_span_bytes": 162816,
+        "image_span_reduction": 161280,
+        "image_span_reduction_after_one_generic_clut_per_image": 142848
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 18,
+        "ap88_bytes": 876544,
+        "current_span_bytes": 324096,
+        "p4_span_bytes": 162816,
+        "image_span_reduction": 161280,
+        "image_span_reduction_after_one_generic_clut_per_image": 142848
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 162,
+        "ap88_bytes": 2568704
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 162,
+        "ap88_bytes": 2568704
+      },
+      "max_post_top": 146,
+      "max_post_length": 90,
+      "max_post_data_offset": 87,
+      "max_column_pixels": 105,
+      "identical_canonical": {
+        "groups_with_duplicates": 4,
+        "duplicate_instances": 6,
+        "payload_opportunity_bytes": 17242
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 4,
+        "duplicate_instances": 6,
+        "payload_opportunity_bytes": 73728
+      }
+    },
+    "CHARS.PAK:Sonic&Tails": {
+      "count": 1,
+      "area": 16384,
+      "opaque_pixels": 6796,
+      "holes": 9588,
+      "canonical_pixels": 6796,
+      "canonical_posts": 265,
+      "canonical_columns": 128,
+      "canonical_ee_bytes": 11564,
+      "canonical_pixels_lz4_model_bytes": 5285,
+      "canonical_post8_model_ee_bytes": 10508,
+      "canonical_post6_model_ee_bytes": 9980,
+      "ap88_pow2_bytes": 32768,
+      "ap88_cropped_bytes": 32768,
+      "ap88_lz4_model_bytes": 7073,
+      "cpu_p8_or_p9_model_bytes": 16384,
+      "cpu_tight_p8_or_p9_model_bytes": 16384,
+      "cpu_tight_always_coverage_model_bytes": 18432,
+      "current_native_payload": 16384,
+      "current_native_span_bytes": 16384,
+      "native_formats": {
+        "P8": 1
+      },
+      "with_holes": 1,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 1,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 1,
+        "ap88_bytes": 32768
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 1,
+        "ap88_bytes": 32768
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 1,
+        "ap88_bytes": 32768
+      },
+      "max_post_top": 110,
+      "max_post_length": 70,
+      "max_post_data_offset": 68,
+      "max_column_pixels": 90,
+      "identical_canonical": {
+        "groups_with_duplicates": 0,
+        "duplicate_instances": 0,
+        "payload_opportunity_bytes": 0
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 0,
+        "duplicate_instances": 0,
+        "payload_opportunity_bytes": 0
+      }
+    },
+    "SRB2.PAK:Graphics": {
+      "count": 1765,
+      "area": 100229827,
+      "opaque_pixels": 46248216,
+      "holes": 53981611,
+      "canonical_pixels": 46248216,
+      "canonical_posts": 738166,
+      "canonical_columns": 379522,
+      "canonical_ee_bytes": 59754152,
+      "canonical_pixels_lz4_model_bytes": 6330247,
+      "canonical_post8_model_ee_bytes": 56801256,
+      "canonical_post6_model_ee_bytes": 55326648,
+      "ap88_pow2_bytes": 403051722,
+      "ap88_cropped_bytes": 200459654,
+      "ap88_lz4_model_bytes": 8930965,
+      "cpu_p8_or_p9_model_bytes": 201525861,
+      "cpu_tight_p8_or_p9_model_bytes": 100229827,
+      "cpu_tight_always_coverage_model_bytes": 112759006,
+      "current_native_payload": 100229827,
+      "current_native_span_bytes": 124912128,
+      "native_formats": {
+        "P8": 1765
+      },
+      "with_holes": 1494,
+      "with_opaque255": 2,
+      "gs_fullsize_legal": 1747,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 1765,
+        "ap88_bytes": 403051722
+      },
+      "shared_p4_eligible": {
+        "count": 12,
+        "ap88_bytes": 737664,
+        "current_span_bytes": 338432,
+        "p4_span_bytes": 186624,
+        "image_span_reduction": 151808,
+        "image_span_reduction_after_one_generic_clut_per_image": 144384
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 382,
+        "ap88_bytes": 6321792,
+        "current_span_bytes": 2393600,
+        "p4_span_bytes": 1312768,
+        "image_span_reduction": 1080832,
+        "image_span_reduction_after_one_generic_clut_per_image": 998400
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 382,
+        "ap88_bytes": 6321792,
+        "current_span_bytes": 2393600,
+        "p4_span_bytes": 1312768,
+        "image_span_reduction": 1080832,
+        "image_span_reduction_after_one_generic_clut_per_image": 998400
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 1765,
+        "ap88_bytes": 403051722
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 1765,
+        "ap88_bytes": 403051722
+      },
+      "max_post_top": 609,
+      "max_post_length": 254,
+      "max_post_data_offset": 508,
+      "max_column_pixels": 714,
+      "identical_canonical": {
+        "groups_with_duplicates": 15,
+        "duplicate_instances": 91,
+        "payload_opportunity_bytes": 376152
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 23,
+        "duplicate_instances": 99,
+        "payload_opportunity_bytes": 4203868
+      }
+    },
+    "SRB2.PAK:Patches": {
+      "count": 445,
+      "area": 7943664,
+      "opaque_pixels": 5593146,
+      "holes": 2350518,
+      "canonical_pixels": 5593146,
+      "canonical_posts": 92709,
+      "canonical_columns": 57556,
+      "canonical_ee_bytes": 7418458,
+      "canonical_pixels_lz4_model_bytes": 629199,
+      "canonical_post8_model_ee_bytes": 7047258,
+      "canonical_post6_model_ee_bytes": 6862378,
+      "ap88_pow2_bytes": 16807936,
+      "ap88_cropped_bytes": 15887328,
+      "ap88_lz4_model_bytes": 695373,
+      "cpu_p8_or_p9_model_bytes": 8403968,
+      "cpu_tight_p8_or_p9_model_bytes": 7943664,
+      "cpu_tight_always_coverage_model_bytes": 8936625,
+      "current_native_payload": 7943664,
+      "current_native_span_bytes": 8348160,
+      "native_formats": {
+        "P8": 445
+      },
+      "with_holes": 174,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 445,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 445,
+        "ap88_bytes": 16807936
+      },
+      "shared_p4_eligible": {
+        "count": 63,
+        "ap88_bytes": 1726208,
+        "current_span_bytes": 981760,
+        "p4_span_bytes": 508160,
+        "image_span_reduction": 473600,
+        "image_span_reduction_after_one_generic_clut_per_image": 428544
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 363,
+        "ap88_bytes": 11527680,
+        "current_span_bytes": 5921536,
+        "p4_span_bytes": 3091456,
+        "image_span_reduction": 2830080,
+        "image_span_reduction_after_one_generic_clut_per_image": 2521088
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 363,
+        "ap88_bytes": 11527680,
+        "current_span_bytes": 5921536,
+        "p4_span_bytes": 3091456,
+        "image_span_reduction": 2830080,
+        "image_span_reduction_after_one_generic_clut_per_image": 2521088
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 445,
+        "ap88_bytes": 16807936
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 445,
+        "ap88_bytes": 16807936
+      },
+      "max_post_top": 508,
+      "max_post_length": 254,
+      "max_post_data_offset": 508,
+      "max_column_pixels": 512,
+      "identical_canonical": {
+        "groups_with_duplicates": 10,
+        "duplicate_instances": 14,
+        "payload_opportunity_bytes": 273056
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 10,
+        "duplicate_instances": 14,
+        "payload_opportunity_bytes": 458752
+      }
+    },
+    "SRB2.PAK:Sprites": {
+      "count": 5261,
+      "area": 54024255,
+      "opaque_pixels": 16784480,
+      "holes": 37239775,
+      "canonical_pixels": 16784480,
+      "canonical_posts": 520506,
+      "canonical_columns": 412120,
+      "canonical_ee_bytes": 28256000,
+      "canonical_pixels_lz4_model_bytes": 5808978,
+      "canonical_post8_model_ee_bytes": 26173296,
+      "canonical_post6_model_ee_bytes": 25140496,
+      "ap88_pow2_bytes": 225242890,
+      "ap88_cropped_bytes": 108048510,
+      "ap88_lz4_model_bytes": 8745871,
+      "cpu_p8_or_p9_model_bytes": 112621445,
+      "cpu_tight_p8_or_p9_model_bytes": 54024255,
+      "cpu_tight_always_coverage_model_bytes": 60778570,
+      "current_native_payload": 54024255,
+      "current_native_span_bytes": 81532416,
+      "native_formats": {
+        "P8": 5261
+      },
+      "with_holes": 5233,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 5261,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 5261,
+        "ap88_bytes": 225242890
+      },
+      "shared_p4_eligible": {
+        "count": 12,
+        "ap88_bytes": 105472,
+        "current_span_bytes": 61696,
+        "p4_span_bytes": 31232,
+        "image_span_reduction": 30464,
+        "image_span_reduction_after_one_generic_clut_per_image": 19200
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 970,
+        "ap88_bytes": 13736704,
+        "current_span_bytes": 5876480,
+        "p4_span_bytes": 3002624,
+        "image_span_reduction": 2873856,
+        "image_span_reduction_after_one_generic_clut_per_image": 2121472
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 970,
+        "ap88_bytes": 13736704,
+        "current_span_bytes": 5876480,
+        "p4_span_bytes": 3002624,
+        "image_span_reduction": 2873856,
+        "image_span_reduction_after_one_generic_clut_per_image": 2121472
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 5261,
+        "ap88_bytes": 225242890
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 5261,
+        "ap88_bytes": 225242890
+      },
+      "max_post_top": 763,
+      "max_post_length": 254,
+      "max_post_data_offset": 762,
+      "max_column_pixels": 765,
+      "identical_canonical": {
+        "groups_with_duplicates": 202,
+        "duplicate_instances": 251,
+        "payload_opportunity_bytes": 1280694
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 223,
+        "duplicate_instances": 273,
+        "payload_opportunity_bytes": 12888064
+      }
+    },
+    "SRB2.PAK:Textures": {
+      "count": 2848,
+      "area": 88581533,
+      "opaque_pixels": 81476157,
+      "holes": 7105376,
+      "canonical_pixels": 81476157,
+      "canonical_posts": 965676,
+      "canonical_columns": 398005,
+      "canonical_ee_bytes": 97978989,
+      "canonical_pixels_lz4_model_bytes": 11300620,
+      "canonical_post8_model_ee_bytes": 94115709,
+      "canonical_post6_model_ee_bytes": 92185885,
+      "ap88_pow2_bytes": 190522368,
+      "ap88_cropped_bytes": 177163066,
+      "ap88_lz4_model_bytes": 12973018,
+      "cpu_p8_or_p9_model_bytes": 95261184,
+      "cpu_tight_p8_or_p9_model_bytes": 88581533,
+      "cpu_tight_always_coverage_model_bytes": 99654233,
+      "current_native_payload": 88581533,
+      "current_native_span_bytes": 91765504,
+      "native_formats": {
+        "P8": 2848
+      },
+      "with_holes": 632,
+      "with_opaque255": 11,
+      "gs_fullsize_legal": 2845,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 2848,
+        "ap88_bytes": 190522368
+      },
+      "shared_p4_eligible": {
+        "count": 795,
+        "ap88_bytes": 39953152,
+        "current_span_bytes": 20397312,
+        "p4_span_bytes": 10202624,
+        "image_span_reduction": 10194688,
+        "image_span_reduction_after_one_generic_clut_per_image": 9400320
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 2362,
+        "ap88_bytes": 149513216,
+        "current_span_bytes": 72571904,
+        "p4_span_bytes": 36691200,
+        "image_span_reduction": 35880704,
+        "image_span_reduction_after_one_generic_clut_per_image": 33519104
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 2362,
+        "ap88_bytes": 149513216,
+        "current_span_bytes": 72571904,
+        "p4_span_bytes": 36691200,
+        "image_span_reduction": 35880704,
+        "image_span_reduction_after_one_generic_clut_per_image": 33519104
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 2848,
+        "ap88_bytes": 190522368
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 2848,
+        "ap88_bytes": 190522368
+      },
+      "max_post_top": 2032,
+      "max_post_length": 254,
+      "max_post_data_offset": 2032,
+      "max_column_pixels": 2048,
+      "identical_canonical": {
+        "groups_with_duplicates": 81,
+        "duplicate_instances": 82,
+        "payload_opportunity_bytes": 1384276
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 81,
+        "duplicate_instances": 82,
+        "payload_opportunity_bytes": 3915776
+      }
+    },
+    "ZONES.PAK:Level select pictures": {
+      "count": 79,
+      "area": 1344800,
+      "opaque_pixels": 1344800,
+      "holes": 0,
+      "canonical_pixels": 1344800,
+      "canonical_posts": 13448,
+      "canonical_columns": 13448,
+      "canonical_ee_bytes": 1671344,
+      "canonical_pixels_lz4_model_bytes": 701345,
+      "canonical_post8_model_ee_bytes": 1617552,
+      "canonical_post6_model_ee_bytes": 1590672,
+      "ap88_pow2_bytes": 5570560,
+      "ap88_cropped_bytes": 2689600,
+      "ap88_lz4_model_bytes": 760912,
+      "cpu_p8_or_p9_model_bytes": 2785280,
+      "cpu_tight_p8_or_p9_model_bytes": 1344800,
+      "cpu_tight_always_coverage_model_bytes": 1512900,
+      "current_native_payload": 1344800,
+      "current_native_span_bytes": 2244096,
+      "native_formats": {
+        "P8": 79
+      },
+      "with_holes": 0,
+      "with_opaque255": 0,
+      "gs_fullsize_legal": 79,
+      "with_holes_and_opaque255": 0,
+      "cpu_p8_exact_eligible": {
+        "count": 79,
+        "ap88_bytes": 5570560
+      },
+      "shared_p4_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_index_states_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p4_rgba_colors_eligible": {
+        "count": 0,
+        "ap88_bytes": 0,
+        "current_span_bytes": 0,
+        "p4_span_bytes": 0,
+        "image_span_reduction": 0,
+        "image_span_reduction_after_one_generic_clut_per_image": 0
+      },
+      "custom_p8_index_states_eligible": {
+        "count": 79,
+        "ap88_bytes": 5570560
+      },
+      "custom_p8_rgba_colors_eligible": {
+        "count": 79,
+        "ap88_bytes": 5570560
+      },
+      "max_post_top": 0,
+      "max_post_length": 100,
+      "max_post_data_offset": 0,
+      "max_column_pixels": 100,
+      "identical_canonical": {
+        "groups_with_duplicates": 1,
+        "duplicate_instances": 1,
+        "payload_opportunity_bytes": 19888
+      },
+      "identical_ap88_images": {
+        "groups_with_duplicates": 1,
+        "duplicate_instances": 1,
+        "payload_opportunity_bytes": 65536
+      }
+    }
+  },
+  "raw_flats": {
+    "count": 1386,
+    "bytes": 34735104,
+    "single_band_count": 409,
+    "single_band_bytes": 8796160,
+    "single_band_without255_count": 409,
+    "single_band_physical_span_reduction": 4398080,
+    "at_most_16_colors_count": 1174
+  },
+  "fades": {
+    "count": 125,
+    "bytes": 484000
+  },
+  "rejected_nonpatch_by_category": {
+    "SRB2.PAK:ANIMDEFS.erz": 1,
+    "SRB2.PAK:ANIMDEFS.fluids": 1,
+    "SRB2.PAK:ANIMDEFS.gfz": 1,
+    "SRB2.PAK:ANIMDEFS.misc": 1,
+    "SRB2.PAK:ANIMDEFS.ptz": 1,
+    "SRB2.PAK:ANIMDEFS.rvz": 1,
+    "SRB2.PAK:ANIMDEFS.tutorial": 1,
+    "SRB2.PAK:COLORMAP": 1,
+    "SRB2.PAK:DEMO_001": 1,
+    "SRB2.PAK:DEMO_002": 1,
+    "SRB2.PAK:DEMO_003": 1,
+    "SRB2.PAK:DEMO_004": 1,
+    "SRB2.PAK:PLAYPAL": 1,
+    "SRB2.PAK:SOC": 2,
+    "SRB2.PAK:Sounds": 737,
+    "SRB2.PAK:TEXTURES.acz": 1,
+    "SRB2.PAK:TEXTURES.cez": 1,
+    "SRB2.PAK:TEXTURES.cez2": 1,
+    "SRB2.PAK:TEXTURES.chz": 1,
+    "SRB2.PAK:TEXTURES.csz": 1,
+    "SRB2.PAK:TEXTURES.dsz": 1,
+    "SRB2.PAK:TEXTURES.erz": 1,
+    "SRB2.PAK:TEXTURES.flags": 1,
+    "SRB2.PAK:TEXTURES.gfz": 1,
+    "SRB2.PAK:TEXTURES.ghz": 1,
+    "SRB2.PAK:TEXTURES.legacy": 1,
+    "SRB2.PAK:TEXTURES.mhz": 1,
+    "SRB2.PAK:TEXTURES.misc": 1,
+    "SRB2.PAK:TEXTURES.psz": 1,
+    "SRB2.PAK:TEXTURES.ptz": 1,
+    "SRB2.PAK:TEXTURES.rvz": 1,
+    "SRB2.PAK:TEXTURES.scz": 1,
+    "SRB2.PAK:TEXTURES.slz": 1,
+    "SRB2.PAK:TEXTURES.thz": 1,
+    "SRB2.PAK:TEXTURES.thz2": 1,
+    "SRB2.PAK:TEXTURES.tutorial": 1,
+    "SRB2.PAK:TEXTURES.xmas": 1,
+    "SRB2.PAK:TRANS10": 1,
+    "SRB2.PAK:TRANS20": 1,
+    "SRB2.PAK:TRANS30": 1,
+    "SRB2.PAK:TRANS40": 1,
+    "SRB2.PAK:TRANS50": 1,
+    "SRB2.PAK:TRANS60": 1,
+    "SRB2.PAK:TRANS70": 1,
+    "SRB2.PAK:TRANS80": 1,
+    "SRB2.PAK:TRANS90": 1,
+    "SRB2.PAK:WATERMAP": 1,
+    "CHARS.PAK:1_Sonic": 2,
+    "CHARS.PAK:2_Tails": 1,
+    "CHARS.PAK:3_Knuckles": 1,
+    "CHARS.PAK:4_Amy": 1,
+    "CHARS.PAK:5_Fang": 1,
+    "CHARS.PAK:6_MetalSonic": 1,
+    "CHARS.PAK:SOC": 1,
+    "CHARS.PAK:SPRTINFO.txt": 1,
+    "ZONES.PAK:Maps": 86,
+    "ZONES.PAK:SOC": 4
+  },
+  "PLAYPAL_opaque255_aliases": [
+    {
+      "bank": 0,
+      "index255_rgb": "00ffff",
+      "aliases": []
+    },
+    {
+      "bank": 1,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 2,
+      "index255_rgb": "baf5fe",
+      "aliases": []
+    },
+    {
+      "bank": 3,
+      "index255_rgb": "bafee8",
+      "aliases": []
+    },
+    {
+      "bank": 4,
+      "index255_rgb": "bf7171",
+      "aliases": [
+        31,
+        112,
+        113,
+        114,
+        115,
+        116,
+        117,
+        118,
+        119,
+        125,
+        126,
+        127,
+        143,
+        152,
+        153,
+        154,
+        155,
+        156,
+        157,
+        158,
+        159,
+        253,
+        254
+      ]
+    },
+    {
+      "bank": 5,
+      "index255_rgb": "c00000",
+      "aliases": []
+    },
+    {
+      "bank": 6,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 7,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 8,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 9,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 10,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 11,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 12,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    },
+    {
+      "bank": 13,
+      "index255_rgb": "bfffff",
+      "aliases": []
+    }
+  ],
+  "stock_rgba_sources": "No native RGBA pictures in these four cooked PAKs. Fifteen PNGs already contain canonical indexed Doom patches. External model packs, add-ons, generated/rotated patches and runtime colormap variants are not this corpus.",
+  "oracle": {
+    "result": {
+      "patches": 12443,
+      "compared_ap88_bytes": 881263572,
+      "cropped_texels": 262358515,
+      "canonical_posts": 2485855,
+      "canonical_pixels": 154276454,
+      "checks": 343300
+    },
+    "sanitizers": true,
+    "negative_controls": {
+      "post": {
+        "detected": true,
+        "exit": 101,
+        "log_sha256": "6a7e00c2769e1679c80ab7ad074e015195363b41204348dcfcdc2928a8e948f4"
+      },
+      "ap88": {
+        "detected": true,
+        "exit": 101,
+        "log_sha256": "5dac2df65f311ee8d4f754a3471943f1f56ef0fa30de55b9dc7313f87d0750bd"
+      }
+    },
+    "generated_sha256": "8b42627e42b829c269d1b686bf6a453332bc8602d98a427503f42430bf0f2261",
+    "binary_sha256": "274fbccc31e5ac4cbefdd14f8a7ea24fe84144a891a4cfe71cdc413892b638b8"
+  },
+  "corpus_sha256": "7c2c3adeaaf4116b2d97dcacad71c11506bee223b2a7ba07ba84b2d7c5eb3172",
+  "frozen_tool_sha256": {
+    "strip_pics.py": "2fd4c15284721db880209f9435db7bd415978c2e2a8a6615cadd948be20c8a97",
+    "sprite_texture_audit.py": "0e1ab7e153e9f04a4634021321e11cb068b7c8ab1736036c878681c32d0008e9",
+    "patch_abi.c": "8b238b7bda6bf963438a5aef956fb22316c06ca341478543de626ff17be6be0d",
+    "cook.py": "6394cfc780d2ca801f59d0aa1d7d6cf3308f851f0d0c745a3ef3adb679c19714",
+    "next13_flats_cut_hosttest.py": "d034d740d50baa4a310fdcf91ae036841b3af4f8b2c035031f3d7243d1895ed0",
+    "patch_rescue_hosttest.c": "e4a683a7dbd142097f29abe87de2bfc1daad2bbdcab44cd190ffd6ae5ffed2f6",
+    "patch_rescue_hosttest.py": "a3859bb2d53d6bd6a66af1f0ab898e3d393b2f22b8cbd37b3bed087416d97727"
+  }
+}

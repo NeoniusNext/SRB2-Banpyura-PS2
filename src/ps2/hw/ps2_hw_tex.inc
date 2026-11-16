@@ -15,6 +15,15 @@ extern UINT32 hwr_texsig;
 #define WIPE_DEAD_FRAMES 12 // frames a wipe image may stay unused before pool pressure may take it
 
 static void ov_flush_all(void);
+static void tile_invalidate(void);
+static void tile_release_source(texrec_t *r);
+static u32 tex_usable_blocks(void);
+static u32 tile_cache_borrowed_blocks(void);
+static int tile_cache_return_borrow(void);
+static u32 tile_workspace_peak(void);
+static u32 tile_core_fast_count(void);
+static u32 tile_box_count(void);
+static u32 tile_pixel_fallback_count(void);
 static int scr_spill_victim(void);
 static u32 tex_want(const GLMipmap_t *m, int *visible); // ps2_hw_plan.inc
 
@@ -193,6 +202,12 @@ static u32 tex_footprint(int psm, u32 w, u32 h, u32 tbw)
 	h--;
 	switch (psm)
 	{
+#ifndef PS2_NOOPT_P4_BAND
+		case PSM_T4:
+			lastpage = (h >> 7) * ((tbw + 1) >> 1) + (w >> 7);
+			maxblk = blk_16[(h >> 4) & 7][(w >> 5) & 3];
+			break;
+#endif
 		case PSM_T8:
 			lastpage = (h >> 6) * ((tbw + 1) >> 1) + (w >> 7);
 			maxblk = blk_32_8[(h >> 4) & 3][(w >> 4) & 7];
@@ -309,6 +324,8 @@ static void tex_drop(int i, int count_eviction)
 {
 	texrec_t *r = &H.rec[i];
 
+	if (r->tiled == 1)
+		tile_invalidate();
 	if (r->owner)
 		r->owner->ps2_drop = (u8)(drop_reason ? drop_reason : (count_eviction ? 1 : 5));
 
@@ -361,8 +378,16 @@ static void tex_drop(int i, int count_eviction)
 		r->owner->downloaded = 0;
 	if (r->screen)
 		H.scr_rec[r->screen - 1] = NOREC;
-	own_clear(r->blk, r->nblk);
-	vram_free(r->blk, r->nblk);
+	if (r->tiled == 1)
+	{
+		tile_release_source(r);
+		free(r->tile_palette);
+	}
+	if (r->nblk)
+	{
+		own_clear(r->blk, r->nblk);
+		vram_free(r->blk, r->nblk);
+	}
 	if (count_eviction)
 		H.st.evictions++;
 	rec_release(i);
@@ -535,6 +560,8 @@ static int small_victim(void)
 	for (pass = 0; pass < 2; pass++)
 		for (v = H.lru_tail; v != NOREC; v = H.rec[v].prev)
 		{
+			if (!H.rec[v].nblk)
+				continue; // metadata-only tile sources cannot make allocation room
 			u32 w = evict_weight(&H.rec[v], v, 0, 31); // seq 0, shift 31: every texture that is not pending weighs 1
 
 			if (w != WEIGHT_STAY && (pass == 1 || w < 60u))
@@ -557,6 +584,14 @@ static u32 vram_alloc_evicting(u32 n, u32 align, int hi)
 		b = hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
 		if (b)
 			return b;
+		// Optional window capacity cannot cost an ordinary allocation or eviction.
+		// Old wide draws already precede the next upload in the same GIF stream.
+		if (tile_cache_return_borrow())
+		{
+			b = hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
+			if (b)
+				return b;
+		}
 		if (!tries)
 		{
 			TX.alloc_fail++; // no free range fits: something has to go (PS2-HW-39: how often there was room in total, but not in one piece)
@@ -596,7 +631,27 @@ static u32 vram_alloc_evicting(u32 n, u32 align, int hi)
 			tex_drop(o - 1, 1);
 		}
 	}
-	return 0;
+	// The final victim may have made room; small oldest-first victims may
+	// also leave only scattered holes. Finish one existing safe window.
+	b = hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
+	if (b)
+		return b;
+	w = best_window(n, align);
+	if (w == NOWIN)
+		return 0;
+	for (e = w; e < w + n;)
+	{
+		u16 o = blk_owner[e];
+
+		if (!o)
+		{
+			e++;
+			continue;
+		}
+		e = H.rec[o - 1].blk + H.rec[o - 1].nblk;
+		tex_drop(o - 1, 1);
+	}
+	return hi ? vram_alloc_hi(n, align) : vram_alloc(n, align);
 }
 
 static inline texrec_t *rec_of(const GLMipmap_t *m)
@@ -999,6 +1054,61 @@ static int rgba_to_indices(const u32 *src, u32 n, u8 *dst, int *holes, int *uses
 	return 1;
 }
 
+#ifndef PS2_NOOPT_P4_BAND
+// Exact P8 eligibility: the low nibble plus one unchanged aligned CLUT band
+// represents every source index. A partial scan never publishes a band.
+static int p4_band(const u8 *src, u32 n, u32 *band)
+{
+	u32 i, high;
+
+	if (!n)
+		return 0;
+	high = src[0] & 0xF0u;
+	i = 1;
+#ifdef __mips__
+	if (n >= 16u && !((uintptr_t)src & 15u))
+	{
+		const u8 *s = src;
+		u32 groups = n >> 4;
+		u64 mask, expect, value, upper, mismatch;
+
+		// All sixteen original bytes must keep the same high nibble. Reduce
+		// both register halves before the early reject; scalar checks the tail.
+		__asm__ volatile(
+			".set push\n\t.set noreorder\n\t"
+			"pcpyld %[mask],%[highmask],%[highmask]\n\t"
+			"pextlw %[expect],%[high],%[high]\n\t"
+			"pcpyld %[expect],%[expect],%[expect]\n\t"
+			"1:\n\t"
+			"lq %[value],0(%[s])\n\t"
+			"pxor %[value],%[value],%[expect]\n\t"
+			"pand %[value],%[value],%[mask]\n\t"
+			"pcpyud %[upper],%[value],%[value]\n\t"
+			"or %[mismatch],%[value],%[upper]\n\t"
+			"bnez %[mismatch],2f\n\t"
+			"addiu %[s],%[s],16\n\t"
+			"addiu %[groups],%[groups],-1\n\t"
+			"bnez %[groups],1b\n\t"
+			"nop\n\t"
+			"2:\n\t.set pop\n\t"
+			: [s] "+r"(s), [groups] "+r"(groups), [mask] "=&r"(mask),
+			  [expect] "=&r"(expect), [value] "=&r"(value),
+			  [upper] "=&r"(upper), [mismatch] "=&r"(mismatch)
+			: [highmask] "r"((u64)0xF0F0F0F0F0F0F0F0ULL), [high] "r"(high * 0x01010101u)
+			: "memory");
+		if (mismatch)
+			return 0;
+		i = n & ~15u;
+	}
+#endif
+	for (; i < n; i++)
+		if ((src[i] & 0xF0u) != high)
+			return 0;
+	*band = high >> 4;
+	return 1;
+}
+#endif
+
 // write rows [r0, r0+nr) of the stored texture: W2 pixels per row of bpp bytes, produced by fill(row, dst)
 typedef void (*rowfill_t)(void *ctx, u32 row, u8 *dst);
 
@@ -1013,6 +1123,10 @@ static inline void vram_guard(u32 blk, int psm, u32 W2, u32 H2, u32 tbw, const c
 static void upload_bands(u32 blk, u32 tbw, u32 psm, u32 W2, u32 H2, u32 bpp, rowfill_t fill, void *ctx)
 {
 	u32 rowbytes = W2 * bpp;
+#ifndef PS2_NOOPT_P4_BAND
+	if (psm == PSM_T4)
+		rowbytes = W2 >> 1; // eligibility requires legal RRW: a multiple of eight texels
+#endif
 
 	vram_guard(blk, (int)psm, W2, H2, tbw, "texture upload outside the texture pool of the GS memory");
 	u32 band = (65536u / rowbytes) & ~15u; // rows per band, multiple of 16
@@ -1342,7 +1456,11 @@ typedef struct
 	u32 dx, dy; // the stored texture takes every (1 << dx)-th column / (1 << dy)-th row of the source (PS2-HW-20); 0 = all of them
 	int mode; // fill-specific
 	int holes;
+#ifdef HWR_PS2_PACKED_PATCHES
+	const GLMipmap_t *patch; // compact AP88 source; occupies the old EE padding word
+#else
 	u8 pad[4];
+#endif
 } fillctx_t;
 
 // Without decimation uploads preserve source rows and columns exactly. A decimated texture (dx/dy > 0) keeps the texel at the centre of
@@ -1383,6 +1501,61 @@ static void fill_idx(void *ctx, u32 row, u8 *dst)
 		sx += step;
 	} while (--remaining);
 }
+
+#ifndef PS2_NOOPT_P4_BAND
+// Packed directly into the existing DMA ring. No second persistent image and
+// no new scratch allocation; legal even transfer rows start a fresh byte.
+static void fill_p4(void *ctx, u32 row, u8 *dst)
+{
+	const fillctx_t *c = ctx;
+	const u8 *src = c->src + (size_t)src_row(c, row) * c->sw;
+	u32 x = 0;
+
+	// Only the complete, undecimated source has contiguous original columns.
+	// LQ and SD require aligned addresses; short, unaligned and tail texels
+	// retain the byte path below. No source or packet bytes are read past W2.
+	if (!c->dx && !c->dy && c->W2 == c->sw && c->H2 == c->sh
+		&& c->W2 >= 16u && !((uintptr_t)src & 15u) && !((uintptr_t)dst & 7u))
+	{
+		const u32 end = c->W2 & ~15u;
+#ifdef __mips__
+		const u8 *s = src;
+		u8 *d = dst;
+		u32 groups = end >> 4;
+		u64 mask, value, odd;
+
+		// Each halfword holds two masked indices. Its shifted odd nibble
+		// joins the even nibble; PPACB gathers the eight low bytes for SD.
+		// Keep 128-bit register contents entirely inside this asm block.
+		__asm__ volatile(
+			".set push\n\t.set noreorder\n\t"
+			"pcpyld %[mask],%[low],%[low]\n\t"
+			"1:\n\t"
+			"lq %[value],0(%[s])\n\t"
+			"pand %[value],%[value],%[mask]\n\t"
+			"psrlh %[odd],%[value],4\n\t"
+			"por %[value],%[value],%[odd]\n\t"
+			"ppacb %[value],$zero,%[value]\n\t"
+			"sd %[value],0(%[d])\n\t"
+			"addiu %[s],%[s],16\n\t"
+			"addiu %[groups],%[groups],-1\n\t"
+			"bnez %[groups],1b\n\t"
+			"addiu %[d],%[d],8\n\t"
+			".set pop\n\t"
+			: [s] "+r"(s), [d] "+r"(d), [groups] "+r"(groups),
+			  [mask] "=&r"(mask), [value] "=&r"(value), [odd] "=&r"(odd)
+			: [low] "r"((u64)0x0F0F0F0F0F0F0F0FULL)
+			: "memory");
+#else
+		for (x = 0; x < end; x += 2)
+			dst[x >> 1] = (u8)((src[x] & 15u) | ((src[x + 1] & 15u) << 4));
+#endif
+		x = end;
+	}
+	for (; x < c->W2; x += 2)
+		dst[x >> 1] = (u8)((src[src_col(c, x)] & 15u) | ((src[src_col(c, x + 1)] & 15u) << 4));
+}
+#endif
 
 // Gather the low byte of each of four 16-bit texels into a 32-bit word, preserving their order.
 static inline u32 ap88_gather(u64 v)
@@ -1489,6 +1662,64 @@ static void fill_ap88_ct32(void *ctx, u32 row, u8 *dst)
 	}
 }
 
+#ifdef HWR_PS2_PACKED_PATCHES
+static void fill_patch8(void *ctx, u32 row, u8 *dst)
+{
+	const fillctx_t *c = ctx;
+	const GLMipmap_t *m = c->patch;
+	const u32 sy = src_row(c, row);
+	u32 x;
+
+	if (c->mode || (m->ps2_cpu & HWR_PS2_CPU_HOLES255))
+	{
+		u32 copied = 0;
+
+		if (sy < m->ps2_uh)
+		{
+			const u8 *src = (const u8 *)m->data + (size_t)sy * m->ps2_uw;
+			u32 sx = (1u << c->dx) >> 1;
+
+			if (sx < m->ps2_uw)
+			{
+				const u32 step = 1u << c->dx;
+				const u32 valid = (m->ps2_uw - sx + step - 1u) >> c->dx;
+
+				copied = c->W2 < valid ? c->W2 : valid;
+				if (!c->dx)
+					memcpy(dst, src, copied);
+				else
+					for (x = 0; x < copied; x++, sx += step)
+						dst[x] = src[sx];
+			}
+		}
+		if (copied < c->W2)
+			memset(dst + copied, 255, c->W2 - copied);
+		return;
+	}
+	for (x = 0; x < c->W2; x++)
+	{
+		const u16 pixel = HWR_PS2_ReadAP88(m, src_col(c, x), sy);
+
+		dst[x] = (!c->mode && !(pixel >> 8)) ? 255 : (u8)pixel;
+	}
+}
+
+static void fill_patch32(void *ctx, u32 row, u8 *dst)
+{
+	const fillctx_t *c = ctx;
+	const u32 sy = src_row(c, row);
+	u32 *out = (u32 *)(void *)dst;
+	u32 x;
+
+	for (x = 0; x < c->W2; x++)
+	{
+		const u16 pixel = HWR_PS2_ReadAP88(c->patch, src_col(c, x), sy);
+
+		out[x] = H.pal[pixel & 255u] | (a8_to_gs(pixel >> 8) << 24);
+	}
+}
+#endif
+
 // RGBA -> CT32 with the GS alpha scale (0x80 = opaque)
 static void fill_ct32(void *ctx, u32 row, u8 *dst)
 {
@@ -1572,7 +1803,7 @@ static void cap_step(int idx, const char *why)
 
 static void tex_cap_control(void)
 {
-	u32 budget = H.pool_blocks / CAP_BUDGET_DEN * CAP_BUDGET_NUM;
+	u32 budget = tex_usable_blocks() / CAP_BUDGET_DEN * CAP_BUDGET_NUM;
 	int k;
 
 	if (!H.cap_adapt || H.pred_frame != H.frame_no + 1)
@@ -1584,7 +1815,7 @@ static void tex_cap_control(void)
 		H.cap_up_count = 0;
 		for (k = H.cap_idx + 1; k < NCAPS - 1 && H.pred[k] > budget; k++)
 			;
-		if (H.pred[H.cap_idx] > H.pool_blocks / 10u * 9u || ++H.cap_down_count >= CAP_DOWN_FRAMES)
+		if (H.pred[H.cap_idx] > tex_usable_blocks() / 10u * 9u || ++H.cap_down_count >= CAP_DOWN_FRAMES)
 			cap_step(k, "working set over budget");
 		return;
 	}
@@ -1658,7 +1889,7 @@ static struct
 
 static void tx_note_upload(const GLMipmap_t *m, int psm, u32 nblk)
 {
-	u32 k = psm != PSM_T8 ? 3u : m->regen_kind == 1 ? 0u : m->regen_kind == 2 ? 1u : 2u;
+	u32 k = !psm_indexed(psm) ? 3u : m->regen_kind == 1 ? 0u : m->regen_kind == 2 ? 1u : 2u;
 	u32 h = (u32)(((uintptr_t)m >> 4) * 2654435761u) >> 21;
 
 	TX.up_n[k]++;
@@ -1960,6 +2191,84 @@ static void ap88_scan(const u16 *d16, u32 sw, u32 cw, u32 ch, u32 pal255, int fa
 	}
 }
 
+#include "ps2_hw_tile.inc" // Lossless bounded residency for a source larger than the available GS pool.
+
+#ifdef HWR_PS2_PACKED_PATCHES
+static void ap88_scan_patch(const GLMipmap_t *m, u32 cw, u32 ch, u32 pal255, int *hole, int *opaque255, int *hole_rgb)
+{
+	u32 y, x;
+
+	// tex_upload scans before tex_plan: the full real rectangle when cropped,
+	// otherwise the whole logical rectangle including its transparent border.
+	// These cached facts describe source bytes, independent of palette epochs.
+	if (cw >= m->ps2_uw && ch >= m->ps2_uh
+		&& ((m->ps2_cpu & HWR_PS2_CPU_HOLES255) || !(m->ps2_cpu & HWR_PS2_CPU_HAS_HOLES)))
+	{
+		*hole |= (m->ps2_cpu & HWR_PS2_CPU_HAS_HOLES) != 0 || cw > m->ps2_uw || ch > m->ps2_uh;
+		*opaque255 |= (m->ps2_cpu & HWR_PS2_CPU_OPAQUE255) != 0;
+		return;
+	}
+	for (y = 0; y < ch; y++)
+		for (x = 0; x < cw; x++)
+		{
+			const u16 pixel = HWR_PS2_ReadAP88(m, x, y);
+			const u32 index = pixel & 255u;
+
+			if (pixel >> 8)
+				*opaque255 |= index == 255u;
+			else
+			{
+				*hole = 1;
+				if (index != 255u && H.pal[index] != pal255)
+					*hole_rgb = 1;
+			}
+		}
+}
+#endif
+
+// A planned level may fail residency while the original source remains fully
+// drawable through tiles. Cached mip bytes never describe that proxy's holes.
+static int tex_full_p8_proxy(GLMipmap_t *m)
+{
+	const u8 *full = m->data;
+	dcent_t *full_cache = NULL;
+	int has255, clut, ri;
+
+	if (!full)
+	{
+		full_cache = dc_find(dc_key(m), m->width, m->height, 0);
+		if (full_cache) full = full_cache->p;
+	}
+	if (!full)
+	{
+		HWR_PS2_RegenerateMipmap(m);
+		full = m->data;
+	}
+	if (!full)
+	{
+		tex_fail_why = "no full-size texture source";
+		return NOREC;
+	}
+	if (full_cache)
+	{
+		if (full_cache->busy == 255) dma_fence();
+		if (full_cache->busy == 255)
+		{
+			tex_fail_why = "full-size texture source busy";
+			return NOREC;
+		}
+		if (!full_cache->busy++) HWR_PS2_LockData((void *)full);
+	}
+	else
+		HWR_PS2_LockData((void *)full);
+	has255 = scan_has_ff(full, (u32)m->width * m->height);
+	m->ps2_h255 = (u8)(has255 ? 2 : 1);
+	clut = (m->flags & TF_CHROMAKEYED) && has255 ? 2 : 1;
+	ri = tile_source_record(m, PSM_T8, clut, 0, clut == 2, 1, has255, m->width, m->height);
+	tile_source_unlock((void *)full, full_cache, 0);
+	return ri;
+}
+
 // returns the record index or NOREC (nothing was changed then)
 static int tex_upload(GLMipmap_t *m)
 {
@@ -1978,6 +2287,11 @@ static int tex_upload(GLMipmap_t *m)
 	int lvdec = 0; // the stored texels are those of the cache entry of that level
 	int split = 0; // PS2-HW-70: the image has more than 1024 rows and is stored as two images (rows [0, H2) and the hb rows after them)
 	u32 hb = 0, nblkA = 0;
+	int store_psm;
+#ifndef PS2_NOOPT_P4_BAND
+	u32 csa = 0;
+	int can_p4 = 0;
+#endif
 
 	tex_fail_why = "ok";
 	zc_last = 0;
@@ -2014,15 +2328,18 @@ static int tex_upload(GLMipmap_t *m)
 	if (!data || !sw || !sh)
 	{
 		tex_fail_why = !data ? "no data (purged)" : "zero size";
-		return NOREC;
+		goto failed;
 	}
-	if ((sw > 1024 && (sw & 1)) || (sh > 1024 && (sh & 1)) || sw > 16384 || sh > 16384)
+	if (sw > 16384 || sh > 16384)
 	{
 		tex_fail_why = "larger than 1024 and not divisible";
-		return NOREC;
+		goto failed;
 	}
 
 	memset(c, 0, sizeof *c);
+#ifdef HWR_PS2_PACKED_PATCHES
+	c->patch = HWR_PS2_IsPackedPatch(m) ? m : NULL;
+#endif
 	n = sw * sh;
 	// PS2-HW-39: a patch (sprite) is a block of the next power of two size around the real picture (a 100 x 150 sprite is 128 x 256): only the picture
 	// is stored (texture coordinates are scaled by the size of the block, clamping at the picture's edge), a quarter to a half of the blocks and bytes
@@ -2048,10 +2365,16 @@ static int tex_upload(GLMipmap_t *m)
 				{
 					has255 = scan_has_ff(data, (sw >> lv) * (sh >> lv)); // the stored texels are those of the level (not cached: the full size may differ)
 				}
+				else if (dsrc)
+				{
+					// A cached mip can lose index 255 even when the original has holes.
+					// Its classification belongs to this upload, never to the full source.
+					has255 = scan_has_ff(data, ssw * ssh);
+				}
 				else
 				{
 					if (!m->ps2_h255)
-						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, dsrc ? ssw * ssh : n) ? 2 : 1);
+						m->ps2_h255 = (m->ps2_twin && m->ps2_twin->ps2_h255) ? m->ps2_twin->ps2_h255 : (UINT8)(scan_has_ff(data, n) ? 2 : 1);
 					has255 = m->ps2_h255 == 2;
 				}
 				if (clut == 2 && !has255)
@@ -2074,6 +2397,10 @@ static int tex_upload(GLMipmap_t *m)
 
 			psm = PSM_T8;
 			fill = fill_ap88;
+#ifdef HWR_PS2_PACKED_PATCHES
+			if (c->patch)
+				fill = fill_patch8;
+#endif
 			if (m->flags & TF_CHROMAKEYED) // index 255 is the hole, the alpha byte is ignored
 			{
 				u32 y, x;
@@ -2082,13 +2409,22 @@ static int tex_upload(GLMipmap_t *m)
 				c->mode = 1;
 				for (y = 0; y < ch && !holes; y++)
 					for (x = 0; x < cw; x++)
-						if (data[((size_t)y * sw + x) * 2] == 255)
+						if (
+#ifdef HWR_PS2_PACKED_PATCHES
+							c->patch ? (HWR_PS2_ReadAP88(m, x, y) & 255u) == 255u :
+#endif
+							data[((size_t)y * sw + x) * 2] == 255)
 						{
 							holes = 1;
 							break;
 						}
 				break;
 			}
+#ifdef HWR_PS2_PACKED_PATCHES
+			if (c->patch)
+				ap88_scan_patch(m, cw, ch, H.pal[255], &hole, &opaque255, &hole_rgb);
+			else
+#endif
 			{
 				// one pass over the stored part (the real picture of a patch): binary alpha (0 / 255), holes, an opaque texel of index 255, holes whose colour is not
 				// the hole colour of the palette
@@ -2120,6 +2456,10 @@ static int tex_upload(GLMipmap_t *m)
 				clut = 0;
 				baked = 1;
 				fill = fill_ap88_ct32;
+#ifdef HWR_PS2_PACKED_PATCHES
+				if (c->patch)
+					fill = fill_patch32;
+#endif
 			}
 			else
 			{
@@ -2158,8 +2498,31 @@ static int tex_upload(GLMipmap_t *m)
 			break;
 		default:
 			tex_fail_why = "unknown format";
-			return NOREC;
+			goto failed;
 	}
+
+	// A source that cannot ever fit is represented by metadata only. Its original
+	// pixels are uploaded in bounded tiles at draw time; no level/cap is changed.
+	if (!lv && !lvdec && !dsrc && !H.tex_cap_blocks && !cfg.tex_max_bytes
+		&& (cw > 1024u || ch > 1024u
+			|| tex_footprint(psm, cw, ch, psm == PSM_T8 ? ((cw + 127u) / 128u) * 2u : (cw + 63u) / 64u) > tex_usable_blocks()))
+	{
+		ri = tile_source_record(m, psm, clut, baked, holes, shareable, has255, cw, ch);
+		goto complete;
+	}
+
+#ifndef PS2_NOOPT_P4_BAND
+	// Exact packing is confined to the explicitly selected full-size mode.
+	// Its frame/immediate planners are off and no cap or budget feeds back
+	// into stored levels. Only a complete original P8 source can enter here:
+	// DMA retirement cannot select a different non-associative mip source.
+	if (m->format == GL_TEXFMT_P_8 && shareable && H.pal_set && !has255
+		&& (m->flags & TF_WRAPXY) == TF_WRAPXY && n >= 2048u
+		&& sw <= 1024u && sh <= 1024u && !(sw & 7u)
+		&& !H.cap_adapt && !H.tex_cap_blocks && !cfg.tex_max_bytes
+		&& ps2hwd_dbg_flags == HWDBG_NOPLAN && !lv && !lvdec && !dsrc)
+		can_p4 = p4_band(data, n, &csa);
+#endif
 
 	// The GS takes at most 1024 texels per axis, and the pool of the PS2 is a fifth of what the engine's textures can add up to
 	// in a frame: a texture over the limit (or over the footprint cap in force) is stored decimated by powers of two (PS2-HW-20).
@@ -2174,7 +2537,7 @@ static int tex_upload(GLMipmap_t *m)
 		if (!fit && !tex_plan(psm, sw, sh, H.tex_cap_blocks, shareable && !crop, &dx, &dy))
 		{
 			tex_fail_why = "larger than 1024 and not divisible";
-			return NOREC;
+			goto failed;
 		}
 		if (lv && !dx && !dy && psm == PSM_T8 && shareable)
 			dx = dy = lv; // stored at level lv: the texels come from dec_level (or the cache) below, the plain decimation of the fill functions is the fallback
@@ -2197,7 +2560,13 @@ static int tex_upload(GLMipmap_t *m)
 			hb = sh - tex_split_rows;
 		}
 		tbw = psm == PSM_T8 ? ((W2 + 127) / 128) * 2 : (W2 + 63) / 64;
-		nblkA = tex_footprint(psm, W2, H2, tbw);
+		store_psm = psm;
+#ifndef PS2_NOOPT_P4_BAND
+		if (can_p4 && !split && !dx && !dy && W2 == sw && H2 == sh && !(W2 & 7u)
+			&& tex_footprint(PSM_T4, W2, H2, tbw) < tex_footprint(psm, W2, H2, tbw))
+			store_psm = PSM_T4;
+#endif
+		nblkA = tex_footprint(store_psm, W2, H2, tbw);
 		if (split)
 			nblkA = (nblkA + PAGE_BLOCKS - 1) & ~(u32)(PAGE_BLOCKS - 1); // the second piece starts on a page (the first one owns the few blocks in between)
 		nblk = nblkA;
@@ -2206,8 +2575,11 @@ static int tex_upload(GLMipmap_t *m)
 		if (cfg.tex_max_bytes > 0 && nblk > (u32)cfg.tex_max_bytes / 256u)
 		{
 			tex_fail_why = "footprint over budget";
+			if (dlock && dlock->p && !dlock->busy)
+				HWR_PS2_UnlockData(dlock->p);
+			dlock = NULL;
 			hw_failure("exact texture GS footprint exceeds configured budget");
-			return NOREC;
+			goto failed;
 		}
 		align = 1;
 		while (align < nblk && align < PAGE_BLOCKS)
@@ -2215,10 +2587,34 @@ static int tex_upload(GLMipmap_t *m)
 		blk = vram_alloc_evicting(nblk, align, nblk >= BIG_IMAGE_BLOCKS ? 1 : 0); // PS2-HW-39: big images from the top of the pool, small ones from the bottom: they do not cut each other's room into pieces
 		if (blk)
 			break;
+#ifndef PS2_NOOPT_P4_BAND
+		if (store_psm == PSM_T4)
+		{
+			// Retry the complete original T8 allocation and failure policy.
+			can_p4 = 0;
+			continue;
+		}
+#endif
 		if (!H.cap_adapt || H.cap_idx >= NCAPS - 1)
 		{
+			// A freshly streamed flat level is locked before GS allocation.
+			// No queued reader exists on this failure path, so release its lease.
+			if (dlock && dlock->p && !dlock->busy)
+				HWR_PS2_UnlockData(dlock->p);
+			dlock = NULL;
+			if (!lv && !lvdec && !dsrc && !H.tex_cap_blocks && !cfg.tex_max_bytes)
+			{
+				ri = tile_source_record(m, psm, clut, baked, holes, shareable, has255, cw, ch);
+				goto complete;
+			}
+			if (!H.tex_cap_blocks && !cfg.tex_max_bytes && m->format == GL_TEXFMT_P_8
+				&& (m->regen_kind == 1 || m->regen_kind == 2))
+			{
+				ri = tex_full_p8_proxy(m);
+				goto complete;
+			}
 			tex_fail_why = "no VRAM block (pool)";
-			return NOREC;
+			goto failed;
 		}
 		cap_step(H.cap_idx + 1, "texture does not fit the pool");
 	}
@@ -2230,8 +2626,9 @@ static int tex_upload(GLMipmap_t *m)
 			dcent_t *ne;
 			void *srcblk = dsrc ? (void *)dsrc->p : l0 ? (void *)l0->p : (void *)m->data;
 			u32 dt0 = cyc();
+			const int src_locked = srcblk && data == (const u8 *)srcblk;
 
-			if (srcblk && data == (const u8 *)srcblk)
+			if (src_locked)
 				HWR_PS2_LockData(srcblk); // the allocation below may purge the zone's caches, the source among them
 			if (l0)
 				l0->busy++;
@@ -2295,7 +2692,7 @@ static int tex_upload(GLMipmap_t *m)
 				l0->busy--;
 			if (dsrc)
 				dsrc->busy--;
-			if (srcblk && data == (const u8 *)srcblk)
+			if (src_locked && (!l0 || !l0->busy) && (!dsrc || !dsrc->busy))
 				HWR_PS2_UnlockData(srcblk);
 		}
 		else
@@ -2308,6 +2705,8 @@ static int tex_upload(GLMipmap_t *m)
 		{
 			lvdec = 1;
 			c->dx = c->dy = 0; // the texels are decimated already
+			ssw = W2;
+			ssh = H2; // packed cached rows have the stored level's stride
 		}
 		TX.lvl_up[lv > 5 ? 5 : lv]++;
 	}
@@ -2359,7 +2758,7 @@ static int tex_upload(GLMipmap_t *m)
 		data = (const u8 *)p;
 		c->src = data;
 	}
-	if (dce && fill == fill_idx && psm == PSM_T8 && !c->dx && !c->dy && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15))
+	if (dce && fill == fill_idx && psm == PSM_T8 && store_psm == PSM_T8 && !c->dx && !c->dy && !(ps2hwd_dbg_flags & HWDBG_NOZC) && !((uintptr_t)data & 15))
 	{
 		// PS2-HW-32: the texels go by DMA reference, from the cache entry (locked until the DMA has read it)
 		rel_room(n);
@@ -2376,7 +2775,22 @@ static int tex_upload(GLMipmap_t *m)
 	}
 	else
 	{
-		upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
+#ifndef PS2_NOOPT_P4_BAND
+		if (store_psm == PSM_T4)
+		{
+			// The source remains the existing P8 cache block. Packet construction
+			// consumes it synchronously; queued DMA sees only the packed ring.
+			if (dce && dce->busy == 255)
+				dma_fence(); // leave one reference count for this synchronous read
+			if (dce && !dce->busy++)
+				HWR_PS2_LockData(dce->p);
+			upload_bands(blk, tbw, store_psm, W2, H2, 0, fill_p4, c);
+			if (dce && !--dce->busy)
+				HWR_PS2_UnlockData(dce->p);
+		}
+		else
+#endif
+			upload_bands(blk, tbw, psm, W2, H2, bpp, fill, c);
 		if (split)
 		{
 			c->src = data + (size_t)H2 * sw;
@@ -2390,9 +2804,7 @@ static int tex_upload(GLMipmap_t *m)
 	{
 		tex_fail_why = "record table";
 		vram_free(blk, nblk);
-		if (dlock && dlock->p && !dlock->busy)
-			HWR_PS2_UnlockData(dlock->p);
-		return NOREC;
+		goto failed;
 	}
 	{
 		texrec_t *r = &H.rec[ri];
@@ -2406,7 +2818,10 @@ static int tex_upload(GLMipmap_t *m)
 		r->tw = (u8)log2_u32(W2);
 		r->th = (u8)log2_u32(H2);
 		r->tbw = (u8)tbw;
-		r->psm = (u8)psm;
+		r->psm = (u8)store_psm;
+#ifndef PS2_NOOPT_P4_BAND
+		r->csa = store_psm == PSM_T4 ? (u8)csa : 0;
+#endif
 		r->clut = (u8)clut;
 		r->wrapx = (m->flags & TF_WRAPX) ? 1 : 0;
 		r->wrapy = (m->flags & TF_WRAPY) ? 1 : 0;
@@ -2442,9 +2857,7 @@ static int tex_upload(GLMipmap_t *m)
 			tex_fail_why = "record table";
 			vram_free(blk + nblkA, nblk - nblkA);
 			tex_drop(ri, 0);
-			if (dlock && dlock->p && !dlock->busy)
-				HWR_PS2_UnlockData(dlock->p);
-			return NOREC;
+			goto failed;
 		}
 		a = &H.rec[ri];
 		b = &H.rec[bi];
@@ -2476,9 +2889,14 @@ static int tex_upload(GLMipmap_t *m)
 	}
 	m->downloaded = (UINT32)(ri + 1);
 	H.st.uploads++;
-	H.st.upload_bytes += W2 * (H2 + hb) * bpp;
+	H.st.upload_bytes += store_psm == PSM_T4 ? (W2 * H2) >> 1 : W2 * (H2 + hb) * bpp;
 	H.st.cyc_tex += cyc() - t0;
-	tx_note_upload(m, psm, nblk);
+	tx_note_upload(m, store_psm, nblk);
+	goto complete;
+
+failed:
+	ri = NOREC;
+complete:
 	if (dlock && dlock->p && !dlock->busy)
 		HWR_PS2_UnlockData(dlock->p); // a zero-copy upload keeps the lock (busy) until its DMA has read the texels
 	return ri;
@@ -2701,6 +3119,12 @@ static void tx_report(void)
 		CONS_Printf("HWPLANCMP win=%d compared=%u cntdiff=%u valdiff=%u\n", win - 1, pm_cmp, pm_dcnt, pm_dval);
 		pm_cmp = pm_dcnt = pm_dval = 0;
 	}
+	if (tile_workspace_peak() || tile_core_fast_count())
+		CONS_Printf("HWSTREAM GS scratch minimum=%u borrowed=%u actual=%u bytes, active run workspace peak=%u bytes, rectangles=%u mask_sprites=%u triangle_submissions=%llu raster_bbox_upper=%llu core_fast=%u boxes=%u pixel_fallback=%u\n",
+			TILE_SIZE * TILE_SIZE * 4u, (unsigned)tile_cache_borrowed_blocks() * 256u,
+			TILE_SIZE * TILE_SIZE * 4u + (unsigned)tile_cache_borrowed_blocks() * 256u, (unsigned)tile_workspace_peak(), (unsigned)tile_stencil_rectangles, (unsigned)tile_stencil_mask_sprites,
+			(unsigned long long)tile_stencil_triangle_submissions, (unsigned long long)tile_stencil_bbox_pixels, (unsigned)tile_core_fast_count(),
+			(unsigned)tile_box_count(), (unsigned)tile_pixel_fallback_count());
 	if (TX.split_up || TX.split_poly)
 		CONS_Printf("HWSPLIT win=%d uploads=%u polygons=%u parts=%u\n", win - 1, (unsigned)TX.split_up, (unsigned)TX.split_poly, (unsigned)TX.split_sub);
 	memset(&TX, 0, sizeof TX);
@@ -2711,13 +3135,23 @@ static void tex_free_all(void)
 {
 	int i;
 
+	tile_invalidate();
+
 	for (i = 0; i < H.rec_n; i++)
 		if (H.rec[i].used)
 		{
 			if (H.rec[i].owner)
 				H.rec[i].owner->downloaded = 0;
-			if (H.rec[i].share == NOREC) // a view owns no blocks
-				vram_free(H.rec[i].blk, H.rec[i].nblk);
+			if (H.rec[i].share == NOREC) // a view owns no blocks or palette history
+			{
+				if (H.rec[i].tiled == 1)
+				{
+					tile_release_source(&H.rec[i]);
+					free(H.rec[i].tile_palette);
+				}
+				if (H.rec[i].nblk)
+					vram_free(H.rec[i].blk, H.rec[i].nblk);
+			}
 			H.rec[i].used = 0;
 		}
 	memset(blk_owner, 0, sizeof blk_owner);
@@ -2776,15 +3210,47 @@ static void scr_backing_free(int slot)
 	}
 }
 
+// Read a capture directly into its retained EE backing. A new slot is budgeted before allocation;
+// existing backing can be reused when the same full-resolution slot is captured again.
+static int scr_backing_read(int slot, u32 blk, u32 tbw)
+{
+	u32 bytes = scr_bytes(), budget = cfg.screen_max_bytes ? cfg.screen_max_bytes : 8u * 1024u * 1024u;
+	void *data = H.scr_data[slot];
+	int fresh = data == NULL;
+
+	if (fresh)
+	{
+		if (H.screen_bytes > budget || bytes > budget - H.screen_bytes)
+			return 0;
+		data = memalign(64, bytes);
+		if (!data)
+			return 0;
+	}
+	if (PS2HWD_ReadVram(data, blk, tbw, H.fbpsm, 0, 0, H.fbw, H.vh) != 0)
+	{
+		if (fresh)
+			free(data);
+		else
+			scr_backing_free(slot); // a failed multi-band refresh may have overwritten part of the old snapshot
+		return 0;
+	}
+	if (fresh)
+	{
+		H.scr_data[slot] = data;
+		H.screen_bytes += bytes;
+		if (H.screen_bytes > H.screen_peak_bytes)
+			H.screen_peak_bytes = H.screen_bytes;
+	}
+	return 1;
+}
+
 // Spill only after a successful synchronized read: even current-frame slots remain recoverable.
 static int scr_spill_victim(void)
 {
 	int v, best = NOREC, slot;
-	u32 bytes = scr_bytes(), budget = cfg.screen_max_bytes ? cfg.screen_max_bytes : 8u * 1024u * 1024u;
-	void *data;
 
 	for (v = H.lru_tail; v != NOREC; v = H.rec[v].prev)
-		if (H.rec[v].screen && !H.rec[v].pin)
+		if (H.rec[v].screen && !H.rec[v].pin && !H.rec[v].tiled)
 		{
 			best = v;
 			break;
@@ -2795,33 +3261,8 @@ static int scr_spill_victim(void)
 		return 0;
 	}
 	slot = H.rec[best].screen - 1;
-	if (!H.scr_data[slot])
-	{
-		if (H.screen_bytes > budget || bytes > budget - H.screen_bytes)
-		{
-			CONS_Printf("HWD spill: budget\n");
-			return 0;
-		}
-		data = memalign(64, bytes);
-		if (!data)
-		{
-			CONS_Printf("HWD spill: no memory for %u bytes\n", (unsigned)bytes);
-			return 0;
-		}
-		{
-			int rr = PS2HWD_ReadVram(data, H.rec[best].blk, H.rec[best].tbw, H.fbpsm, 0, 0, H.fbw, H.vh);
-			if (rr != 0)
-			{
-				CONS_Printf("HWD spill: ReadVram failed %d\n", rr);
-				free(data);
-				return 0;
-			}
-		}
-		H.scr_data[slot] = data;
-		H.screen_bytes += bytes;
-		if (H.screen_bytes > H.screen_peak_bytes)
-			H.screen_peak_bytes = H.screen_bytes;
-	}
+	if (!H.scr_data[slot] && !scr_backing_read(slot, H.rec[best].blk, H.rec[best].tbw))
+		return 0;
 	tex_drop(best, 1);
 	H.st.screen_spills++;
 	return 1;
@@ -2833,33 +3274,40 @@ static void fill_screen(void *ctx, u32 row, u8 *dst)
 	memcpy(dst, (const u8 *)ctx + (size_t)row * rowbytes, rowbytes);
 }
 
-// the record of screen texture `slot`, created (page aligned: it is also a render target) when missing; NOREC on failure
+// A capture that cannot fit the pool uses a zero-block proxy over its full-size EE backing.
+// Other screen records remain page aligned because they are also GS transfer destinations.
 static int scr_tex_get(int slot)
 {
 	int ri;
-	u32 pages, nblk, blk, tw = log2_u32((u32)H.vw), th = log2_u32((u32)H.vh);
+	u32 pages, nblk, blk = 0, tw = log2_u32((u32)H.vw), th = log2_u32((u32)H.vh);
 
 	if (H.scr_rec[slot] != NOREC && H.rec[H.scr_rec[slot]].used)
 		return H.scr_rec[slot];
 	pages = fb_pages(H.fbw, H.fbh, H.fb32);
 	nblk = pages * PAGE_BLOCKS;
-	blk = vram_alloc_evicting(nblk, PAGE_BLOCKS, 1);
-	if (!blk)
-		return NOREC;
+	if (nblk <= H.pool_blocks)
+	{
+		blk = vram_alloc_evicting(nblk, PAGE_BLOCKS, 1);
+		if (!blk)
+			return NOREC;
+	}
 	ri = rec_new();
 	if (ri == NOREC)
 	{
-		vram_free(blk, nblk);
+		if (blk)
+			vram_free(blk, nblk);
 		return NOREC;
 	}
 	{
 		texrec_t *r = &H.rec[ri];
 
-		r->blk = blk;
-		r->nblk = nblk;
-		own_set(ri);
-		r->w = (u16)H.vw;
-		r->h = (u16)H.vh;
+		r->blk = (u16)blk;
+		r->nblk = blk ? (u16)nblk : 0;
+		r->tiled = blk ? 0 : 1;
+		if (blk)
+			own_set(ri);
+		r->w = r->sw = (u16)H.vw;
+		r->h = r->sh = (u16)H.vh;
 		r->tw = (u8)tw;
 		r->th = (u8)th;
 		r->tbw = (u8)(H.fbw / 64);
@@ -2885,9 +3333,12 @@ static int scr_resident(int slot)
 	if (slot < 0 || slot >= NSCR || (H.scr_rec[slot] == NOREC && !H.scr_data[slot]))
 		return NOREC;
 	if (H.scr_rec[slot] != NOREC)
-		return H.scr_rec[slot];
+	{
+		ri = H.scr_rec[slot];
+		return H.rec[ri].tiled && !H.scr_data[slot] ? NOREC : ri;
+	}
 	ri = scr_tex_get(slot);
-	if (ri != NOREC)
+	if (ri != NOREC && !H.rec[ri].tiled)
 	{
 		upload_bands(H.rec[ri].blk, H.rec[ri].tbw, H.fbpsm, (u32)H.fbw, (u32)H.vh,
 			H.fb32 ? 4u : 2u, fill_screen, H.scr_data[slot]);

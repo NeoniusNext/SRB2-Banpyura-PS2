@@ -1,0 +1,203 @@
+{
+  "schema": 1,
+  "scope": "Exact last-use release of compositor-owned temporary canonical patches. Full stock decoded patch inputs and actual TEXTURES/token parsers, complete literal baseline/candidate generation/draw/blend/patch functions. No game RAM, shipping timing, physical-console or MAP11 Hardware-admission claim.",
+  "reference_commit": "ce622181b6adcac285432ede2e705f5aab4c0b1a",
+  "public_runner": "tools/ps2/opt17/composite_lastuse_hosttest.py",
+  "public_fixture": "tools/ps2/opt17/composite_lastuse_hosttest.c",
+  "public_file_sha256": {
+    "tools/ps2/opt17/composite_lastuse_hosttest.py": "f1cf4587053dc11328176c0915d1b843682fbc3eca91bdaaf5ea858734721b8c",
+    "tools/ps2/opt17/composite_lastuse_hosttest.c": "53e53b0b27cd4bc836bde3b7a12c5e7f8a5eb52c26039c6310e846ccba0e7ea9"
+  },
+  "binding": {
+    "selected_generation_state": "reviewed-fix-already-present",
+    "reference_commit": "ce622181b6adcac285432ede2e705f5aab4c0b1a",
+    "reference_generation_sha256": "39b4220d852553e031fbe1611bea5b7a408b3ff9bc6528194c521683741145c1",
+    "candidate_generation_sha256": "0a54b66bf4f661821f0c3064e07fa7a94ed2f7ab245f4712885e28556d461f98",
+    "baseline_cache_sha256": "f76f30bfa9a710c59b26c85213dd871d89c20ea4464cd2bd161f1fa8eab3d682",
+    "candidate_cache_sha256": "b7e627f23fb97e5558c069ff8dcc7861772952799f3038e7047d2e424163d915",
+    "reviewed_patch_sha256": "9290fc166ec3921615a7a5dc04b4e65ba3b57c64bf899a185b6f41c35cd60ed6",
+    "original_32_slots_and_64KiB_try_policy_preserved": true
+  },
+  "opposite_entry_binding": {
+    "selected_generation_state": "before-reviewed-fix",
+    "reference_commit": "ce622181b6adcac285432ede2e705f5aab4c0b1a",
+    "reference_generation_sha256": "39b4220d852553e031fbe1611bea5b7a408b3ff9bc6528194c521683741145c1",
+    "candidate_generation_sha256": "0a54b66bf4f661821f0c3064e07fa7a94ed2f7ab245f4712885e28556d461f98",
+    "baseline_cache_sha256": "f76f30bfa9a710c59b26c85213dd871d89c20ea4464cd2bd161f1fa8eab3d682",
+    "candidate_cache_sha256": "b7e627f23fb97e5558c069ff8dcc7861772952799f3038e7047d2e424163d915",
+    "reviewed_patch_sha256": "9290fc166ec3921615a7a5dc04b4e65ba3b57c64bf899a185b6f41c35cd60ed6",
+    "original_32_slots_and_64KiB_try_policy_preserved": true
+  },
+  "source_inputs": {
+    "src/hardware/hw_cache.c": "b7e627f23fb97e5558c069ff8dcc7861772952799f3038e7047d2e424163d915",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/hardware/hw_defs.h": "8af2f4fd02999542aa881150f86cbfda3c0194ed4e834b1495b1f89413de2394",
+    "src/r_defs.h": "6c88912e24bb3f85cc8d0166f5734ad5e01e42dfe0bad3ae266e91cba831f62c",
+    "src/r_textures.h": "14617f2ada0e83c8215c75dffbdc4909cfe6e9b1365033ef7917e1b08ba6cee4",
+    "src/r_patch.c": "db0dcea9521c8c41f95b8ccac4b3f2e57563e63e3d6e5e3d82a6fb151614942a",
+    "src/r_textures.c": "437f6a3c61c61ebda12ff8581aa5122093cc5431af1260409b9229288d337925",
+    "src/r_data.c": "b8e1590e8738820f9084c6ba969ffb5b7ca5d5bc13b93761c94934fd6fdb8f83",
+    "src/m_misc.c": "3839aa43c93f62f9448bb5acfe6888819c78ff52bcbf3ee57f4439a5f076fdb0",
+    "src/doomtype.h": "7b10522ac20f9f904153842629f01a36be09a4a78a445633a452a7ebc8da3c47"
+  },
+  "corpus": {
+    "records": 12465,
+    "patches": 12443,
+    "TEXTURES_lumps": 22,
+    "sha256": "8975b94227913f66018e24153b6b2cc0626546bae1b02a79886043bb06b15d67",
+    "bytes": 172788009,
+    "packs_sha256": {
+      "SRB2.PAK": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+      "ZONES.PAK": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+      "CHARS.PAK": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+      "MUSIC.PAK": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0"
+    }
+  },
+  "results_each_plain_and_ASan_UBSan": {
+    "checks": 25085665,
+    "cases": 13878,
+    "patches": 12443,
+    "stock_TEXTURES_definitions": 506,
+    "stock_missing_source_definitions": 30,
+    "parsed_patch_placements": 8073,
+    "compared_complete_bytes": 631152467,
+    "hash": "fbb307dadefc6ae5",
+    "base_canonical_builds": 16851,
+    "candidate_canonical_builds": 16851,
+    "SKY11_base_EE_payload_peak": 748784,
+    "SKY11_candidate_EE_payload_peak": 672312
+  },
+  "run_artifacts": {
+    "plain": {
+      "binary_sha256": "5b9ae58a3f386dd2cb1534a75ccff8f470c94e0f15c65e49176ae4bf97691f2b",
+      "run_log_sha256": "7e528ea101b42d533f7e6fe111ec40d848a576e8b5f286b964182c4f014f7c85",
+      "build_log_sha256": "af161f8deabd1bc29e8d4bb7c7cd6012b8fe7b77a2d1fc8534fa25ce850c14b1"
+    },
+    "sanitize": {
+      "binary_sha256": "6268226cad43c901bc47e4037c45c49000309a86507fe69055e2e9907e957c6f",
+      "run_log_sha256": "b21c829a71ba869635f03337bf22f2e39567505c45c7b873e04fdbf0d8b032fc",
+      "build_log_sha256": "12d1fb2abdf79823624a897787ee1048141cf7d53f8f22b48a35200fb17ca952"
+    }
+  },
+  "negative_controls": {
+    "early-free": {
+      "exit": 101,
+      "expected_assertion": "per-resource canonical build counts unchanged",
+      "diagnostic": "LASTUSE FAIL focus: per-resource canonical build counts unchanged",
+      "source_sha256": "fe23e37a84aad5c36052d87a93a0a6948e0d2a1906602803acc3631268433929",
+      "binary_sha256": "6d517b9935e30ab84d5035f56ee54bba4eb203a2135cf077daed47f6a1bc05b1",
+      "run_log_sha256": "b04a674614ee60305ac1036807a7d918437dbd3ef830fbc35a80a00a8683d3e8",
+      "build_log_sha256": "cc7a24e9d8bc60cd9923f9a23c6f593a0e416352af507fff63ed9bae4bd367ec"
+    },
+    "free-nonheld": {
+      "exit": 101,
+      "expected_assertion": "nonheld hardware source must remain live",
+      "diagnostic": "LASTUSE FAIL focus: nonheld hardware source must remain live",
+      "source_sha256": "841ce00c254a459b24d85024ad448cc27b9a573f0e547bf9880bf2bceae416e7",
+      "binary_sha256": "7bd1b721f52f06c45345f0d98b4f3180dd5d025b63761be03a9360d7e7e69baf",
+      "run_log_sha256": "57dca82e5bde4355fcfaeb9bba48e87ff4e1f6291a063fcc65db25562fd115d7",
+      "build_log_sha256": "6a7aeecf85c4491bd3fb9cb8e15d561a094f6eab3ce0bf082a61ce7b251e1244"
+    },
+    "end-only": {
+      "exit": 101,
+      "expected_assertion": "last-use release lowers measured live payload",
+      "diagnostic": "LASTUSE FAIL focus: last-use release lowers measured live payload",
+      "source_sha256": "1a4838ce6346927776b5ae5790d98eb486edad2c9d4196144a894712670b8903",
+      "binary_sha256": "073d4b235295c6c70d37bb49592ef789420f2d784706679342a4711648a6fdff",
+      "run_log_sha256": "97c85e2863a57de7c7851d8c3f44db587e1a3f53131ca3afbc7364774a743980",
+      "build_log_sha256": "ea649a9120598c3c64ba5b3d78b67d3d1a098b7f8f8de825d6d8262df6293e79"
+    }
+  },
+  "inactive_generation_exact": {
+    "generic": true,
+    "PS2-without-profile": true
+  },
+  "unresolved_stock_definitions": [
+    "MARGFL1",
+    "MARGFL2",
+    "MARGFL3",
+    "MARGFL4",
+    "MARIOCE1",
+    "MARIOF6",
+    "MARIOF8",
+    "MAROWRG7",
+    "PTZGFE",
+    "PTZGFE1",
+    "PTZGFE2",
+    "PTZGFE3",
+    "PTZWCT1",
+    "PTZWCT11",
+    "PTZWCT15",
+    "PTZWCT16",
+    "PTZWCT17",
+    "PTZWCT18",
+    "PTZWCT2",
+    "PTZWCT3",
+    "PTZWCT34",
+    "PTZWCT4",
+    "PTZWCT5",
+    "PTZWCT6",
+    "PTZWCT7",
+    "PTZWCTE",
+    "PTZWCTXL",
+    "STEMSHR",
+    "STEMSHR1",
+    "STEMSHR2"
+  ],
+  "unresolved_names_equal_preexisting_exporter_rejections": true,
+  "prior_exporter_attestation": {
+    "report": "build/nov17-composite-lastuse/final-attestation.json",
+    "sha256": "a4e1a24bdd260e793c7703ed3d309281d42538138fd57d687cc5152071917a05",
+    "export_log_sha256": "82b517b5ee7adbe10a167ba5f0bf49cd70f55958a210e384206fe3c8dc004a3a"
+  },
+  "actual_EE_diagnostic": {
+    "compiler": "GCC15.2 R5900",
+    "baseline_object_bytes": 49708,
+    "candidate_object_bytes": 50164,
+    "GenerateTexture_stack_baseline": 560,
+    "GenerateTexture_stack_candidate": 688,
+    "build_logs": {
+      "baseline-build.log": "d3a88c1892cdb71dcb641c50057fc35a08d24f840f843d08eea7bea4e747a69f",
+      "candidate-build.log": "2dfd297d4d2b27f6706a1f391549d51a60b1e9986fcc507badf9414ceacd889a"
+    },
+    "cache_source_hashes": {
+      "baseline": "f76f30bfa9a710c59b26c85213dd871d89c20ea4464cd2bd161f1fa8eab3d682",
+      "candidate": "b7e627f23fb97e5558c069ff8dcc7861772952799f3038e7047d2e424163d915"
+    },
+    "object_sha256": {
+      "baseline.o": "b086762c5f78468297a92d98c80471a5ae7e4fa51784d7f70abc088e165d72c3",
+      "candidate.o": "bd623d61be7fd39c9c250117991f42b73632ed34fea2106fc81e56d07dda03c0"
+    },
+    "not_shipping_LTO_measurements": true
+  },
+  "normalized_component_peak": {
+    "SKY11_width": 1024,
+    "SKY11_height": 512,
+    "P8_output_bytes": 524288,
+    "placements": 48,
+    "same_canonical_builds_each": 17,
+    "baseline_EE_payload_peak_bytes": 748784,
+    "candidate_EE_payload_peak_bytes": 672312,
+    "saved_bytes": 76472,
+    "normalization": "Actual source post/pixel counts with EE patch/column/post sizes48/12/12; excludes zone headers/alignment, fragmentation and other game allocations.",
+    "measured_game_RAM": false
+  },
+  "retained_public_report": {
+    "path": "build/nov17-composite-lastuse/public-v2/report.json",
+    "sha256": "877e06676c8eb26651f213fa8de5c6f2de931e26ae3616a63531702b4cf08d2c",
+    "generated_source_sha256": "d4b197bd87bb90f76f4a94eb093b0dcf3b0ff599ca42a8366ba221d7489f9a4a"
+  },
+  "retained_pre_adoption_run": {
+    "path": "build/nov17-composite-lastuse/public-v1/report.json",
+    "sha256": "0e53f7e13aac2f6a3a2e518bd1b30544f85295e243dbf4b0a6d0e19f3a951417",
+    "note": "Earlier portable-runner revision, before final macro/type guards; same corpus/results. Final runner opposite entry was separately bound to identical before/after full cache snapshots."
+  },
+  "boundaries": "Archive reads/source lookup, zone allocation/placement, nearest-palette/master-palette/TRANS access, optional TEXC/PNG/flat services and GPU services are controlled host boundaries. Literal AST blend code and original TRANS tables are retained. EE normalized payload is not game RAM or fragmentation. Reference and candidate execute literal complete generation/draw/blend/patch/parser functions.",
+  "persistent_metadata_growth_bytes": 0,
+  "temporary_EE_stack_growth_bytes": 128,
+  "original_held_slots": 32,
+  "freed_slots_reused": false,
+  "production_written": false,
+  "emulator_invoked": false,
+  "MAP11_Hardware_admission_established": false
+}

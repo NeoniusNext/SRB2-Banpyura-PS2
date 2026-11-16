@@ -1,0 +1,23 @@
+--- a/src/ps2/hw/ps2_hw_tex.inc
++++ b/src/ps2/hw/ps2_hw_tex.inc
+@@ -2402,8 +2402,9 @@
+ 			dcent_t *ne;
+ 			void *srcblk = dsrc ? (void *)dsrc->p : l0 ? (void *)l0->p : (void *)m->data;
+ 			u32 dt0 = cyc();
+-
+-			if (srcblk && data == (const u8 *)srcblk)
++			const int src_locked = srcblk && data == (const u8 *)srcblk;
++
++			if (src_locked)
+ 				HWR_PS2_LockData(srcblk); // the allocation below may purge the zone's caches, the source among them
+ 			if (l0)
+ 				l0->busy++;
+@@ -2467,7 +2468,7 @@
+ 				l0->busy--;
+ 			if (dsrc)
+ 				dsrc->busy--;
+-			if (srcblk && data == (const u8 *)srcblk)
++			if (src_locked && (!l0 || !l0->busy) && (!dsrc || !dsrc->busy))
+ 				HWR_PS2_UnlockData(srcblk);
+ 		}
+ 		else

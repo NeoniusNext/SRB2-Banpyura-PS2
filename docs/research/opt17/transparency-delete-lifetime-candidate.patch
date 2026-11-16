@@ -1,0 +1,20 @@
+--- a/src/ps2/hw/ps2_hwd.c
++++ b/src/ps2/hw/ps2_hwd.c
+@@ -1964,6 +1964,17 @@
+ 		tex_drop((int)(r - H.rec), 0);
+ 	}
+ 	TexInfo->downloaded = 0;
++	if (H.up && TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2) && !TexInfo->ps2_twin)
++	{
++		int i;
++
++		// The engine deletes the child variant before the canonical object.
++		// A new object under this number must not inherit its cached source.
++		TexInfo->ps2_h255 = 0;
++		for (i = 0; i < DC_MAX; i++)
++			if (dc[i].key == dc_key(TexInfo))
++				dc_drop(&dc[i]);
++	}
+ }
+ 
+ static void hw_GClipRect(INT32 minx, INT32 miny, INT32 maxx, INT32 maxy, float nearclip)

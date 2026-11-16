@@ -24,6 +24,9 @@
 *.vcxproj* -crlf -whitespace
 *.manifest -crlf -whitespace
 # Patches
+# Unified diff context has a required leading space, including before source tabs.
+# Keep reviewed patch bytes intact instead of checking their context as source.
+*.patch -whitespace
 /tools/SDL-1.2.14-gc/SDL-1.2.14-gc.patch -whitespace
 #Appveyor
 /appveyor.yml -crlf -whitespace

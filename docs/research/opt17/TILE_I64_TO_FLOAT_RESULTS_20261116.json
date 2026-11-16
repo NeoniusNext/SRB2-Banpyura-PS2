@@ -1,0 +1,349 @@
+{
+  "scope": "Exact signed32 conversion replacing two int64 casts in private final6-box UV function. Native Count measures isolated conversions, not renderer/frame or physical PS2 speed.",
+  "candidate_proof": {
+    "base": "build/nov17-tiles/review-v6/src/ps2/hw/ps2_hw_tile_draw.inc",
+    "base_sha256": "27f368345e38cb8687ef047c3ee5955bdbc2956d38a77ab78b6e2d198464c4f8",
+    "candidate": "build/nov17-tile-i64f/candidate/src/ps2/hw/ps2_hw_tile_draw.inc",
+    "candidate_sha256": "7563b662e0b2a8742a32622e78e06c1b4e280f51f30b2f6d21b67ab9b2d8af52",
+    "scope": "Exactly two edge-numerator int64-to-float casts; determinant and all other float operations unchanged. Native helper bit/Count proof passed."
+  },
+  "host": {
+    "passed": true,
+    "returncode": 0,
+    "sanitize": false,
+    "source_proof": {
+      "functions": "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_functions.c",
+      "functions_sha256": "5aebcbb6d5a98dcf140f009f871e00997b4dc3f0607235ef609bb8e456f76f85",
+      "fixture": "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_hosttest.c",
+      "fixture_sha256": "9af06ad4550d6ce1fd9e59a065af4eb5bfa614091eec15c883266f07c56ee90d",
+      "scope": "Separate non-LTO current compiler int64 cast, direct int32 diagnostic, exact signed32 bit constructor and exactly representable-only cast. No GS or whole-game performance claim."
+    },
+    "output": "TI CHECKS checks=2185782 failures=0 direct_mismatches=0\nTI BENCH rep=0 which=0 calls=163840 ticks=276978 checksum=75564432\nTI BENCH rep=0 which=1 calls=163840 ticks=1028671 checksum=75564432\nTI BENCH rep=0 which=2 calls=163840 ticks=577140 checksum=75564432\nTI BENCH rep=0 which=3 calls=163840 ticks=273512 checksum=75564432\nTI BENCH rep=1 which=0 calls=163840 ticks=273222 checksum=75564432\nTI BENCH rep=1 which=1 calls=163840 ticks=1053359 checksum=75564432\nTI BENCH rep=1 which=2 calls=163840 ticks=589439 checksum=75564432\nTI BENCH rep=1 which=3 calls=163840 ticks=288595 checksum=75564432\nTI BENCH rep=2 which=0 calls=163840 ticks=273402 checksum=75564432\nTI BENCH rep=2 which=1 calls=163840 ticks=1056003 checksum=75564432\nTI BENCH rep=2 which=2 calls=163840 ticks=568147 checksum=75564432\nTI BENCH rep=2 which=3 calls=163840 ticks=273642 checksum=75564432\nTI COMPLETE checks=2185782 failures=0 direct_mismatches=0 sink=906773184\n",
+    "stderr": ""
+  },
+  "sanitize": {
+    "passed": true,
+    "returncode": 0,
+    "sanitize": true,
+    "source_proof": {
+      "functions": "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_functions.c",
+      "functions_sha256": "5aebcbb6d5a98dcf140f009f871e00997b4dc3f0607235ef609bb8e456f76f85",
+      "fixture": "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_hosttest.c",
+      "fixture_sha256": "9af06ad4550d6ce1fd9e59a065af4eb5bfa614091eec15c883266f07c56ee90d",
+      "scope": "Separate non-LTO current compiler int64 cast, direct int32 diagnostic, exact signed32 bit constructor and exactly representable-only cast. No GS or whole-game performance claim."
+    },
+    "output": "TI CHECKS checks=2185782 failures=0 direct_mismatches=0\nTI BENCH rep=0 which=0 calls=163840 ticks=312591 checksum=75564432\nTI BENCH rep=0 which=1 calls=163840 ticks=772655 checksum=75564432\nTI BENCH rep=0 which=2 calls=163840 ticks=417599 checksum=75564432\nTI BENCH rep=0 which=3 calls=163840 ticks=355215 checksum=75564432\nTI BENCH rep=1 which=0 calls=163840 ticks=334344 checksum=75564432\nTI BENCH rep=1 which=1 calls=163840 ticks=645493 checksum=75564432\nTI BENCH rep=1 which=2 calls=163840 ticks=422417 checksum=75564432\nTI BENCH rep=1 which=3 calls=163840 ticks=310849 checksum=75564432\nTI BENCH rep=2 which=0 calls=163840 ticks=321785 checksum=75564432\nTI BENCH rep=2 which=1 calls=163840 ticks=641908 checksum=75564432\nTI BENCH rep=2 which=2 calls=163840 ticks=420193 checksum=75564432\nTI BENCH rep=2 which=3 calls=163840 ticks=354604 checksum=75564432\nTI COMPLETE checks=2185782 failures=0 direct_mismatches=0 sink=906773184\n",
+    "stderr": ""
+  },
+  "native": {
+    "passed": true,
+    "scope": "Actual EE conversion bits/Count, standard32MiB PCSX2; no GS or whole-game performance claim. Direct32 is diagnostic, not required to match.",
+    "checks": 485782,
+    "failures": 0,
+    "direct32_mismatches": 150396,
+    "paired_candidate_checksums_equal": true,
+    "benchmarks": [
+      {
+        "rep": 0,
+        "which": 0,
+        "calls": 163840,
+        "ticks": 125777052,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 0,
+        "which": 1,
+        "calls": 163840,
+        "ticks": 11391437,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 0,
+        "which": 2,
+        "calls": 163840,
+        "ticks": 127323336,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 0,
+        "which": 3,
+        "calls": 163840,
+        "ticks": 2130245,
+        "checksum": "2244166232"
+      },
+      {
+        "rep": 1,
+        "which": 0,
+        "calls": 163840,
+        "ticks": 125774508,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 1,
+        "which": 1,
+        "calls": 163840,
+        "ticks": 11389047,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 1,
+        "which": 2,
+        "calls": 163840,
+        "ticks": 127325543,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 1,
+        "which": 3,
+        "calls": 163840,
+        "ticks": 2130245,
+        "checksum": "2244166232"
+      },
+      {
+        "rep": 2,
+        "which": 0,
+        "calls": 163840,
+        "ticks": 125772858,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 2,
+        "which": 1,
+        "calls": 163840,
+        "ticks": 11389047,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 2,
+        "which": 2,
+        "calls": 163840,
+        "ticks": 127325643,
+        "checksum": "2244244952"
+      },
+      {
+        "rep": 2,
+        "which": 3,
+        "calls": 163840,
+        "ticks": 2130245,
+        "checksum": "2244166232"
+      }
+    ],
+    "median_Count": {
+      "reference_soft64": 125774508,
+      "nearest_signed32": 11389047,
+      "exact_only_signed32": 127325543,
+      "direct_signed32_diagnostic": 2130245
+    },
+    "source_proof": {
+      "functions": "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_functions.c",
+      "functions_sha256": "5aebcbb6d5a98dcf140f009f871e00997b4dc3f0607235ef609bb8e456f76f85",
+      "fixture": "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_hosttest.c",
+      "fixture_sha256": "9af06ad4550d6ce1fd9e59a065af4eb5bfa614091eec15c883266f07c56ee90d",
+      "scope": "Separate non-LTO current compiler int64 cast, direct int32 diagnostic, exact signed32 bit constructor and exactly representable-only cast. No GS or whole-game performance claim."
+    },
+    "elf_sha256": "85180b5d0f1f34bef48a884db322046e6b4c8d45be7314e8494ca13a74c0e474",
+    "run_post": {
+      "command": [
+        "/workspace/.onboarding/assets-venv/bin/python3",
+        "-B",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+        "--name",
+        "paired",
+        "--elf",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/native/TILE_I64F.ELF",
+        "--ram",
+        "32",
+        "--pak",
+        "/workspace/SRB2-Banpyura-PS2/build/pak",
+        "--out",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/native-run/runs",
+        "--timeout",
+        "180",
+        "--until",
+        "TI COMPLETE"
+      ],
+      "rc": 0,
+      "input_sha256": {
+        "/workspace/.onboarding/emulator-env.sh": "0fcb4cc8dbc608b515b5ff042eb01d1a878f09b520d311161b9b3dc42967fb50",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/native/TILE_I64F.ELF": "85180b5d0f1f34bef48a884db322046e6b4c8d45be7314e8494ca13a74c0e474",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/native/ee-build-report.json": "1bd179c1ef11440e88b243cdd779fe4a033d544ac0ef17e5d356af623620f739",
+        "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/native/source-proof.json": "2d57532d9dc67900175d848d7749f96cc93dbdbbcc0ba72e86ac5298792fe0e8",
+        "/workspace/SRB2-Banpyura-PS2/build/pak/CHARS.PAK": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+        "/workspace/SRB2-Banpyura-PS2/build/pak/FINEACON.DAT": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792",
+        "/workspace/SRB2-Banpyura-PS2/build/pak/MUSIC.PAK": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0",
+        "/workspace/SRB2-Banpyura-PS2/build/pak/SRB2.PAK": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+        "/workspace/SRB2-Banpyura-PS2/build/pak/ZONES.PAK": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next10_gs_run.py": "23b81462d6ba0c7bf8dd1ac0b439e5edee91012b239c85b9ec6f13405c35562f",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/next12_runtime.py": "1981626e8ecc90a0ac88a80b79498ebde0b461f7bc5a3ac52a697e210d5275ff",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_functions.c": "5aebcbb6d5a98dcf140f009f871e00997b4dc3f0607235ef609bb8e456f76f85",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_hosttest.c": "9af06ad4550d6ce1fd9e59a065af4eb5bfa614091eec15c883266f07c56ee90d",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_hosttest.py": "7d1dc67d8b2a5edde83765fb11ea0a1dcce7510dfb5492d73a4544153b247376",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/tile_i64f_native.py": "39de2e886fc73674408a6bff37b5512c0d06447122c135be6a03c145a1dbdd15",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py": "20f3aa6b24c002fbf7be916af4a65c73cbd38a4668c7fb8ba24a8df3fc18807b",
+        "/workspace/SRB2-Banpyura-PS2/tools/ps2/run_pcsx2.py": "2d8a95e317d050f6b0447e9fee2aa1835617726c0dd82ae1931190430e5e2aa4"
+      },
+      "all_frozen_inputs_unchanged": true,
+      "all_non_UI_settings_unchanged": true,
+      "emulator_binary_unchanged": true,
+      "orchestration_sha256": "7d5c81240d002853308f3142045a672337d38fda87c2f92a82b5055360d3ae8e",
+      "config_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": "44cdf685cb46be77f5eb5e9724964eac6274901c948cab9abbb525bcc9208d65"
+      },
+      "critical_settings": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/inis/PCSX2.ini": {
+          "Folders": {
+            "Bios": "bios",
+            "Snapshots": "snaps",
+            "Savestates": "sstates",
+            "MemoryCards": "memcards",
+            "Logs": "logs",
+            "Cheats": "cheats",
+            "Patches": "patches",
+            "Cache": "cache",
+            "Textures": "textures",
+            "InputProfiles": "inputprofiles",
+            "Videos": "videos"
+          },
+          "Filenames": {
+            "BIOS": "SCPH50003.bin"
+          },
+          "EmuCore": {
+            "EnableExtraMemory": "false",
+            "HostFs": "true",
+            "EnablePatches": "false",
+            "EnableCheats": "false",
+            "EnableFastBoot": "true",
+            "EnableWideScreenPatches": "false",
+            "EnableNoInterlacingPatches": "false"
+          },
+          "EmuCore/CPU": {
+            "FPU.DenormalsAreZero": "true"
+          },
+          "EmuCore/CPU/Recompiler": {
+            "EnableEE": "true",
+            "EnableEECache": "false"
+          },
+          "EmuCore/Speedhacks": {
+            "EECycleRate": "0",
+            "EECycleSkip": "0"
+          },
+          "EmuCore/GS": {
+            "Renderer": "13",
+            "VsyncEnable": "0",
+            "FrameLimitEnable": "false"
+          },
+          "SPU2/Output": {
+            "OutputModule": "nullout"
+          },
+          "Logging": {
+            "EnableSystemConsole": "false",
+            "EnableFileLogging": "true",
+            "EnableEEConsole": "true",
+            "EnableIOPConsole": "true"
+          },
+          "MemoryCards": {
+            "Slot1_Enable": "true",
+            "Slot1_Filename": "Mcd001.ps2",
+            "Slot2_Enable": "false"
+          }
+        }
+      },
+      "emulator_binary_sha256": {
+        "/workspace/.onboarding/pcsx2/slot0/usr/bin/pcsx2-qt": "2ed2378691b0b242a5cd37eac7882da6ca14c6a912d37eba863c58dc733e43fa"
+      }
+    },
+    "boot": "TI DIRECT_DIFF value=16777219 ref=4b800002 direct=4b800001\nTI DIRECT_DIFF value=-16777219 ref=cb800002 direct=cb800001\nTI DIRECT_DIFF value=16777223 ref=4b800004 direct=4b800003\nTI DIRECT_DIFF value=-16777223 ref=cb800004 direct=cb800003\nTI CHECKS checks=485782 failures=0 direct_mismatches=150396\nTI BENCH rep=0 which=0 calls=163840 ticks=125777052 checksum=2244244952\nTI BENCH rep=0 which=1 calls=163840 ticks=11391437 checksum=2244244952\nTI BENCH rep=0 which=2 calls=163840 ticks=127323336 checksum=2244244952\nTI BENCH rep=0 which=3 calls=163840 ticks=2130245 checksum=2244166232\nTI BENCH rep=1 which=0 calls=163840 ticks=125774508 checksum=2244244952\nTI BENCH rep=1 which=1 calls=163840 ticks=11389047 checksum=2244244952\nTI BENCH rep=1 which=2 calls=163840 ticks=127325543 checksum=2244244952\nTI BENCH rep=1 which=3 calls=163840 ticks=2130245 checksum=2244166232\nTI BENCH rep=2 which=0 calls=163840 ticks=125772858 checksum=2244244952\nTI BENCH rep=2 which=1 calls=163840 ticks=11389047 checksum=2244244952\nTI BENCH rep=2 which=2 calls=163840 ticks=127325643 checksum=2244244952\nTI BENCH rep=2 which=3 calls=163840 ticks=2130245 checksum=2244166232\nTI COMPLETE checks=485782 failures=0 direct_mismatches=150396 sink=1160899488\n"
+  },
+  "actual_plane_host": {
+    "passed": true,
+    "source_proof": {
+      "base": "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/base/src/ps2/hw/ps2_hw_tile_draw.inc",
+      "base_sha256": "27f368345e38cb8687ef047c3ee5955bdbc2956d38a77ab78b6e2d198464c4f8",
+      "candidate": "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/candidate/src/ps2/hw/ps2_hw_tile_draw.inc",
+      "candidate_sha256": "7563b662e0b2a8742a32622e78e06c1b4e280f51f30b2f6d21b67ab9b2d8af52",
+      "native_functions_sha256": "5aebcbb6d5a98dcf140f009f871e00997b4dc3f0607235ef609bb8e456f76f85",
+      "helper_body_matches_native_test_tokens": true,
+      "all_other_UV_function_bytes_unchanged": true,
+      "helper_body_token_sha256": "5da4354cc823c94f3b95c4101fb74aeffc5935944efce7fb73fd0f2024972abb"
+    },
+    "sanitize": false,
+    "returncode": 0,
+    "output": "TIP COMPLETE checks=1000000 float_outputs=6000000 failures=0\n",
+    "stderr": ""
+  },
+  "actual_plane_sanitize": {
+    "passed": true,
+    "source_proof": {
+      "base": "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/base/src/ps2/hw/ps2_hw_tile_draw.inc",
+      "base_sha256": "27f368345e38cb8687ef047c3ee5955bdbc2956d38a77ab78b6e2d198464c4f8",
+      "candidate": "/workspace/SRB2-Banpyura-PS2/build/nov17-tile-i64f/candidate/src/ps2/hw/ps2_hw_tile_draw.inc",
+      "candidate_sha256": "7563b662e0b2a8742a32622e78e06c1b4e280f51f30b2f6d21b67ab9b2d8af52",
+      "native_functions_sha256": "5aebcbb6d5a98dcf140f009f871e00997b4dc3f0607235ef609bb8e456f76f85",
+      "helper_body_matches_native_test_tokens": true,
+      "all_other_UV_function_bytes_unchanged": true,
+      "helper_body_token_sha256": "5da4354cc823c94f3b95c4101fb74aeffc5935944efce7fb73fd0f2024972abb"
+    },
+    "sanitize": true,
+    "returncode": 0,
+    "output": "TIP COMPLETE checks=1000000 float_outputs=6000000 failures=0\n",
+    "stderr": ""
+  },
+  "patch_sha256": "e6880bedf5356d77f734abf235250e6e2c2d45cced5b06674bff56c56e314118",
+  "patch": "--- a/src/ps2/hw/ps2_hw_tile_draw.inc\n+++ b/src/ps2/hw/ps2_hw_tile_draw.inc\n@@ -211,10 +211,35 @@\n \t*n0 = p->det - *n1 - *n2;\n }\n \n+// Match the software int64 cast, whose signed32 inputs round to nearest-even.\n+// EE cvt.s.w can truncate inexact values, so use it only for exact integers.\n+static float tile_i64_to_float(int64_t value)\n+{\n+\tint32_t n = (int32_t)value;\n+\n+\tif ((int64_t)n != value) return (float)value;\n+\tif (n >= -16777216 && n <= 16777216) return (float)n;\n+\tconst uint32_t sign = (uint32_t)n & 0x80000000u;\n+\tconst uint32_t mag = n < 0 ? 0u - (uint32_t)n : (uint32_t)n;\n+\t// Here floor(log2(mag)) is 24..31: at most eight low bits are lost.\n+\tunsigned shift = 1;\n+\tuint32_t top = mag >> 24;\n+\tif (top >= 16u) { shift += 4; top >>= 4; }\n+\tif (top >= 4u) { shift += 2; top >>= 2; }\n+\tif (top >= 2u) shift++;\n+\tuint32_t mant = mag >> shift;\n+\tconst uint32_t rem = mag & ((1u << shift) - 1u), half = 1u << (shift - 1u);\n+\tif (rem > half || (rem == half && (mant & 1u))) mant++;\n+\t// Addition carries a rounded 24-bit mantissa into the next exponent.\n+\tconst uint32_t bits = sign + ((shift + 150u) << 23) + (mant - 0x800000u);\n+\tunion { uint32_t u; float f; } out = {bits};\n+\treturn out.f;\n+}\n+\n static void tile_plane_uv(const tile_plane_t *p, int64_t n1, int64_t n2,\n \tfloat *u, float *v, float *q, float *qa, float *ua, float *va)\n {\n-\tconst float b1 = (float)n1 * p->inv_det, b2 = (float)n2 * p->inv_det;\n+\tconst float b1 = tile_i64_to_float(n1) * p->inv_det, b2 = tile_i64_to_float(n2) * p->inv_det;\n \tconst float iq = (*q = p->rq[0] + b1 * (p->rq[1] - p->rq[0]) + b2 * (p->rq[2] - p->rq[0])) > 0.0f ? 1.0f / *q : 0.0f;\n \n \t*u = (p->us[0] + b1 * (p->us[1] - p->us[0]) + b2 * (p->us[2] - p->us[0])) * iq;\n",
+  "committable_manifest": [
+    {
+      "path": "docs/research/opt17/TILE_I64_TO_FLOAT_20261116.md",
+      "sha256": "bf8cd7564653f4c308e9e527e325203f092aee68e4a25c654e815c65e7ae8065"
+    },
+    {
+      "path": "docs/research/opt17/TILE_I64_TO_FLOAT_RESULTS_20261116.json",
+      "sha256": "self"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_i64f_functions.c",
+      "sha256": "5aebcbb6d5a98dcf140f009f871e00997b4dc3f0607235ef609bb8e456f76f85"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_i64f_hosttest.c",
+      "sha256": "9af06ad4550d6ce1fd9e59a065af4eb5bfa614091eec15c883266f07c56ee90d"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_i64f_hosttest.py",
+      "sha256": "7d1dc67d8b2a5edde83765fb11ea0a1dcce7510dfb5492d73a4544153b247376"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_i64f_native.py",
+      "sha256": "39de2e886fc73674408a6bff37b5512c0d06447122c135be6a03c145a1dbdd15"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_i64f_plane_hosttest.c",
+      "sha256": "1449f767033822bc02f2914b421ac6f3e739c20d2bde9a5f6b898ed5f9392ebb"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_i64f_plane_hosttest.py",
+      "sha256": "afbeaf45720226604b94ba106f9aa7535c2f47a972bb8a7ac2cd0479d3a3bc0b"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_cpu_reference/i64f-box-base.inc",
+      "sha256": "27f368345e38cb8687ef047c3ee5955bdbc2956d38a77ab78b6e2d198464c4f8"
+    },
+    {
+      "path": "tools/ps2/opt17/tile_cpu_reference/i64f-box-candidate.inc",
+      "sha256": "7563b662e0b2a8742a32622e78e06c1b4e280f51f30b2f6d21b67ab9b2d8af52"
+    }
+  ],
+  "additional_shared_updates": [
+    "tools/ps2/opt17/tile_cpu_reference/README.md",
+    "tools/ps2/opt17/tile_columns_hosttest.py",
+    "docs/research/opt17/TILE_CPU_MATH_RESULTS_20261116.json"
+  ],
+  "integration": "Parent owns combined rowruns/converter source binding and native/pixel/frame gates. No production source changed by this component work.",
+  "private_combined_v7_binding": {
+    "source": "build/nov17-tiles/review-v7/src/ps2/hw/ps2_hw_tile_draw.inc",
+    "sha256": "7563b662e0b2a8742a32622e78e06c1b4e280f51f30b2f6d21b67ab9b2d8af52",
+    "whole_draw_file_matches_proven_candidate": true,
+    "helper_body_token_sha256": "5da4354cc823c94f3b95c4101fb74aeffc5935944efce7fb73fd0f2024972abb",
+    "scope": "Conversion component identity only. Combined rowrun texture-fill changes are independently owned/reviewed; renderer/frame validation belongs to parent gates.",
+    "no_source_changes_by_binding": true
+  }
+}

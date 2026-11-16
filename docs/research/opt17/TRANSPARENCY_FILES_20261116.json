@@ -1,0 +1,143 @@
+{
+  "scope": "Transparency/cache-lifetime agent-owned committable tools and research artifacts only. No highres, sprite-cache, resource/PAK files included; parent owns production integration and final full-engine acceptance. No more edits planned to these artifacts.",
+  "reviewed_production_fixes": [
+    "canonical P8 h255 knowledge",
+    "packed cached-mip row stride",
+    "canonical DeleteTexture source-key lifetime",
+    "temporary mip-source lock balance with pending-DMA busy guard"
+  ],
+  "held_candidate": "UpdateTexture: immediate admission proof only; independent engine-owned sibling CPU-data contract unresolved. Do not apply its .patch to production.",
+  "integrated_component_report": "docs/research/opt17/TRANSPARENCY_INTEGRATED_RESULTS_20261116.json",
+  "native_GS_report": "docs/research/opt17/TRANSPARENCY_NATIVE_RESULTS_20261116.json",
+  "pinned_portable_baseline_commit": "45f8de1cbf33e8e7b2581afc08cb02499dd8c186",
+  "files": {
+    "tools/ps2/opt17/transparency_delete_hosttest.c": {
+      "bytes": 3296,
+      "sha256": "04e58d151522f5a3e11675ef3bac2dc9c5fe4945d11c31e41f93f5395a44fad8"
+    },
+    "tools/ps2/opt17/transparency_delete_hosttest.py": {
+      "bytes": 4484,
+      "sha256": "e143227090715c4d10d215e1c0f8c4b1c64a1c07c3f1e559a71222388cc6bae9"
+    },
+    "tools/ps2/opt17/transparency_hosttest.c": {
+      "bytes": 15026,
+      "sha256": "24a41df6c9b28e7c2d41f39bef9e3432991422f8ce09fe9a688a116177604668"
+    },
+    "tools/ps2/opt17/transparency_hosttest.py": {
+      "bytes": 8377,
+      "sha256": "4f9af09a4d99c20766bed63f82b80f20d393a9841c3cdc12cf2f1e86da859764"
+    },
+    "tools/ps2/opt17/transparency_lock_hosttest.c": {
+      "bytes": 4505,
+      "sha256": "21cfd182a472c650b8817a41131cf0a5c05ff1f8839531ead34e7faff7513534"
+    },
+    "tools/ps2/opt17/transparency_lock_hosttest.py": {
+      "bytes": 6482,
+      "sha256": "3d26f235512980aecb6b1044ff39844373f36c81b1ccf5e4ae26ad3e6058ee2e"
+    },
+    "tools/ps2/opt17/transparency_map_twin_hosttest.c": {
+      "bytes": 2926,
+      "sha256": "51f7663e47dca01a4d963bb06bffc666aaeba111c097139bfe6c197910c50918"
+    },
+    "tools/ps2/opt17/transparency_map_twin_hosttest.py": {
+      "bytes": 2500,
+      "sha256": "1a2e5b0dc8f8c1289a3bfc52afc08adf3cf89c16d3059a3cbcef13a4bcfda987"
+    },
+    "tools/ps2/opt17/transparency_native.py": {
+      "bytes": 6403,
+      "sha256": "55d94b83b2440b1173653b2d9f29a46a649b1f958a522f8b4e6a87f08b01cc7c"
+    },
+    "tools/ps2/opt17/transparency_native_driver.inc": {
+      "bytes": 1418,
+      "sha256": "30ee87a43847400e7bbf567a8332fe5c99cf4694779fa5cc556076d9c8af22dd"
+    },
+    "tools/ps2/opt17/transparency_native_main.inc": {
+      "bytes": 4810,
+      "sha256": "b904647a56b523993049d7b4dd9df2f17fa070511d801f7e80fcc6a1a47e5189"
+    },
+    "tools/ps2/opt17/transparency_native_report.py": {
+      "bytes": 5507,
+      "sha256": "503501c024593af34e6695375a0c3ad2857499bafb9630ac9c3d7fa3134171dc"
+    },
+    "tools/ps2/opt17/transparency_stride_hosttest.py": {
+      "bytes": 3540,
+      "sha256": "1638217abf532c2bb8df2c6abcfa3ebfcef9ac11de6cd4c840739f40b116367e"
+    },
+    "tools/ps2/opt17/transparency_update_hosttest.c": {
+      "bytes": 3411,
+      "sha256": "b2726f6adab7d52bebfb73038decf6972a881c37ff5a332b8ea08ccf128cdaca"
+    },
+    "tools/ps2/opt17/transparency_update_hosttest.py": {
+      "bytes": 6914,
+      "sha256": "05cbd1450a785f69ef83b7637e76c8d53b27a283ee1df1c67fd2c5cca3e9fd12"
+    },
+    "docs/research/opt17/TRANSPARENCY_20261116.md": {
+      "bytes": 16598,
+      "sha256": "853b9aaed9e83e13ba3455be465ba65ba063f60d3eb77dfb11f5577a3ec5ce91"
+    },
+    "docs/research/opt17/TRANSPARENCY_DELETE_CANDIDATE_20261116.json": {
+      "bytes": 580,
+      "sha256": "0fd664ecd7f00c614e55dec28b7b774cd74db88dd3d63f610f26846d0fa99a73"
+    },
+    "docs/research/opt17/TRANSPARENCY_DELETE_RESULTS_20261116.json": {
+      "bytes": 3850,
+      "sha256": "7fb0f8d51194c7eb8a0a481dd887aaea17f7d0a3bad2125400078f29c70f169a"
+    },
+    "docs/research/opt17/TRANSPARENCY_HOST_RESULTS_20261116.json": {
+      "bytes": 10225,
+      "sha256": "1748599613e7d49776b7773d002d73901a6ae287d2116683acb765c2b1b84a55"
+    },
+    "docs/research/opt17/TRANSPARENCY_INTEGRATED_RESULTS_20261116.json": {
+      "bytes": 10625,
+      "sha256": "32797e6e1b2859ae19db6b9807c617d140fc43a3d3a4c9796a5c65a80b98749c"
+    },
+    "docs/research/opt17/TRANSPARENCY_LOCK_CANDIDATE_20261116.json": {
+      "bytes": 1257,
+      "sha256": "2d3b3ff0b78ab205f07461e9b91b85b6cc83e330baab326ab744678ed2b93a96"
+    },
+    "docs/research/opt17/TRANSPARENCY_LOCK_RESULTS_20261116.json": {
+      "bytes": 14853,
+      "sha256": "64d80233923aa78b95b88f3d34b216dffaabae0c08ab557ad0cb35d6a74267f2"
+    },
+    "docs/research/opt17/TRANSPARENCY_MAP_TWIN_RESULTS_20261116.json": {
+      "bytes": 28853,
+      "sha256": "69a498b94d9a033e25bacd638623df471cb26afa3da71a8b02621b217582e30a"
+    },
+    "docs/research/opt17/TRANSPARENCY_NATIVE_RESULTS_20261116.json": {
+      "bytes": 11291,
+      "sha256": "4341072259da7fce4873c52db4ab3762c2e548accc3fa6e0aa65ab15650bfe0a"
+    },
+    "docs/research/opt17/TRANSPARENCY_PATCH_20261116.json": {
+      "bytes": 458,
+      "sha256": "5cefb6543148049e141f3814311979f96c7798b5c6dfe094b80a721410eb35c9"
+    },
+    "docs/research/opt17/TRANSPARENCY_UPDATE_CANDIDATE_20261116.json": {
+      "bytes": 932,
+      "sha256": "b8b604019ea8a458af9f145b1f0a341f18553e9a63ffca2e3aa03053113248eb"
+    },
+    "docs/research/opt17/TRANSPARENCY_UPDATE_RESULTS_20261116.json": {
+      "bytes": 18883,
+      "sha256": "902c4ad821fd924bda82fd1739952310ed0870c387fefc2484f3d6a5fad1d622"
+    },
+    "docs/research/opt17/transparency-cached-stride.patch": {
+      "bytes": 288,
+      "sha256": "d7c04bdb05702be2416b2fa8cda38d6d10e8c344a580461fbae7ba80028e9a82"
+    },
+    "docs/research/opt17/transparency-canonical-h255.patch": {
+      "bytes": 857,
+      "sha256": "47d68f9144c9eb9f3557a88e68a5ff1b4ae6d8fb265782269c54b408f0fbc7e6"
+    },
+    "docs/research/opt17/transparency-delete-lifetime-candidate.patch": {
+      "bytes": 648,
+      "sha256": "0d9dc95f8bfcd6fd73e0c61b1f4603240922802a3b6267dd0614e36d02ab3e0b"
+    },
+    "docs/research/opt17/transparency-mip-source-unlock.patch": {
+      "bytes": 708,
+      "sha256": "50836ad57bf3e38355311e609c7e1a4329194216434ee6b4842f71bdf9ec898d"
+    },
+    "docs/research/opt17/transparency-update-lifetime-candidate.patch": {
+      "bytes": 999,
+      "sha256": "1cf7e80bd4747b7b1907e56837df16a435aba886d8154eca03fa118ab141d8b5"
+    }
+  }
+}

@@ -1,0 +1,221 @@
+{
+  "baseline": "604cfd150c5240142d8cb5367950b53d987916d1",
+  "source_sha256": {
+    "src/ps2/hw/ps2_hw_fx2.inc": "b80204310e2ef95116e640f965022ffe4c7ec575a776a43b99c070d0a7613055",
+    "src/ps2/hw/ps2_hw_priv.inc": "e5f90041c72f3dd99c839895ec0343a4fc064865be91276df9834f1d476a69d6",
+    "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+    "src/ps2/hw/ps2_hw_quad.h": "4843200edd2eb3ad749bbe48aac0ef4d6361af1e221f62254a5e779e8273dc82"
+  },
+  "scope": "actual complete baseline/current parallelogram cull; real driver state/type/pixel-centre headers",
+  "runs": [
+    {
+      "name": "normal",
+      "passed": true,
+      "exit": 0,
+      "stdout": "PARACULL PASS queries=301751 hidden=96387 retained=205364 state=36944 cull=104\n"
+    },
+    {
+      "name": "lost-eye-guard",
+      "passed": true,
+      "exit": 1,
+      "stdout": "PARACULL FAIL query=9 label=last-corner-near-eye returns=0/1 expected=0 p=0x1.f4p+9,-0x1.4p+3,0x1.9p+6\n"
+    },
+    {
+      "name": "mixed-outcodes",
+      "passed": true,
+      "exit": 1,
+      "stdout": "PARACULL FAIL query=2 label=mixed-outcodes returns=0/1 expected=0 p=-0x1.9p+7,-0x1.9p+7,0x1.9p+6\n"
+    },
+    {
+      "name": "lost-far-plane",
+      "passed": true,
+      "exit": 1,
+      "stdout": "PARACULL FAIL query=7 label=shared-outside-plane returns=1/0 expected=1 p=-0x1.4p+3,-0x1.4p+3,0x1.9p+6\n"
+    },
+    {
+      "name": "sanitized",
+      "passed": true,
+      "exit": 0,
+      "stdout": "PARACULL PASS queries=301751 hidden=96387 retained=205364 state=36944 cull=104\n"
+    }
+  ],
+  "ee_build": {
+    "elf": "/workspace/SRB2-Banpyura-PS2/build/nov15-next16/para-o3/ee/PARACULL.ELF",
+    "elf_sha256": "45265129f34fc0bc4d32b3110e7590983195271b7f90dadb99589fe8434b0971",
+    "launched": true
+  },
+  "passed": true,
+  "ee": {
+    "passed": true,
+    "queries": 72375,
+    "hidden": 22603,
+    "retained": 49772,
+    "driver_state_bytes": 36896,
+    "cull_type_bytes": 104,
+    "rows": [
+      {
+        "pattern": "large-visible",
+        "queries": 8192,
+        "reference": 4972594,
+        "current": 3293232,
+        "percent": -33.772353021380795
+      },
+      {
+        "pattern": "left",
+        "queries": 8192,
+        "reference": 3719218,
+        "current": 1351728,
+        "percent": -63.655585663437854
+      },
+      {
+        "pattern": "right",
+        "queries": 8192,
+        "reference": 3735602,
+        "current": 1359920,
+        "percent": -63.59569354551154
+      },
+      {
+        "pattern": "bottom",
+        "queries": 8192,
+        "reference": 3719218,
+        "current": 1826864,
+        "percent": -50.880427014496064
+      },
+      {
+        "pattern": "top",
+        "queries": 8192,
+        "reference": 3719218,
+        "current": 1835056,
+        "percent": -50.66016565847982
+      },
+      {
+        "pattern": "near-plane",
+        "queries": 8192,
+        "reference": 3727410,
+        "current": 2302000,
+        "percent": -38.24129891801545
+      },
+      {
+        "pattern": "far-plane",
+        "queries": 8192,
+        "reference": 3719218,
+        "current": 2310192,
+        "percent": -37.88500700953803
+      },
+      {
+        "pattern": "eye-first",
+        "queries": 8192,
+        "reference": 352306,
+        "current": 352304,
+        "percent": -0.0005676883164107416
+      },
+      {
+        "pattern": "eye-last",
+        "queries": 8192,
+        "reference": 786482,
+        "current": 786480,
+        "percent": -0.0002542969832708408
+      },
+      {
+        "pattern": "small-centre",
+        "queries": 8192,
+        "reference": 7151666,
+        "current": 5660720,
+        "percent": -20.847533987185642
+      },
+      {
+        "pattern": "small-no-centre",
+        "queries": 8192,
+        "reference": 6488114,
+        "current": 4997168,
+        "percent": -22.979651713887883
+      },
+      {
+        "pattern": "varying-w-visible",
+        "queries": 8192,
+        "reference": 4972594,
+        "current": 3293232,
+        "percent": -33.772353021380795
+      }
+    ],
+    "log_sha256": "21d7ff38b06b9bebb3481da326e75b87db67deb4e2b0e470efa2288a839bdea8",
+    "micro_assembly": {
+      "ReferenceParaHidden": {
+        "symbol_bytes": 3064,
+        "stack_bytes": 48
+      },
+      "PS2HWD_ParaHidden": {
+        "symbol_bytes": 2172,
+        "stack_bytes": 48
+      }
+    },
+    "compile_flags": [
+      "-G8",
+      "-O2",
+      "-std=gnu23",
+      "-ffunction-sections",
+      "-fdata-sections",
+      "-D_EE",
+      "-DPS2",
+      "-DPS2_PROFILE",
+      "-DPS2_AUDIO_VORBIS",
+      "-DPS2_AUDIO_MP3",
+      "-DNOMUMBLE",
+      "-DNO_IPV6",
+      "-DNOUPNP",
+      "-DCMAKECONFIG",
+      "-D_LARGEFILE64_SOURCE",
+      "-DNOEXECINFO",
+      "-DUNIXCOMMON",
+      "-Wall",
+      "-Wextra",
+      "-Wno-trigraphs",
+      "-Wno-unused-parameter",
+      "-fwrapv",
+      "-DHAVE_ZLIB",
+      "-DHAVE_PNG",
+      "-DNDEBUG",
+      "-mno-abicalls",
+      "-flto",
+      "-DHWRENDER",
+      "-Werror",
+      "-Wno-format-truncation",
+      "-O3",
+      "-Werror",
+      "-Wno-unused-function",
+      "-Wno-unused-variable",
+      "-DHWRENDER",
+      "-DPARA_CULL_NATIVE",
+      "-I",
+      "/workspace/SRB2-Banpyura-PS2/build/nov15-next16/para-o3/ee",
+      "-I",
+      "/workspace/SRB2-Banpyura-PS2/build/nov15-next16/para-o3",
+      "-I/workspace/SRB2-Banpyura-PS2/src",
+      "-I/workspace/SRB2-Banpyura-PS2/src/ps2",
+      "-I/workspace/SRB2-Banpyura-PS2/build/ps2/gen",
+      "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ee/include",
+      "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/common/include",
+      "-I/workspace/.onboarding/ps2dev-v2/ps2dev/gsKit/include",
+      "-I/workspace/.onboarding/ps2dev-v2/ps2dev/ps2sdk/ports/include"
+    ],
+    "scope": "COP0 Count, 8192 equal calls per row, minimum of seven repetitions in alternating order; no FPS/physical-hardware claim"
+  },
+  "harness_sha256": {
+    "tools/ps2/hw_para_cull_hosttest.c": "fbbe1dfd3cbbd4bc93728ea7097144255cda0d0bd13712a00cbbe1d2a433a48a",
+    "tools/ps2/hw_para_cull_hosttest.py": "db9ca7535365577b3add2038fe1b9e6ab39613509d3b3685b0ef9cb6a6e0d71f"
+  },
+  "unchanged_callers": [
+    "HWR_FX_QuadHidden",
+    "HWR_PS2_SpriteHidden"
+  ],
+  "rejected_centre_reuse": {
+    "path": "build/nov15-next16/front",
+    "reason": "Release/LTO compiler already eliminated repeated transforms; explicit reuse slowed reject cases by 2 Count per call. Removed from runtime.",
+    "host_queries": 263640,
+    "ee_queries": 34264
+  },
+  "initial_o2_measurement": {
+    "path": "build/nov15-next16/para",
+    "note": "Earlier timings omitted the driver unit -O3 override; retained for transparency and superseded by this report."
+  }
+}

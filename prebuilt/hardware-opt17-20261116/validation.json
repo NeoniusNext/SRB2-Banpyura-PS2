@@ -1,0 +1,955 @@
+{
+  "source_commit": "321c8d4da2cdc4d175271726b8b2bc450cbbc57b",
+  "base_comparison_revision": "604cfd150c5240142d8cb5367950b53d987916d1",
+  "ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+  "ELF_bytes": 11329336,
+  "production_source_count": 607,
+  "hardware_C_units": 204,
+  "VU_programs": 2,
+  "compile_diagnostics": 0,
+  "link_diagnostics": false,
+  "normal_OS_seeded_shipping_RNG": true,
+  "diagnostic_RNG_copies_not_shipped": true,
+  "all_current_and_frozen_sources_identical": true,
+  "all_required_matrix_stages_completed": true,
+  "all_strict_checks_pass": false,
+  "unexpected_new_failures": [],
+  "retained_rejected_stage_history": {
+    "original_matrix_journal_sha256": "51fb918705445548640606212f19d2135a4ec1927ceb3396144d2d078b496036",
+    "incomplete_standard_report": "docs/research/opt17/restart/incomplete-basic-gs-fixture.json",
+    "reason": "Initial basic GS builder omitted2 existing GS-list model checks and4 readbacks; all30commonreadbacks exact. Fresh canonical builder rerun with unchanged34-reference and strict tolerances replaces that incomplete fixture only. No production source changes or strict failure exemptions."
+  },
+  "physical_PS2_tested": false,
+  "global_FPS_gain_claimed": false,
+  "full_game_images": {
+    "default-images": {
+      "exact_complete_frame_pairs": 15,
+      "scene_pairs": [
+        {
+          "scene": "fog-npot",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "map02",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "map01",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "legacy",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "legacy-sprites",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        }
+      ],
+      "diagnostic_lines_per_role": {
+        "baseline": 200,
+        "candidate": 200
+      },
+      "strict_errors": [
+        "baseline-fog-npot: Hardware texture draws missing or skipped between captures",
+        "candidate-fog-npot: Hardware texture draws missing or skipped between captures",
+        "baseline-map02: Hardware texture draws missing or skipped between captures",
+        "candidate-map02: Hardware texture draws missing or skipped between captures",
+        "baseline-map01: Hardware texture draws missing or skipped between captures",
+        "candidate-map01: Hardware texture draws missing or skipped between captures",
+        "baseline-legacy: Hardware texture draws missing or skipped between captures",
+        "candidate-legacy: Hardware texture draws missing or skipped between captures",
+        "baseline-legacy-sprites: Hardware texture draws missing or skipped between captures",
+        "candidate-legacy-sprites: Hardware texture draws missing or skipped between captures"
+      ]
+    },
+    "full-images": {
+      "exact_complete_frame_pairs": 15,
+      "scene_pairs": [
+        {
+          "scene": "fog-npot",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "map02",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "map01",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "legacy",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        },
+        {
+          "scene": "legacy-sprites",
+          "complete_frames": 3,
+          "equal_frames": true,
+          "equal_loader_hashes": true,
+          "equal_saved_config": true
+        }
+      ],
+      "diagnostic_lines_per_role": {
+        "baseline": 0,
+        "candidate": 0
+      },
+      "strict_errors": []
+    }
+  },
+  "memory": {
+    "scenario": "Matched default Hardware MAP02,350frames,local-RNG initializer-only diagnostic copies,32MiB",
+    "net_available_zone_plus_C_heap_delta_bytes": 1920768,
+    "net_available_delta_MiB": 1.831787109375,
+    "numeric_deltas": {
+      "ram": 0,
+      "class": 0,
+      "map": 0,
+      "levelframes": 0,
+      "frames": 0,
+      "cycles": 20009525,
+      "arena": -40960,
+      "used": -1974592,
+      "peak": -1974592,
+      "gpeak": -1974592,
+      "free": 1933632,
+      "largest": 1929184,
+      "evicted": 0,
+      "evictedbytes": 16,
+      "failed": 0,
+      "libcfree": -12864,
+      "flushes": 0,
+      "libcpeak": 15936,
+      "stackused": 0,
+      "spillpeak": -758400,
+      "spillnow": -758400,
+      "t_ms": 86
+    },
+    "ordered_stream_equality": {
+      "LHASH ": {
+        "rows": [
+          10,
+          10
+        ],
+        "equal": true
+      },
+      "HWPH ": {
+        "rows": [
+          407,
+          407
+        ],
+        "equal": true
+      },
+      "HWLT ": {
+        "rows": [
+          2,
+          2
+        ],
+        "equal": true
+      },
+      "HWWS ": {
+        "rows": [
+          49,
+          49
+        ],
+        "equal": true
+      },
+      "HWPROF resource tail": {
+        "rows": [
+          3,
+          3
+        ],
+        "equal": true
+      }
+    },
+    "strict_errors": [
+      "Memory pressure increased: libcpeak",
+      "Available memory or arena capacity decreased: arena",
+      "Available memory or arena capacity decreased: libcfree"
+    ]
+  },
+  "renderer_and_resolution_stability": {
+    "switch-pal": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "1",
+          "levelframes": "175",
+          "frames": "175",
+          "cycles": "742189708",
+          "arena": "23506944",
+          "used": "19630176",
+          "peak": "20668064",
+          "gpeak": "20668064",
+          "free": "3876768",
+          "largest": "2150192",
+          "evicted": "32",
+          "evictedbytes": "176336",
+          "failed": "15",
+          "libcfree": "167416",
+          "flushes": "0",
+          "libcpeak": "507776",
+          "stackused": "132560",
+          "spillpeak": "4972672",
+          "spillnow": "1360512",
+          "t_ms": "100448"
+        }
+      ],
+      "capture_count": 12,
+      "capture_sizes": [
+        "320x200",
+        "640x400",
+        "640x448",
+        "640x480",
+        "640x512"
+      ],
+      "skipped_diagnostic_lines": 40
+    },
+    "switch-480p": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "1",
+          "levelframes": "175",
+          "frames": "175",
+          "cycles": "1477901730",
+          "arena": "23506944",
+          "used": "19631344",
+          "peak": "20653008",
+          "gpeak": "20653008",
+          "free": "3875600",
+          "largest": "2153584",
+          "evicted": "32",
+          "evictedbytes": "176336",
+          "failed": "16",
+          "libcfree": "167336",
+          "flushes": "0",
+          "libcpeak": "507776",
+          "stackused": "132560",
+          "spillpeak": "4890752",
+          "spillnow": "1360512",
+          "t_ms": "73786"
+        }
+      ],
+      "capture_count": 12,
+      "capture_sizes": [
+        "320x200",
+        "640x400",
+        "640x448",
+        "640x480",
+        "640x512"
+      ],
+      "skipped_diagnostic_lines": 40
+    },
+    "heat-pal": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "2",
+          "levelframes": "45",
+          "frames": "45",
+          "cycles": "3268373161",
+          "arena": "23506944",
+          "used": "21354656",
+          "peak": "22408576",
+          "gpeak": "22408576",
+          "free": "2152288",
+          "largest": "2062256",
+          "evicted": "260",
+          "evictedbytes": "4749664",
+          "failed": "11",
+          "libcfree": "113272",
+          "flushes": "0",
+          "libcpeak": "491520",
+          "stackused": "132560",
+          "spillpeak": "7659648",
+          "spillnow": "5365888",
+          "t_ms": "53528"
+        }
+      ],
+      "capture_count": 3,
+      "capture_sizes": [
+        "640x512"
+      ],
+      "skipped_diagnostic_lines": 40
+    },
+    "heat-480p": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "2",
+          "levelframes": "45",
+          "frames": "45",
+          "cycles": "3080211669",
+          "arena": "23506944",
+          "used": "21215152",
+          "peak": "23310368",
+          "gpeak": "23310368",
+          "free": "2291792",
+          "largest": "2277072",
+          "evicted": "172",
+          "evictedbytes": "1944656",
+          "failed": "45",
+          "libcfree": "113192",
+          "flushes": "0",
+          "libcpeak": "491520",
+          "stackused": "132560",
+          "spillpeak": "7250048",
+          "spillnow": "5099648",
+          "t_ms": "52020"
+        }
+      ],
+      "capture_count": 3,
+      "capture_sizes": [
+        "640x480"
+      ],
+      "skipped_diagnostic_lines": 40
+    },
+    "wipe-pal": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "1",
+          "levelframes": "137",
+          "frames": "137",
+          "cycles": "2126607581",
+          "arena": "23506944",
+          "used": "18587824",
+          "peak": "20198592",
+          "gpeak": "23468224",
+          "free": "4919120",
+          "largest": "4342528",
+          "evicted": "615",
+          "evictedbytes": "14662432",
+          "failed": "62",
+          "libcfree": "119608",
+          "flushes": "0",
+          "libcpeak": "528448",
+          "stackused": "132560",
+          "spillpeak": "7594112",
+          "spillnow": "5300352",
+          "t_ms": "195232"
+        }
+      ],
+      "capture_count": 5,
+      "capture_sizes": [
+        "640x512"
+      ],
+      "skipped_diagnostic_lines": 40
+    },
+    "wipe-480p": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "1",
+          "levelframes": "137",
+          "frames": "137",
+          "cycles": "2989092248",
+          "arena": "23506944",
+          "used": "18321136",
+          "peak": "19788192",
+          "gpeak": "23405504",
+          "free": "5185808",
+          "largest": "4605504",
+          "evicted": "373",
+          "evictedbytes": "11156896",
+          "failed": "26",
+          "libcfree": "123800",
+          "flushes": "0",
+          "libcpeak": "528448",
+          "stackused": "132560",
+          "spillpeak": "7184512",
+          "spillnow": "5034112",
+          "t_ms": "124480"
+        }
+      ],
+      "capture_count": 5,
+      "capture_sizes": [
+        "640x480"
+      ],
+      "skipped_diagnostic_lines": 40
+    },
+    "heat-wipe-pal": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "1",
+          "levelframes": "38",
+          "frames": "38",
+          "cycles": "3086655814",
+          "arena": "23506944",
+          "used": "18546960",
+          "peak": "18546960",
+          "gpeak": "22469840",
+          "free": "4959984",
+          "largest": "4429536",
+          "evicted": "512",
+          "evictedbytes": "14372880",
+          "failed": "13",
+          "libcfree": "123576",
+          "flushes": "0",
+          "libcpeak": "528256",
+          "stackused": "132560",
+          "spillpeak": "7659648",
+          "spillnow": "5365888",
+          "t_ms": "67475"
+        }
+      ],
+      "capture_count": 3,
+      "capture_sizes": [
+        "640x512"
+      ],
+      "skipped_diagnostic_lines": 40
+    },
+    "heat-wipe-480p": {
+      "integration_passed": true,
+      "strict_missing_draw_passed": false,
+      "fatal": [],
+      "automatic_fallback": [],
+      "warnings": [],
+      "audio_errors": [],
+      "complete_shutdown": true,
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "1",
+          "levelframes": "38",
+          "frames": "38",
+          "cycles": "2033393294",
+          "arena": "23506944",
+          "used": "18280560",
+          "peak": "18280560",
+          "gpeak": "23362208",
+          "free": "5226384",
+          "largest": "4698016",
+          "evicted": "397",
+          "evictedbytes": "12534896",
+          "failed": "8",
+          "libcfree": "123576",
+          "flushes": "0",
+          "libcpeak": "528256",
+          "stackused": "132560",
+          "spillpeak": "7250048",
+          "spillnow": "5099648",
+          "t_ms": "48471"
+        }
+      ],
+      "capture_count": 3,
+      "capture_sizes": [
+        "640x480"
+      ],
+      "skipped_diagnostic_lines": 40
+    }
+  },
+  "CPU_GPU_HUD": {
+    "range_percent": [
+      0,
+      100
+    ],
+    "CPU": "Foreground EE elapsed minus union of explicit main-thread waits; not aggregate all-thread execution.",
+    "GPU~": "Observed submission-to-existing-FINISH queue-span upper estimate, including feeding/transfer/VU/observation gaps; not exact GS busy.",
+    "initialization": "N/A while an observed interval is unavailable.",
+    "modes": "Existing Off/On/RAM/VRAM values0/1/2/3 preserved."
+  },
+  "PAL_resolution": {
+    "menu_logical": [
+      320,
+      200
+    ],
+    "default_Hardware_framebuffer": [
+      320,
+      256
+    ],
+    "emulator_video_output": [
+      640,
+      512
+    ],
+    "other_outputs": "NTSC/480p layouts may differ; output size alone does not identify raster size."
+  },
+  "standard_GS": {
+    "runs": {
+      "ct32": {
+        "suite_exit": 1,
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=56 failures=1"
+        ],
+        "failures": [
+          "H0 FAIL vu0_transform 49152 vertices, 0 outcode differences, max dX 1 dY 1 dZ 86, max 1/w relative error 3.61343e-05"
+        ],
+        "pass_count": 55
+      },
+      "ct16": {
+        "suite_exit": 1,
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=51 failures=1"
+        ],
+        "failures": [
+          "H0 FAIL vu0_transform 49152 vertices, 0 outcode differences, max dX 1 dY 1 dZ 86, max 1/w relative error 3.61343e-05"
+        ],
+        "pass_count": 50
+      }
+    },
+    "images": {
+      "hw-clear-32.ppm": "8284da12bd8d50df49cbf6643b988e76376821b79bb84cfef84f7ba2c3bbdab4",
+      "hw-clear.ppm": "e6a5fc8145d0750fc1696e4c1e04aae3c2a323cb7be080b850e1e75fde120ce9",
+      "hw-clut_all_256-32.ppm": "17ea9fe11cc1bd17aa31125b9c977aea78b8dc59046fd365492c0069c986c6f6",
+      "hw-clut_all_256.ppm": "e6e4b9ccb8721054b234db8ccdfcac0d4872d3eec341109832d8b08fbf8eb1d6",
+      "hw-depth_order-32.ppm": "efb2c94d14591cf59fbedc515d4c981f8537f669f61ac9b03c3d01ff473bc0ac",
+      "hw-depth_order.ppm": "efb2c94d14591cf59fbedc515d4c981f8537f669f61ac9b03c3d01ff473bc0ac",
+      "hw-evict-32.ppm": "77c4e7ad3e88bada9112f1316fdb20e576c24f3d4b4e8dbcf903a71f447b3599",
+      "hw-evict.ppm": "e00b670d556309edd8bac1ee091200b36bdf5a37e23fc7f5e9ede6601a4c8400",
+      "hw-flat-32.ppm": "e06f5003fb4495efee1a342dd9bd789a8458ffdf970222d9667199cea71a01d9",
+      "hw-flat.ppm": "e125bc3b88e5c87335efa4fb9527fc3a80f19c6e90349c19b5e6bd76247b37d4",
+      "hw-gs-list-model-flat-32.ppm": "c2c70a8968f8d89fcd22fa426cd1f2226c6eaef4a5a0b6098a274393eca28d16",
+      "hw-gs-list-model-flat.ppm": "fd4fb2057507830cab27921871a416e4d7f2c2453781d575c1bd02ba78e0b0be",
+      "hw-gs-list-model-light-32.ppm": "31cfdfd23a52734e2e8629613dba10f3677a90a0568181bf13e8a8a45a78abbb",
+      "hw-gs-list-model-light.ppm": "7aeba90c68118acd4bfb3c0221239b25752a7847aea34bca21bd29edcbc795e7",
+      "hw-indexed-32.ppm": "b3e7ea3b6146db470df429e4d4d3e176d7d9d5a6905a5b425d8f1fb56a24493e",
+      "hw-indexed.ppm": "53db4607e8cb96c869ec398bd73161fdbae9a5db6e7dc572c2b5e89e2552333e",
+      "hw-pool-32.ppm": "041e225072969f2173f7d31c6c911deae5c40715dc30445103d33cc039921071",
+      "hw-pool.ppm": "2712d44cfc0dea21b40819149a2e11cf036ef3181bf0d9936133107b94fd9f85",
+      "hw-screen-32.ppm": "dbaf2ab7cd4cbe739fb06d4544124bf5ebafe5d17038a0284b2800782e195256",
+      "hw-screen.ppm": "dbaf2ab7cd4cbe739fb06d4544124bf5ebafe5d17038a0284b2800782e195256",
+      "hw-sky-32.ppm": "9be85738408679ef77f9385272ef7fc2bacb7b1b9b8370a246ed4bec8508ac59",
+      "hw-sky.ppm": "ef80c6d29c8a33a360591a24cf117b2b0b169fd50907903f4214cd58761827c5",
+      "hw-tex_nearest_clamp-32.ppm": "50572651d814d7f591d39683b1ca1c8dabbeeacd5558f76b4b551c3526d79709",
+      "hw-tex_nearest_clamp.ppm": "6a6a5c6239561f7d8343703de1e9d66b4030462b2b6600766e3dfdbec8f8222b",
+      "hw-tex_nearest_repeat-32.ppm": "50572651d814d7f591d39683b1ca1c8dabbeeacd5558f76b4b551c3526d79709",
+      "hw-tex_nearest_repeat.ppm": "6a6a5c6239561f7d8343703de1e9d66b4030462b2b6600766e3dfdbec8f8222b",
+      "hw-transform_view0-32.ppm": "a276e988a01b9080cd3456b5f66a2c5e462d6347e0555d7c96ddaf827c12d8d5",
+      "hw-transform_view0.ppm": "a276e988a01b9080cd3456b5f66a2c5e462d6347e0555d7c96ddaf827c12d8d5",
+      "hw-transform_view_yaw200-32.ppm": "15428e41dc15a5f0c2adbd364f3fd7d1c2f4e602dbde9afd9b956be22aa556d8",
+      "hw-transform_view_yaw200.ppm": "15428e41dc15a5f0c2adbd364f3fd7d1c2f4e602dbde9afd9b956be22aa556d8",
+      "hw-transform_view_yaw40_pitch10-32.ppm": "c6de12aaf41fb3da2c06e5826a31c657a1d7689208ce6bc75c94aeae93ad74ca",
+      "hw-transform_view_yaw40_pitch10.ppm": "c6de12aaf41fb3da2c06e5826a31c657a1d7689208ce6bc75c94aeae93ad74ca",
+      "hw-wipe-32.ppm": "54392d4e44cdb6f7b9492d2a6e599d9e737725a110f0f205588f81746f5594a9",
+      "hw-wipe.ppm": "54392d4e44cdb6f7b9492d2a6e599d9e737725a110f0f205588f81746f5594a9"
+    },
+    "strict_errors": [
+      "ct32: strict suite failed",
+      "ct16: strict suite failed"
+    ],
+    "regression_errors": [],
+    "ELF_sha256": "265b4b5132755eceec2b701d2d14c660e912e158f3ff2fbf928195be89cf4c2e",
+    "build_report_sha256": "ed57c6e844d234cedaec0eddae38509e335f1d10d3f58ead72b56845e86a5e60",
+    "physical_PS2_tested": false,
+    "FPS_claimed": false,
+    "reference_sha256": "0b974eacd293912c39d9f7ec5faed482726edbc7efee823d16d1731cd26ed005",
+    "fixture_builder": "/workspace/SRB2-Banpyura-PS2/tools/ps2/gs_list_eetest.py",
+    "GS_list_model_checks_included": true,
+    "strict_passed": false,
+    "reference_unchanged": true
+  },
+  "resources": {
+    "scope": "Native same-ELF visual admission of optional lossless resource sets; no loading/FPS or steady-state RAM claim.",
+    "physical_PS2_tested": false,
+    "runs": {
+      "gap-layout": {
+        "rc": 0,
+        "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+          "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+          "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+        },
+        "loader_hashes": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 50385f14c8ad0a59",
+          "LHASH map.sec ea135c152447daa4",
+          "LHASH map.lin d31ea0b71b228cb2",
+          "LHASH map.sid 44da8cb24e77b387",
+          "LHASH map.bsp 52d8b0931c52a64e",
+          "LHASH map.lut 24dddd6210ba70f7",
+          "LHASH map.thg a95f21b55d87d054",
+          "LHASH map.all a95f21b55d87d054"
+        ],
+        "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+        "boot_sha256": "7aca8993bfd4abeca773978d73eadf956ee2f6ef00e6df3465522a257b3ce952",
+        "warnings": [],
+        "skipped_draw_lines": [],
+        "skipped_draw_classification": {
+          "selected_while_collecting": [],
+          "purged_source": [],
+          "not_resident": [],
+          "other": []
+        },
+        "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+        "errors": [],
+        "complete_PPM_literal_pairs": [
+          {
+            "file": "vidshot-320x200-l140.ppm",
+            "identical": true,
+            "baseline_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+            "candidate_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336"
+          },
+          {
+            "file": "vidshot-320x200-l20.ppm",
+            "identical": true,
+            "baseline_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+            "candidate_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4"
+          },
+          {
+            "file": "vidshot-320x200-l70.ppm",
+            "identical": true,
+            "baseline_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952",
+            "candidate_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+          }
+        ],
+        "saved_config_matches_stock": true,
+        "TEXC_lines": [],
+        "loader_hashes_match_stock": true,
+        "resource_pack_sha256": {
+          "CHARS.PAK": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+          "MUSIC.PAK": "39de305eb44e2ec8fdde2dd0f5d7ec4eee5d4264167fcf999fce160be60ba269",
+          "SRB2.PAK": "947fb651efda632ebfde64c61636047562f6046a9c04f5e6b7728570bc414aad",
+          "ZONES.PAK": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+          "FINEACON.DAT": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792"
+        },
+        "command": [
+          "/workspace/.onboarding/assets-venv/bin/python",
+          "-B",
+          "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+          "--name",
+          "gap-layout",
+          "--elf",
+          "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+          "--ram",
+          "32",
+          "--pak",
+          "/workspace/SRB2-Banpyura-PS2/build/pak-opt17",
+          "--out",
+          "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/resource-native/runs",
+          "--map",
+          "MAP02",
+          "--timeout",
+          "240",
+          "--until",
+          "I_ShutdownSystem(): end of logstream.",
+          "--",
+          "-singletics",
+          "-loadprof",
+          "-loadhash",
+          "-astat",
+          "-hwdbg",
+          "33554432",
+          "-vidshot",
+          "l20,l70,l140",
+          "-renderer",
+          "Hardware"
+        ],
+        "passed": true
+      },
+      "texc-direct-zero-prefetch": {
+        "rc": 0,
+        "elf_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+        "captures": {
+          "vidshot-320x200-l140.ppm": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+          "vidshot-320x200-l20.ppm": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+          "vidshot-320x200-l70.ppm": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+        },
+        "loader_hashes": [
+          "LHASH tex.boot 13cb6e0834278031",
+          "LHASH spr.all a0a22bcec38eaabf",
+          "LHASH map.vtx 50385f14c8ad0a59",
+          "LHASH map.sec ea135c152447daa4",
+          "LHASH map.lin d31ea0b71b228cb2",
+          "LHASH map.sid 44da8cb24e77b387",
+          "LHASH map.bsp 52d8b0931c52a64e",
+          "LHASH map.lut 24dddd6210ba70f7",
+          "LHASH map.thg a95f21b55d87d054",
+          "LHASH map.all a95f21b55d87d054"
+        ],
+        "saved_config_sha256": "4d90a03d7c4191df3a00820998a5e9b4a28f30050f1438474680033b2ce2f519",
+        "boot_sha256": "872983178530898cdab893221aec871eeddf31b46f6bc93c07b4132184b30dcf",
+        "warnings": [],
+        "skipped_draw_lines": [],
+        "skipped_draw_classification": {
+          "selected_while_collecting": [],
+          "purged_source": [],
+          "not_resident": [],
+          "other": []
+        },
+        "skipped_draw_scope": "Diagnostic lines only, not complete draw counters. No classification is exempted from the strict gate.",
+        "errors": [],
+        "complete_PPM_literal_pairs": [
+          {
+            "file": "vidshot-320x200-l140.ppm",
+            "identical": true,
+            "baseline_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336",
+            "candidate_sha256": "41c20cde84fb26834b49a16a33b931e8128430d6d9138600f92fbf07eb9b0336"
+          },
+          {
+            "file": "vidshot-320x200-l20.ppm",
+            "identical": true,
+            "baseline_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4",
+            "candidate_sha256": "86a732cc441db9f014f67d071540019967f21cc4e1c126bb1be3f13e06254db4"
+          },
+          {
+            "file": "vidshot-320x200-l70.ppm",
+            "identical": true,
+            "baseline_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952",
+            "candidate_sha256": "b645d20e0ee328ea8142cf74be36d6da98f039359e4250b6e8ab018c8cad4952"
+          }
+        ],
+        "saved_config_matches_stock": true,
+        "TEXC_lines": [],
+        "loader_hashes_match_stock": true,
+        "resource_pack_sha256": {
+          "CHARS.PAK": "ee80b2802426d5c65c05d8867db741d537397d588453b7feb1f027d324d46f5f",
+          "MUSIC.PAK": "9bdab1b7e1fcd68e051e347af968011777c8192ec5e8e128b74494ed3bb4c6f0",
+          "SRB2.PAK": "96ac72a0b788af08a2ad63a3ad8b59b8f14e9097bc7e4480ba6dd27bcece5941",
+          "TEXC.PAK": "6f408ef03180291f098e26dd1049e09018e71c44ffcfbd1231779a9fbef3b485",
+          "ZONES.PAK": "5e188b082284a30f58b848b2e9c4ce7246c7956f2fcc279cae40dff5e1235fb0",
+          "FINEACON.DAT": "eba78a0b78bb4b7497c02d7bf4c5fa2a692c84ca03e2f7b30d18de959f1b3792"
+        },
+        "command": [
+          "/workspace/.onboarding/assets-venv/bin/python",
+          "-B",
+          "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt_run.py",
+          "--name",
+          "texc-direct-zero-prefetch",
+          "--elf",
+          "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+          "--ram",
+          "32",
+          "--pak",
+          "/workspace/SRB2-Banpyura-PS2/build/pak-texc17",
+          "--out",
+          "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/resource-native/runs",
+          "--map",
+          "MAP02",
+          "--timeout",
+          "240",
+          "--until",
+          "I_ShutdownSystem(): end of logstream.",
+          "--",
+          "-singletics",
+          "-loadprof",
+          "-loadhash",
+          "-astat",
+          "-hwdbg",
+          "33554432",
+          "-vidshot",
+          "l20,l70,l140",
+          "-renderer",
+          "Hardware",
+          "-texcmem",
+          "0"
+        ],
+        "passed": true
+      }
+    },
+    "passed": true
+  },
+  "MAP11": {
+    "map11-guard": {
+      "scope": "Observe current preemptive/OOM recovery policy on a known heavy map. No thresholds or recovery guards overridden. Not proof that all maps stay in Hardware.",
+      "wrapper_exit": 0,
+      "ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+      "guard_lines": [
+        "HWE acquired driver=ps2_hwd renderer=Hardware experimental=1 size=320x200",
+        "HWE startup renderer=Hardware chosen=2 hardware=1",
+        "WARNING: Hardware renderer: map with 15942 subsectors is too big for it. Switching to the Software renderer for this map.",
+        "ps2_hwfb: HARDWARE -> SOFTWARE (map with 15942 subsectors is too big for it) map 11 frame 0",
+        "HWE released Hardware texture owners before GS shutdown",
+        "HWE acquired renderer=Software",
+        "ps2_hwfb: fallbacks 1 returns 0 soft-retries 0 thrown 0 level-fails 0 zone-jumps 0 guarded-allocs 39336 gaveup 0 last \"map with 15942 subsectors is too big for it\""
+      ],
+      "fatal": [],
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "11",
+          "levelframes": "35",
+          "frames": "35",
+          "cycles": "3297940720",
+          "arena": "23506944",
+          "used": "22654032",
+          "peak": "23483936",
+          "gpeak": "23483936",
+          "free": "852912",
+          "largest": "376064",
+          "evicted": "2209",
+          "evictedbytes": "101939472",
+          "failed": "247",
+          "libcfree": "289384",
+          "flushes": "0",
+          "libcpeak": "340224",
+          "stackused": "132560",
+          "spillpeak": "1276416",
+          "spillnow": "680448",
+          "t_ms": "23681"
+        }
+      ]
+    },
+    "map11-admission": {
+      "scope": "Diagnostic admission past preemptive SS/free heuristics only. Actual OOM/driver recovery remains armed; no production policy edit or universal Hardware claim.",
+      "wrapper_exit": 0,
+      "ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+      "guard_lines": [
+        "HWE acquired driver=ps2_hwd renderer=Hardware experimental=1 size=320x200",
+        "HWE startup renderer=Hardware chosen=2 hardware=1",
+        "WARNING: Hardware renderer: out of memory (17544 bytes, PU_RENDERWORK). Switching to the Software renderer for this map.",
+        "ps2_hwfb: HARDWARE -> SOFTWARE (out of memory (17544 bytes, PU_RENDERWORK)) map 11 frame 1",
+        "HWE released Hardware texture owners before GS shutdown",
+        "HWE acquired renderer=Software",
+        "ps2_hwfb: fallbacks 1 returns 0 soft-retries 0 thrown 0 level-fails 0 zone-jumps 1 guarded-allocs 145575 gaveup 0 last \"out of memory (17544 bytes, PU_RENDERWORK)\""
+      ],
+      "fatal": [],
+      "ZSTAT": [
+        {
+          "ram": "33554432",
+          "class": "32",
+          "map": "11",
+          "levelframes": "35",
+          "frames": "35",
+          "cycles": "3409929955",
+          "arena": "23506944",
+          "used": "21908640",
+          "peak": "23477472",
+          "gpeak": "23477472",
+          "free": "1598304",
+          "largest": "91216",
+          "evicted": "2482",
+          "evictedbytes": "91668496",
+          "failed": "440",
+          "libcfree": "264072",
+          "flushes": "0",
+          "libcpeak": "434368",
+          "stackused": "132560",
+          "spillpeak": "1424480",
+          "spillnow": "708480",
+          "t_ms": "29189"
+        }
+      ]
+    }
+  },
+  "component_native_scope": "Seven V9 GS component boots carried by102 unchanged actual compiled production inputs in each positive/negative build. The two changed CPU ownership units are not compiled in that standalone fixture; real-Zone and fresh whole-game mode chains cover them. Historical20-source guard not represented as final21-source equality.",
+  "known_limits": [
+    "Default missing-draw diagnostics remain a strict failure despite exact captured images.",
+    "Native fast-reference comparison retains one pixel/channel difference of1; original strict report remains failed.",
+    "Standard VU0 numerical check remains failed at original tolerances.",
+    "High-resolution sky/heat remains CPU-heavy; no global FPS gain or universal Hardware residency claim.",
+    "Individual memory pools can regress while net available memory increases; all reported strict errors retained."
+  ],
+  "public_evidence_sha256": {
+    "docs/research/opt17/final-321c/default-images.json": "8e6693590b247107e26f33852c77b7752d3075c7e8fbca580cf7f920165a1c12",
+    "docs/research/opt17/final-321c/default-pressure.json": "6c2b8d7b589a7aa2ffd8976146edd3fac22d636f3a10cf934eba0f509e2cb5e1",
+    "docs/research/opt17/final-321c/full-images.json": "375cfcf28983a6e982d71d3df0fa53466ea57dcd29bc1bdbf7fce2329cd463e8",
+    "docs/research/opt17/final-321c/heat-480p.json": "092f0b57397033b196ebb67bfbb1973412182cb9bf33f734f9f937815147c81a",
+    "docs/research/opt17/final-321c/heat-pal.json": "f09a49ae5c62b591c7a27c8c3cb385b5f640f9494624c96a61a17e21398c92a0",
+    "docs/research/opt17/final-321c/heat-wipe-480p.json": "f39111b8300d98aa430128c4609bb2bd72cd3d2cb31d4f38151570dccb75cc36",
+    "docs/research/opt17/final-321c/heat-wipe-pal.json": "3249df9a73221ba762a2fb15a564f957d258beb7d05ee8eca04fdda793977204",
+    "docs/research/opt17/final-321c/local-rng-diagnostic-admission.json": "2bc314743e9d3987d669dbb1a3fec214bab45be89f2fd300e2a64262f8677044",
+    "docs/research/opt17/final-321c/map11-admission.json": "3dc6a0d29717885e096950fa1776d4b97fbd603966e3ee65a8362d300c580e2b",
+    "docs/research/opt17/final-321c/map11-guard.json": "10339b863c653411a48fe8bb7678feb6352c1da043464b305f13abf20f27b61e",
+    "docs/research/opt17/final-321c/map11-runtime-commands.json": "0dce5980a17f01a22fa244ac7938d366890244964f4fdfbc80a4e7aa5d125a4b",
+    "docs/research/opt17/final-321c/original-matrix-with-incomplete-GS.json": "51fb918705445548640606212f19d2135a4ec1927ceb3396144d2d078b496036",
+    "docs/research/opt17/final-321c/post-matrix-journal.json": "843d293953958d5d2f71cd838660313a329e81565753894d1437950ec73340b2",
+    "docs/research/opt17/final-321c/resource-native.json": "96dfe5ed6cd5255509d96120a69e4d1affedd93c76de2cf075643155c16d607c",
+    "docs/research/opt17/final-321c/standard-gs-incomplete-basic.json": "adab8e0fa6f0158eebc0de1acc5d6a0a16c511af77c65c6e91fabb22e61eb311",
+    "docs/research/opt17/final-321c/standard-gs.json": "a4817f282b47282291be5074dbdfa8f0e2b1fdd7a4c4b3bb8c3c281a40001280",
+    "docs/research/opt17/final-321c/switch-480p.json": "2be64c38ec2445e7db9b1fdfbb507d5c55f8df4242375360d9d52b2ad5c3eed0",
+    "docs/research/opt17/final-321c/switch-pal.json": "f245617af04bd079b0c6a892e416bb86ead9ac4945a1f3440b4c523533043b86",
+    "docs/research/opt17/final-321c/validation-journal.json": "95ab1da27d8375344cdb00d2ad5396c00b22f4eef99fb9ab3798929a29fe229b",
+    "docs/research/opt17/final-321c/wipe-480p.json": "2bf9d92e391cbe43fb29509a4e5ff26c97b12b0d74283cd51b22af76f82277f1",
+    "docs/research/opt17/final-321c/wipe-pal.json": "25d9a58a5254a474fc3818456aa7a61a7e08747249639812076aa233d5bfad30",
+    "docs/research/opt17/highres-native-borrowed-v9.json": "fb2cb9df96a6d4ddcb793d04da2d3bc0dcd7e1a3fa86dcf5ac126565d1476605",
+    "docs/research/opt17/highres-host-borrowed-v9.json": "439bab8b002ee5ebb68811e996250eac66fde878cb276fafe5624daa9e924cba",
+    "docs/research/opt17/restart/lifecycle-host-results.json": "fcfc54623eff2a2ee7b6359364037d901641ba08c0e64fbcd7c9fdc986742dcf",
+    "docs/research/opt17/restart/gcache-owner-diagnostic.json": "e1e06beeae197d51d7e4e973128b50783e9073a90a2114be4f6330cd56716e79",
+    "docs/research/opt17/restart/unchanged-gs-production-inputs.json": "726f070276cb81c31b4021622aeaf1277357b59717cb08f911e876dd03b1cea0",
+    "docs/research/opt17/ACTIVITY_HUD_HOST_RESULTS_20261116.json": "fac9a9151376a3d69118a8e88057721b861bd0023256deb0a4ee8d71c83091ec",
+    "docs/research/opt17/ACTIVITY_HUD_NATIVE_RESULTS_20261116.json": "a1d07d3da54867349ade10048003096f945c9b1832f0c81b6e85151f4563c3fa",
+    "docs/research/opt17/SPRITE_CPU_PATCH_RESULTS_20261116.json": "9eb9ce0997efd927810369fa40f1b605566febe0789830918c32e4a03acb61e3",
+    "docs/research/opt17/PAK_LAYOUT_RESULTS_20261116.json": "f716be4b64c03db18f6077d9b0d215f3a3f8768c6708c61583c4d65b0d7058c5"
+  }
+}

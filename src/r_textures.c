@@ -34,7 +34,7 @@
 #ifdef PS2_PROFILE
 #include "ps2/ps2_texc.h" // OPT13 IZ (PS2-602): -texcdump
 #endif
-#if defined(PS2) && defined(PS2_PROFILE)
+#ifdef PS2_PROFILE
 #include "m_argv.h" // -flatstream / -flatcheck (PS2-180)
 #endif
 

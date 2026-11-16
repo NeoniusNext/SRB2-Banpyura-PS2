@@ -1,0 +1,443 @@
+{
+  "version": "7-measured",
+  "patch_sha256": "49c416d5495265fa9571678ce9343f9fe8058a6ca63e1ad065b0aae38d8b24e6",
+  "guard_manifest_sha256": "49f3886e36543051fbf974fd25fc95bf29cef7cddbcee7da2165718d6499991c",
+  "candidate_sha256": {
+    "src/hardware/hw_cache.c": "7a3611e3b1e160a92221231baea24f948313b1912900e2bb12376705391d08d2",
+    "src/hardware/hw_data.h": "4f6848e6bad98ca095267e36f8d37faa68485619a1c82bc32b7de183ca24befc",
+    "src/hardware/hw_light.c": "11ea9a197e01a2beb60715903201d783d930651a19272d844fbbb918bcfd9fd8",
+    "src/hardware/hw_md2.c": "9a8e58a3d268e67a7defeba35accb26d411d3041fb0f4e0431a133edd39fb899",
+    "src/ps2/hw/ps2_hw_draw.inc": "b142f3639c884abcf5f752702244bad2a16be30793fb064bc8954b952f36e585",
+    "src/ps2/hw/ps2_hw_gs.inc": "fcfc8ceaa61efa01dc990284208003d12653408c7d39249975690376f4ca8983",
+    "src/ps2/hw/ps2_hw_model.inc": "16220c4273728f07a9914b648975bedb0d9a720c8c14c462306e3ee422e439a1",
+    "src/ps2/hw/ps2_hw_plan.inc": "8b26d1049778697b94f6d319dbb27b4e3d936cc4b77cc9300b5661776ca08970",
+    "src/ps2/hw/ps2_hw_priv.inc": "6c6e00db930824d9096f92af0b4cbb1f7f1af8b0b1c6a605fc3ecb8b50230689",
+    "src/ps2/hw/ps2_hw_regs.inc": "bafea9f30d3a2b2c0ef59f6e5b8c1cf08dfd945cfb9794a44646e4bb6b701a0d",
+    "src/ps2/hw/ps2_hw_screen.inc": "aaba2b74e7290d26a8659020678c1117cdb471f02e9c57b13b6b043ce30f74c8",
+    "src/ps2/hw/ps2_hw_sky.inc": "266a459be858e408f32a4d4d7a6fe3e61fb00246639b37808b873b0bf36992d1",
+    "src/ps2/hw/ps2_hw_spr.inc": "2978635704694a6701749277ce07a8482fb8f511fe364d579f233be528e051e0",
+    "src/ps2/hw/ps2_hw_tex.inc": "3c7afcc590fd97cfc9ff2dac7763198d6fc0e75df66092f3e5b2d7a616b91ff0",
+    "src/ps2/hw/ps2_hw_tile.inc": "47e41c5147b7a0a202e88fa410dea26b579adcfddd8f63745e6e1a74938a5d8d",
+    "src/ps2/hw/ps2_hw_tile_draw.inc": "7563b662e0b2a8742a32622e78e06c1b4e280f51f30b2f6d21b67ab9b2d8af52",
+    "src/ps2/hw/ps2_hw_tile_stencil.inc": "37a55c2815acb9bec480fdb6628c5aedfdb53ae181f4ca0345b318f3460babae",
+    "src/ps2/hw/ps2_hw_tt.inc": "453d519c80efe439b2802d13ae1b2365a9f96dc8d5aadb8e4b4d8a35abc32ac2",
+    "src/ps2/hw/ps2_hw_vu1.inc": "b16440b623591447fd29954211ee1db6c3fc53a9c06ba3d53d3116b4564628c3",
+    "src/ps2/hw/ps2_hwd.c": "40896784a1ecd6c20b6a81e479dda53ef4912ce9271126444a53699068db4082"
+  },
+  "scope": "Standalone actual EE/GS readbacks in unchanged standard 32 MiB single-slot PCSX2. Synthetic sources only; engine allocation/zone/regeneration hooks are fixture services. Not full-game or physical PS2 validation.",
+  "native_runs": {
+    "full-run": {
+      "report": "build/nov17-tiles/native/measured-v7-full-run/native-report.json",
+      "sha256": "65acb5e73f17d7e36c5ff2477dde30c19aef5d8a28d529f93098742db66910c6",
+      "checks": 231,
+      "failures": 1,
+      "failure_lines": [
+        "H0 FAIL tn_texture_parity name=texture-f0-1024x512-s4-l0 beyond=1"
+      ],
+      "elf_sha256": "acd4ff60f8e403271af3028011fb2d66f9cda9c8b0d6d1a7c4d22cf49217214c",
+      "all_runtime_invariants_passed": true
+    },
+    "common-run": {
+      "report": "build/nov17-tiles/native/measured-v7-common-run/native-report.json",
+      "sha256": "18a660875a364c2db54447cc1863e3b56598c262f780fb95efacf79fea7d8280",
+      "checks": 144,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "acd4ff60f8e403271af3028011fb2d66f9cda9c8b0d6d1a7c4d22cf49217214c",
+      "all_runtime_invariants_passed": true
+    },
+    "attributes-run": {
+      "report": "build/nov17-tiles/native/measured-v7-attributes-run/native-report.json",
+      "sha256": "a001a919c7ab8ce692f16e074e02d28390e8f35a7f44df5b3a391387e5872bb7",
+      "checks": 46,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "acd4ff60f8e403271af3028011fb2d66f9cda9c8b0d6d1a7c4d22cf49217214c",
+      "all_runtime_invariants_passed": true
+    },
+    "coordinate-run": {
+      "report": "build/nov17-tiles/native/measured-v7-coordinate-run/native-report.json",
+      "sha256": "5bd48e401262b4bc8c53fad6b07b092f8bd5361e4b4fadb864cf269cc2c2be2d",
+      "checks": 40,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "acd4ff60f8e403271af3028011fb2d66f9cda9c8b0d6d1a7c4d22cf49217214c",
+      "all_runtime_invariants_passed": true
+    },
+    "no-halo-run": {
+      "report": "build/nov17-tiles/native/measured-v7-no-halo-run/native-report.json",
+      "sha256": "daddb03f92ec5d8fd5699ca5c1aafde909bdc277707f37fff7eb01a2a0b8b289",
+      "checks": 10,
+      "failures": 1,
+      "failure_lines": [
+        "H0 FAIL tn_texture_parity name=texture-f2-512x256-s6-l1 beyond=1559"
+      ],
+      "elf_sha256": "dc0bc450046165de12c0fd60edde95cf1cd0c472b70b0d9aba19e574a2cbd834",
+      "all_runtime_invariants_passed": true
+    },
+    "onecore-run": {
+      "report": "build/nov17-tiles/native/measured-v7-onecore-run/native-report.json",
+      "sha256": "c262aa0a08cc5d4a90f7753d14f0817d0293c507e983a546bc8e027445b345ab",
+      "checks": 197,
+      "failures": 0,
+      "failure_lines": [],
+      "elf_sha256": "acd4ff60f8e403271af3028011fb2d66f9cda9c8b0d6d1a7c4d22cf49217214c",
+      "all_runtime_invariants_passed": true
+    }
+  },
+  "raw_readback_analysis": {
+    "capture-frame-proof": {
+      "path": "build/nov17-tiles/native/measured-v7-capture-frame-proof.json",
+      "sha256": "68fef09ac73d3643a4004a3bc86bf8faa7f10093dde16463901bd25462adf2a4"
+    },
+    "coordinate-frame-proof": {
+      "path": "build/nov17-tiles/native/measured-v7-coordinate-frame-proof.json",
+      "sha256": "8dde9c08d6388bab8c25014ffeb65434ad257d0382ab939a56e48044af5d3d3a"
+    },
+    "texture-RGBA-proof": {
+      "path": "build/nov17-tiles/native/measured-v7-texture-RGBA-proof.json",
+      "sha256": "3dae1e88ad85e81417fbb95754133f417ad726531dec7c067fe8aa3ccfa3640e"
+    }
+  },
+  "default_original_strict_gate_passed": false,
+  "complete_texture_readbacks": {
+    "total_compared": 1088000,
+    "different_RGBA": 1,
+    "different_alpha": 0
+  },
+  "opaque_source_coordinates": [
+    {
+      "shape": 0,
+      "compared_frame_pixels": 64000,
+      "covered_in_both": 64000,
+      "changed_source_coordinates": 0,
+      "max_circular_dx": 0,
+      "max_circular_dy": 0,
+      "missing_coverage": 0,
+      "extra_coverage": 0
+    },
+    {
+      "shape": 3,
+      "compared_frame_pixels": 64000,
+      "covered_in_both": 51792,
+      "changed_source_coordinates": 0,
+      "max_circular_dx": 0,
+      "max_circular_dy": 0,
+      "missing_coverage": 0,
+      "extra_coverage": 0
+    }
+  ],
+  "capture_identity_and_wipe": [
+    {
+      "visible": [
+        640,
+        400
+      ],
+      "compared_pixels_per_check": 256000,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    },
+    {
+      "visible": [
+        640,
+        480
+      ],
+      "compared_pixels_per_check": 307200,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    },
+    {
+      "visible": [
+        640,
+        512
+      ],
+      "compared_pixels_per_check": 327680,
+      "identity_different_RGBA_pixels": 0,
+      "wipe_different_RGBA_pixels": 0
+    }
+  ],
+  "retained_reference_exception": "One palette-lightrow pixel differs by one RGB level between the existing fast reference and general path; common EE rendering is exact. No original gate or tolerance was changed.",
+  "historical_evidence": [
+    "build/nov17-tiles/native/proof-index-v2.json",
+    "build/nov17-tiles/native/proof-index-v3.json",
+    "build/nov17-tiles/native/proof-index-v4.json"
+  ],
+  "one_window_native_witness": {
+    "scope": "Actual complete GS readbacks through production colored/model-light NoDepth fog emission, perspective Q, and both Z-write settings.",
+    "cases": {
+      "1": "Narrow 80..95 window",
+      "2": "Inclusive 0..32 boundaries",
+      "3": "Nonaligned 61-texel span",
+      "4": "Raw 512-texel repeat must reject the fast path"
+    },
+    "positive_pairs": 12,
+    "fallback_pairs": 1,
+    "compared_RGBA_pixels": 832000,
+    "different_RGBA_pixels": 0,
+    "different_Zlow24_pixels": 0,
+    "counter_observations": [
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 1,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 2,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 0,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 0,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 3,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 1,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 4,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 0,
+        "fast_delta": 0,
+        "masks": 0,
+        "mask_sprites": 0,
+        "workspace": 0
+      },
+      {
+        "cell": 4,
+        "model_light": 1,
+        "zwrite": 1,
+        "variant": 1,
+        "fast_delta": 0,
+        "masks": 2751,
+        "mask_sprites": 6426,
+        "workspace": 6912
+      }
+    ],
+    "log": "build/nov17-tiles/native/measured-v7-onecore-run/native.txt",
+    "log_sha256": "1a81bbbc3b44d9ed2b167eb06d5b5a538450cda2d97bd1fe3a6eafb4116efe44"
+  }
+}

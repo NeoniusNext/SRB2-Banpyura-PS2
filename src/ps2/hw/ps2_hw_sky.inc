@@ -307,7 +307,7 @@ static int sky_dome_fast(gl_sky_t *sky)
 		if (!okb)
 			goto done;
 	}
-	if (!(P.vu0 && P.npass == 1 && P.lmode == LM_NONE && (!P.cutx || SKY.cellx) && (!P.cuty || SKY.celly) && !P.water && P.pass[0].tex == (u8)P.textured))
+	if (!(P.vu0 && !(P.r && P.r->tiled == 1) && P.npass == 1 && P.lmode == LM_NONE && (!P.cutx || SKY.cellx) && (!P.cuty || SKY.celly) && !P.water && P.pass[0].tex == (u8)P.textured))
 	{
 		ok = 0; // a plan the shortcut does not cover: the old path draws it
 		{

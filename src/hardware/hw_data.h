@@ -53,6 +53,34 @@ typedef struct GLColormap_s GLColormap_t;
 // NULL if the texture is not in SRB2's heap cache.
 struct GLMipmap_s
 {
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_MIPMAP_LAYOUT) && !defined(PS2_NOOPT_MIPMAP_STORAGE)
+	// The format and flag sets fit in bytes. Keep handles, indices, dimensions,
+	// pointers and frame counters full width; only the bounded status fields
+	// share a byte. On EE this takes 68 bytes instead of 76.
+	UINT32                downloaded;
+	void                 *data;
+	struct GLMipmap_s    *nextcolormap;
+	struct GLColormap_s  *colormap;
+	INT32                 regen_id;
+	struct GLMipmap_s    *ps2_twin;
+	UINT32                ps2_planfr;
+	UINT32                ps2_ihfr, ps2_imfr;
+	UINT32                ps2_full_fr;
+	UINT32                ps2_gcv;
+	UINT32                ps2_spv;
+	UINT16                height, width;
+	UINT16                ps2_pi;
+	UINT16                ps2_uw, ps2_uh;
+	UINT8                 format; // GLTextureFormat_t: 0 or 0x01..0x22.
+	UINT8                 flags; // ETextureFlags: wrap, chroma key, transparency.
+	UINT8                 ps2_want, ps2_ihint;
+	UINT8                 ps2_nup, ps2_cost;
+	UINT8                 regen_kind : 2; // 0 patch, 1 map texture, 2 flat.
+	UINT8                 ps2_h255 : 2; // 0 unknown, 1 absent, 2 present.
+	UINT8                 ps2_vis : 1; // At least one visible polygon.
+	UINT8                 ps2_drop : 3; // 0 none; reasons 1..5.
+	UINT8                 ps2_cpu; // Private patch source representation; consumes EE tail padding.
+#else
 	// for UpdateTexture
 	GLTextureFormat_t     format;
 	void                 *data;
@@ -109,9 +137,56 @@ struct GLMipmap_s
 	UINT8                 ps2_nup, ps2_drop; // OPT12 HWDRV (PS2-HW-441): uploads of this texture so far (saturating) / why its VRAM image was dropped last (1 evicted, 2 upgrade, 3 downgrade, 4 cap, 5 other)
 	UINT8                 ps2_cost; // OPT12 HWDRV (PS2-HW-442): what the last make-again of its data cost, in units of 2^18 cycles (0 = never made again, 255 = more)
 #endif
+#ifdef PS2
+	UINT8                 ps2_cpu; // Private patch source representation; consumes EE tail padding.
+#endif
+#endif
 #endif
 };
 typedef struct GLMipmap_s GLMipmap_t;
+
+#if defined(PS2) && defined(PS2_PROFILE)
+#define HWR_PS2_CPU_TILED_SOURCE 16u // driver retains this original CPU source for a tiled image
+#define HWR_RELEASE_MIPMAP_DATA(m_, tag_) do { \
+	if (!((m_)->ps2_cpu & HWR_PS2_CPU_TILED_SOURCE)) Z_ChangeTag((m_)->data, (tag_)); \
+} while (0)
+#else
+#define HWR_RELEASE_MIPMAP_DATA(m_, tag_) Z_ChangeTag((m_)->data, (tag_))
+#endif
+
+#if defined(PS2) && defined(PS2_PROFILE) && !defined(PS2_NOOPT_PATCH_PIXELS)
+#define HWR_PS2_PACKED_PATCHES
+#define HWR_PS2_CPU_PATCH 1u
+#define HWR_PS2_CPU_HOLES255 2u
+#define HWR_PS2_CPU_HAS_HOLES 4u
+#define HWR_PS2_CPU_OPAQUE255 8u
+
+static inline boolean HWR_PS2_IsPackedPatch(const GLMipmap_t *m)
+{
+	return (m->ps2_cpu & HWR_PS2_CPU_PATCH) && m->format == GL_TEXFMT_AP_88
+		&& !m->regen_kind && m->ps2_uw && m->ps2_uh
+		&& m->ps2_uw <= m->width && m->ps2_uh <= m->height;
+}
+
+// Logical AP88 coordinates remain the power-of-two mipmap coordinates.
+// Compact sources store the real rectangle, then one coverage bit per texel.
+// Index and alpha outside that rectangle are the original 0x00ff background.
+static inline UINT16 HWR_PS2_ReadAP88(const GLMipmap_t *m, UINT32 x, UINT32 y)
+{
+	const UINT8 *data = m->data;
+	size_t p;
+
+	if (HWR_PS2_IsPackedPatch(m))
+	{
+		if (x >= m->ps2_uw || y >= m->ps2_uh)
+			return 0x00ffu;
+		p = (size_t)y * m->ps2_uw + x;
+		return (UINT16)(data[p] | ((data[(size_t)m->ps2_uw * m->ps2_uh + (p >> 3)] & (1u << (p & 7u))) ? 0xff00u : 0u));
+	}
+	p = ((size_t)y * m->width + x) * 2u;
+	return (UINT16)(data[p] | ((UINT16)data[p + 1u] << 8));
+}
+#endif
 
 
 //

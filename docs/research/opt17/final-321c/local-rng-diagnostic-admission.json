@@ -1,0 +1,350 @@
+{
+  "diagnostic_only": true,
+  "mode": "diagnostic-generation",
+  "checker_sha256": "2b9d2b1921fc03adf60b96df263a17426675e3ea6cd1735fefabcdf35e6e0aa0",
+  "production_inputs_unchanged": true,
+  "original_inputs": {
+    "engine": {
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware/obj/engine_lto.o",
+      "sha256": "8ff2abbb6ef6f39cd5d7487e0ba30e4c3c7b2fac9d40575abd83895b5da9e473"
+    },
+    "elf": {
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware/SRB2.ELF",
+      "sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d"
+    },
+    "map": {
+      "path": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/hardware/SRB2.map",
+      "sha256": "343fc62c439160a38424f5b1a0a09e8d692659ee05d9af42c989f462f9568089"
+    }
+  },
+  "original_initializer_and_actual_seeder_bindings": {
+    "M_RandomSeedFromOS": {
+      "complete_text_bytes": 216,
+      "all_fully_resolved_linked_bytes_equal": true,
+      "exact_frame_record": {
+        "stack_frame_bytes": 32,
+        "register_mask": 2147483648,
+        "frame_record_hex": "0000000000000080f8ffffff0000000000000000200000001d0000001f000000"
+      },
+      "ordered_RELA_records": [
+        {
+          "offset": 12,
+          "kind": 4,
+          "exact_symbol": "I_GetRandomBytes",
+          "explicit_addend": 0,
+          "resolved_symbol": "I_GetRandomBytes",
+          "resolved_address": 4060752
+        },
+        {
+          "offset": 144,
+          "kind": 5,
+          "exact_symbol": "m_randomstate.lto_priv.0",
+          "explicit_addend": 0,
+          "resolved_symbol": "m_randomstate.lto_priv.0",
+          "resolved_address": 6083440
+        },
+        {
+          "offset": 156,
+          "kind": 6,
+          "exact_symbol": "m_randomstate.lto_priv.0",
+          "explicit_addend": 0,
+          "resolved_symbol": "m_randomstate.lto_priv.0",
+          "resolved_address": 6083440
+        },
+        {
+          "offset": 172,
+          "kind": 6,
+          "exact_symbol": "m_randomstate.lto_priv.0",
+          "explicit_addend": 0,
+          "resolved_symbol": "m_randomstate.lto_priv.0",
+          "resolved_address": 6083440
+        }
+      ],
+      "referenced_data": [
+        {
+          "input_section": ".data.m_randomstate.lto_priv.0",
+          "complete_bytes": 16,
+          "sha256": "2cac451f22039814851b2419e67e9b456c89bb25b00c92ebfd4b911a9d81c9a1",
+          "linked_address": 6083440,
+          "literal_identity": true
+        }
+      ],
+      "engine_sha256": "8ff2abbb6ef6f39cd5d7487e0ba30e4c3c7b2fac9d40575abd83895b5da9e473",
+      "ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+      "map_sha256": "343fc62c439160a38424f5b1a0a09e8d692659ee05d9af42c989f462f9568089",
+      "exact_link_command_wrappers": [
+        "W_LumpLength",
+        "_calloc_r",
+        "_free_r",
+        "_malloc_r",
+        "_memalign_r",
+        "_realloc_r",
+        "memcpy",
+        "memset"
+      ],
+      "build_report_sha256": "3d342e3736b1ffc7a3674f0b6c019b83e74bb9cc1d69484bb0905b55cb0e3d65"
+    },
+    "M_RandomSeed": {
+      "complete_text_bytes": 112,
+      "all_fully_resolved_linked_bytes_equal": true,
+      "exact_frame_record": {
+        "stack_frame_bytes": 0,
+        "register_mask": 0,
+        "frame_record_hex": "0000000000000000000000000000000000000000000000001d0000001f000000"
+      },
+      "ordered_RELA_records": [
+        {
+          "offset": 72,
+          "kind": 5,
+          "exact_symbol": "m_randomstate.lto_priv.0",
+          "explicit_addend": 0,
+          "resolved_symbol": "m_randomstate.lto_priv.0",
+          "resolved_address": 6083440
+        },
+        {
+          "offset": 84,
+          "kind": 6,
+          "exact_symbol": "m_randomstate.lto_priv.0",
+          "explicit_addend": 0,
+          "resolved_symbol": "m_randomstate.lto_priv.0",
+          "resolved_address": 6083440
+        },
+        {
+          "offset": 96,
+          "kind": 6,
+          "exact_symbol": "m_randomstate.lto_priv.0",
+          "explicit_addend": 0,
+          "resolved_symbol": "m_randomstate.lto_priv.0",
+          "resolved_address": 6083440
+        }
+      ],
+      "referenced_data": [
+        {
+          "input_section": ".data.m_randomstate.lto_priv.0",
+          "complete_bytes": 16,
+          "sha256": "2cac451f22039814851b2419e67e9b456c89bb25b00c92ebfd4b911a9d81c9a1",
+          "linked_address": 6083440,
+          "literal_identity": true
+        }
+      ],
+      "engine_sha256": "8ff2abbb6ef6f39cd5d7487e0ba30e4c3c7b2fac9d40575abd83895b5da9e473",
+      "ELF_sha256": "7bf67e21438e697cf40c112b9166c2a3018956fbe909ef34f0780de17750e96d",
+      "map_sha256": "343fc62c439160a38424f5b1a0a09e8d692659ee05d9af42c989f462f9568089",
+      "exact_link_command_wrappers": [
+        "W_LumpLength",
+        "_calloc_r",
+        "_free_r",
+        "_malloc_r",
+        "_memalign_r",
+        "_realloc_r",
+        "memcpy",
+        "memset"
+      ],
+      "build_report_sha256": "3d342e3736b1ffc7a3674f0b6c019b83e74bb9cc1d69484bb0905b55cb0e3d65"
+    }
+  },
+  "actual_initializer_calls": [
+    {
+      "caller": "D_SRB2Main",
+      "offset": 896,
+      "address": 1968672,
+      "instruction": "0xc09bba8"
+    }
+  ],
+  "IPA_clobber_proof": {
+    "actual_seeder_GPR_writes": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      10
+    ],
+    "original_initializer_own_GPR_writes": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      10,
+      29,
+      31
+    ],
+    "seeder_writes_subset_of_original_initializer": true,
+    "no_FPU_HI_LO_GP_or_callee_saved_effects": true
+  },
+  "unchanged_actual_SFC32_state_consumers": {
+    "M_RandomByte": {
+      "address": 2545920,
+      "complete_owned_text_bytes": 120,
+      "original_ELF_sha256": "f0464a3cb7c2d19db4650a61bb5c413dd8c13086866c0c4a5e907b74cb2a68c8"
+    },
+    "M_RandomFixed": {
+      "address": 2545800,
+      "complete_owned_text_bytes": 120,
+      "original_ELF_sha256": "3cfc9838eb07055ee8f4acdc20db5e53ac715e7eb5518cf195008a3d5976badb"
+    },
+    "M_RandomKey": {
+      "address": 2546040,
+      "complete_owned_text_bytes": 360,
+      "original_ELF_sha256": "aba0cc6b739be67fbd72f5d345d7e1bbdac771db6009308506fa9e458d8e47b9"
+    },
+    "M_RandomRange": {
+      "address": 2546400,
+      "complete_owned_text_bytes": 368,
+      "original_ELF_sha256": "a98244c2c4c58d3e943c11aedb69a60d2a8e5c867e2d651449bfc5ab6619da89"
+    },
+    "M_RandomSeed": {
+      "address": 2546768,
+      "complete_owned_text_bytes": 112,
+      "original_ELF_sha256": "931900beeb7538e57f87f1a02b5f542221f4f2eae1eb82c2603214dd5e76e000"
+    },
+    "M_RandomizedSeed": {
+      "address": 2547224,
+      "complete_owned_text_bytes": 120,
+      "original_ELF_sha256": "dd8f02cf75e04e64dd136918c6e8f260da7d5a8ff0985e6c76b2be43d2ec637e"
+    },
+    "P_SpawnPrecipitation.part.0": {
+      "address": 3042440,
+      "complete_owned_text_bytes": 784,
+      "original_ELF_sha256": "8a2dfbf1a409cfbca601acf2657aaea6b738ddd15d0c95bd64e7faaf92a94683"
+    },
+    "P_SwitchWeather": {
+      "address": 3210440,
+      "complete_owned_text_bytes": 1232,
+      "original_ELF_sha256": "275e1385bc3d8bdba7489c2204509cd6c8c385ffbbfb3f81e913f99e2d6fb868"
+    },
+    "V_DoPostProcessor": {
+      "address": 3872808,
+      "complete_owned_text_bytes": 1888,
+      "original_ELF_sha256": "387bed833012ed084be086140453acbf0ace0d340a5353cdf3de47627206c89f"
+    }
+  },
+  "variants": {
+    "01b2d3f5": {
+      "seed_uint32": 28496885,
+      "seed_hex": "0x01b2d3f5",
+      "ELF": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/DIAGNOSTIC-LOCAL-RNG-01b2d3f5.ELF",
+      "ELF_sha256": "19384ec94a25af24fddc9af1cac52a90baebdbdeefd33ba94328b5358f8d7382",
+      "initializer_address": 2551456,
+      "patched_file_offset": 1503008,
+      "owned_symbol_bytes": 212,
+      "stub_bytes": 40,
+      "NOP_fill_bytes": 172,
+      "stub_words_hex": [
+        "27bdffe0",
+        "ffbf0018",
+        "3c0401b2",
+        "3484d3f5",
+        "0c09b714",
+        "00000000",
+        "dfbf0018",
+        "24020001",
+        "03e00008",
+        "27bd0020"
+      ],
+      "actual_M_RandomSeed_address": 2546768,
+      "frame_bytes": 32,
+      "saved_RA_offset": 24,
+      "outgoing_arg_area_bytes": 16,
+      "return_value": 1,
+      "all_other_ELF_bytes_identical": true,
+      "all_symbol_sizes_addresses_identical": true,
+      "all_actual_SFC32_graph_bytes_unchanged": true,
+      "assembled_template": {
+        "assembly": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/stub-01b2d3f5.S",
+        "assembly_sha256": "1b948e1bbc557e58e63b5b3f72b25295e1232246b6d9b1e8914a83c04a242f54",
+        "object": "/workspace/SRB2-Banpyura-PS2/build/nov17-final-r3/local-rng/stub-01b2d3f5.o",
+        "object_sha256": "49af63f981831ff2a7d5b2905d4814ee0feb361d1007501c5f95a4c83127ed77",
+        "complete_text_bytes": 40,
+        "only_RELA": {
+          "offset": 16,
+          "kind": 4,
+          "target": "M_RandomSeed",
+          "explicit_addend": 0
+        },
+        "exact_frame_record": {
+          "stack_frame_bytes": 32,
+          "register_mask": 2147483648,
+          "frame_record_hex": "0000000000000080f8ffffff0000000000000000200000001d0000001f000000"
+        }
+      },
+      "negative_controls": [
+        {
+          "mutation": "outside_symbol",
+          "rejected": true,
+          "reason": "Diagnostic patch changed bytes outside original initializer symbol extent",
+          "actual_mutated_ELF_byte_buffer_sha256": "7f80a3ede5a94dfd2facb280bc362e586a3adb600cc2c6f6739af09647c4039a",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "seed_immediate",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "b4c8c6e8ad62225ebecd9559eb4532c0d9027d7812ee1a07b310d54f226fc135",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "JAL_target",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "070135a50057de3935cc2da9a678179cefa665b0f01d2371aaeb23818e2d296b",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "NOP_fill",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "bc2b9618d8e1e3a1c4fb6b569426c28114ba53346715bb8286b9e8f846290fd3",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "ELF_size",
+          "rejected": true,
+          "reason": "Diagnostic patch changed ELF length",
+          "actual_mutated_ELF_byte_buffer_sha256": "0d2c25b305eacb9ae0a74d55bce9b232e472759d764a7cfe6c5a865385c6ed5f",
+          "mutated_bytes": 11329337
+        },
+        {
+          "mutation": "misaligned_frame",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "46ac95fc7a93e8bd7a74406a4efbb745ce752484dfe2a055376fc80fd6031860",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "RA_slot",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "94a903092262635e84de9816b9090d988c50b26c4f9b9708cbfd0156c35be827",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "false_return",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "a66925938402418fffab20e291105da69f3630122fcb9be5779db75958405ccf",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "unrestored_SP",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "0c2bcc2107adb891a86af0f9b9306acf153b83dc574da4b3175f135d9f312644",
+          "mutated_bytes": 11329336
+        },
+        {
+          "mutation": "callee_saved_write",
+          "rejected": true,
+          "reason": "Diagnostic stub or complete NOP fill differs",
+          "actual_mutated_ELF_byte_buffer_sha256": "71c4ad1f8ae003776e266837e34875be5026034a5421c32c1daae0f4becec546",
+          "mutated_bytes": 11329336
+        }
+      ]
+    }
+  }
+}

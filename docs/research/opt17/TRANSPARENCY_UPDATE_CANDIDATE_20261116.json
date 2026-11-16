@@ -1,0 +1,9 @@
+{
+  "scope": "Isolated UpdateTexture driver-contract correction. Current production callers are patch/model updates (regen_kind0); P8 map/flat user-trigger reachability is not established. No production edit by this agent. Immediate upload only: independent sibling CPU data can remain stale after later eviction; candidate is held pending broader engine CPU-data contract.",
+  "base_driver_sha256": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72",
+  "candidate_driver_sha256": "4eddfff198abb5382127ce8ab0ca4a70a14e681ec5e7be8126abee8ad7475b2b",
+  "patch_sha256": "1cf7e80bd4747b7b1907e56837df16a435aba886d8154eca03fa118ab141d8b5",
+  "actual_function_before_sha256": "398ee592f37d93a1325489c5be29df67367a41145e2a633d4b7a75a70c4e448b",
+  "actual_function_candidate_sha256": "d87cfa1e7451910bb0cefbbd042134aa8cdffc73c6af96492327cc653d34cff7",
+  "host_proof": "build/nov17-transparency-update-host-v4/report.json"
+}

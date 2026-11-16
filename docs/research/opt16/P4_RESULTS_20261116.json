@@ -1,0 +1,662 @@
+{
+  "status": "Frozen renderer-v7 through 45f8 completed the checked full-mode game image gate and 350-frame profile. Earlier rejected stages remain historical; default image/pressure gates retain their errors.",
+  "baseline": "604cfd150c5240142d8cb5367950b53d987916d1",
+  "activation": "-hwfulltex, equivalent to -hwdbg 33554432; all other eligibility constraints apply.",
+  "ordinary_planner_mode_VRAM_saving_claim": false,
+  "production_source_sha256": {
+    "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c",
+    "src/ps2/hw/ps2_hw_plan.inc": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
+    "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+    "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+    "src/ps2/hw/ps2_hw_val.inc": "df958312ebe4becda71a502ea4a7eadfd06d5789c0336e929e475bbe8c81ac6a",
+    "src/ps2/hw/ps2_hw_vu1.inc": "c29867be00f83b03f54fdba3161b8e585268d921d3851ae744e20be48e13f25b",
+    "src/ps2/hw/ps2_hwd.c": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72",
+    "src/ps2/hw/vu1/ps2_hw_vu1.vsm": "915af9e6563a11b78224018a45e6ed5da4afd9c5447ba011a4024f43c40717a4"
+  },
+  "host": {
+    "report": "build/nov16-hwopt/p4-production-recovery-host-v1/report.json",
+    "report_sha256": "be699ab1bda583e11e9aab54e6d95246fae873d8b1335abf5ea542ae64beb390",
+    "results": {
+      "plain": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      },
+      "sanitize": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      }
+    },
+    "detected_negative_controls": 6,
+    "private_record_bytes": 140,
+    "private_record_growth_bytes": 0,
+    "all_previous_offsets_and_widths_preserved": true,
+    "separate_planner_proof_sha256": "259bc5fae1d6298bfc959dab9208f3c5d5530509d545caa8ecfb4489a6418445",
+    "mandatory_VU_data_map": {
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/p4-production-recovery-host-v1/vu-memory/report.json",
+      "report_sha256": "84ccbf06553768611eabf23de3e03811604b6d143b54ce3862435928fa50171c",
+      "results": {
+        "plain": {
+          "checks": 1189,
+          "constant_cases": 64,
+          "executed_UNPACK_packets": 161,
+          "written_quadwords": 1708,
+          "selector_address": 856,
+          "boot_plane_quadwords_unchanged": 12
+        },
+        "sanitize": {
+          "checks": 1189,
+          "constant_cases": 64,
+          "executed_UNPACK_packets": 161,
+          "written_quadwords": 1708,
+          "selector_address": 856,
+          "boot_plane_quadwords_unchanged": 12
+        }
+      }
+    }
+  },
+  "native": {
+    "directory": "build/nov16-hwopt/p4-clip-native-fixed-v1",
+    "ELF_sha256": "f1c0e7f47e40fcbcaeb39cd9d4838f65e81340be1ff03a7961d86506cc50e216",
+    "ELF_bytes": 2261676,
+    "compile_diagnostics": 0,
+    "link_diagnostics_except_known_sdk_abi_warning": 0,
+    "variants": {
+      "ct32": {
+        "wrapper_report": "build/nov16-hwopt/p4-clip-native-fixed-v1/hwt-clip-ct32.json",
+        "wrapper_report_sha256": "4ba38d1a647e6108dbbdd8a6f50037e5b3fb518e6f807fb00cac852a813a4cd2",
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=700 failures=0"
+        ],
+        "exact_complete_frame_pairs": 116,
+        "compared_pixels": 8314880,
+        "cropped_pixels": 0,
+        "tolerance": 0,
+        "direct_VU_plane_words_preserved": 48
+      },
+      "ct16": {
+        "wrapper_report": "build/nov16-hwopt/p4-clip-native-fixed-v1/hwt-clip-ct16.json",
+        "wrapper_report_sha256": "2f2d2f0603c489f897f291ef84775ae338efcf0c45a42e6c355d716018a9933e",
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=700 failures=0"
+        ],
+        "exact_complete_frame_pairs": 116,
+        "compared_pixels": 8314880,
+        "cropped_pixels": 0,
+        "tolerance": 0,
+        "direct_VU_plane_words_preserved": 48
+      }
+    },
+    "summary": {
+      "report": "build/nov16-hwopt/p4-clip-native-fixed-v1/native-summary.json",
+      "report_sha256": "d017a80491b744ea3322b03c65d5c1405f9483483a1df87b58c83de9ada12897"
+    },
+    "exact_complete_frame_pairs_total": 232,
+    "compared_pixels_total": 16629760
+  },
+  "native_allocations": [
+    {
+      "size": [
+        512,
+        512
+      ],
+      "T8_bytes": 262144,
+      "T4_bytes": 131072,
+      "saved_usable_VRAM_bytes": 131072
+    },
+    {
+      "size": [
+        1024,
+        512
+      ],
+      "T8_bytes": 524288,
+      "T4_bytes": 262144,
+      "saved_usable_VRAM_bytes": 262144
+    },
+    {
+      "size": [
+        1024,
+        1024
+      ],
+      "T8_bytes": 1048576,
+      "T4_bytes": 524288,
+      "saved_usable_VRAM_bytes": 524288
+    }
+  ],
+  "limits": "Expanded isolated native GS/EE/VU component evidence plus a frozen full-game LTO v7 checkpoint covering five scenes and 350-frame MAP02. No exhaustive compatibility, physical-console timing, full-game FPS, global pool reduction, default-mode VRAM saving or subsequent opt17 validation is claimed.",
+  "whole_game_rejection": {
+    "MAP02_changed_pixels": [
+      18550,
+      23713,
+      22777
+    ],
+    "MAP02_candidate_missing_draw_messages": 2,
+    "cause": "Selector at VU data QW28 overwrites persistent x-minus clip-plane masks within boot QW20..31.",
+    "isolated_repair": "build/nov16-hwopt/p4-clip-fix-v1/source; selector moved to856, outside polygon and sprite regions.",
+    "packet_memory_fixed_report": "build/nov16-hwopt/p4-vu-memory-fixed-v1/report.json",
+    "executed_old_source_failure": "build/nov16-hwopt/p4-vu-memory-v4-negative-v1/plain.log",
+    "native_revalidation_passed": true,
+    "whole_game_revalidation_pending": false,
+    "stage": "initial_v4_rejected",
+    "resolution": "Slot 856, AP88 rescue and allocator recovery are included in the later successful v7 checked full-mode gate; the original v4 result remains rejected.",
+    "resolution_report": "build/nov16-hwopt/v7-full-images/report.json"
+  },
+  "clip_repair": {
+    "selector_quadword": 856,
+    "old_selector_quadword": 28,
+    "fixed_native_directory": "build/nov16-hwopt/p4-clip-native-fixed-v1",
+    "fixed_checks_per_CT32_and_CT16": 700,
+    "extra_clip_frame_pairs_per_mode": 42,
+    "old28_negative_directory": "build/nov16-hwopt/p4-clip-native-old28-v1",
+    "old28_negative_checks": 700,
+    "old28_negative_failures": 48,
+    "old28_direct_plane_corruption_failures": 42,
+    "old28_complete_clipped_frame_failures": 6,
+    "packet_memory_production_report": "build/nov16-hwopt/p4-vu-memory-production-v1/report.json",
+    "packet_memory_cases": 64,
+    "packet_memory_plain_and_sanitized_checks": 1189,
+    "whole_game_revalidation_pending": false,
+    "first_corrected_game": {
+      "report": "build/nov16-hwopt/clip-fixed-map02/report.json",
+      "report_sha256": "ca802a7b67df48799e9c2ea1a038a52a4e0ae723e4f98fc93595dfa3f20d5fa8",
+      "MAP02_complete_PPM_pairs": 3,
+      "all_complete_PPM_bytes_equal": true,
+      "loader_hashes_equal": true,
+      "saved_config_equal": true,
+      "compatibility_gate_passed": false,
+      "remaining_failure": "Two AP88 patch sources purged before frame129 draws; sampled captures still exact.",
+      "stage": "v5_rejected_for_purged_AP88_sources",
+      "later_source_repair_document": "docs/research/opt16/PATCH_RESCUE_20261116.md"
+    },
+    "whole_game_v7_report": "build/nov16-hwopt/v7-full-images/report.json"
+  },
+  "initial_v4_native": {
+    "directory": "build/nov15-opt16/p4-native-target-v4",
+    "ELF_sha256": "1127c7b7bc8ae422cf50e108c214174c3869c3bd3d304b82d267c90d002927ed",
+    "ELF_bytes": 2252864,
+    "compile_diagnostics": 0,
+    "link_diagnostics_except_known_sdk_abi_warning": 0,
+    "variants": {
+      "ct32": {
+        "wrapper_report": "build/nov15-opt16/p4-native-target-v4/hwt-p4-ct32.json",
+        "wrapper_report_sha256": "517b552ee93dccc6673949e20cf1a9a95db767ab1750832756d7c6521c4b3632",
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=447 failures=0"
+        ],
+        "exact_complete_frame_pairs": 74,
+        "compared_pixels": 5304320,
+        "cropped_pixels": 0,
+        "tolerance": 0
+      },
+      "ct16": {
+        "wrapper_report": "build/nov15-opt16/p4-native-target-v4/hwt-p4-ct16.json",
+        "wrapper_report_sha256": "c65bc92e8bcd513863bf87656a4f4b7caeddf539476b1b0b71197a3ef7970fea",
+        "wrapper_exit": 0,
+        "complete": [
+          "H0 COMPLETE checks=447 failures=0"
+        ],
+        "exact_complete_frame_pairs": 74,
+        "compared_pixels": 5304320,
+        "cropped_pixels": 0,
+        "tolerance": 0
+      }
+    },
+    "scope": "Historical superseded 447-check stage; it did not exercise the clipping cases that exposed the slot 28 defect."
+  },
+  "initial_v4_host": {
+    "report": "build/nov15-opt16/p4-production-host-v1/report.json",
+    "report_sha256": "4d32619faa1d059a4e42a2c7d63fcb6da0e945c6e9fd8e519d72faf34e5056fc",
+    "results": {
+      "plain": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      },
+      "sanitize": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      }
+    },
+    "detected_negative_controls": 6,
+    "private_record_bytes": 140,
+    "private_record_growth_bytes": 0,
+    "all_previous_offsets_and_widths_preserved": true,
+    "separate_planner_proof_sha256": "8cc8ac93dd29dae6e960110440b79667a1d7c9047cd374e147a142a2080d6257",
+    "scope": "Historical pre-clip/MMI/recovery source proof, not final game acceptance."
+  },
+  "EE_packing_optimization": {
+    "document": "docs/research/opt16/P4_PACK_MMI_20261116.md",
+    "results": "docs/research/opt16/P4_PACK_MMI_RESULTS_20261116.json",
+    "results_sha256": "ff2e8b881b2d4d878a55c4df0b4cb6bfa8bc3d22da0031ddb348f662a83b3910",
+    "actual_native_helper_checks": 10653592,
+    "actual_native_mutations_detected": 4,
+    "texture_source_sha256": "80ac35dad5945143d5bd6a752e3c954fb03e942854ce0cd1ede71e5c2cb1ae55",
+    "whole_game_v6_validation_pending": false,
+    "whole_game_v6_status": "Rejected for three fog no-VRAM-block failures despite nine exact PPM pairs; later repaired and checked in v7."
+  },
+  "pre_recovery_MMI_host": {
+    "report": "build/nov16-hwopt/p4-production-mmi-host-v1/report.json",
+    "report_sha256": "960c3645f78c2621d0230328e9e3f05ffb863b7d8942891123fff7b97517b8cb",
+    "results": {
+      "plain": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      },
+      "sanitize": {
+        "checks": 101434367,
+        "texels": 101369320,
+        "uploads": 2232,
+        "corpus_cases": 1386,
+        "bands": 16,
+        "CLUT_rows": 32,
+        "palette_epochs": 3,
+        "ring_flushes": 322,
+        "policy_counterexample": {
+          "budgets": [
+            4300,
+            4812
+          ],
+          "levels": [
+            [
+              1,
+              1,
+              0
+            ],
+            [
+              2,
+              0,
+              1
+            ]
+          ],
+          "reject_naive_no_quality_loss_claim": true
+        }
+      }
+    },
+    "detected_negative_controls": 6,
+    "private_record_bytes": 140,
+    "private_record_growth_bytes": 0,
+    "all_previous_offsets_and_widths_preserved": true,
+    "separate_planner_proof_sha256": "1f6d2d594b09f6fdc72daa9b3aedae6562f63567ff0cb431ac73add2c605882f",
+    "mandatory_VU_data_map": {
+      "report": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/p4-production-mmi-host-v1/vu-memory/report.json",
+      "report_sha256": "84ccbf06553768611eabf23de3e03811604b6d143b54ce3862435928fa50171c",
+      "results": {
+        "plain": {
+          "checks": 1189,
+          "constant_cases": 64,
+          "executed_UNPACK_packets": 161,
+          "written_quadwords": 1708,
+          "selector_address": 856,
+          "boot_plane_quadwords_unchanged": 12
+        },
+        "sanitize": {
+          "checks": 1189,
+          "constant_cases": 64,
+          "executed_UNPACK_packets": 161,
+          "written_quadwords": 1708,
+          "selector_address": 856,
+          "boot_plane_quadwords_unchanged": 12
+        }
+      }
+    },
+    "scope": "Historical MMI source proof before allocator recovery; superseded by host above."
+  },
+  "allocator_recovery": {
+    "document": "docs/research/opt16/VRAM_RECOVERY_20261116.md",
+    "results": "docs/research/opt16/VRAM_RECOVERY_RESULTS_20261116.json",
+    "results_sha256": "79eecad1bb2d4fe83926a1695d0a57635017c846a1b02b507a20360ce493a5e0",
+    "v6_fog_no_VRAM_failures": 3,
+    "v6_complete_PPM_pairs_equal": 9,
+    "original_64_attempt_policy_preserved": true,
+    "additional_policy": "One final free allocation retry, one existing protected-safe window, one final allocation call.",
+    "whole_game_v7_validation_pending": false,
+    "whole_game_v7_full_mode_gate_passed": true,
+    "actual_source_proof": {
+      "report": "build/nov16-hwopt/vram-recovery-v3/report.json",
+      "report_sha256": "eb502776458ba59f06d9278ec1425e6befce48f41068541b812b5b083af99b59"
+    },
+    "actual_64_attempt_states_equal": true,
+    "plain_and_sanitized_cases_per_old_fixed_variant": 6,
+    "executed_negative_controls": 2,
+    "whole_game_v7_report": "build/nov16-hwopt/v7-full-images/report.json"
+  },
+  "renderer_checkpoint_revision": "45f8de1cbf33e8e7b2581afc08cb02499dd8c186",
+  "whole_game_v7": {
+    "report": "build/nov16-hwopt/v7-renderer-validation-summary.json",
+    "report_sha256": "2a1ecd56bac6995ee59a2446683bb49e58a54a4cd935646cea2e118cecf6aa66",
+    "revision": "45f8de1cbf33e8e7b2581afc08cb02499dd8c186",
+    "candidate_shipping_ELF": "build/nov16-hwopt/candidate-v7/hardware/SRB2.ELF",
+    "candidate_shipping_ELF_bytes": 11268908,
+    "candidate_shipping_ELF_sha256": "8fabe702b3785a8a5b80b0711c0e7b2edcf95d561a58586fc2e91d07983f67df",
+    "frozen_source_counts": {
+      "baseline": 602,
+      "candidate": 602
+    },
+    "physical_RAM_bytes": 33554432,
+    "explicit_full_mode_both_roles": [
+      "-hwdbg",
+      "33554432"
+    ],
+    "included_repairs": [
+      "VU1 P4 selector 856",
+      "try-only AP88 patch rescue",
+      "exact EE MMI packing/band scan",
+      "bounded allocator recovery after 64 attempts"
+    ],
+    "full_images": {
+      "report": "build/nov16-hwopt/v7-full-images/report.json",
+      "report_sha256": "21a033c3216231625f570a74aa855036856cc9085a1f91f6a95c42906660d9a2",
+      "scene_names": [
+        "fog-npot",
+        "map02",
+        "map01",
+        "legacy",
+        "legacy-sprites"
+      ],
+      "complete_scenes": 5,
+      "complete_frame_pairs": 15,
+      "all_complete_PPM_bytes_equal": true,
+      "changed_pixels": 0,
+      "max_RGB_error": 0,
+      "boots": 10,
+      "missing_or_skipped_diagnostic_lines": 0,
+      "all_loader_hashes_and_saved_configs_equal": true,
+      "normal_OS_RNG": true,
+      "strict_gate_passed": true,
+      "errors": [],
+      "diagnostic_scope": "Observed diagnostic lines, not exhaustive draw counters; complete sampled frames and five tested scenes only."
+    },
+    "full_350_profile": {
+      "report": "build/nov16-hwopt/v7-full-profile/report.json",
+      "report_sha256": "1a2abeca891edbdc179bcc6b1ad398aa5fb8a87c0cec6579de24f47953eb0226",
+      "profile_completed_without_missing_content": true,
+      "baseline_ZSTAT": {
+        "ram": 33554432,
+        "class": 32,
+        "map": 2,
+        "levelframes": 350,
+        "frames": 350,
+        "cycles": 2830745931,
+        "arena": 23547904,
+        "used": 21066544,
+        "peak": 22901136,
+        "gpeak": 22901136,
+        "free": 2481360,
+        "largest": 697648,
+        "evicted": 35491,
+        "evictedbytes": 1015847152,
+        "failed": 1713,
+        "libcfree": 168888,
+        "flushes": 0,
+        "libcpeak": 430528,
+        "stackused": 132560,
+        "spillpeak": 2118912,
+        "spillnow": 2118912,
+        "t_ms": 123619
+      },
+      "candidate_ZSTAT": {
+        "ram": 33554432,
+        "class": 32,
+        "map": 2,
+        "levelframes": 350,
+        "frames": 350,
+        "cycles": 2453170008,
+        "arena": 23539712,
+        "used": 20324208,
+        "peak": 22476128,
+        "gpeak": 22476128,
+        "free": 3215504,
+        "largest": 1048688,
+        "evicted": 17956,
+        "evictedbytes": 211839008,
+        "failed": 679,
+        "libcfree": 155816,
+        "flushes": 0,
+        "libcpeak": 446336,
+        "stackused": 132560,
+        "spillpeak": 1360512,
+        "spillnow": 1360512,
+        "t_ms": 122137
+      },
+      "numeric_deltas": {
+        "ram": 0,
+        "class": 0,
+        "map": 0,
+        "levelframes": 0,
+        "frames": 0,
+        "cycles": -377575923,
+        "arena": -8192,
+        "used": -742336,
+        "peak": -425008,
+        "gpeak": -425008,
+        "free": 734144,
+        "largest": 351040,
+        "evicted": -17535,
+        "evictedbytes": -804008144,
+        "failed": -1034,
+        "libcfree": -13072,
+        "flushes": 0,
+        "libcpeak": 15808,
+        "stackused": 0,
+        "spillpeak": -758400,
+        "spillnow": -758400,
+        "t_ms": -1482
+      },
+      "actual_available_zone_plus_libc_delta_bytes": 721072,
+      "baseline_native_pool_observations_blocks": [
+        9864,
+        8141,
+        9487
+      ],
+      "candidate_native_pool_observations_blocks": [
+        9732,
+        11225,
+        9359
+      ],
+      "pool_capacity_blocks": 12032,
+      "global_pool_reduction_claimed": false,
+      "interpretation": "Retains the smaller arena/C-heap-free and larger relative libcpeak, all zone failures/evictions, GS upload/eviction/timing counters and changed residency. It is a raw same-full-mode diagnostic, not a pass of the original strict pressure gate or a comparison to default quality."
+    },
+    "stock_cloud_witness": {
+      "report": "build/nov16-hwopt/v7-stock-trace/report.json",
+      "report_sha256": "53137e583db0b762711d1f5726c60e5dd1ba969eed5ce7064c9cf7ea7f2b30df",
+      "stock_texture": "F:GFS_CLD3",
+      "actual_trace_observations": {
+        "baseline": [
+          {
+            "raw": "HWT fans n=7 fl=0x9101 tex=F:GFS_CLD3 rec=132 blk=11776 1024x1024 psm=19 clut=1",
+            "record": 132,
+            "block256": 11776,
+            "width": 1024,
+            "height": 1024,
+            "psm": 19,
+            "clut": 1
+          }
+        ],
+        "candidate": [
+          {
+            "raw": "HWT fans n=7 fl=0x9101 tex=F:GFS_CLD3 rec=47 blk=7680 1024x1024 psm=20 clut=1",
+            "record": 47,
+            "block256": 7680,
+            "width": 1024,
+            "height": 1024,
+            "psm": 20,
+            "clut": 1
+          }
+        ]
+      },
+      "direct_stock_nblk_counter_printed": false,
+      "native_verified_footprint_contract_blocks": {
+        "P8": 4096,
+        "P4": 2048
+      },
+      "per_image_payload_and_allocated_footprint_saving_bytes": 524288,
+      "contract": {
+        "candidate_complete_texture_file_sha256": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+        "fixture_complete_texture_file_sha256": "7af412ee1a34c8fe53f55e43803362ca2be087afc3eb59d4a4a7e6cb61080f8a",
+        "whole_texture_upload_file_identical": false,
+        "exact_unchanged_sections_sha256": {
+          "tables_and_complete_footprint_function": "56cbe990ae4cfe9062901e8c648616052406218db2bced0de7eb1decbaad155e",
+          "complete_stride_PSM_and_nblk_selection": "353059fa7dbe30b0d65fc90be924c6e8b2825fddce346a6480e397364ab6d9a5"
+        },
+        "exact_private_format_constants_record_and_query_layout_sha256": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+        "scope": "Exact allocation/layout contract only. Packing/classification code outside these sections may differ and requires separate correctness evidence; no whole-upload equivalence is claimed."
+      }
+    },
+    "separate_default_image_gate": {
+      "report": "build/nov16-hwopt/v7-default-images/report.json",
+      "report_sha256": "f7f6b758c3f09af90297efa0ccc12c667574b319abfbcd5db6ab295f0397b83c",
+      "complete_frame_pairs": 15,
+      "all_complete_PPM_bytes_equal": true,
+      "strict_gate_passed": false,
+      "boots": 10,
+      "inherited_selected_while_collecting_diagnostics_per_boot": 40,
+      "present_in_both_baseline_and_candidate": true,
+      "classification_exempted": false,
+      "error_count": 10,
+      "scope": "Separate default-mode gate; does not describe the full-mode image gate."
+    },
+    "separate_strict_default_pressure_gate": {
+      "report": "build/nov16-hwopt/v7-default-pressure/report.json",
+      "report_sha256": "1f7f0f4007cee2e5437769dbf74b5e262940d0936bacbb334fd720358983530a",
+      "strict_gate_passed": false,
+      "errors": [
+        "Memory pressure increased: libcpeak",
+        "Available memory or arena capacity decreased: arena",
+        "Available memory or arena capacity decreased: libcfree"
+      ]
+    },
+    "all_runtime_input_and_critical_settings_invariants_true": true,
+    "known_standard_GS_VU0_gate_reclassified": false,
+    "known_standard_GS_VU0_gate_status": "Known FAIL retained; P4 component and full-mode game gates do not reclassify it.",
+    "FPS_claimed": false,
+    "physical_PS2_tested": false,
+    "later_opt17_loader_cooker_sprite_cache_validated": false
+  }
+}

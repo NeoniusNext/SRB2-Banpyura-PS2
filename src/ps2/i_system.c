@@ -39,6 +39,7 @@
 #include "ps2_addons.h"
 #endif
 #include "ps2_sys.h"
+#include "ps2_activity.h"
 #include "ps2_mem.h"
 #include "ps2_kbd.h"
 #include "ps2_mouse.h"
@@ -202,6 +203,7 @@ void PS2_SleepUs(UINT32 us)
 #endif
 	ee_thread_status_t st;
 	const s32 self = GetThreadId();
+	const unsigned activity = PS2_ACTIVITY_IDLE_BEGIN(self, PS2Mem_Cycles());
 	const precise_t dest = GetTimerSystemTime() + (precise_t)((UINT64)us * (PS2_PRECISION / 1000) / 1000);
 	s32 prio = -1;
 
@@ -214,6 +216,7 @@ void PS2_SleepUs(UINT32 us)
 		;
 	if (prio >= 0)
 		ChangeThreadPriority(self, prio);
+	PS2_ACTIVITY_IDLE_END(activity, PS2Mem_Cycles());
 #ifdef PS2_PROFILE
 	ps2prof_sleep_cyc += (unsigned int)(sleep_cyc_now() - t0);
 #endif

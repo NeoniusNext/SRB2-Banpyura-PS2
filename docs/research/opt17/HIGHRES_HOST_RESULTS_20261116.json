@@ -1,0 +1,378 @@
+{
+  "scope": "Host source logic only; GS hardware interfaces simulated. Root applied the reviewed five-file planner namespace patch. Combined native validation is pending; the v7 high-resolution capacity failure is unresolved.",
+  "frozen_v7_state": [
+    {
+      "negative": "",
+      "sanitize": false,
+      "rc": 0,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/host-final/normal/test.log"
+    },
+    {
+      "negative": "",
+      "sanitize": true,
+      "rc": 0,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/host-final/sanitize/test.log"
+    },
+    {
+      "negative": "scale",
+      "sanitize": false,
+      "rc": 1,
+      "passed": false,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/host-final/negative-scale/test.log"
+    },
+    {
+      "negative": "viewport",
+      "sanitize": false,
+      "rc": 1,
+      "passed": false,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/host-final/negative-viewport/test.log"
+    },
+    {
+      "negative": "palette",
+      "sanitize": false,
+      "rc": 1,
+      "passed": false,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/host-final/negative-palette/test.log"
+    }
+  ],
+  "planner_namespace_state": [
+    {
+      "negative": "",
+      "sanitize": false,
+      "rc": 0,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/planner-clock/state-host/normal/test.log"
+    },
+    {
+      "negative": "",
+      "sanitize": true,
+      "rc": 0,
+      "passed": true,
+      "log": "/workspace/SRB2-Banpyura-PS2/build/nov17-highres/planner-clock/state-host/sanitize/test.log"
+    }
+  ],
+  "epoch_v7": {
+    "scope": "Reproduce frame-ID reuse across a same-level HW restart; no production edit.\n\nExit zero means the expected bug was reproduced, or that --expect-correct passed\nfor an isolated candidate. GS bring-up is simulated; engine texture metadata is\nretained while actual planner/reset state is exercised.\n",
+    "bug_reproduced": true,
+    "correct": false,
+    "expected_correct": false,
+    "faults": {
+      "expired": {
+        "stale_registration": 1,
+        "stale_full_hint": 1,
+        "stale_immediate_hint": 1,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 200
+      },
+      "recent": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 1,
+        "delayed_immediate_revival": 1,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 200
+      },
+      "same_framebuffer": {
+        "stale_registration": 0,
+        "stale_full_hint": 1,
+        "stale_immediate_hint": 1,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 100
+      }
+    },
+    "wrap": {
+      "tested": 0,
+      "failures": 0,
+      "cases": 0
+    },
+    "output": "HIGHRES EPOCH case=expired stale_registration=1 stale_full_hint=1 stale_immediate_hint=1 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=recent stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=1 delayed_immediate_revival=1 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=same_framebuffer stale_registration=0 stale_full_hint=1 stale_immediate_hint=1 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=100\nHIGHRES WRAP tested=0 failures=0 cases=0\n",
+    "rc": 0,
+    "GS_init_shutdown_simulated": true,
+    "actual_init_shutdown_state_reset_statements": "static void epoch_state_init(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_state_shutdown(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_tick_frames(u32 count) { H.frame_no += count; }\nstatic void epoch_fixture_clock_init(void) {}\nstatic int epoch_hint_live(const GLMipmap_t *k) { return k->ps2_ihfr && H.frame_no + 1 - k->ps2_ihfr <= 2; }\nstatic void epoch_wrap_test(void) { printf(\"HIGHRES WRAP tested=0 failures=0 cases=0\\n\"); }\n",
+    "production_source_modified": false
+  },
+  "rejected_global_frame_prototype": {
+    "scope": "Reproduce frame-ID reuse across a same-level HW restart; no production edit.\n\nExit zero means the expected bug was reproduced, or that --expect-correct passed\nfor an isolated candidate. GS bring-up is simulated; engine texture metadata is\nretained while actual planner/reset state is exercised.\n",
+    "bug_reproduced": true,
+    "correct": false,
+    "expected_correct": false,
+    "faults": {
+      "expired": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 401
+      },
+      "recent": {
+        "stale_registration": 0,
+        "stale_full_hint": 1,
+        "stale_immediate_hint": 1,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 401
+      },
+      "same_framebuffer": {
+        "stale_registration": 0,
+        "stale_full_hint": 1,
+        "stale_immediate_hint": 1,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 100
+      }
+    },
+    "wrap": {
+      "tested": 0,
+      "failures": 0,
+      "cases": 0
+    },
+    "output": "HIGHRES EPOCH case=expired stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=401\nHIGHRES EPOCH case=recent stale_registration=0 stale_full_hint=1 stale_immediate_hint=1 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=401\nHIGHRES EPOCH case=same_framebuffer stale_registration=0 stale_full_hint=1 stale_immediate_hint=1 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=100\nHIGHRES WRAP tested=0 failures=0 cases=0\n",
+    "rc": 0,
+    "GS_init_shutdown_simulated": true,
+    "actual_init_shutdown_state_reset_statements": "static u32 hw_frame_clock;\nstatic void epoch_state_init(void)\n{\n\tmemset(&H, 0, sizeof H);\n\tH.frame_no = hw_frame_clock;\n}\nstatic void epoch_state_shutdown(void)\n{\n\thw_frame_clock = H.frame_no + 1u;\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_tick_frames(u32 count) { H.frame_no += count; }\nstatic void epoch_fixture_clock_init(void) {}\nstatic int epoch_hint_live(const GLMipmap_t *k) { return k->ps2_ihfr && H.frame_no + 1 - k->ps2_ihfr <= 2; }\nstatic void epoch_wrap_test(void) { printf(\"HIGHRES WRAP tested=0 failures=0 cases=0\\n\"); }\n",
+    "production_source_modified": false
+  },
+  "planner_namespace": {
+    "scope": "Reproduce frame-ID reuse across a same-level HW restart; no production edit.\n\nExit zero means the expected bug was reproduced, or that --expect-correct passed\nfor an isolated candidate. GS bring-up is simulated; engine texture metadata is\nretained while actual planner/reset state is exercised.\n",
+    "bug_reproduced": false,
+    "correct": true,
+    "expected_correct": true,
+    "faults": {
+      "expired": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 200
+      },
+      "recent": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 200
+      },
+      "same_framebuffer": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 100
+      }
+    },
+    "wrap": {
+      "tested": 1,
+      "failures": 0,
+      "cases": 322
+    },
+    "output": "HIGHRES EPOCH case=expired stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=recent stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=same_framebuffer stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=100\nHIGHRES WRAP tested=1 failures=0 cases=322\n",
+    "rc": 0,
+    "GS_init_shutdown_simulated": true,
+    "actual_init_shutdown_state_reset_statements": "static void epoch_state_init(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_state_shutdown(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_tick_frames(u32 count) { while (count--) { H.frame_no++; plan_advance(1u); } }\nstatic void epoch_fixture_clock_init(void) { plan_clock = 1; }\nstatic int epoch_hint_live(const GLMipmap_t *k) { return k->ps2_ihfr && plan_stamp() - k->ps2_ihfr <= 2; }\n\nstatic void epoch_wrap_test(void)\n{\n    unsigned failures = 0, cases = 0;\n    plan_info_p = calloc(1, sizeof *plan_info_p);\n    if (!plan_info_p) exit(11);\n    for (u32 offset = 0; offset <= 160; offset++)\n    {\n        GLMipmap_t m;\n        int visible;\n        u32 old;\n        memset(&m, 0, sizeof m);\n        plan_clock = ~0u - offset;\n        old = plan_stamp();\n        plan_advance(1u);\n        failures += !old || !plan_stamp() || plan_stamp() - old < 1u || plan_stamp() - old > 2u;\n        cases++;\n        plan_clock = old;\n        m.ps2_planfr = m.ps2_full_fr = m.ps2_ihfr = old;\n        plan_reset();\n        failures += !plan_stamp() || plan_stamp() - old < PLAN_FULL_KEEP;\n        failures += plan_key(&m) == NULL;\n        m.ps2_want = 3; m.ps2_vis = 1; batch_phase = 2;\n        failures += epoch_tex_want(&m, &visible) != 3 || epoch_hint_live(&m);\n        cases++;\n    }\n    free(plan_info_p);\n    printf(\"HIGHRES WRAP tested=1 failures=%u cases=%u\\n\", failures, cases);\n}\n",
+    "production_source_modified": false
+  },
+  "planner_namespace_sanitize": {
+    "scope": "Reproduce frame-ID reuse across a same-level HW restart; no production edit.\n\nExit zero means the expected bug was reproduced, or that --expect-correct passed\nfor an isolated candidate. GS bring-up is simulated; engine texture metadata is\nretained while actual planner/reset state is exercised.\n",
+    "bug_reproduced": false,
+    "correct": true,
+    "expected_correct": true,
+    "faults": {
+      "expired": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 200
+      },
+      "recent": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 200
+      },
+      "same_framebuffer": {
+        "stale_registration": 0,
+        "stale_full_hint": 0,
+        "stale_immediate_hint": 0,
+        "delayed_full_revival": 0,
+        "delayed_immediate_revival": 0,
+        "planned_lod_without_stale_hint": 3,
+        "frame_no": 100
+      }
+    },
+    "wrap": {
+      "tested": 1,
+      "failures": 0,
+      "cases": 322
+    },
+    "output": "HIGHRES EPOCH case=expired stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=recent stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=same_framebuffer stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=100\nHIGHRES WRAP tested=1 failures=0 cases=322\n",
+    "stderr": "",
+    "rc": 0,
+    "sanitize": true,
+    "GS_init_shutdown_simulated": true,
+    "actual_init_shutdown_state_reset_statements": "static void epoch_state_init(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_state_shutdown(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_tick_frames(u32 count) { while (count--) { H.frame_no++; plan_advance(1u); } }\nstatic void epoch_fixture_clock_init(void) { plan_clock = 1; }\nstatic int epoch_hint_live(const GLMipmap_t *k) { return k->ps2_ihfr && plan_stamp() - k->ps2_ihfr <= 2; }\n\nstatic void epoch_wrap_test(void)\n{\n    unsigned failures = 0, cases = 0;\n    plan_info_p = calloc(1, sizeof *plan_info_p);\n    if (!plan_info_p) exit(11);\n    for (u32 offset = 0; offset <= 160; offset++)\n    {\n        GLMipmap_t m;\n        int visible;\n        u32 old;\n        memset(&m, 0, sizeof m);\n        plan_clock = ~0u - offset;\n        old = plan_stamp();\n        plan_advance(1u);\n        failures += !old || !plan_stamp() || plan_stamp() - old < 1u || plan_stamp() - old > 2u;\n        cases++;\n        plan_clock = old;\n        m.ps2_planfr = m.ps2_full_fr = m.ps2_ihfr = old;\n        plan_reset();\n        failures += !plan_stamp() || plan_stamp() - old < PLAN_FULL_KEEP;\n        failures += plan_key(&m) == NULL;\n        m.ps2_want = 3; m.ps2_vis = 1; batch_phase = 2;\n        failures += epoch_tex_want(&m, &visible) != 3 || epoch_hint_live(&m);\n        cases++;\n    }\n    free(plan_info_p);\n    printf(\"HIGHRES WRAP tested=1 failures=%u cases=%u\\n\", failures, cases);\n}\n",
+    "production_source_modified": false
+  },
+  "negative_controls": {
+    "negative-gap": {
+      "scope": "Reproduce frame-ID reuse across a same-level HW restart; no production edit.\n\nExit zero means the expected bug was reproduced, or that --expect-correct passed\nfor an isolated candidate. GS bring-up is simulated; engine texture metadata is\nretained while actual planner/reset state is exercised.\n",
+      "bug_reproduced": true,
+      "correct": false,
+      "expected_correct": true,
+      "faults": {
+        "expired": {
+          "stale_registration": 0,
+          "stale_full_hint": 0,
+          "stale_immediate_hint": 0,
+          "delayed_full_revival": 0,
+          "delayed_immediate_revival": 0,
+          "planned_lod_without_stale_hint": 3,
+          "frame_no": 200
+        },
+        "recent": {
+          "stale_registration": 0,
+          "stale_full_hint": 1,
+          "stale_immediate_hint": 0,
+          "delayed_full_revival": 0,
+          "delayed_immediate_revival": 0,
+          "planned_lod_without_stale_hint": 3,
+          "frame_no": 200
+        },
+        "same_framebuffer": {
+          "stale_registration": 0,
+          "stale_full_hint": 1,
+          "stale_immediate_hint": 0,
+          "delayed_full_revival": 0,
+          "delayed_immediate_revival": 0,
+          "planned_lod_without_stale_hint": 3,
+          "frame_no": 100
+        }
+      },
+      "wrap": {
+        "tested": 1,
+        "failures": 322,
+        "cases": 322
+      },
+      "output": "HIGHRES EPOCH case=expired stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=recent stale_registration=0 stale_full_hint=1 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=same_framebuffer stale_registration=0 stale_full_hint=1 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=100\nHIGHRES WRAP tested=1 failures=322 cases=322\n",
+      "stderr": "",
+      "rc": 0,
+      "sanitize": false,
+      "GS_init_shutdown_simulated": true,
+      "actual_init_shutdown_state_reset_statements": "static void epoch_state_init(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_state_shutdown(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_tick_frames(u32 count) { while (count--) { H.frame_no++; plan_advance(1u); } }\nstatic void epoch_fixture_clock_init(void) { plan_clock = 1; }\nstatic int epoch_hint_live(const GLMipmap_t *k) { return k->ps2_ihfr && plan_stamp() - k->ps2_ihfr <= 2; }\n\nstatic void epoch_wrap_test(void)\n{\n    unsigned failures = 0, cases = 0;\n    plan_info_p = calloc(1, sizeof *plan_info_p);\n    if (!plan_info_p) exit(11);\n    for (u32 offset = 0; offset <= 160; offset++)\n    {\n        GLMipmap_t m;\n        int visible;\n        u32 old;\n        memset(&m, 0, sizeof m);\n        plan_clock = ~0u - offset;\n        old = plan_stamp();\n        plan_advance(1u);\n        failures += !old || !plan_stamp() || plan_stamp() - old < 1u || plan_stamp() - old > 2u;\n        cases++;\n        plan_clock = old;\n        m.ps2_planfr = m.ps2_full_fr = m.ps2_ihfr = old;\n        plan_reset();\n        failures += !plan_stamp() || plan_stamp() - old < PLAN_FULL_KEEP;\n        failures += plan_key(&m) == NULL;\n        m.ps2_want = 3; m.ps2_vis = 1; batch_phase = 2;\n        failures += epoch_tex_want(&m, &visible) != 3 || epoch_hint_live(&m);\n        cases++;\n    }\n    free(plan_info_p);\n    printf(\"HIGHRES WRAP tested=1 failures=%u cases=%u\\n\", failures, cases);\n}\n",
+      "production_source_modified": false
+    },
+    "negative-zero": {
+      "scope": "Reproduce frame-ID reuse across a same-level HW restart; no production edit.\n\nExit zero means the expected bug was reproduced, or that --expect-correct passed\nfor an isolated candidate. GS bring-up is simulated; engine texture metadata is\nretained while actual planner/reset state is exercised.\n",
+      "bug_reproduced": false,
+      "correct": false,
+      "expected_correct": true,
+      "faults": {
+        "expired": {
+          "stale_registration": 0,
+          "stale_full_hint": 0,
+          "stale_immediate_hint": 0,
+          "delayed_full_revival": 0,
+          "delayed_immediate_revival": 0,
+          "planned_lod_without_stale_hint": 3,
+          "frame_no": 200
+        },
+        "recent": {
+          "stale_registration": 0,
+          "stale_full_hint": 0,
+          "stale_immediate_hint": 0,
+          "delayed_full_revival": 0,
+          "delayed_immediate_revival": 0,
+          "planned_lod_without_stale_hint": 3,
+          "frame_no": 200
+        },
+        "same_framebuffer": {
+          "stale_registration": 0,
+          "stale_full_hint": 0,
+          "stale_immediate_hint": 0,
+          "delayed_full_revival": 0,
+          "delayed_immediate_revival": 0,
+          "planned_lod_without_stale_hint": 3,
+          "frame_no": 100
+        }
+      },
+      "wrap": {
+        "tested": 1,
+        "failures": 2,
+        "cases": 322
+      },
+      "output": "HIGHRES EPOCH case=expired stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=recent stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=200\nHIGHRES EPOCH case=same_framebuffer stale_registration=0 stale_full_hint=0 stale_immediate_hint=0 delayed_full_revival=0 delayed_immediate_revival=0 planned_lod_without_stale_hint=3 frame_no=100\nHIGHRES WRAP tested=1 failures=2 cases=322\n",
+      "stderr": "",
+      "rc": 0,
+      "sanitize": false,
+      "GS_init_shutdown_simulated": true,
+      "actual_init_shutdown_state_reset_statements": "static void epoch_state_init(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_state_shutdown(void)\n{\n\tmemset(&H, 0, sizeof H);\n}\nstatic void epoch_tick_frames(u32 count) { while (count--) { H.frame_no++; plan_advance(1u); } }\nstatic void epoch_fixture_clock_init(void) { plan_clock = 1; }\nstatic int epoch_hint_live(const GLMipmap_t *k) { return k->ps2_ihfr && plan_stamp() - k->ps2_ihfr <= 2; }\n\nstatic void epoch_wrap_test(void)\n{\n    unsigned failures = 0, cases = 0;\n    plan_info_p = calloc(1, sizeof *plan_info_p);\n    if (!plan_info_p) exit(11);\n    for (u32 offset = 0; offset <= 160; offset++)\n    {\n        GLMipmap_t m;\n        int visible;\n        u32 old;\n        memset(&m, 0, sizeof m);\n        plan_clock = ~0u - offset;\n        old = plan_stamp();\n        plan_advance(1u);\n        failures += !old || !plan_stamp() || plan_stamp() - old < 1u || plan_stamp() - old > 2u;\n        cases++;\n        plan_clock = old;\n        m.ps2_planfr = m.ps2_full_fr = m.ps2_ihfr = old;\n        plan_reset();\n        failures += !plan_stamp() || plan_stamp() - old < PLAN_FULL_KEEP;\n        failures += plan_key(&m) == NULL;\n        m.ps2_want = 3; m.ps2_vis = 1; batch_phase = 2;\n        failures += epoch_tex_want(&m, &visible) != 3 || epoch_hint_live(&m);\n        cases++;\n    }\n    free(plan_info_p);\n    printf(\"HIGHRES WRAP tested=1 failures=%u cases=%u\\n\", failures, cases);\n}\n",
+      "production_source_modified": false
+    }
+  },
+  "source_proof": {
+    "source_root": "build/nov16-hwopt/candidate-v7/source",
+    "changed_files": {
+      "src/ps2/hw/ps2_hw_draw.inc": {
+        "before": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c",
+        "after": "ae0d07376fdae1e353c6a0455acf0be92a7815782ecb4777ede1f06456df940d"
+      },
+      "src/ps2/hw/ps2_hw_gs.inc": {
+        "before": "fdf12939e01ba31472ebad75a4418aeb1fada38784f0c4bc796a8b5bd2b71d1e",
+        "after": "a2a70b3ef46f51af86204ce3bf405c34652e10f6cc654b87b14e191dfe6bd3d8"
+      },
+      "src/ps2/hw/ps2_hw_plan.inc": {
+        "before": "67a07460191d1c4060edb51b7ef5f082206e3d1615d5266eaf8f8a2fb330ee0b",
+        "after": "d70f4179c0d402c5783f8811f755366d00c2b7d80b8554fa96a9bdc3d6421f85"
+      },
+      "src/ps2/hw/ps2_hw_priv.inc": {
+        "before": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+        "after": "a0fbba19493e10c9ada81fac9444363df7e22d7aae26940251ec15d10f1a0e19"
+      },
+      "src/ps2/hw/ps2_hwd.c": {
+        "before": "2a54dc7851b62ea371cfe2ecb3731c4d68c56134d55abeadf1660dc57a697a72",
+        "after": "5775cc62cbf457d94e93070b423d20a98ef85f58a30c39b71a9cc60528cba963"
+      }
+    },
+    "production_modified": false,
+    "H.frame_no_consumer_changes": "Only the planner namespace references are redirected; H.frame_no assignments/counter increments and all nonplanner consumers unchanged."
+  },
+  "production_mirror": {
+    "src/ps2/hw/ps2_hw_draw.inc": true,
+    "src/ps2/hw/ps2_hw_gs.inc": true,
+    "src/ps2/hw/ps2_hw_plan.inc": true,
+    "src/ps2/hw/ps2_hw_priv.inc": true,
+    "src/ps2/hw/ps2_hwd.c": true
+  },
+  "artifact_sha256": {
+    "tools/ps2/opt17/highres_state_hosttest.py": "8bbb19e1718601921994e65b5de6e485d2663c3c85eb1d7452e10d4b0660b80f",
+    "tools/ps2/opt17/highres_state_hosttest.c": "c0a0639f344383d235fe0e47dd97568f5401888fb5538102afa732976dc68949",
+    "tools/ps2/opt17/highres_epoch_probe.py": "a9130a76e958c801fc17e736ac98b9b97ae998d9dab110349faffa57ead3f311",
+    "tools/ps2/opt17/highres_epoch_probe.c": "5a37cbf6ecdea57155c2a14c124d8cfe50296133686815fd606517f14be9ef66",
+    "tools/ps2/opt17/highres_native_report.py": "34fffd35f1d1938adef30916dcf45a4c88c148348768bb28964047fb537a5256",
+    "build/nov17-highres/planner-clock/prototype.patch": "f33cb1ee267039d3712cc8b8a58643f59ece2168f4702bc193a0f27532af4f99",
+    "build/nov17-highres/planner-clock/source-proof.json": "84c3f958d48080287c8932a593799bc72c11d55086e6b8d3a5e689bd9332a1be",
+    "build/nov17-highres/planner-clock/syntax-final/build.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  }
+}

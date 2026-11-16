@@ -1,0 +1,32 @@
+--- a/src/ps2/hw/ps2_hwd.c
++++ b/src/ps2/hw/ps2_hwd.c
+@@ -1936,12 +1936,25 @@
+ 
+ 	if (!H.up || !TexInfo)
+ 		return;
++	ov_flush_all();
++	dma_fence(); // old source references can outlive an evicted VRAM record
+ 	r = rec_of(TexInfo);
++	if (!r)
++		r = twin_rec(TexInfo);
+ 	if (r)
+-	{
+-		ov_flush_all();
+-		dma_fence(); // the engine has changed the texels: no queued reference may still read the old ones
+-		tex_drop((int)(r - H.rec), 0);
++		tex_drop(img_of((int)(r - H.rec)), 0); // every view shares the changed texels
++	if (TexInfo->format == GL_TEXFMT_P_8 && (TexInfo->regen_kind == 1 || TexInfo->regen_kind == 2))
++	{
++		GLMipmap_t *key = TexInfo->ps2_twin ? TexInfo->ps2_twin : TexInfo;
++		int i;
++
++		key->ps2_h255 = TexInfo->ps2_h255 = 0;
++		if (key->nextcolormap)
++			key->nextcolormap->ps2_h255 = 0;
++		// Cached full and derived levels belong to the preceding content.
++		for (i = 0; i < DC_MAX; i++)
++			if (dc[i].key == dc_key(TexInfo))
++				dc_drop(&dc[i]);
+ 	}
+ 	settex_now(TexInfo);
+ }

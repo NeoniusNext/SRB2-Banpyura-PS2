@@ -1,0 +1,53 @@
+{
+  "release_id": 446500266,
+  "tag": "pak-opt17-20261116",
+  "source_commit": "3aad51501a95cf39071870ca2cfa067d886d3102",
+  "release_url": "https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/tag/pak-opt17-20261116",
+  "published_at": "2026-11-16T01:20:17Z",
+  "prerelease": true,
+  "draft": false,
+  "uploaded_sha256_verified": true,
+  "public_download_checks": [
+    {
+      "name": "SHA256SUMS",
+      "public_http_status": 200,
+      "content_length": "202"
+    },
+    {
+      "name": "SRB2-PS2-PAKs-OPT17-20261116.zip",
+      "public_http_status": 200,
+      "content_length": "162923970"
+    },
+    {
+      "name": "SRB2-PS2-TEXC-for-OPT17-20261116.zip",
+      "public_http_status": 200,
+      "content_length": "9327703"
+    }
+  ],
+  "uploader_workflow_run": "https://github.com/NeoniusNext/SRB2-Banpyura-PS2/actions/runs/43785585182",
+  "isolated_transport_branch": "dist/pak-opt17-20261116",
+  "isolated_transport_commit": "1f8eaa1baa6f873a7001f5284d9586896107eff5",
+  "assets": [
+    {
+      "id": 752974177,
+      "name": "SHA256SUMS",
+      "size": 202,
+      "digest": "sha256:230771764258e381342c2c0372573d0304541687de0226e6951bf8c2388792ba",
+      "browser_download_url": "https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/download/pak-opt17-20261116/SHA256SUMS"
+    },
+    {
+      "id": 752974179,
+      "name": "SRB2-PS2-PAKs-OPT17-20261116.zip",
+      "size": 162923970,
+      "digest": "sha256:2c4d56ed1eb2221fb27035f99e9ecd3c7b0c0bd6b9b2c1402bff5c5bebb9d1ea",
+      "browser_download_url": "https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/download/pak-opt17-20261116/SRB2-PS2-PAKs-OPT17-20261116.zip"
+    },
+    {
+      "id": 752974176,
+      "name": "SRB2-PS2-TEXC-for-OPT17-20261116.zip",
+      "size": 9327703,
+      "digest": "sha256:0b045a82e5f3d5067e7f013e12bfc5969fae88ff681fa49d1b21465592d1e1ae",
+      "browser_download_url": "https://github.com/NeoniusNext/SRB2-Banpyura-PS2/releases/download/pak-opt17-20261116/SRB2-PS2-TEXC-for-OPT17-20261116.zip"
+    }
+  ]
+}

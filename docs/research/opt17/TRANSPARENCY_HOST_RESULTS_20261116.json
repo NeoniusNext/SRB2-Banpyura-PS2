@@ -1,0 +1,203 @@
+{
+  "scope": "Actual complete-source host texture-manager regression; native GS evidence is the separate TRANSPARENCY_NATIVE_RESULTS report. No production edit by transparency agent.",
+  "current": {
+    "source_root": "/workspace/SRB2-Banpyura-PS2",
+    "fixture_sha256": "24a41df6c9b28e7c2d41f39bef9e3432991422f8ce09fe9a688a116177604668",
+    "runner_sha256": "c9de35e5cfac327e1d5c0eb592b119752ca5134b9ef21a2c7020bd5a3736a3af",
+    "index_crc_pairs_exact": 41,
+    "variants": {
+      "baseline": {
+        "source_inputs": {
+          "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+          "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+          "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+          "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+          "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+          "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+          "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+          "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+        },
+        "summary": {
+          "observations": 41,
+          "rgba_bad": 12,
+          "poisoned": 24,
+          "checks": 759
+        },
+        "executed_modes": [
+          "normal",
+          "sanitize",
+          "packed",
+          "packed_sanitize"
+        ]
+      },
+      "fixed": {
+        "source_inputs": {
+          "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+          "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+          "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+          "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+          "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+          "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+          "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+          "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+        },
+        "summary": {
+          "observations": 41,
+          "rgba_bad": 0,
+          "poisoned": 0,
+          "checks": 759
+        },
+        "executed_modes": [
+          "normal",
+          "sanitize",
+          "packed",
+          "packed_sanitize"
+        ]
+      }
+    }
+  },
+  "frozen_v7": {
+    "source_root": "/workspace/SRB2-Banpyura-PS2/build/nov16-hwopt/candidate-v7/source",
+    "fixture_sha256": "92904143b5bee2a3c2013f598ccf3ff34b12d6411fa1900d84c879ad05006d53",
+    "runner_sha256": "d4cf7db75df99563eda19fc43f5a89f55cb41781415cf4abe2a5d9467471fc26",
+    "index_crc_pairs_exact": 41,
+    "variants": {
+      "baseline": {
+        "source_inputs": {
+          "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+          "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+          "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+          "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+          "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+          "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+          "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+          "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+        },
+        "summary": {
+          "observations": 41,
+          "rgba_bad": 12,
+          "poisoned": 24,
+          "checks": 759
+        },
+        "executed_modes": [
+          "normal",
+          "sanitize",
+          "packed",
+          "packed_sanitize"
+        ]
+      },
+      "fixed": {
+        "source_inputs": {
+          "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+          "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+          "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+          "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+          "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+          "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+          "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+          "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+        },
+        "summary": {
+          "observations": 41,
+          "rgba_bad": 0,
+          "poisoned": 0,
+          "checks": 759
+        },
+        "executed_modes": [
+          "normal",
+          "sanitize",
+          "packed",
+          "packed_sanitize"
+        ]
+      }
+    }
+  },
+  "separate_NOZC_stride": {
+    "source_root": "/workspace/SRB2-Banpyura-PS2",
+    "scope": "Execute the cached-mip row-stride diagnostic path with/without its fix.",
+    "variants": {
+      "baseline": {
+        "source_inputs": {
+          "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+          "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+          "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+          "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+          "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+          "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+          "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+          "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+        },
+        "results": {
+          "normal": {
+            "exit": 1,
+            "log_sha256": "c4a466aef822c2d096097ab727319cf0bce6449854db24ace8b7362dce1cd030",
+            "last_line": "Transparency proof failed: all upload bytes exactly match reference (check 15)"
+          },
+          "sanitize": {
+            "exit": 1,
+            "log_sha256": "a608b48cbb823e96d22ded439d0a8266e496a203e2e9b2d9666da5b4a5fe206f",
+            "last_line": "==62055==ABORTING"
+          }
+        }
+      },
+      "fixed": {
+        "source_inputs": {
+          "src/ps2/hw/ps2_hw_priv.inc": "a57948a2e7436568fae8d9cc8b6bdccdcdfea5ef6d06496f416fe9b462a49b41",
+          "src/ps2/hw/ps2_hw_regs.inc": "3cf94ebc110fa9295ec503adab42bb705302d99335c381543bbb47d09edc571a",
+          "src/ps2/hw/ps2_hw_xform.inc": "4fa104584a07557129b01147e6eae532d0ed8ef0f8de7ba0a67e3577af68878c",
+          "src/ps2/hw/ps2_hw_pal.inc": "94451d54cf0d307ee3e2b11fa776bbb291c277828935daa0cfa067a8a6c6b665",
+          "src/ps2/hw/ps2_hw_tex.inc": "b7ebecb38b30ea72a23e37366b0c5e566ed3c99851aa9c11a8215b49673888ab",
+          "src/ps2/hw/ps2_hwd_dbg.h": "69028feaee6f4c98190435d3b7de81ab33c8ca46ade5826dd887f0aa96879e18",
+          "src/ps2/hw/ps2_hw_fx2.h": "703ac570ffac8e4907bf33abb99e219a3aff470df4874f2a957d08a9edf0cc55",
+          "src/ps2/hw/ps2_hw_draw.inc": "b5ff4f3236ab345bc95f95e1b4d1ecdf7a4f2e494e5671cc8cca7f86d3eca94c"
+        },
+        "results": {
+          "normal": {
+            "exit": 0,
+            "log_sha256": "b49b36e44c804e943771a78e55241740107de8daa40991650ba5c2e049522dc8",
+            "last_line": "T17 COMPLETE observations=41 rgba_bad=0 poisoned=0 checks=696"
+          },
+          "sanitize": {
+            "exit": 0,
+            "log_sha256": "b49b36e44c804e943771a78e55241740107de8daa40991650ba5c2e049522dc8",
+            "last_line": "T17 COMPLETE observations=41 rgba_bad=0 poisoned=0 checks=696"
+          }
+        }
+      }
+    }
+  },
+  "manifest": {
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-host-v4/report.json": {
+      "bytes": 167975,
+      "sha256": "dd1968225aa4885a10e26d9fc521f2e99cf338afca616cb26a04030eca1e9bff"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-v7-host-v1/report.json": {
+      "bytes": 168013,
+      "sha256": "4a8946afa3c1137d6e0a61d31b4f86a03a1cdcb2551c9933bc1e679c07a00d6b"
+    },
+    "/workspace/SRB2-Banpyura-PS2/build/nov17-transparency-stride-host-v2/report.json": {
+      "bytes": 2908,
+      "sha256": "ce25979a5699b7249c8a2639112925a5b310205250d1f491d840ec2345115445"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_hosttest.c": {
+      "bytes": 15026,
+      "sha256": "24a41df6c9b28e7c2d41f39bef9e3432991422f8ce09fe9a688a116177604668"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_hosttest.py": {
+      "bytes": 6890,
+      "sha256": "c9de35e5cfac327e1d5c0eb592b119752ca5134b9ef21a2c7020bd5a3736a3af"
+    },
+    "/workspace/SRB2-Banpyura-PS2/tools/ps2/opt17/transparency_stride_hosttest.py": {
+      "bytes": 3320,
+      "sha256": "584893da795711946f434d07f94431760341ff5207ff36bdcfd7681973c3a576"
+    },
+    "/workspace/SRB2-Banpyura-PS2/docs/research/opt17/transparency-canonical-h255.patch": {
+      "bytes": 857,
+      "sha256": "47d68f9144c9eb9f3557a88e68a5ff1b4ae6d8fb265782269c54b408f0fbc7e6"
+    },
+    "/workspace/SRB2-Banpyura-PS2/docs/research/opt17/transparency-cached-stride.patch": {
+      "bytes": 288,
+      "sha256": "d7c04bdb05702be2416b2fa8cda38d6d10e8c344a580461fbae7ba80028e9a82"
+    }
+  }
+}

@@ -552,14 +552,17 @@ void HWR_GCacheFlush(void)
 	gc.s_flush++;
 }
 
-// a new level: the zone has freed the block (PU_HWRPLANE), all pointers into it are gone
+// A level teardown may already clear this owner; a same-level renderer restart
+// still owns a live block. Detach borrowed state pointers before releasing it.
 static void HWR_GCacheLevel(void)
 {
 	gc.bypass = gc.bypass_len = gc.w_views = gc.w_q = gc.w_hit = gc.w_full = 0;
 	gc.dead = false;
 	gc.tries = 0;
+	HWR_PBStDetach(); // the table of states is inside the block
+	if (gc.blk)
+		Z_Free(gc.blk); // clears gc.blk through its Zone user; never orphan a live owner
 	gc.blk = NULL;
-	HWR_PBStDetach(); // (the table of states was in the block)
 	gc.on = false;
 	if (!gc.kb_user)
 		gc.kb = GC_DEFAULT_KB; // (a level starts with the small arena)
