@@ -1,0 +1,40 @@
+name: Publish verified OPT17 PAK archives
+on:
+  push:
+    branches: [dist/pak-opt17-20261116]
+permissions:
+  contents: write
+concurrency:
+  group: publish-pak-opt17-20261116
+  cancel-in-progress: false
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify and reconstruct unchanged archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha256sum --check PARTS.sha256
+          cat SRB2-PS2-PAKs-OPT17-20261116.zip.part01 SRB2-PS2-PAKs-OPT17-20261116.zip.part02 > SRB2-PS2-PAKs-OPT17-20261116.zip
+          sha256sum --check SHA256SUMS
+      - name: Upload only to the existing draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/446500266" > release.json
+          python3 - <<'PYVERIFY'
+          import json
+          r=json.load(open('release.json'))
+          assert r['id']==446500266
+          assert r['tag_name']=='pak-opt17-20261116'
+          assert r['draft'] is True
+          assert r['target_commitish']=='3aad51501a95cf39071870ca2cfa067d886d3102'
+          PYVERIFY
+          gh release upload pak-opt17-20261116 --repo "$GITHUB_REPOSITORY" SRB2-PS2-PAKs-OPT17-20261116.zip SRB2-PS2-TEXC-for-OPT17-20261116.zip SHA256SUMS
